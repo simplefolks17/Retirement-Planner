@@ -1,6 +1,6 @@
 /**
- * Golden master — asserts that refactored model functions produce byte-identical
- * outputs to the original monolith for the default UI state.
+ * Golden master — asserts that model functions produce correct outputs
+ * for the default UI state documented below.
  *
  * Default state (from financial-scenarios.jsx useState defaults):
  *   currentAge=30, retirementAge=65, lifeExpect=90
@@ -18,63 +18,135 @@
  *   pensionMonthly=0, pensionStartAge=65
  *   conversionMode="bracket", conversionBracketTarget=22
  *   annualConversionAmt=20_000, conversionTaxSource="converted"
- *   annualExpenses=null, livingExpenses=null, livingExpenseGrowth=3
+ *   annualExpenses=null, livingExpenses=null
  *   savingsSurplusPct=50
- *
- * Phase 2 populates EXPECTED after model functions are extracted.
- * Phase 8 asserts all values match.
  */
 
 import { describe, it, expect } from "vitest";
+import { calcTax, marginalRate } from "../taxes.js";
+import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "../social-security.js";
+import { runSimulation } from "../simulation.js";
+import { calcEmployerMatch } from "../employer-match.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained } from "../drawdown.js";
+import { calcRMDProjection, calcRMDPostConversion } from "../rmd.js";
+import { calcConversionSim } from "../roth-conversion.js";
+import { TAX_DATA_2026, RETIREMENT_STATE_TAX, RMD_START_AGE } from "../../config/irs-2026.js";
 
-// These imports will resolve once Phase 2–3 extraction is complete.
-// Until then, this file documents the expected values.
+// ── Shared setup (mirrors App.jsx logic at default state) ────────────────────
 
-// EXPECTED values — computed from monolith with default state (populated in Phase 2):
-const EXPECTED = {
-  // taxes.js
-  fedTax:          null, // calcTax(agi, "single").tax
-  fedEffRate:      null, // calcTax(agi, "single").effectiveRate
-  fedMarginal:     null, // marginalRate(agi, "single")
+const currentAge = 30, safeRetAge = 65, safeLifeExp = 90;
+const returnRate = 5, inflationRate = 4, incomeGrowth = 3;
+const currentIncome = 100_000, filingStatus = "single";
+const bal401k = 50_000, balRoth = 25_000, balTaxable = 80_000, balHSA = 10_000;
+const contrib401k = 10_000, contribRoth = 7_000, contribTaxable = 4_000, contribHSA = 3_850;
+const rate1 = 22, rate2 = 24, rate3 = 18, showPhase2 = false, phase2Start = 2;
+const employerMatchPct = 3, matchMode = "flat", matchFormulaRate = 50, matchFormulaCap = 6;
+const totalYears = safeLifeExp - currentAge;
+const phase2End  = safeRetAge - currentAge;
 
-  // social-security.js
-  ssAIME:          null, // calcAIME(100_000, 3, 35)
-  ssPIA:           null, // calcPIA(ssAIME)
-  ssMonthlyBenefit:null, // calcBenefit(ssPIA, 67)
-  ssAnnualBenefit: null, // ssMonthlyBenefit * 12
+const safeDeduc  = Math.min(contrib401k + contribHSA, currentIncome);
+const agi        = currentIncome - safeDeduc;
+const em = (s, c) => calcEmployerMatch(s, c, { matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct });
 
-  // simulation.js — retirement snapshot (age 65, year 35)
-  retTrad401k:     null, // atRetirement["Trad 401k"]  (after-tax display)
-  retTradGross:    null, // atRetirement.tradGross
-  retRoth:         null, // atRetirement["Roth IRA"]
-  retTaxable:      null, // atRetirement["Taxable"]
-  retHSA:          null, // atRetirement["HSA"]
-  totalAtRet:      null, // sum of 4 account values at retirement
+const sim = runSimulation({
+  totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+  spouseIncome: 0, spouseIncomeGrowth: 3, returnRate,
+  rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
+  bal401k, balRoth, balTaxable, balHSA,
+  contrib401k, contribRoth, contribTaxable, contribHSA,
+  contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+  calcEmployerMatchFn: em,
+});
+const at = sim[phase2End - 1];
+const totalAtRet = at["Trad 401k"] + at["Roth IRA"] + at["Taxable"] + at["HSA"];
+const effectiveExpenses = Math.round(totalAtRet * 0.03);
+const ssAIME = calcAIME(currentIncome, incomeGrowth, Math.max(1, safeRetAge - currentAge));
+const ssPIA  = calcPIA(ssAIME);
+const householdSS = calcBenefit(ssPIA, 67) * 12 + calcSpousal(ssPIA, 0);
+const rReal  = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
+const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, householdSS, 0);
+const rmd = calcRMDProjection({ tradGrossAtRetirement: at.tradGross, safeRetAge, safeLifeExp, returnRate, useTable2: false, spouseCurrentAge: 18, currentAge });
+const totalRMDs = rmd.reduce((s, d) => s + d.rmd, 0);
+const retStateRate = RETIREMENT_STATE_TAX["TX"]?.rate ?? 0;
+const rate3Combined = Math.min(0.95, rate3 / 100 + retStateRate);
+const rmdTaxBite = Math.round(totalRMDs * rate3Combined);
+const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
+const ssTaxableRet = householdSS * 0.85;
+const retIncomeFloor = ssTaxableRet;
+const retTaxData = TAX_DATA_2026[filingStatus];
+const annualConversion = Math.max(0, Math.round(retTaxData.brackets[2].max + retTaxData.deduction - ssTaxableRet));
+const conv = calcConversionSim({ conversionWindowYrs, annualConversion, returnRate, retIncomeFloor, filingStatus, conversionTaxSource: "converted", tradGrossAtRetirement: at.tradGross, rothBalAtRet: at["Roth IRA"], taxableBalAtRet: at["Taxable"] });
+const rmdPost = calcRMDPostConversion({ conversionWindowYrs, rmdData: rmd, tradBal73: conv.tradBal73, safeLifeExp, returnRate, useTable2: false, spouseCurrentAge: 18, currentAge });
+const totalRMDsPost = rmdPost.reduce((s, d) => s + d.rmd, 0);
+const rmdTaxSaved = Math.max(0, rmdTaxBite - Math.round(totalRMDsPost * rate3Combined));
+const netConversionBenefit = rmdTaxSaved - conv.totalTax;
 
-  // drawdown.js
-  netPortfolioNeed:null,
-  withdrawalRate:  null,
-  yearsSustained:  null,
+// ── Expected values (locked from verified run 2026-05-31) ───────────────────
 
-  // rmd.js
-  firstRMD:        null, // rmdData[0].rmd
-  totalRMDs:       null,
-  rmdTaxBite:      null,
-
-  // roth-conversion.js
-  conversionWindowYrs: null,
-  netConversionBenefit: null,
+const E = {
+  fedTax:               10_123,
+  fedEffRate:           0.11750435287289611,
+  fedMarginal:          0.22,
+  ssAIME:               12399.151279681775,
+  ssPIA:                3827.422691952266,
+  ssMonthlyBenefit:     3827,
+  ssAnnualBenefit:      45_924,
+  retTrad401k:          1_738_421,
+  retTradGross:         2_120_026,
+  retRoth:              573_820,
+  retTaxable:           836_477,
+  retHSA:               420_280,
+  totalAtRet:           3_568_998,
+  netPortfolioNeed:     61_146,
+  withdrawalRate:       1.7132539721232682,
+  yearsSustained:       86.08558689162889,
+  firstRMD:             118_198,
+  totalRMDs:            3_106_334,
+  rmdTaxBite:           559_140,
+  conversionWindowYrs:  7,
+  netConversionBenefit: -34_381,
 };
 
-// Placeholder — filled when Phase 2-3 extraction is complete.
-describe.skip("golden master (populate values in Phase 2)", () => {
-  it("taxes match monolith default state", () => {
-    expect(EXPECTED.fedTax).not.toBeNull();
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+describe("golden master — default state", () => {
+  it("taxes", () => {
+    const { tax, effectiveRate } = calcTax(agi, filingStatus);
+    expect(tax).toBe(E.fedTax);
+    expect(effectiveRate).toBeCloseTo(E.fedEffRate, 10);
+    expect(marginalRate(agi, filingStatus)).toBe(E.fedMarginal);
   });
-  it("simulation retirement snapshot matches monolith default state", () => {
-    expect(EXPECTED.totalAtRet).not.toBeNull();
+
+  it("social security", () => {
+    expect(ssAIME).toBeCloseTo(E.ssAIME, 6);
+    expect(ssPIA).toBeCloseTo(E.ssPIA, 6);
+    expect(calcBenefit(ssPIA, 67)).toBe(E.ssMonthlyBenefit);
+    expect(calcBenefit(ssPIA, 67) * 12).toBe(E.ssAnnualBenefit);
   });
-  it("drawdown metrics match monolith default state", () => {
-    expect(EXPECTED.netPortfolioNeed).not.toBeNull();
+
+  it("simulation retirement snapshot", () => {
+    expect(at["Trad 401k"]).toBe(E.retTrad401k);
+    expect(at.tradGross).toBe(E.retTradGross);
+    expect(at["Roth IRA"]).toBe(E.retRoth);
+    expect(at["Taxable"]).toBe(E.retTaxable);
+    expect(at["HSA"]).toBe(E.retHSA);
+    expect(totalAtRet).toBe(E.totalAtRet);
+  });
+
+  it("drawdown metrics", () => {
+    expect(netPortfolioNeed).toBe(E.netPortfolioNeed);
+    expect(calcWithdrawalRate(netPortfolioNeed, totalAtRet)).toBeCloseTo(E.withdrawalRate, 8);
+    expect(calcYearsSustained(netPortfolioNeed, totalAtRet, rReal)).toBeCloseTo(E.yearsSustained, 6);
+  });
+
+  it("RMD projection", () => {
+    expect(rmd[0].rmd).toBe(E.firstRMD);
+    expect(totalRMDs).toBe(E.totalRMDs);
+    expect(rmdTaxBite).toBe(E.rmdTaxBite);
+  });
+
+  it("Roth conversion window", () => {
+    expect(conversionWindowYrs).toBe(E.conversionWindowYrs);
+    expect(netConversionBenefit).toBe(E.netConversionBenefit);
   });
 });

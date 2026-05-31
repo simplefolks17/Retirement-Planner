@@ -7,15 +7,23 @@ import {
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct } from "./formatters.js";
 import { calcTax, marginalRate, ltcgRate } from "./model/taxes.js";
-import { getTaxRate } from "./model/simulation.js";
+import { runSimulation } from "./model/simulation.js";
+import { calcEmployerMatch } from "./model/employer-match.js";
+import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained } from "./model/drawdown.js";
+import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
+import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
+import { calcConversionSim } from "./model/roth-conversion.js";
+import { calcOptimizedScenario } from "./model/optimization.js";
+import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import {
   TAX_DATA_2026, ROTH_PHASEOUT_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
   LIMIT_415C_2026, LIMIT_415C_CATCHUP_2026, CATCHUP_AGE,
   FICA_RATE, FICA_WAGE_BASE,
-  RMD_START_AGE, RMD_TABLE3, RMD_TABLE2,
-  SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE, SS_AIME_YEARS,
-  SS_FACTORS, SS_BEND1, SS_BEND2,
+  RMD_START_AGE,
+  SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE,
+  SS_FACTORS,
   STATE_TAX, RETIREMENT_STATE_TAX,
 } from "./config/irs-2026.js";
 import { Slider }        from "./components/Slider.jsx";
@@ -105,68 +113,20 @@ export default function App() {
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
 
-  const calcEmployerMatch = (salary, employeeContrib) => {
-    if (matchMode === "formula") {
-      const matchableContrib = Math.min(employeeContrib, salary * matchFormulaCap / 100);
-      return Math.round(matchableContrib * matchFormulaRate / 100);
-    }
-    return Math.round(salary * employerMatchPct / 100);
-  };
+  const employerMatch = (salary, employeeContrib) =>
+    calcEmployerMatch(salary, employeeContrib, {
+      matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
+    });
 
-  const simData = useMemo(() => {
-    let trad = bal401k, roth = balRoth, taxable = balTaxable, hsa = balHSA;
-    const r = returnRate / 100;
-    const g = incomeGrowth / 100;
-    const arr = [];
-    for (let y = 1; y <= totalYears; y++) {
-      const age        = currentAge + y;
-      const taxRate    = getTaxRate(y, { rate1, rate2, rate3, phase2Start, phase2End, showPhase2 });
-      const growFactor = Math.pow(1 + g, y - 1);
-      const limit415cYr   = currentAge + (y - 1) >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
-      const electiveLimit = currentAge + (y - 1) >= CATCHUP_AGE
-        ? TRAD_401K_LIMIT_2026 + 7_500
-        : TRAD_401K_LIMIT_2026;
-      const employeeDeferral = age <= contribEnd401k
-        ? Math.min(contrib401k * growFactor, electiveLimit)
-        : 0;
-      const matchAmt = age <= contribEnd401k ? calcEmployerMatch(currentIncome * growFactor, employeeDeferral) : 0;
-      const c401k    = Math.min(employeeDeferral + matchAmt, limit415cYr);
-      const cRoth = (() => {
-        if (age > contribEndRoth || contribRoth <= 0) return 0;
-        const rothCap = currentAge + (y - 1) >= CATCHUP_AGE
-          ? ROTH_IRA_LIMIT_2026 + 1_000
-          : ROTH_IRA_LIMIT_2026;
-        const baseContrib = Math.min(contribRoth, rothCap);
-        const primaryMAGI = currentIncome * growFactor;
-        const spouseMAGI  = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, y - 1);
-        const yearMAGI    = primaryMAGI + spouseMAGI;
-        const po = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
-        if (yearMAGI >= po.end) return 0;
-        if (yearMAGI <= po.start) return baseContrib;
-        const phasePct = (po.end - yearMAGI) / (po.end - po.start);
-        return Math.round(baseContrib * phasePct);
-      })();
-      const cTaxable = age <= contribEndTaxable ? contribTaxable * growFactor : 0;
-      const cHSA     = age <= contribEndHSA     ? Math.min(contribHSA, HSA_LIMIT_2026) : 0;
-      trad = (trad + c401k) * (1 + r);
-      roth = (roth + cRoth) * (1 + r);
-      hsa  = (hsa  + cHSA)  * (1 + r);
-      const ordinaryIncome = currentIncome * growFactor - employeeDeferral - cHSA;
-      const capGainsRate   = ltcgRate(ordinaryIncome, filingStatus);
-      taxable = (taxable + cTaxable) * (1 + r * (1 - capGainsRate));
-      arr.push({
-        age,
-        "Trad 401k": Math.round(trad * (1 - taxRate)),
-        "Roth IRA":  Math.round(roth),
-        "Taxable":   Math.round(taxable),
-        "HSA":       Math.round(hsa),
-        tradGross:   Math.round(trad),
-        c401k: Math.round(c401k), cRoth: Math.round(cRoth),
-        cTaxable: Math.round(cTaxable), cHSA: Math.round(cHSA),
-      });
-    }
-    return arr;
-  }, [
+  const simData = useMemo(() => runSimulation({
+    totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+    spouseIncome, spouseIncomeGrowth, returnRate,
+    rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
+    bal401k, balRoth, balTaxable, balHSA,
+    contrib401k, contribRoth, contribTaxable, contribHSA,
+    contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+    calcEmployerMatchFn: employerMatch,
+  }), [
     returnRate, totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
     spouseIncome, spouseIncomeGrowth,
     rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
@@ -196,53 +156,18 @@ export default function App() {
   const rothPhaseoutWarning  = combinedIncome >= rothPhaseout.start;
   const rothFullyPhased      = combinedIncome >= rothPhaseout.end;
 
-  const grossAfterTax       = currentIncome - fedTax - stateTax - fica;
-  const currentContribTotal = contrib401k + contribRoth + contribTaxable + contribHSA;
-  const effectiveLiving     = livingExpenses ?? Math.max(0, grossAfterTax - currentContribTotal);
-  const savingsCapacity     = Math.max(0, grossAfterTax - effectiveLiving);
-  const availableSurplus    = Math.max(0, savingsCapacity - currentContribTotal);
+  const grossAfterTax = calcGrossAfterTax(currentIncome, fedTax, stateTax, fica);
+  const { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus } =
+    calcSavingsCapacity({
+      grossAfterTax, contrib401k, contribRoth, contribTaxable, contribHSA, livingExpenses,
+    });
 
-  const optimizedAllocation = (() => {
-    let remaining = Math.round(availableSurplus * savingsSurplusPct / 100);
-    const alloc = { extra401k: 0, extraRoth: 0, extraHSA: 0, extraTaxable: 0, extraMatch: 0 };
-    const matchContribNeeded = matchMode === "formula"
-      ? Math.round(currentIncome * matchFormulaCap / 100)
-      : Math.round(currentIncome * employerMatchPct / 100);
-    if ((employerMatchPct > 0 || matchMode === "formula") && contrib401k < matchContribNeeded) {
-      const matchGap = Math.min(remaining, matchContribNeeded - contrib401k);
-      alloc.extraMatch = matchGap;
-      alloc.extra401k += matchGap;
-      remaining -= matchGap;
-    }
-    const hsaRoom = Math.max(0, HSA_LIMIT_2026 - contribHSA);
-    if (remaining > 0 && hsaRoom > 0) {
-      const hsaAdd = Math.min(remaining, hsaRoom);
-      alloc.extraHSA = hsaAdd;
-      remaining -= hsaAdd;
-    }
-    if (remaining > 0 && !rothFullyPhased) {
-      const rothRoom = Math.max(0, ROTH_IRA_LIMIT_2026 - contribRoth);
-      const rothAdd = Math.min(remaining, rothRoom);
-      alloc.extraRoth = rothAdd;
-      remaining -= rothAdd;
-    }
-    const room401k = Math.max(0, TRAD_401K_LIMIT_2026 - contrib401k - alloc.extra401k);
-    if (remaining > 0 && room401k > 0) {
-      const add401k = Math.min(remaining, room401k);
-      alloc.extra401k += add401k;
-      remaining -= add401k;
-    }
-    if (remaining > 0) {
-      alloc.extraTaxable = remaining;
-      remaining = 0;
-    }
-    alloc.totalExtra = alloc.extra401k + alloc.extraRoth + alloc.extraHSA + alloc.extraTaxable;
-    alloc.opt401k    = contrib401k + alloc.extra401k;
-    alloc.optRoth    = contribRoth + alloc.extraRoth;
-    alloc.optHSA     = contribHSA + alloc.extraHSA;
-    alloc.optTaxable = contribTaxable + alloc.extraTaxable;
-    return alloc;
-  })();
+  const optimizedAllocation = calcOptimizedAllocation({
+    availableSurplus, savingsSurplusPct,
+    contrib401k, contribRoth, contribHSA, contribTaxable,
+    rothFullyPhased, matchMode, matchFormulaCap, matchFormulaRate,
+    employerMatchPct, currentIncome,
+  });
 
   const ACCOUNTS = [
     { key: "Traditional 401k", dataKey: "Trad 401k", color: C.gold,   note: "Pre-tax",
@@ -277,44 +202,25 @@ export default function App() {
   const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
 
   const ssWorkYears = Math.max(1, safeRetAge - currentAge);
-  const ssTotalEarnings = (() => {
-    let total = 0;
-    for (let y = 0; y < ssWorkYears; y++) {
-      const yearEarnings = currentIncome * Math.pow(1 + incomeGrowth / 100, y);
-      total += Math.min(yearEarnings, FICA_WAGE_BASE);
-    }
-    return total;
-  })();
-  const ssAIME = (ssTotalEarnings / Math.max(ssWorkYears, SS_AIME_YEARS)) / 12;
-  const ssPIA  = ssAIME <= SS_BEND1
-    ? ssAIME * 0.90
-    : ssAIME <= SS_BEND2
-      ? SS_BEND1 * 0.90 + (ssAIME - SS_BEND1) * 0.32
-      : SS_BEND1 * 0.90 + (SS_BEND2 - SS_BEND1) * 0.32 + (ssAIME - SS_BEND2) * 0.15;
-  const ssMonthlyBenefit = Math.round(ssPIA * (SS_FACTORS[ssClaimingAge] ?? 1.0));
+  const ssAIME = calcAIME(currentIncome, incomeGrowth, ssWorkYears);
+  const ssPIA  = calcPIA(ssAIME);
+  const ssMonthlyBenefit = calcBenefit(ssPIA, ssClaimingAge);
   const ssAnnualBenefit  = ssMonthlyBenefit * 12;
-  const ss67Monthly      = Math.round(ssPIA * (SS_FACTORS[SS_FRA] ?? 1.0));
+  const ss67Monthly      = calcBenefit(ssPIA, SS_FRA);
   const effectiveSS = includeSS
     ? (ssOverride !== null ? ssOverride : ssAnnualBenefit)
     : 0;
 
-  const spousalBenefitAnnual = Math.round(ssPIA * 12 * 0.5);
-  const spouseSsBenefit = spouseSsEstimate > 0
-    ? Math.max(spouseSsEstimate, spousalBenefitAnnual)
-    : 0;
+  const spouseSsBenefit = calcSpousal(ssPIA, spouseSsEstimate);
   const householdSS = includeSS ? effectiveSS + spouseSsBenefit : 0;
 
   const effectivePension = pensionStartAge <= safeRetAge && pensionMonthly > 0
     ? pensionMonthly * 12
     : 0;
 
-  const netPortfolioNeed = Math.max(0, effectiveExpenses - householdSS - effectivePension);
-  const withdrawalRate   = totalAtRet > 0 ? (netPortfolioNeed / totalAtRet) * 100 : 0;
-  const yearsSustained   = netPortfolioNeed <= 0 || totalAtRet * rReal >= netPortfolioNeed
-    ? Infinity
-    : rReal !== 0
-      ? Math.log(1 - (totalAtRet * rReal) / netPortfolioNeed) / Math.log(1 / (1 + rReal))
-      : totalAtRet / netPortfolioNeed;
+  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePension);
+  const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
+  const yearsSustained   = calcYearsSustained(netPortfolioNeed, totalAtRet, rReal);
   const isSustainable    = yearsSustained === Infinity || yearsSustained >= (safeLifeExp - safeRetAge);
 
   const milestones = useMemo(() => {
@@ -380,30 +286,10 @@ export default function App() {
   const rmdData = useMemo(() => {
     const retRow = simData.find(d => d.age === safeRetAge);
     if (!retRow) return [];
-    const r = returnRate / 100;
-    const result = [];
-    let bal = retRow.tradGross ?? 0;
-    if (safeRetAge >= RMD_START_AGE) {
-      const sAge0 = useTable2 ? Math.round(spouseCurrentAge + (safeRetAge - currentAge)) : null;
-      let d0 = useTable2 ? (RMD_TABLE2[safeRetAge]?.[sAge0] ?? null) : null;
-      if (d0 === null) d0 = RMD_TABLE3[safeRetAge] ?? null;
-      const rmd0 = d0 ? Math.round(bal / d0) : 0;
-      if (d0) bal -= rmd0;
-      result.push({ age: safeRetAge, rmd: rmd0, bal: Math.round(bal), required: !!d0, divisor: d0 });
-    }
-    for (let age = safeRetAge + 1; age <= safeLifeExp; age++) {
-      bal = bal * (1 + r);
-      let divisor = null;
-      if (useTable2) {
-        const sAge = Math.round(spouseCurrentAge + (age - currentAge));
-        divisor = RMD_TABLE2[age]?.[sAge] ?? null;
-      }
-      if (divisor === null) divisor = RMD_TABLE3[age] ?? null;
-      const rmd = divisor ? Math.round(bal / divisor) : 0;
-      if (divisor) bal -= rmd;
-      result.push({ age, rmd, bal: Math.round(bal), required: !!divisor, divisor });
-    }
-    return result.filter(d => d.age >= RMD_START_AGE);
+    return calcRMDProjection({
+      tradGrossAtRetirement: retRow.tradGross ?? 0,
+      safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
+    });
   }, [simData, safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge]);
 
   const firstRMD   = rmdData[0];
@@ -427,77 +313,28 @@ export default function App() {
 
   const conversionSim = useMemo(() => {
     const retRow = simData.find(d => d.age === safeRetAge);
-    if (!retRow || conversionWindowYrs === 0)
-      return {
-        years: [], tradBal73: retRow?.tradGross ?? 0,
-        rothBalEnd_conv: retVals["Roth IRA"] ?? 0, totalTax_conv: 0, taxableBalEnd_conv: retVals["Taxable"] ?? 0,
-        rothBalEnd_tax: retVals["Roth IRA"] ?? 0, totalTax_tax: 0, taxableBalEnd_tax: retVals["Taxable"] ?? 0,
-        rothBalEnd: retVals["Roth IRA"] ?? 0, totalTax: 0,
-      };
-    const r = returnRate / 100;
-    let tradA = retRow.tradGross ?? 0, rothA = retVals["Roth IRA"] ?? 0, taxableA = retVals["Taxable"] ?? 0, totalTaxA = 0;
-    let tradB = retRow.tradGross ?? 0, rothB = retVals["Roth IRA"] ?? 0, taxableB = retVals["Taxable"] ?? 0, totalTaxB = 0;
-    const years = [];
-    for (let yr = 0; yr < conversionWindowYrs; yr++) {
-      tradA *= (1 + r); rothA *= (1 + r); taxableA *= (1 + r);
-      tradB *= (1 + r); rothB *= (1 + r); taxableB *= (1 + r);
-      const conversion = Math.min(annualConversion, Math.min(tradA, tradB));
-      const taxOnConversion = Math.round(conversion * marginalRate(retIncomeFloor + conversion, filingStatus));
-      tradA -= conversion;
-      rothA += (conversion - taxOnConversion);
-      totalTaxA += taxOnConversion;
-      tradB -= conversion;
-      rothB += conversion;
-      taxableB -= taxOnConversion;
-      totalTaxB += taxOnConversion;
-      years.push({
-        age: safeRetAge + yr + 1, conversion: Math.round(conversion),
-        tradBal: Math.round(conversionTaxSource === "taxable" ? tradB : tradA),
-        rothBal: Math.round(conversionTaxSource === "taxable" ? rothB : rothA),
-        tax: Math.round(taxOnConversion),
-      });
-    }
-    tradA *= (1 + r); tradB *= (1 + r);
-    const primaryRoth    = conversionTaxSource === "taxable" ? Math.round(rothB) : Math.round(rothA);
-    const primaryTax     = conversionTaxSource === "taxable" ? Math.round(totalTaxB) : Math.round(totalTaxA);
-    const primaryTradBal = conversionTaxSource === "taxable" ? Math.round(tradB) : Math.round(tradA);
-    return {
-      years,
-      tradBal73: primaryTradBal,
-      rothBalEnd: primaryRoth,
-      totalTax: primaryTax,
-      rothBalEnd_conv: Math.round(rothA), totalTax_conv: Math.round(totalTaxA), taxableBalEnd_conv: Math.round(taxableA),
-      rothBalEnd_tax:  Math.round(rothB), totalTax_tax:  Math.round(totalTaxB), taxableBalEnd_tax:  Math.round(taxableB),
-      rothAdvantage: Math.round(rothB - rothA),
-    };
+    const raw = calcConversionSim({
+      conversionWindowYrs: retRow ? conversionWindowYrs : 0,
+      annualConversion, returnRate, retIncomeFloor, filingStatus, conversionTaxSource,
+      tradGrossAtRetirement: retRow?.tradGross ?? 0,
+      rothBalAtRet: retVals["Roth IRA"] ?? 0,
+      taxableBalAtRet: retVals["Taxable"] ?? 0,
+    });
+    // Model returns year ages as 1-indexed (yr+1); offset by safeRetAge for display.
+    return { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + safeRetAge })) };
   }, [simData, safeRetAge, conversionWindowYrs, annualConversion, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, filingStatus, conversionTaxSource]);
 
-  const rmdDataPostConversion = useMemo(() => {
-    if (conversionWindowYrs === 0) return rmdData;
-    const r = returnRate / 100;
-    const result = [];
-    let bal = conversionSim.tradBal73;
-    for (let age = RMD_START_AGE; age <= safeLifeExp; age++) {
-      bal = bal * (1 + r);
-      let divisor = null;
-      if (useTable2) {
-        const sAge = Math.round(spouseCurrentAge + (age - currentAge));
-        divisor = RMD_TABLE2[age]?.[sAge] ?? null;
-      }
-      if (divisor === null) divisor = RMD_TABLE3[age] ?? null;
-      const rmd = divisor ? Math.round(bal / divisor) : 0;
-      if (divisor) bal -= rmd;
-      result.push({ age, rmd, bal: Math.round(bal), required: !!divisor, divisor });
-    }
-    return result.filter(d => d.age >= RMD_START_AGE);
-  }, [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
+  const rmdDataPostConversion = useMemo(() => calcRMDPostConversion({
+    conversionWindowYrs, rmdData, tradBal73: conversionSim.tradBal73,
+    safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
+  }), [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
 
   const totalRMDsPost        = rmdDataPostConversion.reduce((s, d) => s + d.rmd, 0);
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - Math.round(totalRMDsPost * rate3Combined));
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
-  const employerMatchAmt = calcEmployerMatch(currentIncome, contrib401k);
+  const employerMatchAmt = employerMatch(currentIncome, contrib401k);
   const megaCapacity     = Math.max(0, limit415c - contrib401k - employerMatchAmt);
   const megaGrowth       = [5, 10, 20].map(yrs => ({
     yrs,
@@ -603,64 +440,13 @@ export default function App() {
     netPortfolioNeed, rmdTaxBite, yearsSustained,
   ]);
 
-  const optimized = useMemo(() => {
-    const r = returnRate / 100;
-    const g = incomeGrowth / 100;
-    const yearsToRet = Math.max(1, safeRetAge - currentAge);
-    const oa = optimizedAllocation;
-    const fvAnnuity = (annual, rate, years) => {
-      if (annual <= 0 || years <= 0) return 0;
-      return rate > 0 ? annual * ((Math.pow(1 + rate, years) - 1) / rate) : annual * years;
-    };
-    let extra401kFV = 0;
-    if (oa.extra401k > 0) {
-      for (let y = 1; y <= yearsToRet; y++) {
-        const growFactor  = Math.pow(1 + g, y - 1);
-        const currentC    = contrib401k * growFactor;
-        const roomThisYr  = Math.max(0, TRAD_401K_LIMIT_2026 - currentC);
-        const extraThisYr = Math.min(oa.extra401k, roomThisYr);
-        extra401kFV += extraThisYr * Math.pow(1 + r, yearsToRet - y);
-      }
-      extra401kFV *= (1 - rate3 / 100);
-    }
-    const extraHSAFV     = fvAnnuity(oa.extraHSA, r, yearsToRet);
-    const extraRothFV    = fvAnnuity(oa.extraRoth, r, yearsToRet);
-    const extraTaxableFV = fvAnnuity(oa.extraTaxable, r * 0.85, yearsToRet);
-    const extraPortfolio = Math.round(extra401kFV) + Math.round(extraHSAFV)
-                         + Math.round(extraRothFV) + Math.round(extraTaxableFV);
-    const optTotalAtRet  = totalAtRet + extraPortfolio;
-    const optSS = includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE
-      ? ss70Annual + spouseSsBenefit : householdSS;
-    const optNetNeed = Math.max(0, effectiveExpenses - optSS - effectivePension);
-    const optWR = optTotalAtRet > 0 ? (optNetNeed / optTotalAtRet) * 100 : 0;
-    const optYS = optNetNeed <= 0 || optTotalAtRet * rReal >= optNetNeed
-      ? Infinity
-      : rReal !== 0
-        ? Math.log(1 - (optTotalAtRet * rReal) / optNetNeed) / Math.log(1 / (1 + rReal))
-        : optTotalAtRet / optNetNeed;
-    const optSustainable  = optYS === Infinity || optYS >= (safeLifeExp - safeRetAge);
-    const optDepletionAge = optYS === Infinity ? null : Math.floor(safeRetAge + optYS);
-    const annualTaxSaving     = yr1TaxSavings;
-    const lifetimeConvBenefit = Math.max(0, netConversionBenefit);
-    const actionCount = [
-      oa.extra401k > 0, oa.extraHSA > 0, oa.extraRoth > 0,
-      includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE,
-      netConversionBenefit > 0, yr1TaxSavings > 0,
-      conversionSim.rothAdvantage > 0 && retTaxable > 0,
-    ].filter(Boolean).length;
-    const hasImprovement = extraPortfolio > totalAtRet * 0.005
-      || optYS > yearsSustained * 1.05
-      || (optSustainable && !isSustainable);
-    return {
-      totalAtRet: optTotalAtRet, extraPortfolio,
-      extra401kFV: Math.round(extra401kFV), extraHSAFV: Math.round(extraHSAFV),
-      extraRothFV: Math.round(extraRothFV), extraTaxableFV: Math.round(extraTaxableFV),
-      ss: optSS, netNeed: optNetNeed, withdrawalRate: optWR,
-      yearsSustained: optYS, sustainable: optSustainable, depletionAge: optDepletionAge,
-      annualTaxSaving, lifetimeConvBenefit, actionCount, hasImprovement,
-      allocation: oa,
-    };
-  }, [
+  const optimized = useMemo(() => calcOptimizedScenario({
+    totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
+    rate3, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
+    householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
+    yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
+    conversionSim, retTaxable,
+  }), [
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
     rate3, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
     householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
@@ -2484,189 +2270,30 @@ export default function App() {
           </div>
 
           {(() => {
-            const phase1Steps = [
-              { label: "Starting Portfolio", amount: flowData.startPortfolio, type: "start" },
-              { label: "Contributions", amount: flowData.totalContrib, type: "add", sub: `${safeRetAge - currentAge} yrs · all accounts` },
-              { label: "Investment Growth", amount: flowData.totalGrowth, type: "add", sub: `${returnRate}% return net of tax drag` },
-              { label: "At Retirement", amount: flowData.totalAtRet, type: "total" },
-            ];
-            const phase2Steps = flowData.hasConvWindow ? [
-              { label: "Portfolio In", amount: flowData.totalAtRet, type: "start" },
-              { label: flowData.convWindowGrowth >= 0 ? "Portfolio Growth" : "Net Investment Loss",
-                amount: Math.abs(flowData.convWindowGrowth),
-                type: flowData.convWindowGrowth >= 0 ? "add" : "loss",
-                sub: `${flowData.conversionWindowYrs} yrs at ${returnRate}% (real)` },
-              { label: "Living Expenses", amount: flowData.convWindowDraws, type: "subtract",
-                sub: `${fmt(netPortfolioNeed)}/yr net of SS${effectivePension > 0 ? " + pension" : ""}` },
-              ...(flowData.convWindowTax > 0
-                ? [{ label: "Roth Conversion Tax", amount: flowData.convWindowTax, type: "subtract",
-                     sub: `on ${fmt(flowData.totalConverted)} converted` }]
-                : []),
-              { label: "Portfolio at 73", amount: flowData.portAt73, type: "total" },
-            ] : [];
-            const phase3Steps = [
-              { label: "Portfolio In", amount: flowData.distStartVal, type: "start" },
-              { label: flowData.distGrowth >= 0 ? "Portfolio Growth" : "Net Investment Loss",
-                amount: Math.abs(flowData.distGrowth),
-                type: flowData.distGrowth >= 0 ? "add" : "loss",
-                sub: `${returnRate}% return (real ${((rReal)*100).toFixed(1)}%)` },
-              { label: "Living Expenses", amount: flowData.distDraws, type: "subtract",
-                sub: `${fmt(netPortfolioNeed)}/yr × ${flowData.actualSustainedYrs} yrs` },
-              ...(flowData.distRMDTax > 0
-                ? [{ label: "RMD Tax Bite", amount: flowData.distRMDTax, type: "subtract",
-                     sub: `at ${(rate3Combined*100).toFixed(1)}% combined` }]
-                : []),
-              { label: `Remaining at ${flowData.depletionAge ?? safeLifeExp}`, amount: flowData.distEndVal, type: "total" },
-            ];
-
-            const phase1Actions = [];
-            if (optimizedAllocation.totalExtra > 0) {
-              const oa = optimizedAllocation;
-              const breakdown = [
-                oa.extraMatch > 0 && `${fmt(oa.extraMatch)} to capture match`,
-                oa.extraHSA > 0 && `${fmt(oa.extraHSA)} to HSA`,
-                oa.extraRoth > 0 && `${fmt(oa.extraRoth)} to Roth IRA`,
-                (oa.extra401k - (oa.extraMatch || 0)) > 0 && `${fmt(oa.extra401k - (oa.extraMatch || 0))} to 401k`,
-                oa.extraTaxable > 0 && `${fmt(oa.extraTaxable)} to taxable`,
-              ].filter(Boolean).join(", ");
-              phase1Actions.push({
-                mode: "prescriptive", title: `Deploy Your ${fmt(oa.totalExtra)}/yr Surplus`,
-                body: `You have ${fmt(availableSurplus)}/yr of savings surplus after living expenses. At ${savingsSurplusPct}% deployment, that's ${fmt(oa.totalExtra)}/yr allocated in tax-optimal priority: ${breakdown}. Adjust the surplus slider in the Budget section to see how different commitment levels affect your retirement.`,
-                impact: fmt(optimized.extraPortfolio), impactColor: C.green, impactLabel: `added to portfolio by age ${safeRetAge}`,
-              });
-            }
-            const fullMatchContrib = matchMode === "formula"
-              ? Math.round(currentIncome * matchFormulaCap / 100)
-              : Math.round(currentIncome * employerMatchPct / 100);
-            const hasMatch = matchMode === "formula" ? matchFormulaRate > 0 : employerMatchPct > 0;
-            if (hasMatch && contrib401k < fullMatchContrib && optimizedAllocation.extraMatch === 0) {
-              const matchDesc = matchMode === "formula"
-                ? `Your employer matches ${matchFormulaRate}% of the first ${matchFormulaCap}% of your salary. Contribute at least ${fmt(fullMatchContrib)}/yr to your 401k to capture the full ${fmt(employerMatchAmt)}/yr match.`
-                : `Your employer matches ${employerMatchPct}% of your salary. Contribute at least ${fmt(fullMatchContrib)}/yr to your 401k to capture the full match — this is an immediate 100% return on that money before it even gets invested.`;
-              phase1Actions.push({
-                mode: "prescriptive", title: "Capture Your Full Employer Match", body: matchDesc,
-                impact: fmt(employerMatchAmt) + "/yr", impactColor: C.green, impactLabel: "free money",
-              });
-            }
-            if (availableSurplus <= 0) {
-              phase1Actions.push({
-                mode: "educational", title: "Your Budget Has No Surplus",
-                body: `Your living expenses (${fmt(effectiveLiving)}) and current contributions (${fmt(currentContribTotal)}) consume your entire after-tax income (${fmt(grossAfterTax)}). To create room for optimized savings, consider reducing living expenses, increasing income, or reviewing whether current contribution levels are sustainable. Even a small surplus of $200–500/mo, allocated correctly, compounds significantly over ${safeRetAge - currentAge} years.`,
-              });
-            }
-            if (rothPhaseoutWarning) {
-              phase1Actions.push({
-                mode: "comparative", title: rothFullyPhased ? "Roth IRA: Over the Limit" : "Roth IRA: Phase-Out Zone",
-                body: rothFullyPhased
-                  ? `Your combined household MAGI ($${combinedIncome.toLocaleString()}) exceeds the ${TAX_DATA_2026[filingStatus].label} Roth IRA contribution limit. Direct contributions aren't allowed, but a Backdoor Roth IRA conversion is still available — contribute to a Traditional IRA, then immediately convert to Roth.`
-                  : `Your combined MAGI ($${combinedIncome.toLocaleString()}) is in the Roth phase-out zone. Your maximum Roth contribution is reduced. Consider a Backdoor Roth to get the full amount in.`,
-                vsA: { label: "Direct Roth", value: rothFullyPhased ? "$0" : "Reduced", color: C.orange },
-                vsB: { label: "Backdoor Roth", value: fmt(ROTH_IRA_LIMIT_2026), color: C.green, sub: "full amount" },
-              });
-            }
-            const hsaRoom = Math.max(0, HSA_LIMIT_2026 - contribHSA);
-            if (hsaRoom > 0 && contribHSA > 0) {
-              phase1Actions.push({
-                mode: "educational", title: "HSA: The Stealth Retirement Account",
-                body: `You have ${fmt(hsaRoom)} of unused HSA space. The HSA is the only account with a triple tax advantage: tax-deductible contributions, tax-free growth, and tax-free withdrawals for medical expenses. After 65, you can withdraw for any reason (taxed like a 401k). Maxing it adds ${fmt(HSA_LIMIT_2026)}/yr of tax-sheltered growth.`,
-              });
-            } else if (contribHSA === 0) {
-              phase1Actions.push({
-                mode: "educational", title: "Consider an HSA",
-                body: `If you have a high-deductible health plan, you can contribute up to ${fmt(HSA_LIMIT_2026)}/yr to an HSA. It's the only triple-tax-advantaged account: deductible going in, tax-free growth, tax-free out for medical expenses. After 65 it works like a traditional IRA for any withdrawal. Over ${safeRetAge - currentAge} years, even small HSA contributions compound significantly.`,
-              });
-            }
-            if (megaCapacity > 20_000) {
-              phase1Actions.push({
-                mode: "educational", title: "Mega Backdoor Roth Opportunity",
-                body: `Your 415(c) after-tax space is ${fmt(megaCapacity)}/yr. If your 401k plan allows after-tax contributions + in-plan Roth conversion, this lets you funnel significantly more into Roth than the normal ${fmt(ROTH_IRA_LIMIT_2026)} limit. Check your plan's Summary Plan Description (SPD) for eligibility.`,
-                impact: fmt(megaCapacity) + "/yr", impactColor: C.purple, impactLabel: "Roth capacity",
-              });
-            }
-
-            const phase2Actions = [];
-            if (flowData.hasConvWindow) {
-              if (netConversionBenefit > 0) {
-                phase2Actions.push({
-                  mode: "prescriptive", title: "Execute the Roth Conversion Ladder",
-                  body: `Convert ${fmt(annualConversion)}/yr during your ${conversionWindowYrs}-year low-income window (ages ${safeRetAge + 1}–72). You'll pay ${fmt(conversionSim.totalTax)} in conversion tax now, but save ${fmt(rmdTaxSaved)} in RMD taxes later. Every dollar converted escapes future mandatory withdrawals and grows tax-free forever.`,
-                  impact: netConversionBenefit, impactColor: C.green, impactLabel: "net lifetime savings",
-                });
-              } else if (conversionWindowYrs > 0) {
-                phase2Actions.push({
-                  mode: "educational", title: "The Roth Conversion Window",
-                  body: `Between retirement and age 73, your income drops (no W-2, no RMDs yet). This is the optimal window to move money from your 401k to Roth — paying tax at a lower rate now to avoid forced withdrawals at a higher rate later. Use the Detailed Planner to set your conversion strategy.`,
-                });
-              }
-              if (conversionSim.rothAdvantage > 0 && retTaxable > 0) {
-                phase2Actions.push({
-                  mode: "comparative", title: "Pay Conversion Tax from Taxable Account",
-                  body: "When you convert 401k → Roth, the tax bill can come from the converted amount (shrinking what lands in Roth) or from your taxable brokerage (preserving the full conversion). Paying from taxable is more efficient.",
-                  vsA: { label: "Tax from converted", value: conversionSim.rothBalEnd_conv, color: C.muted, sub: "in Roth" },
-                  vsB: { label: "Tax from taxable", value: conversionSim.rothBalEnd_tax, color: C.green, sub: `+${fmt(conversionSim.rothAdvantage)} more in Roth` },
-                });
-              }
-              if (includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE && ss70DrawReduction > 0) {
-                phase2Actions.push({
-                  mode: "comparative", title: `Social Security: Claim at ${ssClaimingAge} vs ${SS_MAX_CLAIM_AGE}`,
-                  body: ssClaimingAge < SS_FRA
-                    ? `Claiming early at ${ssClaimingAge} permanently reduces your benefit. Waiting to ${SS_MAX_CLAIM_AGE} earns delayed credits (+8%/yr past FRA). The tradeoff: you need to cover ${SS_MAX_CLAIM_AGE - safeRetAge} years of expenses from your portfolio before SS kicks in.`
-                    : `You're claiming at ${ssClaimingAge}. Waiting to ${SS_MAX_CLAIM_AGE} earns ${SS_MAX_CLAIM_AGE - ssClaimingAge} more years of delayed credits (+8%/yr). Each year of delay adds ~${fmt(Math.round(ss70DrawReduction / (SS_MAX_CLAIM_AGE - ssClaimingAge)))}/yr to your benefit permanently.`,
-                  vsA: { label: `Claim at ${ssClaimingAge}`, value: effectiveSS, color: C.muted, sub: `${withdrawalRate.toFixed(1)}% withdrawal` },
-                  vsB: { label: `Claim at ${SS_MAX_CLAIM_AGE}`, value: ss70Annual, color: C.green, sub: ssDelayGainYrs ? `+${ssDelayGainYrs} yrs portfolio life` : `${wr70.toFixed(1)}% withdrawal` },
-                });
-              }
-              if (pensionMonthly === 0) {
-                phase2Actions.push({
-                  mode: "educational", title: "Do You Have a Pension?",
-                  body: "Government, education, military, and union workers often have defined-benefit pensions. If you do, add it in the Detailed Planner — even a small pension significantly reduces how much your portfolio needs to cover, improving sustainability.",
-                });
-              }
-            }
-
-            const phase3Actions = [];
-            if (yr1TaxSavings > 0) {
-              phase3Actions.push({
-                mode: "prescriptive", title: "Withdraw in Tax-Optimal Order",
-                body: "Draw from taxable brokerage first (LTCG rates), then traditional 401k (ordinary income), then Roth (tax-free), with HSA reserved for medical. This sequence minimizes your annual tax bill compared to drawing 401k first.",
-                impact: yr1TaxSavings, impactColor: C.green, impactLabel: "saved in Year 1 tax",
-              });
-            }
-            if (withdrawalRate > 4 && withdrawalRate <= 6) {
-              phase3Actions.push({
-                mode: "educational", title: "Moderate Withdrawal Rate",
-                body: `Your ${withdrawalRate.toFixed(1)}% withdrawal rate is above the traditional 4% "safe" rate. This doesn't mean you'll run out — it depends on market returns and how long you need coverage. But it does mean sequence-of-returns risk matters more: a bad market early in retirement has an outsized impact. Consider whether you can reduce first-year expenses or delay retirement 1–2 years.`,
-              });
-            } else if (withdrawalRate > 6) {
-              phase3Actions.push({
-                mode: "prescriptive", title: "High Withdrawal Rate — Adjust Plan",
-                body: `At ${withdrawalRate.toFixed(1)}%, you're drawing aggressively. Your portfolio depletes at age ${flowData.depletionAge ?? "?"}. The most impactful levers: reduce annual expenses, delay retirement to grow the portfolio, or increase contributions now. Even small changes compound over ${safeRetAge - currentAge} years.`,
-                impact: `${withdrawalRate.toFixed(1)}%`, impactColor: C.orange, impactLabel: "needs to be ≤ 4% for safety",
-              });
-            }
-            if (totalRMDs > 0 && rmdTaxBite > 50_000) {
-              phase3Actions.push({
-                mode: "educational", title: "RMDs Will Be a Major Tax Event",
-                body: `Starting at 73, the IRS forces ${fmt(firstRMD?.rmd ?? 0)}/yr out of your 401k (growing each year). Over your lifetime, you'll pay an estimated ${fmt(rmdTaxBite)} in tax on these mandatory withdrawals at your ${(rate3Combined*100).toFixed(1)}% combined rate. This is exactly why Roth conversions before age 73 are so valuable — every dollar converted is one fewer dollar the IRS can force out.`,
-                impact: rmdTaxBite, impactColor: C.orange, impactLabel: "lifetime RMD tax",
-              });
-            }
-            if (!flowData.hasConvWindow && includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE && ss70DrawReduction > 0) {
-              phase3Actions.push({
-                mode: "comparative", title: `Consider Delaying SS to ${SS_MAX_CLAIM_AGE}`,
-                body: `Waiting earns +8%/yr in delayed credits. Your benefit increases from ${fmt(effectiveSS)} to ${fmt(ss70Annual)}/yr, reducing your portfolio draw from ${withdrawalRate.toFixed(1)}% to ${wr70.toFixed(1)}%.`,
-                vsA: { label: `Claim at ${ssClaimingAge}`, value: effectiveSS, color: C.muted, sub: `${withdrawalRate.toFixed(1)}% withdrawal` },
-                vsB: { label: `Claim at ${SS_MAX_CLAIM_AGE}`, value: ss70Annual, color: C.green, sub: ssDelayGainYrs ? `+${ssDelayGainYrs} yrs portfolio life` : `${wr70.toFixed(1)}% withdrawal` },
-              });
-            }
-            if (!isSustainable && yearsSustained !== Infinity) {
-              const shortfall = Math.max(0, (safeLifeExp - safeRetAge) - Math.floor(yearsSustained));
-              phase3Actions.push({
-                mode: "prescriptive", title: `Close the ${shortfall}-Year Gap`,
-                body: `Your portfolio runs out ${shortfall} years before life expectancy. The highest-impact fixes: (1) reduce retirement expenses by ${fmt(Math.round(netPortfolioNeed * 0.1))}/yr (10% cut), (2) delay retirement by 2–3 years to add contributions + growth, or (3) increase current savings rate. Each year of delayed retirement improves both sides — more time to save and fewer years to fund.`,
-                impact: `${shortfall} yrs`, impactColor: C.orange, impactLabel: "coverage shortfall",
-              });
-            }
+            const { phase1Steps, phase2Steps, phase3Steps } = generatePhaseSteps(flowData, {
+              returnRate, rReal, netPortfolioNeed, effectivePension,
+              rate3Combined, safeRetAge, currentAge, safeLifeExp,
+            });
+            const { phase1Actions, phase2Actions, phase3Actions } = generatePhaseActions({
+              totalAtRet, netPortfolioNeed, withdrawalRate, yearsSustained,
+              isSustainable, safeRetAge, safeLifeExp, currentAge, effectivePension,
+              availableSurplus, savingsSurplusPct, effectiveLiving,
+              grossAfterTax, currentContribTotal, contrib401k, contribHSA,
+              matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
+              employerMatchAmt, currentIncome,
+              rothPhaseoutWarning, rothFullyPhased, combinedIncome, filingStatus,
+              megaCapacity,
+              netConversionBenefit, conversionSim, annualConversion,
+              conversionWindowYrs, rmdTaxSaved,
+              totalRMDs, rmdTaxBite, firstRMD, rate3Combined,
+              includeSS, ssClaimingAge, effectiveSS, ss70Annual,
+              ss70DrawReduction, ssDelayGainYrs, wr70,
+              pensionMonthly,
+              yr1TaxSavings,
+              optimizedAllocation, optimized,
+              depletionAge: flowData.depletionAge, hasConvWindow: flowData.hasConvWindow,
+              retTaxable,
+            });
 
             return (
               <>
