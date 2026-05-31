@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retirement Calculator — Feature Tracker</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d1117; color: #e6edf3; padding: 24px; font-size: 14px; }
+  h1 { font-size: 18px; font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
+  .subtitle { font-size: 12px; color: #8b949e; margin-bottom: 20px; }
+
+  .summary { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+  .stat { flex: 1; min-width: 80px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 12px 14px; }
+  .stat .num { font-size: 24px; font-weight: 600; }
+  .stat .lbl { font-size: 11px; color: #8b949e; margin-top: 2px; }
+
+  .toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid #21262d; }
+  .toolbar-label { font-size: 11px; color: #8b949e; margin-right: 2px; }
+  .fb { font-size: 11px; padding: 4px 10px; border-radius: 6px; border: 1px solid #30363d; background: transparent; color: #8b949e; cursor: pointer; transition: all 0.15s; }
+  .fb:hover { border-color: #8b949e; color: #e6edf3; }
+  .fb.on { background: #21262d; color: #e6edf3; border-color: #8b949e; font-weight: 600; }
+
+  .section-label { font-size: 10px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.08em; margin: 18px 0 8px; }
+
+  .card { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 10px; border: 1px solid #21262d; background: #161b22; margin-bottom: 7px; cursor: pointer; transition: border-color 0.15s; }
+  .card:hover { border-color: #30363d; }
+  .card.sel { border-color: #58a6ff; background: #0d1f30; }
+
+  .card-left { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 34px; }
+  .pb { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 5px; }
+  .p1 { background: #3d0000; color: #f85149; }
+  .p2 { background: #2d1f00; color: #d4a843; }
+  .p3 { background: #001f2d; color: #58a6ff; }
+  .p4 { background: #161b22; color: #8b949e; border: 1px solid #30363d; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .d-planned { background: #30363d; }
+  .d-progress { background: #d4a843; }
+  .d-done { background: #3fb950; }
+
+  .card-body { flex: 1; min-width: 0; }
+  .card-title { font-size: 14px; font-weight: 600; color: #e6edf3; margin-bottom: 3px; }
+  .card-desc { font-size: 12px; color: #8b949e; line-height: 1.55; }
+  .card-meta { display: flex; align-items: center; gap: 7px; margin-top: 8px; flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 2px 7px; border-radius: 5px; }
+  .cx-badge { background: #1c2128; color: #8b949e; border: 1px solid #30363d; }
+  .high-badge { background: #0d2b16; color: #3fb950; }
+  .med-badge { background: #001f2d; color: #58a6ff; }
+
+  .status-sel { font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; cursor: pointer; margin-left: auto; }
+
+  .detail { padding: 14px 16px; border-radius: 8px; border: 1px solid #1f3a5f; background: #0a1929; margin-bottom: 7px; }
+  .detail h4 { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 8px; }
+  .detail p { font-size: 12px; color: #8b949e; line-height: 1.6; margin-bottom: 10px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+  .tag { font-size: 11px; padding: 2px 7px; border-radius: 5px; background: #1c2128; color: #8b949e; border: 1px solid #30363d; }
+  .ask-btn { font-size: 12px; padding: 5px 12px; border-radius: 6px; border: 1px solid #58a6ff; background: transparent; color: #58a6ff; cursor: pointer; }
+  .ask-btn:hover { background: #0d1f30; }
+
+  .empty { text-align: center; padding: 40px; color: #8b949e; font-size: 13px; }
+  .progress-bar { height: 4px; background: #21262d; border-radius: 2px; margin-top: 16px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #3fb950, #58a6ff); border-radius: 2px; transition: width 0.4s; }
+  .active-header { font-size: 10px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.08em; margin: 20px 0 8px; display: flex; align-items: center; gap: 8px; }
+  .active-count-badge { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: #2d1f00; color: #d4a843; font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .done-toggle { display: flex; align-items: center; gap: 10px; margin-top: 28px; padding: 12px 14px; border-radius: 8px; border: 1px solid #21262d; background: #161b22; cursor: pointer; user-select: none; }
+  .done-toggle:hover { border-color: #30363d; }
+  .done-toggle-label { font-size: 13px; color: #8b949e; flex: 1; }
+  .done-toggle-count { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: #0d2b16; color: #3fb950; font-weight: 600; }
+  .done-toggle-arrow { font-size: 11px; color: #8b949e; transition: transform 0.2s; }
+  .done-toggle-arrow.open { transform: rotate(180deg); }
+  .done-section { display: none; margin-top: 6px; }
+  .done-section.open { display: block; }
+</style>
+</head>
+<body>
+
+<h1>Retirement Calculator — Feature Tracker</h1>
+<p class="subtitle">Planned improvements, organized by section and priority</p>
+
+<div class="summary" id="summary"></div>
+<div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+
+<div style="margin-top: 20px;">
+  <div class="toolbar">
+    <span class="toolbar-label">Filter:</span>
+    <button class="fb on" onclick="setF('all')">All</button>
+    <button class="fb" onclick="setF('p1')">Priority 1</button>
+    <button class="fb" onclick="setF('p2')">Priority 2</button>
+    <button class="fb" onclick="setF('p3')">Priority 3</button>
+    <button class="fb" onclick="setF('in-progress')">In progress</button>
+  </div>
+
+  <div class="active-header">
+    Up next &nbsp;<span class="active-count-badge" id="active-count"></span>
+  </div>
+  <div id="list"></div>
+
+  <div class="done-toggle" onclick="toggleDone()">
+    <span class="done-toggle-label">&#10003; Completed features</span>
+    <span class="done-toggle-count" id="done-count"></span>
+    <span class="done-toggle-arrow" id="done-arrow">&#9660;</span>
+  </div>
+  <div class="done-section" id="done-section">
+    <div id="done-list"></div>
+  </div>
+</div>
+
+<script>
+var DATA = [
+  {
+    id: 1, pr: 1, sec: "Overview / Income", st: "done",
+    ti: "Inflation rate slider",
+    ds: "Replace hardcoded 4% inflation constant with a user-adjustable slider. Directly changes yearsSustained, rReal, and every drawdown calculation.",
+    dt: "inflationRate state variable wired into rReal. Slider in Tax Rate Phases section with real-return display underneath. Affects years sustained, total lifecycle chart, drawdown, and all downstream calcs.",
+    cx: "Low", im: "High", af: ["drawdown", "years sustained", "real return chart", "rReal"], sv: "inflationRate"
+  },
+  {
+    id: 2, pr: 1, sec: "Overview / Income", st: "done",
+    ti: "Employer 401k match in simulation",
+    ds: "Wire the existing employerMatchPct state into the simData accumulation loop. We already collect it for Mega Backdoor — the main sim ignores it, understating 401k growth.",
+    dt: "matchAmt computed in simData loop scaling with income growth. Added to c401k each year up to contribEnd401k, capped at 415(c) limit. In dependency array. Employer match slider in Mega Backdoor section.",
+    cx: "Low", im: "High", af: ["simData", "401k projection", "account comparison", "atRetirement"], sv: "employerMatchPct (already exists)"
+  },
+  {
+    id: 3, pr: 2, sec: "Overview / Income", st: "done",
+    ti: "Pension income",
+    ds: "Monthly pension amount starting at a user-specified age. Reduces netPortfolioNeed the same way SS does, changing drawdown, Roth conversion, and withdrawal sections.",
+    dt: "pensionMonthly + pensionStartAge state. effectivePension derived value. Subtracted from netPortfolioNeed alongside householdSS. Included in bracket fill, projected retirement income, drawdown callout breakdown, and withdrawal strategy subtitle. Full Pension section in Detailed Planner with sliders and stat cards.",
+    cx: "Low", im: "High", af: ["netPortfolioNeed", "drawdown callout", "Roth bracket fill", "withdrawal strategy"], sv: "pensionMonthly, pensionStartAge"
+  },
+  {
+    id: 4, pr: 2, sec: "Social Security", st: "done",
+    ti: "Spouse SS benefit + spousal benefit calculation",
+    ds: "Add spouse PIA or estimated benefit. Calculate spousal benefit (50% of higher earner PIA at FRA). Show combined household SS in the drawdown callout.",
+    dt: "spouseSsEstimate state. spousalBenefitAnnual = ssPIA * 12 * 0.5 (explicit, not dependent on SS_FACTORS). spouseSsBenefit = max(own, spousal). householdSS replaces effectiveSS in all downstream: drawdown, bracket fill, projected retirement income, SS delay. Spouse SS section in Detailed Planner with slider and 3 stat cards.",
+    cx: "Medium", im: "High", af: ["SS estimate", "effectiveSS", "drawdown callout", "break-even calc"], sv: "spouseSsEstimate"
+  },
+  {
+    id: 5, pr: 2, sec: "Overview / Income", st: "done",
+    ti: "Spouse or partner income",
+    ds: "Second income stream for households filing jointly. Affects actual tax bracket, Roth IRA phase-out eligibility, and combined SS benefit.",
+    dt: "spouseIncome + spouseIncomeGrowth state. combinedIncome derived. 2026 Roth IRA MAGI phase-out thresholds for all filing statuses. Phase-out warning (orange) and full-block warning with Backdoor Roth suggestion. Spouse section auto-appears for MFJ or when income > 0.",
+    cx: "High", im: "High", af: ["tax breakdown", "Roth eligibility warning", "SS spousal benefit", "filing status calcs"], sv: "spouseIncome, spouseIncomeGrowth"
+  },
+  {
+    id: 6, pr: 2, sec: "Roth Strategy", st: "done",
+    ti: "Conversion tax source toggle",
+    ds: "Show both scenarios: paying conversion tax from taxable brokerage (efficient) vs. paying from the converted amount (less efficient). The difference is material.",
+    dt: "conversionTaxSource state. conversionSim rewritten to run BOTH scenarios simultaneously (tradA/rothA/taxableA vs tradB/rothB/taxableB). Purple toggle card in Roth Conversion Strategy with side-by-side Roth balance comparison and dollar advantage display.",
+    cx: "Medium", im: "High", af: ["conversionSim", "netConversionBenefit", "taxable balance projection"], sv: "conversionTaxSource"
+  },
+  {
+    id: 7, pr: 3, sec: "Roth Strategy", st: "planned",
+    ti: "ACA subsidy cliff awareness (pre-Medicare gap)",
+    ds: "For users retiring before 65, Roth conversions raise MAGI and can eliminate ACA marketplace subsidies at 400% FPL. Show estimated subsidy impact alongside conversion planning.",
+    dt: "The Roth conversion window is exactly when many early retirees depend on marketplace insurance. ACA subsidies phase out at ~$60k single / ~$82k couple (2026, 400% FPL). A $20k conversion could cost $8–12k in lost subsidies. Add a hasMarketplaceInsurance toggle and show MAGI during conversion window vs the cliff threshold. Flag when a planned conversion would cross the cliff.",
+    cx: "Medium", im: "High", af: ["conversion strategy", "effective tax cost of conversions", "conversion window display"], sv: "hasMarketplaceInsurance, householdSize"
+  },
+  {
+    id: 8, pr: 3, sec: "RMDs", st: "planned",
+    ti: "Additional pre-tax balances (old 401k accounts)",
+    ds: "Many users have multiple old 401k accounts at different custodians. Each has its own RMD. Add an input for additional pre-tax balance that feeds the RMD projection.",
+    dt: "Add addlPreTaxBal input (default 0). Add to tradGross in the RMD simulation loop. RMDs can be satisfied from any combination of traditional accounts, so the aggregate pre-tax balance is what matters for projection purposes. No change to accumulation model — purely additive to the RMD calc. Show a note when addlPreTaxBal > 0 explaining the aggregation.",
+    cx: "Low", im: "Medium", af: ["rmdData", "rmdTaxBite", "totalRMDs", "firstRMD"], sv: "addlPreTaxBal"
+  },
+  {
+    id: 9, pr: 3, sec: "Drawdown / Withdrawal", st: "planned",
+    ti: "Legacy / estate goal",
+    ds: "Target portfolio value to leave as inheritance. Changes the model from 'when does money run out' to 'what withdrawal rate preserves this target.'",
+    dt: "Add legacyTarget (default 0). If set, show a second stat alongside yearsSustained: years until portfolio drops to legacyTarget (same log formula, adjusted denominator). The withdrawal rate that preserves legacyTarget is solvable with (totalAtRet - legacyTarget) as the effective starting balance. Display as a third card in the drawdown stat row, and show it alongside the years sustained chart.",
+    cx: "Low", im: "Medium", af: ["drawdown display", "years sustained calc", "withdrawal rate"], sv: "legacyTarget"
+  },
+  {
+    id: 10, pr: 3, sec: "Drawdown / Withdrawal", st: "planned",
+    ti: "Variable spending in retirement",
+    ds: "Spending is typically higher early in retirement and lower later. Add early-retirement spending and a step-down age for a more realistic depletion model.",
+    dt: "Research shows a spending 'smile': higher ages 60–75 (travel, activities), lower in mid-retirement, potential late uptick (healthcare). Add earlyRetirementExpenses and spendingStepDownAge. The drawdown loop uses earlyRetirementExpenses before the step-down age and effectiveExpenses after. Significantly improves yearsSustained accuracy for early retirees who may be overspending relative to the flat expense assumption.",
+    cx: "Medium", im: "Medium", af: ["yearsSustained", "totalChartData", "drawdown display"], sv: "earlyRetirementExpenses, spendingStepDownAge"
+  },
+  {
+    id: 11, pr: 4, sec: "Social Security", st: "planned",
+    ti: "Work gap / zero-earning years",
+    ds: "The SS estimate assumes continuous work to retirement. Career gaps (childcare, illness, sabbatical) appear as zero-earning years in the 35-year AIME average, reducing the actual benefit.",
+    dt: "Add workGapYears input (default 0). In the ssTotalEarnings loop, spread zeroed-out years across the 35-year AIME average. The denominator in ssAIME already uses max(ssWorkYears, SS_AIME_YEARS) = 35, so gaps naturally drag down the average — we just need to stop assuming all years are earning years. Show impact: estimated benefit with vs without the gap so the user can see what the gap costs them.",
+    cx: "Low", im: "Medium", af: ["ssAIME", "ssPIA", "ssAnnualBenefit", "effectiveSS"], sv: "workGapYears"
+  },
+  {
+    id: 12, pr: 1, sec: "Flow-Down", st: "done",
+    ti: "Flow-Down tab — vertical waterfall + action cards + what-if bar",
+    ds: "New tab showing a vertical waterfall of money flowing through 3 life phases (Build Wealth → Optimize & Convert → Spend & Distribute), with context-aware action cards and a current-vs-optimized comparison bar.",
+    dt: "3 chunks shipped: (1) Waterfall timeline with FlowConn connectors, WaterfallStep bars, and PhaseCard components. flowData useMemo computes all phase values. (2) ActionCard component with 3 modes (prescriptive/comparative/educational), 13 conditional actions across phases. (3) optimized useMemo computes what-if scenario using annuity math on deltas; comparison grid shows At Retirement, Withdrawal Rate, Portfolio Lasts To, and Tax Efficiency.",
+    cx: "High", im: "High", af: ["all computed values", "simData", "conversionSim", "totalChartData", "rmdData"], sv: "flowData, optimized (derived)"
+  },
+  {
+    id: 13, pr: 2, sec: "Flow-Down", st: "planned",
+    ti: "Conversion window draws: account for SS claiming age vs retirement age",
+    ds: "During the conversion window (retirement → 72), the user may not have SS yet if claiming at 67+ and retired at 60. Currently uses netPortfolioNeed which subtracts SS regardless of whether it has started.",
+    dt: "Check ssClaimingAge vs each year in the conversion window. For years before SS kicks in, use full effectiveExpenses (minus only pension if applicable) instead of netPortfolioNeed. This affects convWindowDraws in flowData, phase 2 waterfall bars, and the optimized scenario. Most impactful for early retirees (55-62) who won't see SS for years.",
+    cx: "Medium", im: "High", af: ["flowData.convWindowDraws", "phase 2 waterfall", "optimized scenario"], sv: "none (logic change)"
+  },
+  {
+    id: 14, pr: 2, sec: "Flow-Down", st: "done",
+    ti: "Show negative growth as 'Net Loss' in waterfall",
+    ds: "flowData convWindowGrowth and distGrowth are clamped to 0 with Math.max. When portfolio shrinks during a phase, the waterfall shows $0 growth instead of showing a loss, making bars not add up.",
+    dt: "Removed Math.max(0, ...) clamps. Added 'loss' type to WaterfallStep (renders as orange bar with − prefix, same as subtract). Phase step arrays now dynamically choose 'add' or 'loss' type and swap label to 'Net Investment Loss' when growth is negative.",
+    cx: "Low", im: "Medium", af: ["flowData.convWindowGrowth", "flowData.distGrowth", "WaterfallStep"], sv: "none (logic change)"
+  },
+  {
+    id: 15, pr: 2, sec: "Social Security", st: "planned",
+    ti: "SS delay: include FRA as middle option in comparisons",
+    ds: "Phase 2 action cards always compare current claiming age vs age 70. For some users, 67 (FRA) is the right answer. The comparative card should show 3 options or at minimum include FRA as the middle ground.",
+    dt: "Expand the SS comparative ActionCard to show a 3-column layout when ssClaimingAge < SS_FRA: current vs FRA vs 70. Each column shows annual benefit, withdrawal rate, and longevity impact. When ssClaimingAge === SS_FRA, keep 2-column (current vs 70). Requires extending the ActionCard comparative mode to support 3 options.",
+    cx: "Medium", im: "Medium", af: ["phase2Actions", "ActionCard (comparative mode)"], sv: "none (UI change)"
+  },
+  {
+    id: 16, pr: 2, sec: "Overview / Income", st: "done",
+    ti: "Filing status guardrail for spouse income",
+    ds: "When spouseIncome > 0 and filingStatus is 'single', tax calcs don't reflect combined household. No guardrail prevents entering spouse income while filing single.",
+    dt: "Added conditional callout below spouse income section. Shows when spouseIncome > 0 and filingStatus !== 'mfj'. Explains the mismatch for both single/HoH (suggests switching to MFJ with one-click button) and MFS (notes separate brackets and lower Roth thresholds). Button calls setFilingStatus('mfj').",
+    cx: "Low", im: "Medium", af: ["spouse income section", "tax calculations"], sv: "none (UI guardrail)"
+  },
+  {
+    id: 17, pr: 3, sec: "Overview / Income", st: "planned",
+    ti: "Pension timing granularity in Flow-Down",
+    ds: "Pension currently either counts or doesn't based on pensionStartAge <= safeRetAge. If pension starts at 62 but retirement is 60, the 2-year gap before pension is underserved in the waterfall.",
+    dt: "Split Phase 2 (or Phase 3 if no conversion window) into sub-phases: pre-pension and post-pension. Show the higher expense draw for years before pension kicks in, then the reduced draw after. This affects flowData computation, phase step arrays, and action card recommendations.",
+    cx: "Medium", im: "Medium", af: ["flowData", "phase step arrays", "effectivePension timing"], sv: "none (logic enhancement)"
+  },
+  {
+    id: 18, pr: 2, sec: "Flow-Down", st: "planned",
+    ti: "Clickable action cards — auto-apply optimizations",
+    ds: "Action cards are currently informational. Let users click an action to auto-apply the change (e.g., click 'Max 401k' to set contrib401k to the IRS limit). Turns Flow-Down from read-only to actionable.",
+    dt: "Add an optional onApply callback to ActionCard. Each action in the phase arrays includes an apply function that calls the relevant setState. Show a button 'Apply' on prescriptive cards. After applying, the card updates to show 'Applied ✓' and the waterfall re-renders with the new values. Need to handle undo or at least confirm before applying.",
+    cx: "Medium", im: "High", af: ["ActionCard component", "phase action arrays", "all setState functions"], sv: "none (UX enhancement)"
+  },
+  {
+    id: 19, pr: 3, sec: "Flow-Down", st: "planned",
+    ti: "Optimized scenario: full parallel simulation",
+    ds: "The what-if comparison bar uses annuity math on deltas, which is fast but approximate. A full parallel simData run with optimized inputs would be perfectly accurate.",
+    dt: "Create a second useMemo that runs the simData loop with optimized inputs: contrib401k = TRAD_401K_LIMIT_2026, contribHSA = HSA_LIMIT_2026, ssClaimingAge = 70. Compute the same downstream values (totalAtRet, yearsSustained, etc.) from this parallel data. Heavier computation but guarantees the comparison bar matches what the user would see if they applied all changes.",
+    cx: "High", im: "Medium", af: ["optimized useMemo", "comparison bar", "simData"], sv: "none (computation enhancement)"
+  },
+  {
+    id: 20, pr: 2, sec: "UI / Layout", st: "done",
+    ti: "Mobile responsive Flow-Down tab",
+    ds: "The Flow-Down waterfall, comparison bar, and action cards lack @media breakpoints. On small screens, the 3-column comparison grid and waterfall label+bar layout cramp.",
+    dt: "Added 8 responsive CSS rules under @media (max-width: 600px) with fd- prefixed classes. Comparison grid columns shrink. Waterfall steps stack vertically (label above bar). ActionCard comparative grid stacks with 'vs' label hidden. Outcome stats and header stats wrap. Header top stacks vertically. All 6 fd- classes matched 1:1 between CSS and JSX classNames.",
+    cx: "Low", im: "High", af: ["Flow-Down tab layout", "ActionCard", "comparison bar", "WaterfallStep"], sv: "none (CSS)"
+  },
+  {
+    id: 21, pr: 1, sec: "Overview / Income", st: "done",
+    ti: "Auto-derive pre-tax deductions from contributions",
+    ds: "Old preTaxDeduc slider was disconnected from 401k/HSA contributions, causing double-counting in budget waterfall and incorrect AGI when contributions changed.",
+    dt: "Renamed preTaxDeduc → otherPreTaxDeduc (FSA, dep care, transit). New derived totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc. AGI, fedTax, grossAfterTax all auto-recalculate when contributions change. Apply button now automatically updates taxes. UI shows auto breakdown + slider for 'other' only.",
+    cx: "Medium", im: "High", af: ["AGI", "fedTax", "takeHome", "grossAfterTax", "budget waterfall", "Apply button"], sv: "otherPreTaxDeduc (renamed), totalPreTaxDeduc (derived)"
+  },
+  {
+    id: 22, pr: 1, sec: "Overview / Income", st: "done",
+    ti: "Budget-constrained optimized scenario",
+    ds: "Old 'optimized' assumed maxing all accounts — unrealistic for most people. New model uses living expenses + surplus slider to compute realistic optimization.",
+    dt: "New state: livingExpenses, livingExpenseGrowth, savingsSurplusPct. grossAfterTax as budget basis (not takeHome). IRS-priority allocation engine: match → HSA → Roth → 401k → taxable. Apply button pushes optimized allocation to contribution sliders with revert. Budget & Savings Capacity panel in Simple Planner.",
+    cx: "High", im: "High", af: ["optimized useMemo", "Flow-Down comparison bar", "simData contributions", "all projections"], sv: "livingExpenses, livingExpenseGrowth, savingsSurplusPct, preApplySnapshot"
+  },
+  {
+    id: 23, pr: 1, sec: "Overview / Income", st: "done",
+    ti: "Fix yearsSustained/withdrawalRate using effectiveExpenses instead of netPortfolioNeed",
+    ds: "yearsSustained, withdrawalRate, and totalChartData all used full effectiveExpenses instead of netPortfolioNeed (expenses minus SS and pension). Portfolios appeared to deplete years earlier than reality.",
+    dt: "Moved SS/pension computation above drawdown calcs. withdrawalRate now uses netPortfolioNeed/totalAtRet. yearsSustained log formula uses netPortfolioNeed. totalChartData drawdown loop subtracts netPortfolioNeed. Removed duplicate SS/pension/netPortfolioNeed blocks. ssDelayGainYrs auto-fixed.",
+    cx: "Medium", im: "High", af: ["withdrawalRate", "yearsSustained", "totalChartData", "isSustainable", "ssDelayGainYrs", "Flow-Down waterfall"], sv: "none (reordering + formula fix)"
+  },
+  {
+    id: 24, pr: 1, sec: "Social Security", st: "done",
+    ti: "Cap SS earnings at wage base in AIME calculation",
+    ds: "AIME counted full income with no cap. SSA only counts up to the wage base ($168,600). A $300K earner's SS was overstated by $52K/yr.",
+    dt: "Added Math.min(yearEarnings, FICA_WAGE_BASE) inside the ssTotalEarnings loop. One line change. Cascades through ssAIME → ssPIA → ssMonthlyBenefit → effectiveSS → householdSS → netPortfolioNeed → everything.",
+    cx: "Low", im: "High", af: ["ssAIME", "ssPIA", "effectiveSS", "householdSS", "netPortfolioNeed", "all drawdown"], sv: "none (logic fix)"
+  },
+  {
+    id: 25, pr: 1, sec: "Roth Strategy", st: "done",
+    ti: "Roth contributions stop at MAGI phase-out in simData",
+    ds: "simData contributed to Roth every year regardless of income growth. A $140K earner with 3% growth silently exceeded the Roth limit by year 4, overstating Roth balance.",
+    dt: "cRoth in simData now checks combined household MAGI (primary + spouse, both growing) against ROTH_PHASEOUT_2026 each year. Linear phase-out between start and end thresholds. ROTH_PHASEOUT_2026 promoted to module-level constant. spouseIncome/spouseIncomeGrowth added to simData dep array.",
+    cx: "Medium", im: "High", af: ["simData cRoth", "Roth IRA projection", "retVals", "totalAtRet"], sv: "none (logic fix)"
+  },
+  {
+    id: 26, pr: 1, sec: "Overview / Income", st: "done",
+    ti: "IRS sim-level caps for Roth + HSA + 401k elective limit",
+    ds: "Roth and HSA had no sim-level cap (only UI max). 401k employee deferral grew with income past the elective limit. All three could overstate projections.",
+    dt: "cRoth: Math.min(contribRoth, rothCap) with catch-up. cHSA: Math.min(contribHSA, HSA_LIMIT_2026). employeeDeferral: Math.min(contrib401k × growFactor, electiveLimit) with 50+ catch-up. LTCG bracket now uses AGI (ordinaryIncome minus pre-tax deductions).",
+    cx: "Low", im: "Medium", af: ["simData", "cRoth", "cHSA", "employeeDeferral", "LTCG rate"], sv: "none (logic guards)"
+  },
+  {
+    id: 27, pr: 2, sec: "Overview / Income", st: "done",
+    ti: "State tax rate override slider",
+    ds: "State tax used a flat effective rate from a table. Real rates vary by income level. Users couldn't adjust if their actual rate differed from the table average.",
+    dt: "New state: stateRateOverride (null = table default). Slider appears below state dropdown for states with income tax. Snaps to null near default. Reset button. State dropdown clears override. stateRate = override ?? tableDefault flows to all tax calcs.",
+    cx: "Low", im: "Medium", af: ["stateRate", "stateTax", "takeHome", "grossAfterTax", "rate3Combined"], sv: "stateRateOverride"
+  },
+  {
+    id: 28, pr: 2, sec: "Roth Strategy", st: "done",
+    ti: "Employer match formula mode (% of first N%)",
+    ds: "Employer match was flat % of salary. Real plans use formulas like '50% of first 6%' where match depends on employee contribution level.",
+    dt: "New state: matchMode ('flat'/'formula'), matchFormulaRate, matchFormulaCap. calcEmployerMatch helper function. Toggle UI in Mega Backdoor section. Formula: min(employeeContrib, salary × cap%) × rate%. Applied in simData, optimizedAllocation, employerMatchAmt, and action cards.",
+    cx: "Medium", im: "Medium", af: ["simData matchAmt", "employerMatchAmt", "megaCapacity", "optimizedAllocation", "match action card"], sv: "matchMode, matchFormulaRate, matchFormulaCap"
+  }
+];
+
+var SECS = [];
+DATA.forEach(function(d) { if (SECS.indexOf(d.sec) === -1) SECS.push(d.sec); });
+var SL = { planned: "Planned", "in-progress": "In progress", done: "Done" };
+var SC = { planned: "d-planned", "in-progress": "d-progress", done: "d-done" };
+var PC = ["p1","p2","p3","p4"];
+
+var flt = "all", sel = null, sts = {}, doneOpen = false;
+DATA.forEach(function(d) { sts[d.id] = d.st; });
+
+function getActive() {
+  var base = DATA.filter(function(d) { return sts[d.id] !== "done"; });
+  if (flt === "all") return base;
+  if (flt === "in-progress") return base.filter(function(d) { return sts[d.id] === "in-progress"; });
+  if (flt === "p1") return base.filter(function(d) { return d.pr === 1; });
+  if (flt === "p2") return base.filter(function(d) { return d.pr === 2; });
+  if (flt === "p3") return base.filter(function(d) { return d.pr === 3; });
+  return base;
+}
+
+function buildCards(items) {
+  if (!items.length) return '<div class="empty">No items match this filter.</div>';
+  var bySec = {};
+  SECS.forEach(function(s) {
+    var it = items.filter(function(d) { return d.sec === s; });
+    if (it.length) bySec[s] = it;
+  });
+  var h = "";
+  Object.keys(bySec).forEach(function(sec) {
+    h += '<div class="section-label">' + sec + '</div>';
+    bySec[sec].forEach(function(item) {
+      var st = sts[item.id];
+      var isSel = sel === item.id;
+      h += '<div class="card' + (isSel ? " sel" : "") + '" onclick="tog(' + item.id + ')">'
+        + '<div class="card-left">'
+        + '<span class="pb ' + (PC[item.pr - 1] || "p4") + '">P' + item.pr + '</span>'
+        + '<div class="dot ' + SC[st] + '"></div>'
+        + '</div>'
+        + '<div class="card-body">'
+        + '<div class="card-title">' + item.ti + '</div>'
+        + '<div class="card-desc">' + item.ds + '</div>'
+        + '<div class="card-meta">'
+        + '<span class="badge cx-badge">' + item.cx + ' complexity</span>'
+        + '<span class="badge ' + (item.im === "High" ? "high-badge" : "med-badge") + '">' + item.im + ' impact</span>'
+        + '<select class="status-sel" onchange="updSt(' + item.id + ', this.value)" onclick="event.stopPropagation()">'
+        + Object.keys(SL).map(function(v) { return '<option value="' + v + '"' + (st === v ? " selected" : "") + '>' + SL[v] + '</option>'; }).join("")
+        + '</select>'
+        + '</div>'
+        + '</div></div>';
+      if (isSel) {
+        h += '<div class="detail">'
+          + '<h4>Implementation notes</h4>'
+          + '<p>' + item.dt + '</p>'
+          + '<div class="tags">'
+          + item.af.map(function(a) { return '<span class="tag">affects: ' + a + '</span>'; }).join("")
+          + '<span class="tag">new state: ' + item.sv + '</span>'
+          + '</div>'
+          + '</div>';
+      }
+    });
+  });
+  return h;
+}
+
+function render() {
+  var doneItems = DATA.filter(function(d) { return sts[d.id] === "done"; });
+  var prog      = DATA.filter(function(d) { return sts[d.id] === "in-progress"; }).length;
+  var plan      = DATA.filter(function(d) { return sts[d.id] === "planned"; }).length;
+  var pct       = Math.round((doneItems.length / DATA.length) * 100);
+
+  document.getElementById("summary").innerHTML =
+    stat(DATA.length, "Total features", "#e6edf3") +
+    stat(doneItems.length, "Completed", "#3fb950") +
+    stat(prog, "In progress", "#d4a843") +
+    stat(plan, "Planned", "#8b949e");
+
+  document.getElementById("progress").style.width = pct + "%";
+
+  var activeItems = getActive();
+  document.getElementById("active-count").textContent = activeItems.length + " remaining";
+  document.getElementById("list").innerHTML = buildCards(activeItems);
+
+  document.getElementById("done-count").textContent = doneItems.length + " features";
+  document.getElementById("done-list").innerHTML = buildCards(doneItems);
+
+  document.querySelectorAll(".fb").forEach(function(b) {
+    b.classList.toggle("on", b.getAttribute("onclick").indexOf("'" + flt + "'") !== -1);
+  });
+}
+
+function stat(n, l, color) {
+  return '<div class="stat"><div class="num" style="color:' + color + '">' + n + '</div><div class="lbl">' + l + '</div></div>';
+}
+
+function setF(f) { flt = f; sel = null; render(); }
+function tog(id) { sel = (sel === id ? null : id); render(); }
+function updSt(id, v) { sts[id] = v; render(); }
+function toggleDone() {
+  doneOpen = !doneOpen;
+  document.getElementById("done-section").classList.toggle("open", doneOpen);
+  document.getElementById("done-arrow").classList.toggle("open", doneOpen);
+}
+
+render();
+</script>
+</body>
+</html>
