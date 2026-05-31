@@ -49,7 +49,10 @@ export function PhaseCard({ num, title, ageRange, years, color, steps, note, act
       )}
 
       {actions?.length > 0 && (
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.border}` }}>
+          <p style={{ margin: "0 0 8px", fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
+            Recommended Actions
+          </p>
           {actions.map((a, i) => (
             <ActionCardWrapper key={i} {...a} />
           ))}

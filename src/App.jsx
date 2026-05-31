@@ -23,6 +23,8 @@ import { DeferredInput } from "./components/DeferredInput.jsx";
 import { TaxTimeline }   from "./components/TaxTimeline.jsx";
 import { TaxPhaseCard }  from "./components/TaxPhaseCard.jsx";
 import { ChartTooltip }  from "./components/ChartTooltip.jsx";
+import { FlowConn }      from "./components/FlowConn.jsx";
+import { PhaseCard }     from "./components/PhaseCard.jsx";
 
 export default function App() {
 
@@ -2482,148 +2484,6 @@ export default function App() {
           </div>
 
           {(() => {
-            const FlowConnInline = ({ value, color = C.gold, label }) => {
-              const pct = flowData.peakPortfolio > 0 ? Math.max(12, (value / flowData.peakPortfolio) * 65) : 12;
-              return (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  <div style={{ width: 2, height: 10, background: `${color}35` }} />
-                  <div style={{ width: `${pct}%`, minWidth: 90, padding: "5px 14px", background: `${color}10`,
-                    border: `1px solid ${color}25`, borderRadius: 5, textAlign: "center", position: "relative" }}>
-                    <span style={{ fontSize: 13, color, fontWeight: 700, ...mono }}>{fmt(value)}</span>
-                    {label && <span style={{ fontSize: 9, color: C.muted, marginLeft: 6 }}>{label}</span>}
-                  </div>
-                  <div style={{ width: 2, height: 10, background: `${color}35` }} />
-                </div>
-              );
-            };
-
-            const WaterfallStepInline = ({ label, amount, type, sub, maxVal }) => {
-              const isAdd   = type === "add";
-              const isSub   = type === "subtract";
-              const isLoss  = type === "loss";
-              const isTotal = type === "total";
-              const color   = isAdd ? C.green : (isSub || isLoss) ? C.orange : isTotal ? C.gold : C.muted;
-              const prefix  = isAdd ? "+" : (isSub || isLoss) ? "−" : "";
-              const barPct  = maxVal > 0 ? Math.max(5, (Math.abs(amount) / maxVal) * 100) : 5;
-              return (
-                <div className="fd-wf-step" style={{ display: "flex", alignItems: "center", gap: 10, padding: "3px 0" }}>
-                  <div style={{ width: 130, textAlign: "right", flexShrink: 0 }}>
-                    <span style={{ fontSize: 11, color: isTotal ? C.text : C.muted, fontWeight: isTotal ? 600 : 400 }}>{label}</span>
-                    {sub && <span style={{ display: "block", fontSize: 9, color: C.muted }}>{sub}</span>}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      height: isTotal ? 30 : 24, width: `${barPct}%`, minWidth: 60,
-                      background: isTotal ? `linear-gradient(90deg, ${color}45, ${color}20)` : `${color}20`,
-                      borderLeft: `3px solid ${color}`, borderRadius: "0 5px 5px 0",
-                      display: "flex", alignItems: "center", paddingLeft: 8, transition: "width 0.4s ease",
-                    }}>
-                      <span style={{ fontSize: isTotal ? 14 : 12, color, fontWeight: isTotal ? 700 : 500, ...mono, whiteSpace: "nowrap" }}>
-                        {prefix}{fmt(Math.abs(amount))}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            };
-
-            const ActionCardInline = ({ mode, title, body, impact, impactColor, impactLabel, vsA, vsB }) => {
-              const modeConfig = {
-                prescriptive: { icon: "→", accent: C.green,  label: "ACTION" },
-                comparative:  { icon: "⇄", accent: C.blue,   label: "COMPARE" },
-                educational:  { icon: "i",  accent: C.purple, label: "INSIGHT" },
-              };
-              const { icon, accent, label: modeLabel } = modeConfig[mode] ?? modeConfig.educational;
-              return (
-                <div style={{ background: `${accent}06`, border: `1px solid ${accent}20`, borderRadius: 8, padding: "10px 12px", marginBottom: 6 }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: `${accent}20`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 10, fontWeight: 700, color: accent, flexShrink: 0, marginTop: 1 }}>{icon}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 2 }}>
-                        <span style={{ fontSize: 8, fontWeight: 700, color: accent, textTransform: "uppercase", letterSpacing: "0.1em" }}>{modeLabel}</span>
-                        <span style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{title}</span>
-                      </div>
-                      <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted, lineHeight: 1.6 }}>{body}</p>
-                      {mode === "prescriptive" && impact !== undefined && (
-                        <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4,
-                          background: `${impactColor ?? accent}15`, borderRadius: 4, padding: "2px 8px" }}>
-                          <span style={{ fontSize: 12, color: impactColor ?? accent, fontWeight: 700, ...mono }}>
-                            {typeof impact === "string" ? impact : fmt(impact)}
-                          </span>
-                          {impactLabel && <span style={{ fontSize: 9, color: C.muted }}>{impactLabel}</span>}
-                        </div>
-                      )}
-                      {mode === "comparative" && vsA && vsB && (
-                        <div className="fd-action-vs" style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 6, alignItems: "center", marginTop: 4 }}>
-                          <div style={{ background: C.surface, borderRadius: 5, padding: "4px 8px", textAlign: "center" }}>
-                            <p style={{ margin: 0, fontSize: 9, color: C.muted }}>{vsA.label}</p>
-                            <p style={{ margin: 0, fontSize: 13, color: vsA.color ?? C.muted, fontWeight: 600, ...mono }}>
-                              {typeof vsA.value === "string" ? vsA.value : fmt(vsA.value)}
-                            </p>
-                            {vsA.sub && <p style={{ margin: 0, fontSize: 8, color: C.muted }}>{vsA.sub}</p>}
-                          </div>
-                          <span style={{ fontSize: 10, color: C.muted }}>vs</span>
-                          <div style={{ background: `${C.green}10`, borderRadius: 5, padding: "4px 8px", textAlign: "center", border: `1px solid ${C.green}20` }}>
-                            <p style={{ margin: 0, fontSize: 9, color: C.green }}>{vsB.label}</p>
-                            <p style={{ margin: 0, fontSize: 13, color: vsB.color ?? C.green, fontWeight: 600, ...mono }}>
-                              {typeof vsB.value === "string" ? vsB.value : fmt(vsB.value)}
-                            </p>
-                            {vsB.sub && <p style={{ margin: 0, fontSize: 8, color: C.muted }}>{vsB.sub}</p>}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            };
-
-            const PhaseCardInline = ({ num, title, ageRange, years, color, steps, note, actions }) => (
-              <div style={{ ...panel, marginBottom: 0, borderRadius: 0,
-                borderLeft: `4px solid ${color}`, borderTop: `1px solid ${C.border}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ width: 24, height: 24, borderRadius: "50%", background: color,
-                      display: "inline-flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 12, fontWeight: 700, color: "#0d1117", flexShrink: 0 }}>{num}</span>
-                    <div>
-                      <p style={{ margin: 0, fontSize: 14, color: C.text, fontWeight: 700 }}>{title}</p>
-                      <p style={{ margin: 0, fontSize: 10, color: C.muted }}>{ageRange}</p>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 11, color: C.muted, ...mono }}>{years} yr{years !== 1 ? "s" : ""}</span>
-                </div>
-                <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
-                  {steps.map((s, i) => {
-                    const divider = s.type === "total" ? (
-                      <div key={`div-${i}`} style={{ borderTop: `1px dashed ${C.border}`, margin: "6px 0 4px" }} />
-                    ) : null;
-                    return (
-                      <div key={i}>
-                        {divider}
-                        <WaterfallStepInline {...s} maxVal={flowData.peakPortfolio} />
-                      </div>
-                    );
-                  })}
-                </div>
-                {note && (
-                  <div style={{ marginTop: 10, padding: "6px 10px", background: `${color}08`, borderRadius: 5, borderLeft: `2px solid ${color}30` }}>
-                    <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>{note}</p>
-                  </div>
-                )}
-                {actions && actions.length > 0 && (
-                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${C.border}` }}>
-                    <p style={{ margin: "0 0 8px", fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>
-                      Recommended Actions
-                    </p>
-                    {actions.map((a, i) => <ActionCardInline key={i} {...a} />)}
-                  </div>
-                )}
-              </div>
-            );
-
             const phase1Steps = [
               { label: "Starting Portfolio", amount: flowData.startPortfolio, type: "start" },
               { label: "Contributions", amount: flowData.totalContrib, type: "add", sub: `${safeRetAge - currentAge} yrs · all accounts` },
@@ -2810,18 +2670,19 @@ export default function App() {
 
             return (
               <>
-                <PhaseCardInline num={1} title="Build Wealth" ageRange={`Age ${currentAge} → ${safeRetAge}`}
-                  years={safeRetAge - currentAge} color={C.gold} steps={phase1Steps} note={null} actions={phase1Actions} />
-                <FlowConnInline value={flowData.totalAtRet} color={C.gold} label="at retirement" />
+                <PhaseCard num={1} title="Build Wealth" ageRange={`Age ${currentAge} → ${safeRetAge}`}
+                  years={safeRetAge - currentAge} color={C.gold} steps={phase1Steps} note={null} actions={phase1Actions}
+                  peakPortfolio={flowData.peakPortfolio} />
+                <FlowConn value={flowData.totalAtRet} color={C.gold} label="at retirement" peakPortfolio={flowData.peakPortfolio} />
                 {flowData.hasConvWindow ? (
                   <>
-                    <PhaseCardInline num={2} title="Optimize & Convert" ageRange={`Age ${safeRetAge} → 72`}
+                    <PhaseCard num={2} title="Optimize & Convert" ageRange={`Age ${safeRetAge} → 72`}
                       years={flowData.conversionWindowYrs} color={C.blue} steps={phase2Steps}
                       note={flowData.totalConverted > 0
                         ? `${fmt(flowData.totalConverted)} moved from 401k → Roth during this window. Every dollar converted escapes future RMDs and grows tax-free.`
                         : `You have a ${flowData.conversionWindowYrs}-year window before RMDs start. Consider converting 401k → Roth in the Detailed Planner to reduce lifetime taxes.`}
-                      actions={phase2Actions} />
-                    <FlowConnInline value={flowData.portAt73} color={C.blue} label="entering RMDs" />
+                      actions={phase2Actions} peakPortfolio={flowData.peakPortfolio} />
+                    <FlowConn value={flowData.portAt73} color={C.blue} label="entering RMDs" peakPortfolio={flowData.peakPortfolio} />
                   </>
                 ) : (
                   <div style={{ ...panel, marginBottom: 0, borderRadius: 0,
@@ -2833,15 +2694,16 @@ export default function App() {
                     </p>
                   </div>
                 )}
-                <PhaseCardInline num={3} title="Spend & Distribute"
+                <PhaseCard num={3} title="Spend & Distribute"
                   ageRange={`Age ${flowData.distStartAge} → ${flowData.depletionAge ?? safeLifeExp}`}
                   years={flowData.depletionAge
                     ? flowData.depletionAge - flowData.distStartAge
                     : safeLifeExp - flowData.distStartAge}
                   color={isSustainable ? C.green : C.orange}
-                  steps={phase3Steps} note={null} actions={phase3Actions} />
-                <FlowConnInline value={flowData.distEndVal} color={isSustainable ? C.green : C.orange}
-                  label={flowData.distEndVal > 0 ? "remaining" : "depleted"} />
+                  steps={phase3Steps} note={null} actions={phase3Actions}
+                  peakPortfolio={flowData.peakPortfolio} />
+                <FlowConn value={flowData.distEndVal} color={isSustainable ? C.green : C.orange}
+                  label={flowData.distEndVal > 0 ? "remaining" : "depleted"} peakPortfolio={flowData.peakPortfolio} />
                 <div style={{ ...panel, marginBottom: 20, borderRadius: "0 0 10px 10px",
                   borderTop: `1px solid ${C.border}`, textAlign: "center", padding: "20px",
                   background: isSustainable ? `${C.green}08` : `${C.orange}08` }}>
