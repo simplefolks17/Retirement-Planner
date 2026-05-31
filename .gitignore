@@ -141,3 +141,19 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Environment variables (API keys, secrets - NEVER commit these)
+.env
+.env.local
+.env.production
+
+# Vite build output
+dist/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor settings (optional, personal preference)
+.vscode/
+.idea/
