@@ -9,6 +9,26 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### BUG-07 — Chart 1 Trad 401k normalization uses Phase 1 rate for Phase 2 years
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` line 1475
+
+**Symptom:**  
+In "Portfolio Growth Over Time," the BUG-06 fix normalizes all Trad 401k values to `rate1` for a smooth accumulation line. When the mid-career Phase 2 toggle is on and `rate2 ≠ rate1`, Phase 2 years are displayed using `rate1` instead of `rate2`. The chart description says "Phase 1 rate" which partially explains this, but a user with Phase 2 enabled at a higher bracket would see Phase 2 years overstated (if `rate2 > rate1`) or understated (if `rate2 < rate1`).
+
+**Root cause:**  
+The inline `.map()` on chart data applies `tradGross × (1 − rate1/100)` unconditionally for every accumulation year, regardless of which phase that year belongs to.
+
+**Impact:**  
+Phase 2 is off by default and rarely enabled. The inaccuracy is purely visual (the model is unaffected). Individual account growth trends are still directionally correct.
+
+**Recommended fix:**  
+Apply the correct phase rate per year: use `d["Trad 401k"]` from simData directly for all years *except* the retirement year (where rate3 causes the dip). For the retirement year only, substitute `tradGross × (1 − rate_last_working_phase / 100)`. This requires knowing whether the year falls in Phase 1 or Phase 2, which can be determined by comparing `d.age` to `currentAge + phase2Start`.
+
+---
+
 ### ~~BUG-06~~ — Trad 401k line dips in "Portfolio Growth Over Time" chart near retirement
 
 **Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
@@ -201,6 +221,22 @@ The card already shows a "sync" button when projected RMD + SS income puts you i
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-08~~ — RMD reference line missing in Portfolio Lifecycle chart for users retiring at 72
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` line 2489
+
+**Symptom:**  
+In the Flow-Down tab's "Portfolio Lifecycle" chart, the orange "RMDs age 73" reference line only appeared when `flowData.hasConvWindow` was true (i.e., `safeRetAge ≤ 71`). A user retiring at age 72 has zero conversion window years but RMDs begin at 73 — the reference line didn't appear even though it was directly relevant.
+
+**Root cause:**  
+The condition `flowData.hasConvWindow` (`conversionWindowYrs > 0`) was used as the gate. `conversionWindowYrs = RMD_START_AGE − 1 − safeRetAge`. At `safeRetAge = 72`, this equals 0, so `hasConvWindow` is false and the line was suppressed.
+
+**Fix:**  
+Changed the gate to `safeRetAge < RMD_START_AGE`. The RMD marker now appears whenever retirement precedes age 73, regardless of whether a conversion window exists. When `safeRetAge ≥ RMD_START_AGE` (already in RMD territory at retirement), the line is correctly suppressed because it would overlap or precede the retirement marker.
 
 ---
 

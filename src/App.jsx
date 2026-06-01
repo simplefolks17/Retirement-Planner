@@ -1466,8 +1466,9 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Portfolio Growth Over Time</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
-          After-tax values year by year. Trad 401k displayed at Phase 1 rate ({rate1}%) for a smooth growth line —
-          the retirement-rate after-tax value is in the snapshot cards below.
+          After-tax values year by year. Trad 401k normalized to{" "}
+          {showPhase2 ? `Phase 1 rate (${rate1}%) across all working years` : `Phase 1 rate (${rate1}%)`}{" "}
+          for a smooth growth line — the retirement-rate after-tax value is in the snapshot cards below.
           Dashed line marks retirement age.
         </p>
         <ResponsiveContainer width="100%" height={320}>
@@ -2486,7 +2487,7 @@ export default function App() {
                       }} />
                       <ReferenceLine x={safeRetAge} stroke={C.green} strokeDasharray="5 4"
                         label={{ value: "Retire", position: "insideTopRight", fill: C.green, fontSize: 9 }} />
-                      {flowData.hasConvWindow && (
+                      {safeRetAge < RMD_START_AGE && (
                         <ReferenceLine x={RMD_START_AGE} stroke={C.orange} strokeDasharray="3 3"
                           label={{ value: "RMDs", position: "insideTopRight", fill: C.orange, fontSize: 9 }} />
                       )}
