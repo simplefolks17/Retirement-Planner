@@ -4,20 +4,27 @@
 
 ### Federal Income Tax
 - **AGI** = grossIncome − totalPreTaxDeduc (where totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc)
+- **For MFJ filers:** AGI also includes `spouseIncome` (spouse pre-tax deductions are not tracked — planned feature #30). Combined AGI is taxed at MFJ bracket rates, giving the correct joint standard deduction and wider brackets.
 - **Taxable income** = AGI − standard deduction (per filing status)
 - Applied against 2026 graduated brackets (7 rates: 10%, 12%, 22%, 24%, 32%, 35%, 37%)
 - Returns both total tax and effective rate (tax / AGI)
 
 ### State Income Tax
-- Uses a flat effective rate per state from lookup table
+- Uses a flat effective rate per state from lookup table applied to AGI (which includes spouse income for MFJ)
 - User can override with a slider for their actual effective rate
-- Retirement state tax uses a separate table (many states exempt retirement income)
+- Retirement state tax uses a separate table — **known limitation:** state exemptions on retirement income (SS, pension, 401k distributions) are not yet modeled per-state. Planned as feature #33.
 
 ### FICA
-- 7.65% of gross income, capped at SS wage base ($168,600 for 2026)
+- 7.65% on each earner's gross income independently, each capped at the SS wage base ($168,600 for 2026)
+- **For households with spouse income:** `fica = (min(primaryIncome, FICA_WAGE_BASE) + min(spouseIncome, FICA_WAGE_BASE)) × 0.0765`
 - FICA uses gross income, not AGI (payroll tax, not income tax)
 - **401(k) deferrals do NOT reduce the FICA base** — SS and Medicare apply to gross salary before 401(k) deduction. This is why Box 3/5 on a W-2 is higher than Box 1.
 - **HSA via payroll (Section 125 cafeteria plan) DOES reduce the FICA base** — it reduces both Box 1 AND Box 3/5 simultaneously, making it invisible in the Box 1 vs Box 3/5 gap. This is the most tax-efficient way to fund an HSA.
+
+### Household Budget Basis
+- `grossAfterTax` = householdIncome − fedTax − stateTax − fica
+- `householdIncome` = primaryIncome + spouseIncome (MFJ) or primaryIncome (all other statuses)
+- This is the correct budget basis for `savingsCapacity`, `availableSurplus`, and the optimized allocation. It represents household cash available after all taxes are paid.
 
 ## HSA Contribution Method
 
@@ -108,7 +115,8 @@ Most users won't know the term "Section 125" or the difference between payroll d
 
 ### Bracket Fill Strategy
 - Target bracket top (12%, 22%, or 24%) + standard deduction − retirement income floor
-- Retirement income floor = 85% of householdSS + effectivePension
+- Retirement income floor = 85% of householdSS + effectivePension (steady-state, for display and bracket-fill suggestion)
+- **Per-year floors for tax calculation:** `calcConversionSim` receives a `retIncomeFloors[]` array where each entry reflects whether SS and pension have actually started in that year. Pre-SS/pre-pension years use a lower floor, so the marginal rate on conversions in those years is computed correctly.
 
 ### Dual Tax Source Scenarios
 - **From converted amount**: Roth receives (conversion − tax), less efficient
@@ -122,6 +130,14 @@ Most users won't know the term "Section 125" or the difference between payroll d
 netPortfolioNeed = max(0, effectiveExpenses − householdSS − effectivePension)
 ```
 This is the only value used for portfolio depletion. The portfolio does NOT fund the full expense — SS and pension are external income.
+
+**Critical: per-year computation in loops.** The static scalar `netPortfolioNeed` is correct only when all income sources are active. Any loop spanning retirement years must compute the need per-year:
+```
+yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0
+yearPension = pensionMonthly > 0 && age >= pensionStartAge ? pensionMonthly × 12 : 0
+yearNeed    = max(0, effectiveExpenses − yearSS − yearPension)
+```
+This applies to: `totalChartData` drawdown loop, `convWindowDraws` in `flowData`, and `retIncomeFloors[]` passed to `calcConversionSim`. The static scalar is still used for `withdrawalRate`, `yearsSustained`, and display — those use the steady-state (all sources active) value, which is the correct "at retirement" snapshot.
 
 ### Real Return
 ```
@@ -164,9 +180,12 @@ These are intentional modeling choices, not bugs. Document them so users and rev
 | 2026 tax rules frozen for all projection years | Medium | Real brackets adjust for inflation annually. A 30-year-old's projection uses 2026 brackets through age 90. |
 | Taxable brokerage assumes annual realization | Understates taxable growth by 15–25% over 30 years | Buy-and-hold investors compound unrealized gains tax-free. The model applies LTCG drag every year. |
 | 401k after-tax display uses phase rate, not effective rate | Makes 401k look worse vs Roth | Someone withdrawing $80K pays ~13% effective, not the 22% phase rate. |
-| State tax is a flat effective rate | Inaccurate at income extremes | A $50K CA earner pays ~4%, not the table's 9.3%. User can override. |
+| State tax uses flat effective rate during accumulation | Inaccurate at income extremes | A $50K CA earner pays ~4%, not the table's 9.3%. User can override with the slider. |
+| State retirement income exemptions not modeled | Overstates retirement state tax for most states | 13 states exempt SS; many exempt pension/401k. Planned fix: feature #33. |
 | Inflation applied to returns but not to brackets/limits | Subtle asymmetry | IRS adjusts limits annually. Sim uses 2026 limits with inflation-adjusted returns. |
-| SS benefit doesn't adjust for early retirement (fewer earning years) | Overstates SS for very early retirees | Someone retiring at 45 has fewer high-earning years in the 35-year average. |
+| SS benefit assumes continuous work to retirement | Overstates SS for anyone with career gaps | Retiring at 45 leaves fewer high-earning years in the 35-year average. Work-gap input planned: feature #11. |
+| Spouse 401k/Roth/HSA accounts not modeled | Understates household contribution capacity for dual-income MFJ | Spouse accounts tracked as planned premium feature #30. Current sliders are primary earner only. |
+| Single fixed return rate for full projection | Ignores sequence-of-returns risk | A bad decade early in retirement is far worse than the same average return. Monte Carlo planned: feature #38. |
 
 ## IRS Annual Update Procedure
 
@@ -190,3 +209,14 @@ When the IRS publishes new limits (typically October for the following year):
 4. **Update the "2026 Tax Year" badge** in the UI header
 
 All IRS-specific values must trace back to the single config file. If `grep -r "24_500\|24500" src/` finds hits outside the config, something was hardcoded.
+
+## Correctness Fix Log
+
+A record of bugs found and fixed in the financial model (not feature additions — these were wrong answers).
+
+| Date | Bug | Fix | Affected calculations |
+|---|---|---|---|
+| Jun 2026 | SS and pension subtracted from portfolio draws before they start | Per-year `netPortfolioNeed` in `totalChartData` loop, `convWindowDraws`, and `retIncomeFloors[]` to `calcConversionSim` | Drawdown chart, conversion window tax, Flow-Down waterfall |
+| Jun 2026 | Pension not counted in drawdown when `pensionStartAge > safeRetAge` | Same per-year fix — check `age >= pensionStartAge` in all drawdown loops | `yearsSustained` for deferred-pension users |
+| Jun 2026 | Spouse FICA not included in household taxes | `fica = (min(p, FICA_WAGE_BASE) + min(s, FICA_WAGE_BASE)) × 0.0765` | `takeHome`, `grossAfterTax`, `savingsCapacity` |
+| Jun 2026 | MFJ spouse income missing from AGI, state tax, and budget | `agi` and `grossAfterTax` now use `householdIncome` when `filingStatus === "mfj"` | Federal tax, state tax, `savingsCapacity`, `optimizedAllocation` |

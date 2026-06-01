@@ -157,7 +157,7 @@ var DATA = [
     cx: "Medium", im: "High", af: ["conversion strategy", "effective tax cost of conversions", "conversion window display"], sv: "hasMarketplaceInsurance, householdSize"
   },
   {
-    id: 8, pr: 3, sec: "RMDs", st: "planned",
+    id: 8, pr: 2, sec: "RMDs", st: "planned",
     ti: "Additional pre-tax balances (old 401k accounts)",
     ds: "Many users have multiple old 401k accounts at different custodians. Each has its own RMD. Add an input for additional pre-tax balance that feeds the RMD projection.",
     dt: "Add addlPreTaxBal input (default 0). Add to tradGross in the RMD simulation loop. RMDs can be satisfied from any combination of traditional accounts, so the aggregate pre-tax balance is what matters for projection purposes. No change to accumulation model — purely additive to the RMD calc. Show a note when addlPreTaxBal > 0 explaining the aggregation.",
@@ -171,14 +171,14 @@ var DATA = [
     cx: "Low", im: "Medium", af: ["drawdown display", "years sustained calc", "withdrawal rate"], sv: "legacyTarget"
   },
   {
-    id: 10, pr: 3, sec: "Drawdown / Withdrawal", st: "planned",
+    id: 10, pr: 2, sec: "Drawdown / Withdrawal", st: "planned",
     ti: "Variable spending in retirement",
     ds: "Spending is typically higher early in retirement and lower later. Add early-retirement spending and a step-down age for a more realistic depletion model.",
     dt: "Research shows a spending 'smile': higher ages 60–75 (travel, activities), lower in mid-retirement, potential late uptick (healthcare). Add earlyRetirementExpenses and spendingStepDownAge. The drawdown loop uses earlyRetirementExpenses before the step-down age and effectiveExpenses after. Significantly improves yearsSustained accuracy for early retirees who may be overspending relative to the flat expense assumption.",
     cx: "Medium", im: "Medium", af: ["yearsSustained", "totalChartData", "drawdown display"], sv: "earlyRetirementExpenses, spendingStepDownAge"
   },
   {
-    id: 11, pr: 4, sec: "Social Security", st: "planned",
+    id: 11, pr: 3, sec: "Social Security", st: "planned",
     ti: "Work gap / zero-earning years",
     ds: "The SS estimate assumes continuous work to retirement. Career gaps (childcare, illness, sabbatical) appear as zero-earning years in the 35-year AIME average, reducing the actual benefit.",
     dt: "Add workGapYears input (default 0). In the ssTotalEarnings loop, spread zeroed-out years across the 35-year AIME average. The denominator in ssAIME already uses max(ssWorkYears, SS_AIME_YEARS) = 35, so gaps naturally drag down the average — we just need to stop assuming all years are earning years. Show impact: estimated benefit with vs without the gap so the user can see what the gap costs them.",
@@ -192,10 +192,10 @@ var DATA = [
     cx: "High", im: "High", af: ["all computed values", "simData", "conversionSim", "totalChartData", "rmdData"], sv: "flowData, optimized (derived)"
   },
   {
-    id: 13, pr: 2, sec: "Flow-Down", st: "planned",
+    id: 13, pr: 2, sec: "Flow-Down", st: "done",
     ti: "Conversion window draws: account for SS claiming age vs retirement age",
-    ds: "During the conversion window (retirement → 72), the user may not have SS yet if claiming at 67+ and retired at 60. Currently uses netPortfolioNeed which subtracts SS regardless of whether it has started.",
-    dt: "Check ssClaimingAge vs each year in the conversion window. For years before SS kicks in, use full effectiveExpenses (minus only pension if applicable) instead of netPortfolioNeed. This affects convWindowDraws in flowData, phase 2 waterfall bars, and the optimized scenario. Most impactful for early retirees (55-62) who won't see SS for years.",
+    ds: "During the conversion window (retirement → 72), the user may not have SS yet if claiming at 67+ and retired at 60. Previously used netPortfolioNeed which subtracted SS regardless of whether it had started.",
+    dt: "Fixed in modeling correctness pass (Jun 2026). totalChartData drawdown loop, convWindowDraws in flowData, and retIncomeFloors[] passed to calcConversionSim all now check ssClaimingAge and pensionStartAge per-year. Pre-SS/pension years use full effectiveExpenses; post-start years use netPortfolioNeed. Also fixed pension timing (pensionStartAge > retirementAge) and spouse FICA in the same pass.",
     cx: "Medium", im: "High", af: ["flowData.convWindowDraws", "phase 2 waterfall", "optimized scenario"], sv: "none (logic change)"
   },
   {
@@ -234,7 +234,7 @@ var DATA = [
     cx: "Medium", im: "High", af: ["ActionCard component", "phase action arrays", "all setState functions"], sv: "none (UX enhancement)"
   },
   {
-    id: 19, pr: 3, sec: "Flow-Down", st: "planned",
+    id: 19, pr: 4, sec: "Flow-Down", st: "planned",
     ti: "Optimized scenario: full parallel simulation",
     ds: "The what-if comparison bar uses annuity math on deltas, which is fast but approximate. A full parallel simData run with optimized inputs would be perfectly accurate.",
     dt: "Create a second useMemo that runs the simData loop with optimized inputs: contrib401k = TRAD_401K_LIMIT_2026, contribHSA = HSA_LIMIT_2026, ssClaimingAge = 70. Compute the same downstream values (totalAtRet, yearsSustained, etc.) from this parallel data. Heavier computation but guarantees the comparison bar matches what the user would see if they applied all changes.",
@@ -302,6 +302,125 @@ var DATA = [
     ds: "Employer match was flat % of salary. Real plans use formulas like '50% of first 6%' where match depends on employee contribution level.",
     dt: "New state: matchMode ('flat'/'formula'), matchFormulaRate, matchFormulaCap. calcEmployerMatch helper function. Toggle UI in Mega Backdoor section. Formula: min(employeeContrib, salary × cap%) × rate%. Applied in simData, optimizedAllocation, employerMatchAmt, and action cards.",
     cx: "Medium", im: "Medium", af: ["simData matchAmt", "employerMatchAmt", "megaCapacity", "optimizedAllocation", "match action card"], sv: "matchMode, matchFormulaRate, matchFormulaCap"
+  },
+  {
+    id: 29, pr: 2, sec: "Monetization", st: "planned",
+    ti: "Premium feature gating: entitlement flag + upsell nudge system",
+    ds: "Infrastructure for locking premium features behind an entitlement flag, plus a contextual upsell nudge that fires when the model detects an incomplete MFJ scenario or a likely combined-income entry. Required before any premium feature can ship.",
+    dt: "Two-part build. (1) Client-side isPremium flag (local for now, API-backed pre-launch). Feature-locked UI renders a lock overlay + 'Unlock' CTA instead of the real content. Structured so any feature can opt-in with a single isPremium guard. (2) Upsell nudge component: fires on two signals — (a) filingStatus='mfj' with no spouse account data entered (unambiguous incomplete model), and (b) heuristic: single/HoH filer where income is high relative to max contribution capacity, suggesting possible combined-income entry. Nudge is dismissible per session, links to premium upgrade path. Track dismissals to avoid harassing users.",
+    cx: "Medium", im: "High", af: ["all premium features", "filingStatus", "spouseIncome", "combinedIncome"], sv: "isPremium, nudgeDismissed"
+  },
+  {
+    id: 30, pr: 2, sec: "Spouse / Household", st: "planned",
+    ti: "Spouse account modeling engine (premium)",
+    ds: "Add full spouse financial profile: income, growth, 401k, Roth, taxable, HSA, employer match. Each spouse's accounts simulate independently with correct per-person IRS limits. HSA uses a coverage-type toggle (self-only vs. family HDHP) since the family limit ($8,550) is a shared household ceiling, not two individual limits. Requires premium flag from #29.",
+    dt: "New state group: spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA, spouseMatchMode/Rate/Cap, hsaCoverageType ('self'/'family'). Second runSimulation call with spouse inputs and spouse's age/growth params. IRS limits applied independently: spouse 401k capped at TRAD_401K_LIMIT_2026 (+ catch-up if spouseCurrentAge >= 50), HSA capped at HSA_LIMIT_2026 (self) or HSA_FAMILY_LIMIT_2026 (family) shared across both contributions. UI: 'Spouse Accounts' section behind premium gate. Toggle mirrors primary account layout. Primary contribution sliders relabeled 'Your accounts' throughout.",
+    cx: "High", im: "High", af: ["simData (second run)", "IRS limits", "HSA cap", "employer match", "optimizedAllocation", "grossAfterTax"], sv: "spouseBal*, spouseContrib*, spouseMatch*, hsaCoverageType"
+  },
+  {
+    id: 31, pr: 3, sec: "Spouse / Household", st: "planned",
+    ti: "Household dashboard: combined portfolio view (premium)",
+    ds: "Aggregate the primary and spouse simulation runs into a single household portfolio view. Users can toggle between 'My accounts', 'Spouse accounts', and 'Combined household' views across the Simple Planner chart, retirement snapshot, and Flow-Down waterfall. Avoids the complexity of two separate full-app instances while letting joint filers see their true combined retirement picture.",
+    dt: "Combined view sums account balances year-by-year from both simulation runs. Chart switcher (3-way toggle: yours / spouse / combined) on the portfolio chart and account cards. Retirement snapshot shows combined totalAtRet. Flow-Down uses combined values. Drawdown uses combined netPortfolioNeed (householdSS already correct, effectiveExpenses reflects household). Action cards aware of which earner has more optimization room. Requires #30 to be complete. The 'second account for second user' upsell is surfaced on the household dashboard — 'Want separate projections and reports for each of you?'",
+    cx: "High", im: "High", af: ["totalChartData", "retVals", "totalAtRet", "flowData", "optimized", "action cards"], sv: "householdView ('primary'/'spouse'/'combined')"
+  },
+  {
+    id: 32, pr: 2, sec: "Monetization", st: "planned",
+    ti: "MFJ incomplete-model detection: contextual accuracy warning",
+    ds: "When the model detects an MFJ filer with no spouse account data, surface a specific, honest callout explaining which numbers are understated and why. Quantify the gap where possible (e.g., 'your optimization recommendations are based on one person's contribution limits — a second earner could add up to $X more in tax-advantaged space'). Link directly to the spouse account unlock.",
+    dt: "Detection condition: filingStatus === 'mfj' && spouseIncome === 0 && !isPremium. Secondary heuristic: filingStatus !== 'mfj' && currentIncome > 150_000 && contrib401k < TRAD_401K_LIMIT_2026 * 0.5 (possible combined-income entry by a single filer). Callout renders in the tax breakdown panel and in the optimization recommendation area. Quantify: show max additional tax-advantaged space (401k + Roth + HSA delta between one-earner and two-earner limits). Dismissible. Fires premium upsell CTA from #29. Does NOT require #30 to be live — can ship the detection and nudge before the full spouse engine is built.",
+    cx: "Low", im: "High", af: ["filingStatus", "spouseIncome", "isPremium", "tax breakdown panel", "optimization section"], sv: "none (detection only)"
+  },
+  {
+    id: 33, pr: 1, sec: "Tax / Retirement", st: "planned",
+    ti: "State retirement income tax exemptions",
+    ds: "The model applies the flat state income tax rate to all retirement withdrawals. Most states treat retirement income differently — 13 states exempt SS entirely, many exempt pension and 401k distributions. For PA retirees the current model overstates state tax to near zero; for others it's the opposite. This is a correctness issue, not just a feature.",
+    dt: "Extend RETIREMENT_STATE_TAX in irs-2026.js with per-state exemption rules: ssExempt (bool), pensionExempt (bool), traditionalExempt (bool), rothExempt (bool). In the retirement tax calculation (rate3Combined), apply exemptions before computing the effective rate. Show breakdown in the Roth conversion section: 'State tax on RMDs in [state]'. Affects rmdTaxBite, rate3Combined, netConversionBenefit, and the retirement tax callout. Low complexity since the config and display infrastructure exist — mostly a data entry + conditional logic task.",
+    cx: "Low", im: "High", af: ["rate3Combined", "rmdTaxBite", "netConversionBenefit", "retStateRate", "retirement tax display"], sv: "none (config + logic)"
+  },
+  {
+    id: 34, pr: 2, sec: "Tax / Retirement", st: "planned",
+    ti: "IRMAA Medicare surcharge modeling",
+    ds: "Medicare Part B and D premiums increase significantly above certain MAGI thresholds (IRMAA). A $20K Roth conversion can trigger $3,000+ in extra Medicare premiums per year — changing the true cost of conversion. This is directly relevant to the conversion window the app already models.",
+    dt: "Add IRMAA_BRACKETS_2026 to irs-2026.js (6 tiers for single/MFJ). In the conversion window section, compute projected MAGI for each year (retIncomeFloor + annualConversion) and look up the IRMAA surcharge. Show IRMAA surcharge as an additional cost per conversion year alongside the tax. Update netConversionBenefit to include IRMAA cost. Add IRMAA warning callout when projected conversion MAGI crosses a tier boundary. Affects users on Medicare (age 65+) during the conversion window — most relevant when retirement age < 65 and conversion window extends past 65.",
+    cx: "Medium", im: "High", af: ["netConversionBenefit", "conversionSim", "retIncomeFloor", "conversion display"], sv: "none (new config + display)"
+  },
+  {
+    id: 35, pr: 2, sec: "Income / Retirement", st: "planned",
+    ti: "Part-time / bridge income in retirement",
+    ds: "Many people work part-time after 'retiring', consult, or have a phased retirement. This bridge income reduces portfolio draws during a critical early-retirement period when sequence-of-returns risk is highest. Currently invisible to the model.",
+    dt: "New state: bridgeIncome, bridgeIncomeGrowth, bridgeStartAge (default = safeRetAge), bridgeEndAge. Derive effectiveBridgeIncome per-year in the drawdown loop (same pattern as SS/pension timing fix). Bridge income reduces netPortfolioNeed during the bridge period. Show in the drawdown callout breakdown alongside SS and pension. Flow-Down waterfall shows a 'Bridge Income' phase step during the relevant years. Shares infrastructure with rental income (#40) — consider building both together with a generic 'additional income source' component.",
+    cx: "Medium", im: "High", af: ["netPortfolioNeed", "totalChartData", "yearsSustained", "flowData waterfall", "drawdown callout"], sv: "bridgeIncome, bridgeIncomeGrowth, bridgeStartAge, bridgeEndAge"
+  },
+  {
+    id: 36, pr: 3, sec: "Income / Retirement", st: "planned",
+    ti: "Rental income as retirement income source",
+    ds: "Rental income is a passive income stream that reduces portfolio draws the same way pension does. Pre-retirement rental income also affects AGI and Roth phase-out. A single rental property generating $24K/yr changes yearsSustained materially.",
+    dt: "New state: rentalIncome, rentalStartAge (default = current age), rentalEndAge (default = lifeExpect). Derive per-year in drawdown loop. Pre-retirement: adds to combinedIncome for AGI/FICA purposes (rental income is passive — no FICA, but counts for Roth phase-out MAGI). Post-retirement: reduces netPortfolioNeed like pension. Show in drawdown callout. Shares architecture with bridge income (#35) — build together using a generic 'additional income source' pattern: { amount, growth, startAge, endAge, isTaxable, isPassive }.",
+    cx: "Medium", im: "Medium", af: ["netPortfolioNeed", "agi (pre-retirement)", "yearsSustained", "drawdown callout"], sv: "rentalIncome, rentalStartAge, rentalEndAge"
+  },
+  {
+    id: 37, pr: 2, sec: "Income / Retirement", st: "planned",
+    ti: "Self-employment / Solo 401k income mode",
+    ds: "Self-employed workers (freelancers, consultants, business owners) can contribute up to $69,000/yr to a Solo 401k — 3× the W-2 employee limit. They also pay SE tax (15.3% on net earnings) instead of the 7.65% FICA employee share, and can deduct half. Completely invisible to the current model.",
+    dt: "New state: isSelfEmployed (toggle). When true: change FICA display to SE tax (15.3%, capped at FICA_WAGE_BASE * 2 for SS portion), show SE deduction (half of SE tax reduces AGI). Change 401k elective limit to TRAD_401K_LIMIT_2026 + employer contribution (25% of net SE income, capped at LIMIT_415C_2026 total). Add SEP-IRA as an alternative (25% of net SE income, no employee side, simpler). Roth phase-out thresholds unchanged. Optimization recommendation updates to show Solo 401k capacity. Significantly changes savingsCapacity and optimizedAllocation for self-employed users.",
+    cx: "Medium", im: "High", af: ["fica", "agi (SE deduction)", "contrib401k limits", "optimizedAllocation", "megaCapacity"], sv: "isSelfEmployed, selfEmploymentIncome"
+  },
+  {
+    id: 38, pr: 2, sec: "Analytics", st: "planned",
+    ti: "Monte Carlo simulation: probabilistic retirement success rate",
+    ds: "The app uses a fixed return rate for 30-60 year projections, producing a single deterministic outcome. Sequence-of-returns risk means a bad decade at the start of retirement can devastate a plan even with the right average return. Monte Carlo runs 1,000 scenarios with randomized annual returns and shows a probability distribution: '87% of scenarios sustain through age 90'.",
+    dt: "Add runMonteCarlo(params, iterations=1000) to simulation.js or a new analytics.js model file. Each iteration draws annual returns from a normal distribution (mean=returnRate, stdDev=~10% for equities). Run the drawdown phase for each iteration, record the age at depletion. Output: successRate (% lasting to safeLifeExp), median depletion age, p10/p25/p75/p90 depletion ages. Display as a probability band overlay on the portfolio chart (fan chart) and a headline 'X% success rate' stat card. The deterministic projection remains the primary view; Monte Carlo is an overlay. Premium feature — computation is heavy and the output requires explanation.",
+    cx: "High", im: "High", af: ["totalChartData (overlay)", "yearsSustained (probabilistic version)", "new analytics display"], sv: "monteCarloEnabled, monteCarloIterations"
+  },
+  {
+    id: 39, pr: 3, sec: "Analytics", st: "planned",
+    ti: "Historical sequence stress-test (premium)",
+    ds: "Run the user's retirement plan against real historical market sequences: 2000-2002 dot-com crash, 2008-2009 financial crisis, 1965-1982 stagflation decade. Shows 'would your plan have survived the worst decade in market history?' More visceral and understandable than Monte Carlo for most users.",
+    dt: "Add HISTORICAL_SEQUENCES to config: named periods with year-by-year S&P returns (30-year sequences starting at worst historical entry points). Run the drawdown loop with each sequence instead of a fixed return. Display as a comparison table: scenario name, portfolio at age 75/80/85/90, survived Y/N. Premium feature — pairs naturally with Monte Carlo (#38) as the 'Analytics' premium module. Builds on same drawdown infrastructure. Sequences sourced from historical S&P data, stored as config constants.",
+    cx: "Medium", im: "Medium", af: ["totalChartData (alternative sequences)", "yearsSustained per scenario"], sv: "none (config + display)"
+  },
+  {
+    id: 40, pr: 2, sec: "Platform", st: "planned",
+    ti: "Scenario save and compare (premium)",
+    ds: "Save named plan snapshots and compare them side-by-side. 'Retire at 60 vs 65 vs 70', 'With rental income vs without', 'Max contributions vs current pace'. Core planning workflow — currently users must manually track what they change.",
+    dt: "Serialize full app state (all ~48 state variables) to a named snapshot object. Store up to N snapshots in localStorage (free tier: 2, premium: unlimited). Scenario comparison view: select 2-3 snapshots, show side-by-side table of key metrics (totalAtRet, yearsSustained, withdrawalRate, netConversionBenefit, firstRMD). Also enables the 'what-if' workflow: duplicate current scenario, tweak inputs, compare delta. State serialization is also the prerequisite for PDF export (#41) and advisor sharing (#45).",
+    cx: "Medium", im: "High", af: ["all state variables", "new comparison UI", "localStorage persistence"], sv: "savedScenarios[], activeScenario"
+  },
+  {
+    id: 41, pr: 3, sec: "Platform", st: "planned",
+    ti: "PDF retirement plan report (premium)",
+    ds: "Generate a printable 2-3 page summary: current tax picture, retirement projection, key action items, headline numbers. High perceived value — users want something they can show a spouse, a parent, or bring to a financial advisor meeting.",
+    dt: "Use browser print API or a PDF library (e.g., jsPDF) to render a clean report template. Sections: (1) Your Profile (age, income, filing status, accounts), (2) Retirement Snapshot (totalAtRet, yearsSustained, withdrawalRate, SS benefit), (3) Tax Strategy (Roth conversion recommendation, RMD projection, rate3 estimate), (4) Action Items (top 3-5 from action cards). Requires state to be stable — build after scenario save (#40) so the report can reference a named snapshot. Premium gate.",
+    cx: "Medium", im: "High", af: ["all computed values (display only)", "new print template"], sv: "none (output only)"
+  },
+  {
+    id: 42, pr: 3, sec: "Platform", st: "planned",
+    ti: "Advisor collaboration mode (premium)",
+    ds: "Let users share a read-only view of their plan with a financial advisor. Advisors can annotate but not edit. Natural B2B angle: advisors pay for multi-client access (advisor tier); users get advisor oversight as a premium benefit. Requires auth infrastructure (deferred to pre-launch backend split).",
+    dt: "Client-side: serialize plan state to a shareable URL or token (extends scenario save #40). Read-only view mode: all inputs disabled, advisor annotation overlay. Advisor-tier account: dashboard of client plans, annotation tools, export to PDF. User-tier: 'Share with advisor' CTA in premium section, generates a time-limited read-only link. Backend: plan storage API, user auth, advisor-client relationship model. Deferred until server infrastructure is ready (CLAUDE.md rule #8) but UI scaffolding (share button, read-only mode) can be built client-side first.",
+    cx: "High", im: "High", af: ["all state (serialization)", "new advisor UI", "auth/backend"], sv: "shareToken, isReadOnly, advisorAnnotations"
+  },
+  {
+    id: 43, pr: 3, sec: "Income / Retirement", st: "planned",
+    ti: "Long-term care expense shock modeling",
+    ds: "Long-term care is the single biggest unmodeled retirement risk. Median nursing home cost is $100K+/yr. The app models stable expenses; an LTC event can deplete a portfolio in 3-5 years. Show the impact of an LTC expense period on portfolio longevity.",
+    dt: "New state: ltcMonthlyEstimate (default 0), ltcStartAge, ltcDurationYrs. In the drawdown loop, add ltcMonthlyEstimate * 12 to effectiveExpenses during [ltcStartAge, ltcStartAge + ltcDurationYrs]. Show a second 'LTC scenario' line on the portfolio chart. Display: 'With LTC event, portfolio depletes at age X (vs Y without)'. Optional: LTC insurance offset input (monthly benefit that reduces the out-of-pocket cost). Simple to implement — uses existing drawdown loop with an expense override.",
+    cx: "Low", im: "Medium", af: ["totalChartData (second line)", "yearsSustained (LTC scenario)", "drawdown display"], sv: "ltcMonthlyEstimate, ltcStartAge, ltcDurationYrs"
+  },
+  {
+    id: 44, pr: 3, sec: "Income / Accumulation", st: "planned",
+    ti: "RSU / equity compensation vesting",
+    ds: "RSUs are taxed as ordinary income at vest, then become taxable brokerage. For tech and finance workers, a vesting schedule can represent $50K-$200K+ of irregular income that materially affects brackets, Roth eligibility, and contribution capacity in ways a flat income number cannot model.",
+    dt: "New state: rsuAnnualVest (annual vest amount), rsuVestEndAge, rsuGrowthRate. In the simulation loop, add rsuAnnualVest to income for years before rsuVestEndAge (subject to income growth). This increases combinedIncome for Roth phase-out, raises the marginal bracket, and generates additional taxable brokerage balance (vest amount after tax). Display: RSU section in the income panel with vest amount and after-tax proceeds estimate. More advanced: support cliff/graded schedules with a vest table.",
+    cx: "Medium", im: "Medium", af: ["simData income", "agi", "Roth phase-out", "taxable balance", "combinedIncome"], sv: "rsuAnnualVest, rsuVestEndAge"
+  },
+  {
+    id: 45, pr: 4, sec: "Tax / Retirement", st: "planned",
+    ti: "Net Investment Income Tax (NIIT) surtax awareness",
+    ds: "A 3.8% surtax applies to investment income (dividends, capital gains, rental income) above $200K/$250K MAGI. Affects Roth conversion planning and taxable brokerage withdrawals for higher earners. Currently invisible.",
+    dt: "Add NIIT_THRESHOLD_2026 to irs-2026.js ({single: 200_000, mfj: 250_000}). In the conversion window display, flag when projected MAGI (retIncomeFloor + conversion) exceeds the NIIT threshold — show the 3.8% surcharge on investment income above the threshold. Also flag in the taxable brokerage withdrawal section. Niche — only materially relevant above $200K investment income — but important for high-net-worth users.",
+    cx: "Low", im: "Low", af: ["conversion display", "taxable withdrawal section", "netConversionBenefit (minor)"], sv: "none (config + display)"
   }
 ];
 
