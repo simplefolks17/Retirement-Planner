@@ -5,35 +5,40 @@
 ```
 src/
   config/
-    irs-2026.js           All 2026 IRS constants (one object, one update point)
+    irs-2026.js           All 2026 IRS constants + ASSUMPTIONS object           [CLIENT]
   model/                  Pure functions — no React. Used client-side AND server-side.
-    taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax         [CLIENT]
+    taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, getTaxRate  [CLIENT]
     social-security.js    calcAIME, calcPIA, calcBenefit, calcSpousal           [CLIENT]
     simulation.js         runSimulation (accumulation loop)                     [CLIENT]
-    drawdown.js           calcNetPortfolioNeed, calcYearsSustained              [CLIENT]
+    drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained  [CLIENT]
     employer-match.js     calcEmployerMatch (flat + formula modes)              [CLIENT]
     rmd.js                calcRMDProjection, calcRMDPostConversion              [CLIENT]
-    budget.js             calcGrossAfterTax, calcSavingsCapacity                [CLIENT]
-    optimization.js       calcOptimizedAllocation, calcOptimizedScenario        [SERVER]
+    budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation  [CLIENT]
+    optimization.js       calcOptimizedScenario                                 [SERVER]
     roth-conversion.js    calcConversionSim (dual tax-source scenarios)         [SERVER]
-    action-cards.js       generatePhaseActions (conditional card logic)         [SERVER]
+    action-cards.js       generatePhaseActions, generatePhaseSteps              [SERVER]
+    __tests__/            Vitest suites — one per model file + golden-master.test.js
   components/             React UI — all client-side
-    Slider.jsx
-    DeferredInput.jsx
-    TaxPhaseCard.jsx      ...etc (see full list in docs/DESIGN.md)
-  tabs/
-    SimplePlanner.jsx
-    DetailedPlanner.jsx
-    FlowDown.jsx
-  App.jsx                 State management, tab routing, layout shell
+    ActionCard.jsx        ChartTooltip.jsx   DeferredInput.jsx   FlowConn.jsx
+    PhaseCard.jsx         Slider.jsx         TaxPhaseCard.jsx    TaxTimeline.jsx
+    WaterfallStep.jsx
+  __tests__/
+    formatters.test.js    Boundary tests for fmt() / fmtPct()
+  App.jsx                 State management, tab routing, layout shell, AND the three
+                          tab bodies (Simple / Detailed / Flow-Down) rendered inline.
+                          Calls the model layer — no inline duplication of model math.
   theme.js                Design tokens (colors, shared styles)
   formatters.js           fmt, fmtPct
-api/                      Vercel serverless functions (server-side, code not shipped to browser)
-  optimize.js             POST → imports optimization.js
-  allocate.js             POST → imports budget.js (allocation engine)
-  actions.js              POST → imports action-cards.js
-  conversion.js           POST → imports roth-conversion.js
+  main.jsx                React entry point
+api/                      Vercel serverless functions — PLANNED, not yet created.
+  (pre-launch)            [SERVER] model files move behind these routes before launch.
+                          During development they are imported directly. See CLAUDE.md rule #8.
 ```
+
+> **Note on `tabs/`:** an earlier plan split the three tab bodies into
+> `src/tabs/SimplePlanner.jsx` etc. That split has not been done — the tab
+> bodies still live inline in `App.jsx`. App.jsx no longer duplicates model
+> math, though: every computation is delegated to a `src/model/` function.
 
 **[CLIENT]** = runs in the browser, code visible. Public financial math.
 **[SERVER]** = runs in Vercel serverless functions, code never ships to browser. Protected competitive logic.
@@ -103,7 +108,24 @@ INPUTS (state variables)
 
 ## Testing Strategy
 
-Tests live alongside model files: `src/model/__tests__/`.
+Tests live alongside model files: `src/model/__tests__/` (one suite per model
+file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
+`npm test`. Current count: **127 tests across 12 files**, all passing.
+
+### Golden master
+`src/model/__tests__/golden-master.test.js` locks the end-to-end output of the
+whole model chain at the default UI state (taxes → SS → simulation → drawdown
+→ RMD → Roth conversion). It mirrors App.jsx's wiring exactly, so if a model
+change shifts any headline number the golden master fails immediately. The
+locked values are documented in the test header. Update them deliberately
+(never blindly) when an intended change moves a number.
+
+### Visual verifier
+`.claude/skills/verifier-browser.cjs` drives all three tabs with Playwright and
+checks rendered values, reactivity, and console/network health. See
+`.claude/skills/verifier-browser.md` for how to run it and the false-alarm
+reference table (notably: `fmt()` output is `$3.57M` / `$118K`, so currency
+regexes must match `\$[\d.]+[MK]?`, never `\$[\d,]+`).
 
 ### Must-test scenarios
 - **taxes.js**: Known bracket math for each filing status; marginal rate at bracket boundaries; state rate override

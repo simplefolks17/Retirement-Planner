@@ -140,6 +140,21 @@ withdrawalRate = netPortfolioNeed / totalAtRet × 100
 ```
 Uses net need, not gross expenses. A 3.5% rate means the portfolio funds 3.5% of itself, with SS/pension covering the rest.
 
+## Modeling Assumptions (`ASSUMPTIONS` constant)
+
+Non-statutory factors used throughout the model live in the `ASSUMPTIONS`
+object in `src/config/irs-2026.js` — never hardcoded at call sites (rule #1).
+These are modeling choices, not IRS limits, but they are centralized for the
+same reason: one update point, no magic numbers scattered across the code.
+
+| Constant | Value | Used for |
+|---|---|---|
+| `SS_TAXABLE_PCT` | 0.85 | Share of SS benefit treated as taxable income in bracket-fill math |
+| `MONTHS_PER_YEAR` | 12 | Monthly → annual conversions (SS, pension) |
+| `SPOUSAL_BENEFIT_PCT` | 0.5 | Spousal benefit = 50% of primary PIA |
+| `PIA_FACTOR_1/2/3` | 0.90 / 0.32 / 0.15 | PIA bend-point replacement rates |
+| `LTCG_DRAG_PROXY` | 0.15 | Annual taxable-brokerage drag proxy (`r × (1 − 0.15)`) |
+
 ## Known Simplifications
 
 These are intentional modeling choices, not bugs. Document them so users and reviewers understand the tradeoffs.
