@@ -139,25 +139,33 @@ export default function App() {
 
   const atRetirement = simData[phase2End - 1] ?? {};
 
+  const combinedIncome       = currentIncome + spouseIncome;
+
+  // For MFJ filers, both incomes are reported on the same return.
+  // Primary pre-tax deductions (401k, HSA) reduce primary income first;
+  // spouse deductions aren't tracked (no sliders), so spouse income enters
+  // as gross. For all other filing statuses, spouse income is separate.
   const totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc;
   const safeDeduc        = Math.min(totalPreTaxDeduc, currentIncome);
-  const agi              = currentIncome - safeDeduc;
+  const agi              = filingStatus === "mfj"
+    ? currentIncome - safeDeduc + spouseIncome
+    : currentIncome - safeDeduc;
   const { tax: fedTax, effectiveRate: fedEffRate } = calcTax(agi, filingStatus);
   const fedMarginal      = marginalRate(agi, filingStatus);
   const stateRateDefault = STATE_TAX[selectedState]?.rate ?? 0;
   const stateRate        = stateRateOverride !== null ? stateRateOverride : stateRateDefault;
   const stateTax         = agi * stateRate;
   const fica             = (Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)) * FICA_RATE;
-  const takeHome         = currentIncome - fedTax - stateTax - fica - safeDeduc;
-  const combinedEffRate  = (fedTax + stateTax + fica) / currentIncome;
+  // takeHome: household total when spouse income is present, primary-only otherwise.
+  const householdIncome  = filingStatus === "mfj" ? combinedIncome : currentIncome;
+  const takeHome         = householdIncome - fedTax - stateTax - fica - safeDeduc;
+  const combinedEffRate  = (fedTax + stateTax + fica) / (householdIncome || 1);
   const noStateTax       = stateRate === 0;
-
-  const combinedIncome       = currentIncome + spouseIncome;
   const rothPhaseout         = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
   const rothPhaseoutWarning  = combinedIncome >= rothPhaseout.start;
   const rothFullyPhased      = combinedIncome >= rothPhaseout.end;
 
-  const grossAfterTax = calcGrossAfterTax(currentIncome, fedTax, stateTax, fica);
+  const grossAfterTax = calcGrossAfterTax(householdIncome, fedTax, stateTax, fica);
   const { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus } =
     calcSavingsCapacity({
       grossAfterTax, contrib401k, contribRoth, contribTaxable, contribHSA, livingExpenses,
@@ -737,13 +745,13 @@ export default function App() {
               2026 Tax Breakdown
             </p>
             {[
-              { label: "Gross Income",             val: fmt(currentIncome),                            color: C.text    },
+              { label: spouseIncome > 0 ? "Household Gross" : "Gross Income", val: fmt(householdIncome),                     color: C.text    },
               { label: "Pre-Tax Deductions",        val: safeDeduc > 0 ? `- ${fmt(safeDeduc)}` : "-",  color: safeDeduc > 0 ? C.blue : C.muted },
               { label: "AGI",                       val: fmt(agi),                                      color: C.gold    },
               { label: "Federal Tax",               val: fmt(fedTax),                                   color: C.orange  },
               { label: `State Tax (${selectedState})`, val: noStateTax ? "-" : fmt(stateTax),           color: noStateTax ? C.muted : C.purple },
-              { label: "FICA (7.65%)",              val: fmt(fica),                                     color: "#6e7681" },
-              { label: "Est. Take-Home",            val: fmt(takeHome),                                 color: C.green   },
+              { label: spouseIncome > 0 ? "FICA (both earners)" : "FICA (7.65%)", val: fmt(fica),      color: "#6e7681" },
+              { label: spouseIncome > 0 ? "Est. Household Take-Home" : "Est. Take-Home", val: fmt(takeHome), color: C.green },
             ].map(({ label, val, color }) => (
               <div key={label} className="breakdown-row">
                 <span style={{ color: C.muted }}>{label}</span>
@@ -753,9 +761,9 @@ export default function App() {
             <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 8, paddingTop: 8,
               display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               {[
-                { label: "Fed Effective", val: fmtPct(fedEffRate * 100),             color: C.orange, sub: "fed / AGI"   },
-                { label: "Marginal",      val: `${(fedMarginal * 100).toFixed(0)}%`, color: C.gold,   sub: "next $1"     },
-                { label: "Combined",      val: fmtPct(combinedEffRate * 100),        color: C.blue,   sub: "all / gross" },
+                { label: "Fed Effective", val: fmtPct(fedEffRate * 100),             color: C.orange, sub: "fed / AGI"              },
+                { label: "Marginal",      val: `${(fedMarginal * 100).toFixed(0)}%`, color: C.gold,   sub: "next $1"                },
+                { label: "Combined",      val: fmtPct(combinedEffRate * 100),        color: C.blue,   sub: spouseIncome > 0 ? "all / household" : "all / gross" },
               ].map(({ label, val, color, sub }) => (
                 <div key={label}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>{label}</p>
