@@ -147,7 +147,7 @@ export default function App() {
   const stateRateDefault = STATE_TAX[selectedState]?.rate ?? 0;
   const stateRate        = stateRateOverride !== null ? stateRateOverride : stateRateDefault;
   const stateTax         = agi * stateRate;
-  const fica             = Math.min(currentIncome, FICA_WAGE_BASE) * FICA_RATE;
+  const fica             = (Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)) * FICA_RATE;
   const takeHome         = currentIncome - fedTax - stateTax - fica - safeDeduc;
   const combinedEffRate  = (fedTax + stateTax + fica) / currentIncome;
   const noStateTax       = stateRate === 0;
@@ -260,12 +260,17 @@ export default function App() {
     }
     let bal = result[result.length - 1]?.total ?? 0;
     for (let age = safeRetAge + 1; age <= safeLifeExp; age++) {
-      bal = bal * (1 + rReal) - netPortfolioNeed;
+      const yearSS      = includeSS && age > ssClaimingAge ? householdSS : 0;
+      const yearPension = pensionMonthly > 0 && age > pensionStartAge
+        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+      const yearNeed    = calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
+      bal = bal * (1 + rReal) - yearNeed;
       result.push({ age, total: Math.max(0, Math.round(bal)) });
       if (bal <= 0) break;
     }
     return result;
-  }, [simData, safeRetAge, safeLifeExp, returnRate, inflationRate, netPortfolioNeed]);
+  }, [simData, safeRetAge, safeLifeExp, returnRate, inflationRate, effectiveExpenses,
+      includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge, inflationRate]);
 
   const ssBreakEven = ssClaimingAge === SS_FRA ? null : (() => {
     let cumClaim = 0, cum67 = 0;
@@ -301,14 +306,24 @@ export default function App() {
 
   const retTaxData       = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
   const ssTaxableRet     = householdSS * ASSUMPTIONS.SS_TAXABLE_PCT;
-  const retIncomeFloor   = ssTaxableRet + effectivePension;
+  // Per-year income floors for the conversion window: SS and pension only count
+  // in years when they've actually started (ssClaimingAge / pensionStartAge).
+  const convFloors = Array.from({ length: conversionWindowYrs }, (_, i) => {
+    const age         = safeRetAge + i;
+    const yearSSTax   = includeSS && age >= ssClaimingAge ? ssTaxableRet : 0;
+    const yearPension = pensionMonthly > 0 && age >= pensionStartAge
+      ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+    return yearSSTax + yearPension;
+  });
+  // Steady-state floor (all sources active) — used for display and bracket fill.
+  const retIncomeFloor   = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
   const bracketTops      = {
     12: retTaxData.brackets[1]?.max ?? 50_400,
     22: retTaxData.brackets[2]?.max ?? 105_700,
     24: retTaxData.brackets[3]?.max ?? 201_775,
   };
   const bracketFillConversion = Math.max(0, Math.round(
-    (bracketTops[conversionBracketTarget] ?? bracketTops[22]) + retTaxData.deduction - ssTaxableRet - effectivePension
+    (bracketTops[conversionBracketTarget] ?? bracketTops[22]) + retTaxData.deduction - ssTaxableRet - (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0)
   ));
   const annualConversion = conversionMode === "bracket" ? bracketFillConversion : annualConversionAmt;
 
@@ -316,14 +331,15 @@ export default function App() {
     const retRow = simData.find(d => d.age === safeRetAge);
     const raw = calcConversionSim({
       conversionWindowYrs: retRow ? conversionWindowYrs : 0,
-      annualConversion, returnRate, retIncomeFloor, filingStatus, conversionTaxSource,
+      annualConversion, returnRate, retIncomeFloor, retIncomeFloors: convFloors,
+      filingStatus, conversionTaxSource,
       tradGrossAtRetirement: retRow?.tradGross ?? 0,
       rothBalAtRet: retVals["Roth IRA"] ?? 0,
       taxableBalAtRet: retVals["Taxable"] ?? 0,
     });
     // Model returns year ages as 1-indexed (yr+1); offset by safeRetAge for display.
     return { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + safeRetAge })) };
-  }, [simData, safeRetAge, conversionWindowYrs, annualConversion, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, filingStatus, conversionTaxSource]);
+  }, [simData, safeRetAge, conversionWindowYrs, annualConversion, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource]);
 
   const rmdDataPostConversion = useMemo(() => calcRMDPostConversion({
     conversionWindowYrs, rmdData, tradBal73: conversionSim.tradBal73,
@@ -404,7 +420,15 @@ export default function App() {
     const portAt73       = totalChartData.find(d => d.age === RMD_START_AGE)?.total
                         ?? totalChartData.find(d => d.age === safeRetAge)?.total
                         ?? totalAtRet;
-    const convWindowDraws  = netPortfolioNeed * conversionWindowYrs;
+    // Per-year draws: SS and pension only deducted in years they've started.
+    let convWindowDraws = 0;
+    for (let i = 0; i < conversionWindowYrs; i++) {
+      const age         = safeRetAge + i;
+      const yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0;
+      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
+        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+      convWindowDraws  += calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
+    }
     const convWindowTax    = hasConvWindow ? conversionSim.totalTax : 0;
     const totalConverted   = hasConvWindow
       ? conversionSim.years.reduce((s, y) => s + y.conversion, 0)
@@ -439,6 +463,7 @@ export default function App() {
     bal401k, balRoth, balTaxable, balHSA, simData, safeRetAge, totalAtRet,
     conversionWindowYrs, conversionSim, totalChartData, safeLifeExp,
     netPortfolioNeed, rmdTaxBite, yearsSustained,
+    includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge, effectiveExpenses,
   ]);
 
   const optimized = useMemo(() => calcOptimizedScenario({

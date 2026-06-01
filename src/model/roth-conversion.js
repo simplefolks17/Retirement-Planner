@@ -11,6 +11,9 @@ export function calcConversionSim({
   annualConversion,
   returnRate,
   retIncomeFloor,
+  // Optional per-year income floors array. When provided, overrides retIncomeFloor
+  // for each year so pre-SS / pre-pension years use the correct (lower) floor.
+  retIncomeFloors,
   filingStatus,
   conversionTaxSource,
   tradGrossAtRetirement,
@@ -42,8 +45,9 @@ export function calcConversionSim({
     tradB *= (1 + r); rothB *= (1 + r); taxableB *= (1 + r);
 
     const conversion = Math.min(annualConversion, Math.min(tradA, tradB));
+    const floor = retIncomeFloors ? (retIncomeFloors[yr] ?? retIncomeFloor) : retIncomeFloor;
     const taxOnConversion = Math.round(
-      conversion * marginalRate(retIncomeFloor + conversion, filingStatus)
+      conversion * marginalRate(floor + conversion, filingStatus)
     );
 
     // Scenario A: deduct tax from the converted amount itself
