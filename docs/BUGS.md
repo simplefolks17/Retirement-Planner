@@ -206,7 +206,61 @@ The card already shows a "sync" button when projected RMD + SS income puts you i
 
 ## Resolved Issues
 
-*(None yet — move entries here with a fix date and commit reference once resolved.)*
+---
+
+### ~~BUG-02~~ — "Fed / AGI" label reads as a division expression
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` line 764  
+**Change:** Sub-label changed from `"fed / AGI"` to `"fed tax ÷ AGI"`. Same treatment applied to the Combined sub-label (`"all / gross"` → `"all ÷ gross · ref only"` and `"all / household"` → `"all ÷ household · ref only"`).
+
+---
+
+### ~~BUG-02a~~ — "Combined" effective rate unexplained
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` lines 766, 778  
+**Change:** Marginal and Combined stats are now rendered in muted color with "ref only" in their sub-labels, visually distinguishing them from the headline Fed Effective rate. The explanatory note now explicitly states that these two figures are current-year reference only and do not feed into projections; it also points the user to the Phase 3 Retirement Federal Rate as the value that actually drives all projections.
+
+---
+
+### ~~BUG-03~~ — "Other Pre-Tax" row appearing from nothing causes layout jump
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` line 611  
+**Change:** Removed the `{otherPreTaxDeduc > 0 && ...}` conditional. The "Other pre-tax" row is now always rendered; it shows `—` in muted color when the slider is at $0, and switches to the dollar amount in blue once a value is entered. Card height no longer changes as the slider moves off zero.
+
+---
+
+### ~~BUG-03a~~ — HSA default appears in Pre-Tax Deductions but is set far below
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` line 608  
+**Change:** Added `(set in Accounts below)` in italics next to the "HSA contribution" label in the Pre-Tax Deductions breakdown. No model changes.
+
+---
+
+### ~~BUG-04~~ — "→ $X at ret." annotation is unexplained
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` lines 1135–1174  
+**Change:** Added a small sub-line beneath the annotation reading *"contrib. amount scaled with income growth"* so the user understands the number is a projected contribution dollar amount, not a portfolio value.
+
+---
+
+### ~~BUG-04a~~ — "→ $X at ret." projection can show values above IRS limits
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` line 1136  
+**Change:** The projected contribution is now capped at `contribMax` (the per-account IRS limit) before display. When the projection hits the cap, `(IRS cap)` is appended to the annotation, making it clear the number represents the maximum allowed rather than an unconstrained projection. The growth calculation is also guarded to only run when `incomeGrowth > 0` to avoid showing a projection that equals the current contribution.
+
+---
+
+### ~~BUG-05~~ — Retirement Federal Rate: unclear what it drives
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` line 1063  
+**Change:** Added a short paragraph inside the Phase 3 card above the retirement-state selector: *"This rate drives all post-retirement calculations: portfolio charts, drawdown model, Roth conversion analysis, and the withdrawal strategy card. An incorrect estimate will silently skew every projection."*
 
 ---
 

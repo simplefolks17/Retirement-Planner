@@ -605,15 +605,15 @@ export default function App() {
                       <span style={{ color: C.gold, ...mono }}>{fmt(contrib401k)}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
-                      <span style={{ color: C.muted }}>HSA contribution</span>
+                      <span style={{ color: C.muted }}>HSA contribution <span style={{ fontStyle: "italic" }}>(set in Accounts below)</span></span>
                       <span style={{ color: C.purple, ...mono }}>{fmt(contribHSA)}</span>
                     </div>
-                    {otherPreTaxDeduc > 0 && (
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
-                        <span style={{ color: C.muted }}>Other pre-tax</span>
-                        <span style={{ color: C.blue, ...mono }}>{fmt(otherPreTaxDeduc)}</span>
-                      </div>
-                    )}
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                      <span style={{ color: C.muted }}>Other pre-tax</span>
+                      <span style={{ color: otherPreTaxDeduc > 0 ? C.blue : C.muted, ...mono }}>
+                        {otherPreTaxDeduc > 0 ? fmt(otherPreTaxDeduc) : "—"}
+                      </span>
+                    </div>
                   </div>
                   <Slider label="Other Pre-Tax (FSA, dep. care, transit)" value={otherPreTaxDeduc}
                     min={0} max={20_000} step={250}
@@ -761,9 +761,9 @@ export default function App() {
             <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 8, paddingTop: 8,
               display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               {[
-                { label: "Fed Effective", val: fmtPct(fedEffRate * 100),             color: C.orange, sub: "fed / AGI"              },
-                { label: "Marginal",      val: `${(fedMarginal * 100).toFixed(0)}%`, color: C.gold,   sub: "next $1"                },
-                { label: "Combined",      val: fmtPct(combinedEffRate * 100),        color: C.blue,   sub: spouseIncome > 0 ? "all / household" : "all / gross" },
+                { label: "Fed Effective", val: fmtPct(fedEffRate * 100),             color: C.orange, sub: "fed tax ÷ AGI"           },
+                { label: "Marginal",      val: `${(fedMarginal * 100).toFixed(0)}%`, color: C.muted,  sub: "next $1 · ref only"     },
+                { label: "Combined",      val: fmtPct(combinedEffRate * 100),        color: C.muted,  sub: spouseIncome > 0 ? "all ÷ household · ref only" : "all ÷ gross · ref only" },
               ].map(({ label, val, color, sub }) => (
                 <div key={label}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>{label}</p>
@@ -775,7 +775,8 @@ export default function App() {
             <div className="breakdown-note" style={{ marginTop: 8, padding: "7px 10px", background: "#0a0e14", borderRadius: 6, borderLeft: `2px solid ${C.border}` }}>
               <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
                 <span style={{ color: C.orange }}>Fed Effective</span> uses AGI — pre-tax contributions reduce federal taxable income.{" "}
-                <span style={{ color: C.blue }}>Combined</span> uses gross — FICA is assessed on gross wages.
+                <span style={{ color: C.muted }}>Marginal</span> and <span style={{ color: C.muted }}>Combined</span> are current-year reference figures only — they do not feed into projections.{" "}
+                Retirement projections use your <span style={{ color: C.green }}>Retirement Federal Rate</span> (Phase 3 below) combined with your retirement state tax.
               </p>
             </div>
           </div>
@@ -1066,6 +1067,11 @@ export default function App() {
             rate={rate3} setRate={setRate3}
             combinedRate={rate3Combined}
           >
+            <p style={{ margin: "6px 0 0", fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
+              This rate drives all post-retirement calculations: portfolio charts, drawdown
+              model, Roth conversion analysis, and the withdrawal strategy card.
+              An incorrect estimate will silently skew every projection.
+            </p>
             <div style={{ marginTop: 8 }}>
               <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted }}>
                 Retirement state
@@ -1132,9 +1138,11 @@ export default function App() {
             {ACCOUNTS.map(({ key, color, note, val, setVal, contrib, setContrib, contribMax, endAge, setEndAge, growsWithIncome }) => {
               const step        = contribMax <= 10_000 ? 100 : contribMax <= 30_000 ? 500 : 1_000;
               const warnEndAge  = endAge > safeRetAge;
-              const projContrib = growsWithIncome && contrib > 0
-                ? fmt(contrib * Math.pow(1 + incomeGrowth / 100, phase2End - 1))
+              const projContribRaw = growsWithIncome && contrib > 0 && incomeGrowth > 0
+                ? Math.min(contrib * Math.pow(1 + incomeGrowth / 100, phase2End - 1), contribMax)
                 : null;
+              const projContrib = projContribRaw ? fmt(projContribRaw) : null;
+              const projContribCapped = projContribRaw !== null && projContribRaw === contribMax;
               return (
                 <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto",
                   gap: 8, alignItems: "start", padding: "8px 0",
@@ -1168,10 +1176,15 @@ export default function App() {
                       style={{ width: "100%", accentColor: color, marginTop: 4 }} />
                     <span style={{ fontSize: 9, color: C.muted }}>
                       max ${contribMax.toLocaleString()}/yr
-                      {projContrib && incomeGrowth > 0
-                        ? <span style={{ color }}> · → {projContrib} at ret.</span>
-                        : !growsWithIncome ? <span> · fed. cap</span> : null}
+                      {projContrib
+                        ? <span style={{ color }}> · → {projContrib} at ret.{projContribCapped ? " (IRS cap)" : ""}</span>
+                        : !growsWithIncome ? <span> · IRS-capped, won't scale</span> : null}
                     </span>
+                    {projContrib && (
+                      <span style={{ fontSize: 8, color: C.muted, display: "block", lineHeight: 1.3, marginTop: 1 }}>
+                        contrib. amount scaled with income growth
+                      </span>
+                    )}
                     {key === "Traditional 401k" && contrib401kRoom > 0 && fedMarginal > 0 && (
                       <p style={{ margin: "3px 0 0", fontSize: 9, color: C.gold, lineHeight: 1.4 }}>
                         Max saves <span style={{ fontWeight: 700 }}>{fmt(contrib401kTaxSave)}</span> more in fed tax this yr
