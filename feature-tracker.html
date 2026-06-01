@@ -302,6 +302,34 @@ var DATA = [
     ds: "Employer match was flat % of salary. Real plans use formulas like '50% of first 6%' where match depends on employee contribution level.",
     dt: "New state: matchMode ('flat'/'formula'), matchFormulaRate, matchFormulaCap. calcEmployerMatch helper function. Toggle UI in Mega Backdoor section. Formula: min(employeeContrib, salary × cap%) × rate%. Applied in simData, optimizedAllocation, employerMatchAmt, and action cards.",
     cx: "Medium", im: "Medium", af: ["simData matchAmt", "employerMatchAmt", "megaCapacity", "optimizedAllocation", "match action card"], sv: "matchMode, matchFormulaRate, matchFormulaCap"
+  },
+  {
+    id: 29, pr: 2, sec: "Monetization", st: "planned",
+    ti: "Premium feature gating: entitlement flag + upsell nudge system",
+    ds: "Infrastructure for locking premium features behind an entitlement flag, plus a contextual upsell nudge that fires when the model detects an incomplete MFJ scenario or a likely combined-income entry. Required before any premium feature can ship.",
+    dt: "Two-part build. (1) Client-side isPremium flag (local for now, API-backed pre-launch). Feature-locked UI renders a lock overlay + 'Unlock' CTA instead of the real content. Structured so any feature can opt-in with a single isPremium guard. (2) Upsell nudge component: fires on two signals — (a) filingStatus='mfj' with no spouse account data entered (unambiguous incomplete model), and (b) heuristic: single/HoH filer where income is high relative to max contribution capacity, suggesting possible combined-income entry. Nudge is dismissible per session, links to premium upgrade path. Track dismissals to avoid harassing users.",
+    cx: "Medium", im: "High", af: ["all premium features", "filingStatus", "spouseIncome", "combinedIncome"], sv: "isPremium, nudgeDismissed"
+  },
+  {
+    id: 30, pr: 2, sec: "Spouse / Household", st: "planned",
+    ti: "Spouse account modeling engine (premium)",
+    ds: "Add full spouse financial profile: income, growth, 401k, Roth, taxable, HSA, employer match. Each spouse's accounts simulate independently with correct per-person IRS limits. HSA uses a coverage-type toggle (self-only vs. family HDHP) since the family limit ($8,550) is a shared household ceiling, not two individual limits. Requires premium flag from #29.",
+    dt: "New state group: spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA, spouseMatchMode/Rate/Cap, hsaCoverageType ('self'/'family'). Second runSimulation call with spouse inputs and spouse's age/growth params. IRS limits applied independently: spouse 401k capped at TRAD_401K_LIMIT_2026 (+ catch-up if spouseCurrentAge >= 50), HSA capped at HSA_LIMIT_2026 (self) or HSA_FAMILY_LIMIT_2026 (family) shared across both contributions. UI: 'Spouse Accounts' section behind premium gate. Toggle mirrors primary account layout. Primary contribution sliders relabeled 'Your accounts' throughout.",
+    cx: "High", im: "High", af: ["simData (second run)", "IRS limits", "HSA cap", "employer match", "optimizedAllocation", "grossAfterTax"], sv: "spouseBal*, spouseContrib*, spouseMatch*, hsaCoverageType"
+  },
+  {
+    id: 31, pr: 3, sec: "Spouse / Household", st: "planned",
+    ti: "Household dashboard: combined portfolio view (premium)",
+    ds: "Aggregate the primary and spouse simulation runs into a single household portfolio view. Users can toggle between 'My accounts', 'Spouse accounts', and 'Combined household' views across the Simple Planner chart, retirement snapshot, and Flow-Down waterfall. Avoids the complexity of two separate full-app instances while letting joint filers see their true combined retirement picture.",
+    dt: "Combined view sums account balances year-by-year from both simulation runs. Chart switcher (3-way toggle: yours / spouse / combined) on the portfolio chart and account cards. Retirement snapshot shows combined totalAtRet. Flow-Down uses combined values. Drawdown uses combined netPortfolioNeed (householdSS already correct, effectiveExpenses reflects household). Action cards aware of which earner has more optimization room. Requires #30 to be complete. The 'second account for second user' upsell is surfaced on the household dashboard — 'Want separate projections and reports for each of you?'",
+    cx: "High", im: "High", af: ["totalChartData", "retVals", "totalAtRet", "flowData", "optimized", "action cards"], sv: "householdView ('primary'/'spouse'/'combined')"
+  },
+  {
+    id: 32, pr: 2, sec: "Monetization", st: "planned",
+    ti: "MFJ incomplete-model detection: contextual accuracy warning",
+    ds: "When the model detects an MFJ filer with no spouse account data, surface a specific, honest callout explaining which numbers are understated and why. Quantify the gap where possible (e.g., 'your optimization recommendations are based on one person's contribution limits — a second earner could add up to $X more in tax-advantaged space'). Link directly to the spouse account unlock.",
+    dt: "Detection condition: filingStatus === 'mfj' && spouseIncome === 0 && !isPremium. Secondary heuristic: filingStatus !== 'mfj' && currentIncome > 150_000 && contrib401k < TRAD_401K_LIMIT_2026 * 0.5 (possible combined-income entry by a single filer). Callout renders in the tax breakdown panel and in the optimization recommendation area. Quantify: show max additional tax-advantaged space (401k + Roth + HSA delta between one-earner and two-earner limits). Dismissible. Fires premium upsell CTA from #29. Does NOT require #30 to be live — can ship the detection and nudge before the full spouse engine is built.",
+    cx: "Low", im: "High", af: ["filingStatus", "spouseIncome", "isPremium", "tax breakdown panel", "optimization section"], sv: "none (detection only)"
   }
 ];
 

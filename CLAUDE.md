@@ -18,7 +18,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Design system & tokens: `docs/DESIGN.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (28 items, 18 done, 10 planned)
+- Feature backlog: `feature-tracker.html` (32 items, 18 done, 14 planned)
 
 ## Status
 - The app has been refactored from a single 3,988-line monolith into a module
