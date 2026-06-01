@@ -25,6 +25,7 @@ import {
   SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE,
   SS_FACTORS,
   STATE_TAX, RETIREMENT_STATE_TAX,
+  ASSUMPTIONS,
 } from "./config/irs-2026.js";
 import { Slider }        from "./components/Slider.jsx";
 import { DeferredInput } from "./components/DeferredInput.jsx";
@@ -205,7 +206,7 @@ export default function App() {
   const ssAIME = calcAIME(currentIncome, incomeGrowth, ssWorkYears);
   const ssPIA  = calcPIA(ssAIME);
   const ssMonthlyBenefit = calcBenefit(ssPIA, ssClaimingAge);
-  const ssAnnualBenefit  = ssMonthlyBenefit * 12;
+  const ssAnnualBenefit  = ssMonthlyBenefit * ASSUMPTIONS.MONTHS_PER_YEAR;
   const ss67Monthly      = calcBenefit(ssPIA, SS_FRA);
   const effectiveSS = includeSS
     ? (ssOverride !== null ? ssOverride : ssAnnualBenefit)
@@ -215,7 +216,7 @@ export default function App() {
   const householdSS = includeSS ? effectiveSS + spouseSsBenefit : 0;
 
   const effectivePension = pensionStartAge <= safeRetAge && pensionMonthly > 0
-    ? pensionMonthly * 12
+    ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR
     : 0;
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePension);
@@ -299,7 +300,7 @@ export default function App() {
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
   const retTaxData       = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
-  const ssTaxableRet     = householdSS * 0.85;
+  const ssTaxableRet     = householdSS * ASSUMPTIONS.SS_TAXABLE_PCT;
   const retIncomeFloor   = ssTaxableRet + effectivePension;
   const bracketTops      = {
     12: retTaxData.brackets[1]?.max ?? 50_400,
@@ -365,7 +366,7 @@ export default function App() {
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);
 
   const avgAnnualRMD      = rmdData.length > 0 ? Math.round(totalRMDs / rmdData.length) : 0;
-  const projRetIncome     = avgAnnualRMD + Math.round(householdSS * 0.85) + effectivePension;
+  const projRetIncome     = avgAnnualRMD + Math.round(householdSS * ASSUMPTIONS.SS_TAXABLE_PCT) + effectivePension;
   const retBrackets       = (TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single).brackets;
   const projRetBracket    = retBrackets.find(b => projRetIncome >= b.min && projRetIncome < b.max)
                          ?? retBrackets[retBrackets.length - 1];
@@ -373,7 +374,7 @@ export default function App() {
   const projRate3Combined = Math.round((projRetBracket.rate + retStateRate) * 100);
   const rate3Mismatch     = Math.abs(Math.round(rate3Combined * 100) - projRate3Combined) >= 3;
 
-  const ss70Annual       = Math.round(ssPIA * (SS_FACTORS[SS_MAX_CLAIM_AGE] ?? 1.24)) * 12;
+  const ss70Annual       = Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * ASSUMPTIONS.MONTHS_PER_YEAR;
   const household70SS    = ss70Annual + spouseSsBenefit;
   const ss70DrawReduction = Math.max(0, household70SS - householdSS);
   const ysSS70 = (() => {
@@ -1636,7 +1637,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Annual Pension</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.blue, ...mono }}>
-                    {pensionMonthly > 0 ? fmt(pensionMonthly * 12) : "—"}
+                    {pensionMonthly > 0 ? fmt(pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR) : "—"}
                   </p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>
                     {pensionMonthly > 0 ? `starting age ${pensionStartAge}` : "no pension entered"}
