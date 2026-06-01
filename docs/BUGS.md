@@ -1,0 +1,217 @@
+# Bug & Oddity Tracker
+
+This file tracks known bugs, UI oddities, and design questions in the app.
+Each entry records **what was found**, **why it happens** (root cause), **status**, and **fix notes** once resolved.
+
+---
+
+## Open Issues
+
+---
+
+### BUG-01 — Retirement age minimum is current age + 2
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` lines 949, 956
+
+**Symptom:**  
+The Retirement Age slider will not let you set a value less than `currentAge + 2`. If you drag Current Age up, Retirement Age automatically bumps ahead to stay 2 years out.
+
+**Why it happens:**  
+The app divides working years into numbered "phases" for the tax rate timeline (Phase 1, optional Phase 2, Phase 3 = retirement). The internal variable `phase2Start` — the year that Phase 2 begins — has a minimum of 1. The formula for the effective retirement year is:
+
+```
+safeRetAge = Math.max(retirementAge, currentAge + phase2Start + 1)
+```
+
+With `phase2Start` floored at 1, the earliest `safeRetAge` can ever be is `currentAge + 2`. The UI slider enforces this floor directly (`min={currentAge + 2}`).
+
+**Is there a real financial reason?**  
+No fundamental financial rule prevents retiring now or next year. The constraint is structural: the simulation and TaxTimeline need at least 2 years between "current" and "retired" to have a valid working-phase span. Allowing 0 or 1-year retirement windows would require the Phase 2 minimum to collapse to 0, which affects how the timeline renders and how `simData` is indexed.
+
+**Recommended fix:**  
+Reduce the minimum to `currentAge + 1` by allowing `phase2Start = 0` (collapse Phase 2 to zero length). This requires changes to the TaxTimeline rendering so it gracefully hides a 0-length phase, and defensive checks on `simData[phase2End - 1]` indexing. Note that `retirementAge === currentAge` (retire immediately) would give 0 accumulation years, which is valid but unusual.
+
+---
+
+### BUG-02 — "Fed / AGI" label reads as a division expression
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` line 764
+
+**Symptom:**  
+In the 2026 Tax Breakdown card, the sub-label beneath the "Fed Effective" rate reads `fed / AGI`. To a non-technical user this looks like a math expression (`federal tax ÷ AGI`) rather than a description of what two numbers are involved.
+
+**Root cause:**  
+The `sub` string is hardcoded as `"fed / AGI"`. There is no parenthetical or natural-language phrasing.
+
+**Recommended fix:**  
+Change to `"(fed tax ÷ AGI)"` or `"fed tax as % of AGI"`. Either makes clear this is a definition, not an operation.
+
+---
+
+### BUG-02a — "Combined" effective rate has no explanation of how it is used
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` lines 766, 778
+
+**Symptom:**  
+The "Combined" stat in the 2026 Tax Breakdown is visually emphasized the same as "Fed Effective" and "Marginal," but its downstream purpose is unclear. The note beneath reads *"Combined uses gross — FICA is assessed on gross wages"* — accurate, but doesn't tell the user why they should care.
+
+**What the numbers actually mean:**
+
+| Stat | Formula | Used in model? |
+|---|---|---|
+| Fed Effective | Federal tax ÷ AGI | Informational only for current year |
+| Marginal | Rate on the next dollar of income | Informational only for current year |
+| Combined | (Fed + State + FICA) ÷ gross income | **Informational only for current year** |
+
+The retirement-phase combined rate (`rate3Combined`) used in drawdown and Roth conversion is a *separate* calculation: `rate3 (user-set retirement fed rate) + retirement state tax`. It is not derived from the current-year combined figure.
+
+**Recommendation:**  
+Two options:
+1. Add a sentence to the explanatory note clarifying that these three rates are reference figures for the current year and do not feed directly into projections.
+2. Visually de-emphasize Marginal and Combined (smaller font, muted color, no background highlight) so only Fed Effective stands out as the headline metric.
+
+---
+
+### BUG-03 — "Other Pre-Tax" row appearing from nothing causes layout jump
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` line 611
+
+**Symptom:**  
+In the Pre-Tax Deductions card, the "Other pre-tax" row (FSA, dependent care, transit) is hidden when its slider is at $0. As soon as you drag the slider off zero, the row pops into existence, pushing the rest of the card down and causing the whole page to shift.
+
+**Root cause:**  
+The row is conditionally rendered:
+```jsx
+{otherPreTaxDeduc > 0 && (
+  <div ...>Other pre-tax ... {fmt(otherPreTaxDeduc)}</div>
+)}
+```
+
+**Recommended fix:**  
+Remove the conditional entirely. Always render the "Other pre-tax" row; just show `$0` (or `—`) when the value is zero. This keeps the card height stable no matter how the slider moves.
+
+---
+
+### BUG-03a — HSA default contribution appears in Pre-Tax Deductions but is set far below
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` lines 68, 608–609
+
+**Symptom:**  
+The Pre-Tax Deductions card shows "HSA contribution $3,850" as a pre-filled default, but the HSA contribution slider lives much further down the page inside the "Accounts & Projections" card. New users may not realize these are linked — the pre-tax number comes directly from the HSA contribution field they haven't seen yet.
+
+**Root cause:**  
+`contribHSA` defaults to `$3,850` at initialization (line 68) and flows into both the Pre-Tax Deductions display and the Accounts slider. There's no in-context note connecting them.
+
+**Recommended fix:**  
+Add a small parenthetical or icon next to "HSA contribution" in the Pre-Tax Deductions breakdown, e.g.:
+
+> HSA contribution &nbsp;·&nbsp; *(set in Accounts section below)*
+
+This sets the expectation without requiring any model changes.
+
+---
+
+### BUG-04 — "→ $X at ret." annotation on account contributions is unexplained
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` lines 1135–1173
+
+**Symptom:**  
+In the Accounts & Projections card, some accounts (Traditional 401k and Taxable Brokerage) show a small annotation like `→ $8,400 at ret.` next to the contribution amount. There's no explanation of what this number means.
+
+**Root cause:**  
+The annotation is a projection of your *contribution amount* at retirement — not your portfolio value. It assumes contributions scale proportionally with your income growth rate:
+
+```js
+projContrib = contrib * (1 + incomeGrowth / 100) ^ yearsToRetirement
+```
+
+Example: $5,000/yr contribution + 3% income growth + 30 years to retirement → $5,000 × 1.03³⁰ ≈ $12,136.
+
+The intent is to show that if your salary doubles by retirement, your dollar contribution amount would also double.
+
+**Recommended fix:**  
+Add a short tooltip or sub-note such as:
+> *Projected contribution amount at retirement, scaled with your income growth rate.*
+
+This removes the mystery without cluttering the UI.
+
+---
+
+### BUG-04a — "→ $X at ret." projection can show values above IRS contribution limits
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` line 1136
+
+**Symptom:**  
+The projected contribution annotation (see BUG-04) grows the current contribution by income growth over the full accumulation window. For long windows and high income growth, the projected number can exceed IRS annual limits by a large margin.
+
+Example: $20,000/yr 401k contribution + 3% income growth + 35 years → projection shows ~$56,000, but the 2026 401k limit is $23,500 (or $31,000 with catch-up). The simulation correctly caps contributions at IRS limits (per CLAUDE.md Rule 4), but the UI annotation doesn't.
+
+**Root cause:**  
+The annotation formula does not apply any IRS cap:
+```js
+contrib * Math.pow(1 + incomeGrowth / 100, phase2End - 1)
+```
+
+**Recommended fix:**  
+The annotation is meant to be approximate guidance, not a simulation output. Two options:
+1. Cap the displayed number at `contribMax` (the per-account IRS limit) so it never shows an impossible value.
+2. Add a disclaimer: *"actual contributions capped at IRS limits."*
+
+Option 1 is more trustworthy.
+
+---
+
+### BUG-05 — Retirement Federal Rate: unclear what it drives, prominent placement
+
+**Reported:** 2026-06-01  
+**Status:** Open  
+**File:** `src/App.jsx` lines 1063–1107
+
+**Symptom:**  
+"Retirement Federal Rate" (`rate3`) appears as a prominent Phase 3 card in the Tax Rate Phases section. Users may wonder (a) whether this is just a display note or an actual input to calculations, and (b) how to know what value to enter.
+
+**What it actually drives:**  
+`rate3` is a user estimate of their expected federal income-tax rate in retirement. It is used in:
+
+- **Simulation loop** — after-tax value of Traditional 401k withdrawals in all projection charts
+- **Drawdown model** — year-by-year tax cost on traditional account draws
+- **Roth conversion analysis** — bracket-fill math; the combined rate `rate3Combined = rate3 + retirement_state_rate` sets the upper threshold for conversion value
+- **Withdrawal strategy card** — tax estimate on worst-case all-traditional draw (`yr1TaxWorstCase`)
+- **Optimization engine** — comparison of pre-tax vs. after-tax contribution value
+
+It is *not* merely decorative. An incorrect retirement rate will silently skew every projection.
+
+**Recommendation:**  
+Add a short sentence inside the Phase 3 card explaining its reach, e.g.:
+
+> *This rate is used in all post-retirement projections: portfolio charts, Roth conversion analysis, and the withdrawal strategy card.*
+
+The card already shows a "sync" button when projected RMD + SS income puts you in a different bracket — that feature is good. It just needs context so users don't dismiss it as cosmetic.
+
+---
+
+## Resolved Issues
+
+*(None yet — move entries here with a fix date and commit reference once resolved.)*
+
+---
+
+## Conventions
+
+- Add new entries at the top of "Open Issues."
+- When fixing a bug, move it to "Resolved" and add: **Fixed:** date, commit SHA, brief description of change.
+- Link relevant file + line numbers for every entry so they stay navigable as the codebase evolves.
