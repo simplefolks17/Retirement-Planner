@@ -311,6 +311,13 @@ var DATA = [
     cx: "Medium", im: "High", af: ["all premium features", "filingStatus", "spouseIncome", "combinedIncome"], sv: "isPremium, nudgeDismissed"
   },
   {
+    id: 29.5, pr: 3, sec: "Tax Planning", st: "planned",
+    ti: "Mid-career phase scenario tool (premium)",
+    ds: "The '+ mid-career phase' toggle lets users model a known future income change — a high-earning contract window, a career break, parental leave, etc. — by applying a different tax rate for a defined year range. Currently free and opt-in. Planned to gate behind the premium entitlement flag (#29) once that infrastructure exists.",
+    dt: "No implementation work needed yet. When #29 ships, wrap the '+ mid-career phase' button in an isPremium guard: show the button normally for premium users; show a lock overlay + upsell CTA for free users. The mid-career phase state variables (showPhase2, phase2Start, rate2) and the getTaxRate() logic are already complete and correct. The UI decoupling from the retirement-age floor was completed in BUG-01 fix (2026-06-01).",
+    cx: "Low", im: "Medium", af: ["showPhase2", "phase2Start", "rate2", "getTaxRate", "TaxTimeline"], sv: "showPhase2, phase2Start, rate2"
+  },
+  {
     id: 30, pr: 2, sec: "Spouse / Household", st: "planned",
     ti: "Spouse account modeling engine (premium)",
     ds: "Add full spouse financial profile: income, growth, 401k, Roth, taxable, HSA, employer match. Each spouse's accounts simulate independently with correct per-person IRS limits. HSA uses a coverage-type toggle (self-only vs. family HDHP) since the family limit ($8,550) is a shared household ceiling, not two individual limits. Requires premium flag from #29.",

@@ -9,30 +9,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
-### BUG-01 — Retirement age minimum is current age + 2
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` lines 949, 956
-
-**Symptom:**  
-The Retirement Age slider will not let you set a value less than `currentAge + 2`. If you drag Current Age up, Retirement Age automatically bumps ahead to stay 2 years out.
-
-**Why it happens:**  
-The app divides working years into numbered "phases" for the tax rate timeline (Phase 1, optional Phase 2, Phase 3 = retirement). The internal variable `phase2Start` — the year that Phase 2 begins — has a minimum of 1. The formula for the effective retirement year is:
-
-```
-safeRetAge = Math.max(retirementAge, currentAge + phase2Start + 1)
-```
-
-With `phase2Start` floored at 1, the earliest `safeRetAge` can ever be is `currentAge + 2`. The UI slider enforces this floor directly (`min={currentAge + 2}`).
-
-**Is there a real financial reason?**  
-No fundamental financial rule prevents retiring now or next year. The constraint is structural: the simulation and TaxTimeline need at least 2 years between "current" and "retired" to have a valid working-phase span. Allowing 0 or 1-year retirement windows would require the Phase 2 minimum to collapse to 0, which affects how the timeline renders and how `simData` is indexed.
-
-**Recommended fix:**  
-Reduce the minimum to `currentAge + 1` by allowing `phase2Start = 0` (collapse Phase 2 to zero length). This requires changes to the TaxTimeline rendering so it gracefully hides a 0-length phase, and defensive checks on `simData[phase2End - 1]` indexing. Note that `retirementAge === currentAge` (retire immediately) would give 0 accumulation years, which is valid but unusual.
-
 ---
 
 ### BUG-02 — "Fed / AGI" label reads as a division expression
@@ -205,6 +181,24 @@ The card already shows a "sync" button when projected RMD + SS income puts you i
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-01~~ — Retirement age minimum is current age + 2
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**Files:** `src/App.jsx` (8 edits), `feature-tracker.html`
+
+**Root cause:** `safeRetAge = Math.max(retirementAge, currentAge + phase2Start + 1)` applied the Phase 2 constraint unconditionally, even when Phase 2 was off. With `phase2Start` defaulting to 2, the floor was always `currentAge + 3` internally and `currentAge + 2` on the slider.
+
+**Changes:**
+- `safeRetAge` formula is now conditional: uses the Phase 2 constraint only when `showPhase2 = true`; otherwise `safeRetAge = retirementAge` directly.
+- Retirement Age slider `min` is now `showPhase2 ? currentAge + 2 : currentAge`, allowing retirement age as low as current age (already retired).
+- Current Age `onChange` guard updated to match: bumps retirement age to `currentAge + 2` only when Phase 2 is on; otherwise only prevents retirement age going below current age.
+- Phase 2 toggle button bumps retirement age up to `currentAge + 2` proactively when Phase 2 is enabled from a low retirement age.
+- `currentSnapshot` object introduced as a "year-0" fallback (current balance values with the same shape as `simData` rows). Used by: `atRetirement`, `rmdData`, `conversionSim`, and `totalChartData` when `retirementAge === currentAge`.
+- `totalChartData` seeds a starting data point at `age = currentAge` when the user is already retired, so the drawdown chart starts from actual current balances rather than $0.
+- Mid-career phase tagged as planned premium feature in `feature-tracker.html` (item #29.5), to be gated via the `isPremium` flag when #29 ships. No lock overlay built yet.
 
 ---
 

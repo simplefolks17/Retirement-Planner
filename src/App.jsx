@@ -109,7 +109,9 @@ export default function App() {
   const retStateRate  = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
   const rate3Combined = Math.min(0.95, rate3 / 100 + retStateRate);
 
-  const safeRetAge  = Math.max(retirementAge, currentAge + phase2Start + 1);
+  const safeRetAge  = showPhase2
+    ? Math.max(retirementAge, currentAge + phase2Start + 1)
+    : retirementAge;
   const phase2End   = safeRetAge - currentAge;
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
@@ -137,7 +139,19 @@ export default function App() {
     employerMatchPct, matchMode, matchFormulaRate, matchFormulaCap,
   ]);
 
-  const atRetirement = simData[phase2End - 1] ?? {};
+  // Year-0 fallback: when retirementAge === currentAge the user is already retired
+  // and simData has no rows at or before safeRetAge. Use current input balances directly.
+  const currentSnapshot = {
+    age: currentAge,
+    "Trad 401k": Math.round(bal401k * (1 - rate3 / 100)),
+    tradGross: bal401k,
+    "Roth IRA": balRoth,
+    "Taxable": balTaxable,
+    "HSA": balHSA,
+  };
+  const atRetirement = phase2End > 0
+    ? (simData[phase2End - 1] ?? currentSnapshot)
+    : currentSnapshot;
 
   const combinedIncome       = currentIncome + spouseIncome;
 
@@ -258,6 +272,11 @@ export default function App() {
 
   const totalChartData = useMemo(() => {
     const result = [];
+    // Seed chart with current balances as the retirement starting point
+    // when the user is already retired (safeRetAge === currentAge, no accumulation years).
+    if (safeRetAge === currentAge) {
+      result.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
+    }
     for (const d of simData) {
       result.push({
         age: d.age,
@@ -277,8 +296,9 @@ export default function App() {
       if (bal <= 0) break;
     }
     return result;
-  }, [simData, safeRetAge, safeLifeExp, returnRate, inflationRate, effectiveExpenses,
-      includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge, inflationRate]);
+  }, [simData, safeRetAge, safeLifeExp, currentAge, returnRate, inflationRate, effectiveExpenses,
+      includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
+      bal401k, balRoth, balTaxable, balHSA]);
 
   const ssBreakEven = ssClaimingAge === SS_FRA ? null : (() => {
     let cumClaim = 0, cum67 = 0;
@@ -298,13 +318,15 @@ export default function App() {
   const activeTableLabel = useTable2 ? "Table II (Joint Life)" : "Table III (Uniform Lifetime)";
 
   const rmdData = useMemo(() => {
-    const retRow = simData.find(d => d.age === safeRetAge);
+    const retRow = simData.find(d => d.age === safeRetAge)
+      ?? (safeRetAge === currentAge ? currentSnapshot : null);
     if (!retRow) return [];
     return calcRMDProjection({
       tradGrossAtRetirement: retRow.tradGross ?? 0,
       safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
     });
-  }, [simData, safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge]);
+  }, [simData, safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
+      currentSnapshot]);
 
   const firstRMD   = rmdData[0];
   const totalRMDs  = rmdData.reduce((s, d) => s + d.rmd, 0);
@@ -336,7 +358,8 @@ export default function App() {
   const annualConversion = conversionMode === "bracket" ? bracketFillConversion : annualConversionAmt;
 
   const conversionSim = useMemo(() => {
-    const retRow = simData.find(d => d.age === safeRetAge);
+    const retRow = simData.find(d => d.age === safeRetAge)
+      ?? (safeRetAge === currentAge ? currentSnapshot : null);
     const raw = calcConversionSim({
       conversionWindowYrs: retRow ? conversionWindowYrs : 0,
       annualConversion, returnRate, retIncomeFloor, retIncomeFloors: convFloors,
@@ -347,7 +370,7 @@ export default function App() {
     });
     // Model returns year ages as 1-indexed (yr+1); offset by safeRetAge for display.
     return { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + safeRetAge })) };
-  }, [simData, safeRetAge, conversionWindowYrs, annualConversion, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource]);
+  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource]);
 
   const rmdDataPostConversion = useMemo(() => calcRMDPostConversion({
     conversionWindowYrs, rmdData, tradBal73: conversionSim.tradBal73,
@@ -947,14 +970,15 @@ export default function App() {
           <Slider label="Current Age" value={currentAge} min={18} max={80}
             onChange={v => {
               setCurrentAge(v);
-              if (retirementAge <= v + 2) setRetirementAge(v + 2);
+              if (showPhase2 && retirementAge < v + 2) setRetirementAge(v + 2);
+              else if (!showPhase2 && retirementAge < v) setRetirementAge(v);
               if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
               if (contribEnd401k    <= v) setContribEnd401k(v + 1);
               if (contribEndRoth    <= v) setContribEndRoth(v + 1);
               if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
               if (contribEndHSA     <= v) setContribEndHSA(v + 1);
             }} />
-          <Slider label="Retirement Age" value={retirementAge} min={currentAge + 2} max={lifeExpect - 1}
+          <Slider label="Retirement Age" value={retirementAge} min={showPhase2 ? currentAge + 2 : currentAge} max={lifeExpect - 1}
             valueColor={C.green} onChange={v => {
               setRetirementAge(v);
               const newPhase2End = v - currentAge;
@@ -1023,7 +1047,12 @@ export default function App() {
               </div>
             )}
             <button
-              onClick={() => { setShowPhase2(v => !v); setPhase2Start(2); }}
+              onClick={() => {
+                const enabling = !showPhase2;
+                setShowPhase2(enabling);
+                setPhase2Start(2);
+                if (enabling && retirementAge < currentAge + 2) setRetirementAge(currentAge + 2);
+              }}
               style={{
                 marginTop: 8, width: "100%", padding: "3px 0", borderRadius: 5,
                 border: `1px solid ${C.border}`, cursor: "pointer", transition: "all 0.15s",
