@@ -9,6 +9,26 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### ~~BUG-06~~ — Trad 401k line dips in "Portfolio Growth Over Time" chart near retirement
+
+**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
+**File:** `src/App.jsx` line 1473
+
+**Symptom:**  
+The Trad 401k balance line visibly drops toward the end of the "Portfolio Growth Over Time" accumulation chart, just at or before the retirement age marker. All other account lines (Roth, Taxable, HSA) continue trending upward as expected.
+
+**Root cause:**  
+The `"Trad 401k"` value stored in each `simData` row is `tradGross × (1 − taxRate)`. The `taxRate` is determined by `getTaxRate()`, which switches from `rate1` (working phase) to `rate3` (retirement phase) exactly at year `phase2End` — i.e., at age `safeRetAge`. The chart filter was `d.age <= safeRetAge`, so the retirement year (the last data point) was included and already used `rate3`. All preceding points used `rate1`.
+
+If `rate3 > rate1` — which happens whenever users sync their retirement rate to a projected RMD bracket (e.g., rate1=22%, rate3=24%) — the last chart point applies a higher haircut than the rest, producing a visible dip. The other accounts have no such tax factor and always display their gross balances, so they continue rising unaffected.
+
+The chart description also incorrectly stated "using the retirement-phase tax rate **after** age {safeRetAge}" when the code was applying it **at** that age.
+
+**Fix:**  
+The chart now normalizes all data points to use `rate1` consistently: `tradGross × (1 − rate1/100)`. Since `tradGross` (pre-tax balance) is already stored in every `simData` row, this is a pure display transform with no model changes. The line is now smooth throughout the accumulation phase. The description was updated to explain that the snapshot cards below the chart show the retirement-rate after-tax value.
+
+---
+
 ---
 
 ### BUG-02 — "Fed / AGI" label reads as a division expression

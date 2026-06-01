@@ -1466,11 +1466,17 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Portfolio Growth Over Time</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
-          After-tax values year by year. Trad 401k shown using the retirement-phase tax rate after age {safeRetAge}.
+          After-tax values year by year. Trad 401k displayed at Phase 1 rate ({rate1}%) for a smooth growth line —
+          the retirement-rate after-tax value is in the snapshot cards below.
           Dashed line marks retirement age.
         </p>
         <ResponsiveContainer width="100%" height={320}>
-          <LineChart data={simData.filter(d => d.age <= safeRetAge)} margin={{ top: 10, right: 16, left: 16, bottom: 8 }}>
+          <LineChart
+            data={simData.filter(d => d.age <= safeRetAge).map(d => ({
+              ...d,
+              "Trad 401k": Math.round((d.tradGross ?? 0) * (1 - rate1 / 100)),
+            }))}
+            margin={{ top: 10, right: 16, left: 16, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
             <XAxis dataKey="age" stroke={C.muted} tick={{ fontSize: 11, fill: C.muted }}
               label={{ value: "Age", position: "insideBottom", offset: -2, fill: C.muted, fontSize: 11 }} />
