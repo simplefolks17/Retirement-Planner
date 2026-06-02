@@ -236,12 +236,15 @@ export default function App() {
 
   const spouseSsBenefit = calcSpousal(ssPIA, spouseSsEstimate);
   const householdSS = includeSS ? effectiveSS + spouseSsBenefit : 0;
+  // SS only reduces the headline portfolio need if it's already active at retirement.
+  // Mirrors effectivePension which uses the same gate (pensionStartAge <= safeRetAge).
+  const ssAtRet = includeSS && ssClaimingAge <= safeRetAge ? householdSS : 0;
 
   const effectivePension = pensionStartAge <= safeRetAge && pensionMonthly > 0
     ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR
     : 0;
 
-  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePension);
+  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
   const yearsSustained   = calcYearsSustained(netPortfolioNeed, totalAtRet, rReal);
   const isSustainable    = yearsSustained === Infinity || yearsSustained >= (safeLifeExp - safeRetAge);
@@ -287,8 +290,8 @@ export default function App() {
     }
     let bal = result[result.length - 1]?.total ?? 0;
     for (let age = safeRetAge + 1; age <= safeLifeExp; age++) {
-      const yearSS      = includeSS && age > ssClaimingAge ? householdSS : 0;
-      const yearPension = pensionMonthly > 0 && age > pensionStartAge
+      const yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0;
+      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
         ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
       const yearNeed    = calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
       bal = bal * (1 + rReal) - yearNeed;
@@ -1379,16 +1382,32 @@ export default function App() {
                   <span style={{ fontSize: 10, color: C.muted }}>Annual expenses</span>
                   <span style={{ fontSize: 11, color: C.text, ...mono }}>{fmt(effectiveExpenses)}</span>
                 </div>
-                {effectiveSS > 0 && (
+                {effectiveSS > 0 && ssClaimingAge <= safeRetAge && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontSize: 10, color: C.green }}>− Your Social Security</span>
                     <span style={{ fontSize: 11, color: C.green, ...mono }}>− {fmt(effectiveSS)}</span>
                   </div>
                 )}
-                {spouseSsBenefit > 0 && (
+                {effectiveSS > 0 && ssClaimingAge > safeRetAge && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontSize: 10, color: C.muted }}>
+                      SS <span style={{ fontStyle: "italic" }}>(starts age {ssClaimingAge})</span>
+                    </span>
+                    <span style={{ fontSize: 11, color: C.muted, ...mono }}>{fmt(effectiveSS)}/yr deferred</span>
+                  </div>
+                )}
+                {spouseSsBenefit > 0 && ssClaimingAge <= safeRetAge && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontSize: 10, color: C.green }}>− Spouse Social Security</span>
                     <span style={{ fontSize: 11, color: C.green, ...mono }}>− {fmt(spouseSsBenefit)}</span>
+                  </div>
+                )}
+                {spouseSsBenefit > 0 && ssClaimingAge > safeRetAge && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontSize: 10, color: C.muted }}>
+                      Spouse SS <span style={{ fontStyle: "italic" }}>(starts age {ssClaimingAge})</span>
+                    </span>
+                    <span style={{ fontSize: 11, color: C.muted, ...mono }}>{fmt(spouseSsBenefit)}/yr deferred</span>
                   </div>
                 )}
                 {effectivePension > 0 && (
@@ -2163,7 +2182,7 @@ export default function App() {
               <div>
                 <p style={{ margin: "0 0 10px", fontSize: 12, color: C.text }}>
                   Annual need from portfolio: <span style={{ color: C.gold, ...mono }}>{fmt(netPortfolioNeed)}</span>
-                  <span style={{ fontSize: 10, color: C.muted }}> (expenses{householdSS > 0 ? " − SS" : ""}{effectivePension > 0 ? " − pension" : ""})</span>
+                  <span style={{ fontSize: 10, color: C.muted }}> (expenses{ssAtRet > 0 ? " − SS" : ""}{effectivePension > 0 ? " − pension" : ""})</span>
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[

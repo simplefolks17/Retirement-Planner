@@ -224,6 +224,38 @@ The card already shows a "sync" button when projected RMD + SS income puts you i
 
 ---
 
+### ~~BUG-09~~ — `totalChartData` SS/pension income off by one year (`>` vs `>=`)
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-02  
+**File:** `src/App.jsx` lines 290–291
+
+**Symptom:**  
+The Portfolio Lifecycle and Total Portfolio — Full Lifecycle charts showed Social Security and pension income reducing portfolio draws starting one year later than the claiming/start age. For example, if SS claiming age was 67, the chart did not reduce draws at age 67 — only from age 68 onward.
+
+**Root cause:**  
+`totalChartData` drawdown loop used `age > ssClaimingAge` and `age > pensionStartAge` (strict greater-than). Every other age-gated loop in the codebase (`flowData.convWindowDraws`, `convFloors`) correctly uses `>=`. The `>` operator skips the claiming-age year itself, offsetting income by one year.
+
+**Fix:**  
+Changed both comparisons to `>=` (two character changes). The Portfolio Lifecycle and Total Portfolio charts now include SS/pension income starting at the exact claiming/start age, consistent with all other income-timing loops.
+
+---
+
+### ~~BUG-10~~ — Static `netPortfolioNeed` included SS even when `ssClaimingAge > safeRetAge`
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-02  
+**File:** `src/App.jsx` lines 238–244, 1385–1396, 2185
+
+**Symptom:**  
+The Withdrawal Rate and Years Sustained headline cards, along with the "Portfolio draws" breakdown, showed SS income reducing the portfolio need even when the user's SS claiming age was after their retirement age. For example, retiring at 65 with SS claiming age 67 (FRA) would show `netPortfolioNeed = expenses − SS`, as if SS was available from day 1 — making the withdrawal rate appear lower than reality.
+
+**Root cause:**  
+`netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePension)` used `householdSS` (full SS amount) without checking if `ssClaimingAge <= safeRetAge`. `effectivePension` was already correctly gated on `pensionStartAge <= safeRetAge`, but SS had no equivalent gate.
+
+**Fix:**  
+Added `ssAtRet = includeSS && ssClaimingAge <= safeRetAge ? householdSS : 0` — mirrors the pension gate exactly. `netPortfolioNeed` now uses `ssAtRet`. The breakdown card shows SS as "starts age X · deferred" (muted, not subtracted) when claiming age is after retirement, so the user understands their full portfolio draw requirement. The `householdSS` variable is unchanged for per-year loops and display contexts.
+
+---
+
 ### ~~BUG-08~~ — RMD reference line missing in Portfolio Lifecycle chart for users retiring at 72
 
 **Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
