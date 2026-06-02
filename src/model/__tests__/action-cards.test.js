@@ -173,7 +173,7 @@ describe("generatePhaseSteps", () => {
     convWindowDraws: 280_000,
     convWindowTax: 15_000,
     totalConverted: 210_000,
-    portAt73: 985_000,
+    portPreRMD: 985_000,
     distStartVal: 985_000,
     distGrowth: 200_000,
     distDraws: 1_000_000,

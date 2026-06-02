@@ -12,7 +12,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 ### BUG-07 — Chart 1 Trad 401k normalization uses Phase 1 rate for Phase 2 years
 
 **Reported:** 2026-06-01  
-**Status:** Open  
+**Status:** Open — deferred until Phase 2 feature review  
 **File:** `src/App.jsx` line 1475
 
 **Symptom:**  
@@ -29,198 +29,31 @@ Apply the correct phase rate per year: use `d["Trad 401k"]` from simData directl
 
 ---
 
-### ~~BUG-06~~ — Trad 401k line dips in "Portfolio Growth Over Time" chart near retirement
+## Resolved Issues
 
-**Reported:** 2026-06-01 · **Fixed:** 2026-06-01  
-**File:** `src/App.jsx` line 1473
+---
+
+### ~~BUG-11~~ — Flow-Down conversion window draws counted from wrong starting year
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-02  
+**Files:** `src/App.jsx` lines 454–470, `src/model/action-cards.js` line 307
 
 **Symptom:**  
-The Trad 401k balance line visibly drops toward the end of the "Portfolio Growth Over Time" accumulation chart, just at or before the retirement age marker. All other account lines (Roth, Taxable, HSA) continue trending upward as expected.
+The Flow-Down tab "Optimize & Convert" phase card showed "Living Expenses" (convWindowDraws) and "Portfolio Growth" (convWindowGrowth) that didn't balance against the actual chart trajectory. The "entering RMDs" connector value also showed the portfolio after the first RMD draw rather than before.
 
 **Root cause:**  
-The `"Trad 401k"` value stored in each `simData` row is `tradGross × (1 − taxRate)`. The `taxRate` is determined by `getTaxRate()`, which switches from `rate1` (working phase) to `rate3` (retirement phase) exactly at year `phase2End` — i.e., at age `safeRetAge`. The chart filter was `d.age <= safeRetAge`, so the retirement year (the last data point) was included and already used `rate3`. All preceding points used `rate1`.
+Two related issues:
 
-If `rate3 > rate1` — which happens whenever users sync their retirement rate to a projected RMD bracket (e.g., rate1=22%, rate3=24%) — the last chart point applies a higher haircut than the rest, producing a visible dip. The other accounts have no such tax factor and always display their gross balances, so they continue rising unaffected.
+1. `convWindowDraws` loop started at `safeRetAge + i` (i=0 → age=safeRetAge, the retirement year). The chart makes no draw at the retirement year (drawdown starts at `safeRetAge + 1`), so `convWindowDraws` counted one phantom draw at retirement and missed the last actual draw at `RMD_START_AGE - 1`.
 
-The chart description also incorrectly stated "using the retirement-phase tax rate **after** age {safeRetAge}" when the code was applying it **at** that age.
+2. `portAt73` was sourced from `totalChartData.find(d => d.age === RMD_START_AGE)?.total`. The chart value at age 73 is the portfolio *after* the age-73 draw (first RMD), so `convWindowGrowth = portAt73 - totalAtRet + convWindowDraws + taxes` absorbed the first RMD draw as negative growth — making convWindowGrowth appear lower than actual investment return.
 
 **Fix:**  
-The chart now normalizes all data points to use `rate1` consistently: `tradGross × (1 − rate1/100)`. Since `tradGross` (pre-tax balance) is already stored in every `simData` row, this is a pure display transform with no model changes. The line is now smooth throughout the accumulation phase. The description was updated to explain that the snapshot cards below the chart show the retirement-rate after-tax value.
-
----
-
----
-
-### BUG-02 — "Fed / AGI" label reads as a division expression
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` line 764
-
-**Symptom:**  
-In the 2026 Tax Breakdown card, the sub-label beneath the "Fed Effective" rate reads `fed / AGI`. To a non-technical user this looks like a math expression (`federal tax ÷ AGI`) rather than a description of what two numbers are involved.
-
-**Root cause:**  
-The `sub` string is hardcoded as `"fed / AGI"`. There is no parenthetical or natural-language phrasing.
-
-**Recommended fix:**  
-Change to `"(fed tax ÷ AGI)"` or `"fed tax as % of AGI"`. Either makes clear this is a definition, not an operation.
-
----
-
-### BUG-02a — "Combined" effective rate has no explanation of how it is used
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` lines 766, 778
-
-**Symptom:**  
-The "Combined" stat in the 2026 Tax Breakdown is visually emphasized the same as "Fed Effective" and "Marginal," but its downstream purpose is unclear. The note beneath reads *"Combined uses gross — FICA is assessed on gross wages"* — accurate, but doesn't tell the user why they should care.
-
-**What the numbers actually mean:**
-
-| Stat | Formula | Used in model? |
-|---|---|---|
-| Fed Effective | Federal tax ÷ AGI | Informational only for current year |
-| Marginal | Rate on the next dollar of income | Informational only for current year |
-| Combined | (Fed + State + FICA) ÷ gross income | **Informational only for current year** |
-
-The retirement-phase combined rate (`rate3Combined`) used in drawdown and Roth conversion is a *separate* calculation: `rate3 (user-set retirement fed rate) + retirement state tax`. It is not derived from the current-year combined figure.
-
-**Recommendation:**  
-Two options:
-1. Add a sentence to the explanatory note clarifying that these three rates are reference figures for the current year and do not feed directly into projections.
-2. Visually de-emphasize Marginal and Combined (smaller font, muted color, no background highlight) so only Fed Effective stands out as the headline metric.
-
----
-
-### BUG-03 — "Other Pre-Tax" row appearing from nothing causes layout jump
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` line 611
-
-**Symptom:**  
-In the Pre-Tax Deductions card, the "Other pre-tax" row (FSA, dependent care, transit) is hidden when its slider is at $0. As soon as you drag the slider off zero, the row pops into existence, pushing the rest of the card down and causing the whole page to shift.
-
-**Root cause:**  
-The row is conditionally rendered:
-```jsx
-{otherPreTaxDeduc > 0 && (
-  <div ...>Other pre-tax ... {fmt(otherPreTaxDeduc)}</div>
-)}
-```
-
-**Recommended fix:**  
-Remove the conditional entirely. Always render the "Other pre-tax" row; just show `$0` (or `—`) when the value is zero. This keeps the card height stable no matter how the slider moves.
-
----
-
-### BUG-03a — HSA default contribution appears in Pre-Tax Deductions but is set far below
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` lines 68, 608–609
-
-**Symptom:**  
-The Pre-Tax Deductions card shows "HSA contribution $3,850" as a pre-filled default, but the HSA contribution slider lives much further down the page inside the "Accounts & Projections" card. New users may not realize these are linked — the pre-tax number comes directly from the HSA contribution field they haven't seen yet.
-
-**Root cause:**  
-`contribHSA` defaults to `$3,850` at initialization (line 68) and flows into both the Pre-Tax Deductions display and the Accounts slider. There's no in-context note connecting them.
-
-**Recommended fix:**  
-Add a small parenthetical or icon next to "HSA contribution" in the Pre-Tax Deductions breakdown, e.g.:
-
-> HSA contribution &nbsp;·&nbsp; *(set in Accounts section below)*
-
-This sets the expectation without requiring any model changes.
-
----
-
-### BUG-04 — "→ $X at ret." annotation on account contributions is unexplained
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` lines 1135–1173
-
-**Symptom:**  
-In the Accounts & Projections card, some accounts (Traditional 401k and Taxable Brokerage) show a small annotation like `→ $8,400 at ret.` next to the contribution amount. There's no explanation of what this number means.
-
-**Root cause:**  
-The annotation is a projection of your *contribution amount* at retirement — not your portfolio value. It assumes contributions scale proportionally with your income growth rate:
-
-```js
-projContrib = contrib * (1 + incomeGrowth / 100) ^ yearsToRetirement
-```
-
-Example: $5,000/yr contribution + 3% income growth + 30 years to retirement → $5,000 × 1.03³⁰ ≈ $12,136.
-
-The intent is to show that if your salary doubles by retirement, your dollar contribution amount would also double.
-
-**Recommended fix:**  
-Add a short tooltip or sub-note such as:
-> *Projected contribution amount at retirement, scaled with your income growth rate.*
-
-This removes the mystery without cluttering the UI.
-
----
-
-### BUG-04a — "→ $X at ret." projection can show values above IRS contribution limits
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` line 1136
-
-**Symptom:**  
-The projected contribution annotation (see BUG-04) grows the current contribution by income growth over the full accumulation window. For long windows and high income growth, the projected number can exceed IRS annual limits by a large margin.
-
-Example: $20,000/yr 401k contribution + 3% income growth + 35 years → projection shows ~$56,000, but the 2026 401k limit is $23,500 (or $31,000 with catch-up). The simulation correctly caps contributions at IRS limits (per CLAUDE.md Rule 4), but the UI annotation doesn't.
-
-**Root cause:**  
-The annotation formula does not apply any IRS cap:
-```js
-contrib * Math.pow(1 + incomeGrowth / 100, phase2End - 1)
-```
-
-**Recommended fix:**  
-The annotation is meant to be approximate guidance, not a simulation output. Two options:
-1. Cap the displayed number at `contribMax` (the per-account IRS limit) so it never shows an impossible value.
-2. Add a disclaimer: *"actual contributions capped at IRS limits."*
-
-Option 1 is more trustworthy.
-
----
-
-### BUG-05 — Retirement Federal Rate: unclear what it drives, prominent placement
-
-**Reported:** 2026-06-01  
-**Status:** Open  
-**File:** `src/App.jsx` lines 1063–1107
-
-**Symptom:**  
-"Retirement Federal Rate" (`rate3`) appears as a prominent Phase 3 card in the Tax Rate Phases section. Users may wonder (a) whether this is just a display note or an actual input to calculations, and (b) how to know what value to enter.
-
-**What it actually drives:**  
-`rate3` is a user estimate of their expected federal income-tax rate in retirement. It is used in:
-
-- **Simulation loop** — after-tax value of Traditional 401k withdrawals in all projection charts
-- **Drawdown model** — year-by-year tax cost on traditional account draws
-- **Roth conversion analysis** — bracket-fill math; the combined rate `rate3Combined = rate3 + retirement_state_rate` sets the upper threshold for conversion value
-- **Withdrawal strategy card** — tax estimate on worst-case all-traditional draw (`yr1TaxWorstCase`)
-- **Optimization engine** — comparison of pre-tax vs. after-tax contribution value
-
-It is *not* merely decorative. An incorrect retirement rate will silently skew every projection.
-
-**Recommendation:**  
-Add a short sentence inside the Phase 3 card explaining its reach, e.g.:
-
-> *This rate is used in all post-retirement projections: portfolio charts, Roth conversion analysis, and the withdrawal strategy card.*
-
-The card already shows a "sync" button when projected RMD + SS income puts you in a different bracket — that feature is good. It just needs context so users don't dismiss it as cosmetic.
-
----
-
-## Resolved Issues
+- Renamed `portAt73` → `portPreRMD` and changed the lookup to `RMD_START_AGE - 1` (age 72 — portfolio after the last conversion-window draw, before any RMD).
+- Changed `convWindowDraws` loop to start at `safeRetAge + 1 + i` so it covers the same years as the chart drawdown ([safeRetAge+1, safeRetAge+conversionWindowYrs]).
+- With both changes, `convWindowGrowth = portPreRMD - totalAtRet + convWindowDraws + taxes` equals pure investment return during the window.
+- Updated `action-cards.js` label from "Portfolio at 73" → "Portfolio entering RMDs".
+- Updated `action-cards.test.js` mock key accordingly.
 
 ---
 

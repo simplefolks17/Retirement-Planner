@@ -451,13 +451,17 @@ export default function App() {
       s + (d.c401k || 0) + (d.cRoth || 0) + (d.cTaxable || 0) + (d.cHSA || 0), 0);
     const totalGrowth  = Math.max(0, totalAtRet - startPortfolio - totalContrib);
     const hasConvWindow  = conversionWindowYrs > 0;
-    const portAt73       = totalChartData.find(d => d.age === RMD_START_AGE)?.total
+    // Use the chart value at age 72 (last year before RMDs), not 73 (which already includes
+    // the first RMD draw). This gives the true "entering RMDs" portfolio value and makes
+    // convWindowGrowth balance cleanly against the draws and taxes in the conversion window.
+    const portPreRMD     = totalChartData.find(d => d.age === RMD_START_AGE - 1)?.total
                         ?? totalChartData.find(d => d.age === safeRetAge)?.total
                         ?? totalAtRet;
-    // Per-year draws: SS and pension only deducted in years they've started.
+    // Per-year draws: start at safeRetAge+1 (no draw in the chart at the retirement year itself).
+    // SS and pension only deducted in years they've started.
     let convWindowDraws = 0;
     for (let i = 0; i < conversionWindowYrs; i++) {
-      const age         = safeRetAge + i;
+      const age         = safeRetAge + 1 + i;
       const yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0;
       const yearPension = pensionMonthly > 0 && age >= pensionStartAge
         ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
@@ -467,9 +471,9 @@ export default function App() {
     const totalConverted   = hasConvWindow
       ? conversionSim.years.reduce((s, y) => s + y.conversion, 0)
       : 0;
-    const convWindowGrowth = portAt73 - totalAtRet + convWindowDraws + convWindowTax;
+    const convWindowGrowth = portPreRMD - totalAtRet + convWindowDraws + convWindowTax;
     const distStartAge = hasConvWindow ? RMD_START_AGE : safeRetAge;
-    const distStartVal = hasConvWindow ? portAt73 : totalAtRet;
+    const distStartVal = hasConvWindow ? portPreRMD : totalAtRet;
     const lastChart    = totalChartData[totalChartData.length - 1];
     const distEndVal   = lastChart?.total ?? 0;
     const depletionAge = totalChartData.find(d => d.total <= 0)?.age ?? null;
@@ -482,12 +486,11 @@ export default function App() {
     const distGrowth   = distEndVal - distStartVal + distDraws + distRMDTax;
     const peakPortfolio = Math.max(
       startPortfolio, totalAtRet,
-      hasConvWindow ? portAt73 : 0,
       ...totalChartData.map(d => d.total)
     );
     return {
       startPortfolio, totalContrib, totalGrowth, totalAtRet,
-      hasConvWindow, conversionWindowYrs, portAt73,
+      hasConvWindow, conversionWindowYrs, portPreRMD,
       convWindowDraws, convWindowTax, convWindowGrowth, totalConverted,
       distStartAge, distStartVal, distEndVal, distYears,
       distDraws, distRMDTax, distGrowth, depletionAge, actualSustainedYrs,
@@ -2411,7 +2414,7 @@ export default function App() {
                         ? `${fmt(flowData.totalConverted)} moved from 401k → Roth during this window. Every dollar converted escapes future RMDs and grows tax-free.`
                         : `You have a ${flowData.conversionWindowYrs}-year window before RMDs start. Consider converting 401k → Roth in the Detailed Planner to reduce lifetime taxes.`}
                       actions={phase2Actions} peakPortfolio={flowData.peakPortfolio} />
-                    <FlowConn value={flowData.portAt73} color={C.blue} label="entering RMDs" peakPortfolio={flowData.peakPortfolio} />
+                    <FlowConn value={flowData.portPreRMD} color={C.blue} label="entering RMDs" peakPortfolio={flowData.peakPortfolio} />
                   </>
                 ) : (
                   <div style={{ ...panel, marginBottom: 0, borderRadius: 0,

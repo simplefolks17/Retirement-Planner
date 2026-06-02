@@ -304,7 +304,7 @@ export function generatePhaseSteps(flowData, {
       ? [{ label: "Roth Conversion Tax", amount: flowData.convWindowTax, type: "subtract",
            sub: `on ${fmt(flowData.totalConverted)} converted` }]
       : []),
-    { label: "Portfolio at 73", amount: flowData.portAt73, type: "total" },
+    { label: "Portfolio entering RMDs", amount: flowData.portPreRMD, type: "total" },
   ] : [];
 
   const phase3Steps = [
