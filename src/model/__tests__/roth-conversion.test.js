@@ -66,3 +66,36 @@ describe("calcConversionSim — with conversion window", () => {
     expect(resultB.rothBalEnd).toBe(resultB.rothBalEnd_tax);
   });
 });
+
+describe("calcConversionSim — per-year conversion targets (annualConversions)", () => {
+  it("each year's conversion follows the per-year target array", () => {
+    // Larger targets in early (low-income) years, smaller later — tests that the
+    // model honors the array rather than the single annualConversion scalar.
+    const annualConversions = [60_000, 60_000, 40_000, 20_000, 20_000];
+    const result = calcConversionSim({ ...base, annualConversions });
+    expect(result.years[0].conversion).toBe(60_000);
+    expect(result.years[2].conversion).toBe(40_000);
+    expect(result.years[4].conversion).toBe(20_000);
+  });
+
+  it("per-year target is still capped by the available trad balance", () => {
+    // Target far exceeds the trad balance → conversion is clamped to trad, not target.
+    const annualConversions = [10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000];
+    const result = calcConversionSim({ ...base, annualConversions });
+    expect(result.years[0].conversion).toBeLessThanOrEqual(500_000 * 1.05);
+  });
+
+  it("falls back to annualConversion scalar for years past the array length", () => {
+    const annualConversions = [50_000]; // only one entry for a 5-year window
+    const result = calcConversionSim({ ...base, annualConversions });
+    expect(result.years[0].conversion).toBe(50_000);
+    expect(result.years[1].conversion).toBe(base.annualConversion); // 30_000 fallback
+  });
+
+  it("omitting annualConversions reproduces the scalar behavior exactly", () => {
+    const withArr  = calcConversionSim({ ...base, annualConversions: null });
+    const scalar   = calcConversionSim(base);
+    expect(withArr.totalTax).toBe(scalar.totalTax);
+    expect(withArr.rothBalEnd).toBe(scalar.rothBalEnd);
+  });
+});

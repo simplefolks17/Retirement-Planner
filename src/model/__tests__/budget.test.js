@@ -63,10 +63,20 @@ describe("calcOptimizedAllocation — priority order", () => {
     currentIncome: 100_000,
   };
 
-  it("prioritizes employer match gap first", () => {
-    // match needed = 3% of $100K = $3K, current contrib is $5K > $3K → no match gap
-    const alloc = calcOptimizedAllocation({ ...base, contrib401k: 0 });
+  it("prioritizes employer match gap first (formula mode)", () => {
+    // Formula match is contingent: "50% of first 6%" → need 6% of $100K = $6K deferral.
+    // contrib401k 0 < $6K, so surplus is steered into the 401k to capture it.
+    const alloc = calcOptimizedAllocation({ ...base, matchMode: "formula", contrib401k: 0 });
     expect(alloc.extraMatch).toBeGreaterThan(0);
+  });
+
+  it("flat match is unconditional — no surplus steered to 401k to capture it", () => {
+    // Flat match (salary × pct) is paid regardless of employee deferral, so the
+    // optimizer must NOT push surplus into the 401k for it; HSA/Roth take priority.
+    const alloc = calcOptimizedAllocation({ ...base, matchMode: "flat", contrib401k: 0 });
+    expect(alloc.extraMatch).toBe(0);
+    expect(alloc.extraHSA).toBe(4_300);   // HSA filled first instead
+    expect(alloc.extraRoth).toBeGreaterThan(0);
   });
 
   it("fills HSA after match", () => {

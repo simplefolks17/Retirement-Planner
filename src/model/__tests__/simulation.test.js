@@ -61,6 +61,27 @@ describe("runSimulation — IRS limits", () => {
     expect(year1.cRoth).toBeGreaterThan(0);
     expect(year1.cRoth).toBeLessThan(7_500);
   });
+
+  it("non-MFJ filer is NOT phased out by spouse income (uses primary MAGI only)", () => {
+    // Single filer, primary $100K (under the $150K start), spouse earns $200K.
+    // Combined would be $300K (fully phased out) — but a single filer reports
+    // separately, so the full Roth contribution must still go through.
+    const rows = defaultSim({
+      filingStatus: "single", currentIncome: 100_000, incomeGrowth: 0,
+      spouseIncome: 200_000, contribRoth: 7_000,
+    });
+    expect(rows[0].cRoth).toBe(7_000);
+  });
+
+  it("MFJ filer IS phased out by combined household income", () => {
+    // MFJ phase-out is ~$236K–$246K. Primary $150K + spouse $150K = $300K combined
+    // → fully phased out, Roth = 0. Confirms MFJ still combines.
+    const rows = defaultSim({
+      filingStatus: "mfj", currentIncome: 150_000, incomeGrowth: 0,
+      spouseIncome: 150_000, spouseIncomeGrowth: 0, contribRoth: 7_000,
+    });
+    expect(rows[0].cRoth).toBe(0);
+  });
 });
 
 describe("runSimulation — output structure", () => {

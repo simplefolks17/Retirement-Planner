@@ -9,6 +9,10 @@ import { marginalRate } from "./taxes.js";
 export function calcConversionSim({
   conversionWindowYrs,
   annualConversion,
+  // Optional per-year conversion targets. When provided, overrides annualConversion
+  // for each year so the bracket-fill amount can grow in low-income years (e.g.
+  // before SS/pension start) where more bracket room is available.
+  annualConversions,
   returnRate,
   retIncomeFloor,
   // Optional per-year income floors array. When provided, overrides retIncomeFloor
@@ -44,7 +48,8 @@ export function calcConversionSim({
     tradA *= (1 + r); rothA *= (1 + r); taxableA *= (1 + r);
     tradB *= (1 + r); rothB *= (1 + r); taxableB *= (1 + r);
 
-    const conversion = Math.min(annualConversion, Math.min(tradA, tradB));
+    const yearTarget = annualConversions ? (annualConversions[yr] ?? annualConversion) : annualConversion;
+    const conversion = Math.min(yearTarget, Math.min(tradA, tradB));
     const floor = retIncomeFloors ? (retIncomeFloors[yr] ?? retIncomeFloor) : retIncomeFloor;
     const taxOnConversion = Math.round(
       conversion * marginalRate(floor + conversion, filingStatus)

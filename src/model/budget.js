@@ -48,15 +48,19 @@ export function calcOptimizedAllocation({
   let remaining = Math.round(availableSurplus * savingsSurplusPct / 100);
   const alloc = { extra401k: 0, extraRoth: 0, extraHSA: 0, extraTaxable: 0, extraMatch: 0 };
 
-  // 1. Employer match: ensure 401k contribution is high enough to capture full match
-  const matchContribNeeded = matchMode === "formula"
-    ? Math.round(currentIncome * matchFormulaCap / 100)
-    : Math.round(currentIncome * employerMatchPct / 100);
-  if ((employerMatchPct > 0 || matchMode === "formula") && contrib401k < matchContribNeeded) {
-    const matchGap = Math.min(remaining, matchContribNeeded - contrib401k);
-    alloc.extraMatch = matchGap;
-    alloc.extra401k += matchGap;
-    remaining -= matchGap;
+  // 1. Employer match: only FORMULA matches are contingent on the employee's own
+  //    deferral (e.g. "50% of the first 6%"), so only formula mode needs surplus
+  //    steered into the 401k to capture the full match. A FLAT match (salary × pct)
+  //    is paid unconditionally — directing surplus there just to "earn" it is wrong,
+  //    so flat mode skips this step and lets HSA/Roth take priority.
+  if (matchMode === "formula") {
+    const matchContribNeeded = Math.round(currentIncome * matchFormulaCap / 100);
+    if (contrib401k < matchContribNeeded) {
+      const matchGap = Math.min(remaining, matchContribNeeded - contrib401k);
+      alloc.extraMatch = matchGap;
+      alloc.extra401k += matchGap;
+      remaining -= matchGap;
+    }
   }
 
   // 2. HSA (triple tax advantage)

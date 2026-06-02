@@ -20,11 +20,12 @@ export function generatePhaseActions({
   matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
   employerMatchAmt, currentIncome,
   // Roth / phase-out
-  rothPhaseoutWarning, rothFullyPhased, combinedIncome, filingStatus,
+  rothPhaseoutWarning, rothFullyPhased, rothMAGI, filingStatus,
   // Mega backdoor
   megaCapacity,
   // Conversion
   netConversionBenefit, conversionSim, annualConversion,
+  convPeakTarget, convSteadyTarget, convTargetVaries,
   conversionWindowYrs, rmdTaxSaved,
   // RMD
   totalRMDs, rmdTaxBite, firstRMD, rate3Combined,
@@ -95,8 +96,8 @@ export function generatePhaseActions({
       mode: "comparative",
       title: rothFullyPhased ? "Roth IRA: Over the Limit" : "Roth IRA: Phase-Out Zone",
       body: rothFullyPhased
-        ? `Your combined household MAGI ($${combinedIncome.toLocaleString()}) exceeds the ${TAX_DATA_2026[filingStatus].label} Roth IRA contribution limit. Direct contributions aren't allowed, but a Backdoor Roth IRA conversion is still available — contribute to a Traditional IRA, then immediately convert to Roth.`
-        : `Your combined MAGI ($${combinedIncome.toLocaleString()}) is in the Roth phase-out zone. Your maximum Roth contribution is reduced. Consider a Backdoor Roth to get the full amount in.`,
+        ? `Your ${filingStatus === "mfj" ? "combined household " : ""}MAGI ($${rothMAGI.toLocaleString()}) exceeds the ${TAX_DATA_2026[filingStatus].label} Roth IRA contribution limit. Direct contributions aren't allowed, but a Backdoor Roth IRA conversion is still available — contribute to a Traditional IRA, then immediately convert to Roth.`
+        : `Your ${filingStatus === "mfj" ? "combined " : ""}MAGI ($${rothMAGI.toLocaleString()}) is in the Roth phase-out zone. Your maximum Roth contribution is reduced. Consider a Backdoor Roth to get the full amount in.`,
       vsA: { label: "Direct Roth", value: rothFullyPhased ? "$0" : "Reduced", color: C.orange },
       vsB: { label: "Backdoor Roth", value: fmt(ROTH_IRA_LIMIT_2026), color: C.green, sub: "full amount" },
     });
@@ -136,7 +137,7 @@ export function generatePhaseActions({
       phase2Actions.push({
         mode: "prescriptive",
         title: "Execute the Roth Conversion Ladder",
-        body: `Convert ${fmt(annualConversion)}/yr during your ${conversionWindowYrs}-year low-income window (ages ${safeRetAge + 1}–72). You'll pay ${fmt(conversionSim.totalTax)} in conversion tax now, but save ${fmt(rmdTaxSaved)} in RMD taxes later. Every dollar converted escapes future mandatory withdrawals and grows tax-free forever.`,
+        body: `Convert ${convTargetVaries ? `up to ${fmt(convPeakTarget)}/yr in the earliest years (tapering to ${fmt(convSteadyTarget)}/yr once SS/pension begin)` : `${fmt(annualConversion)}/yr`} during your ${conversionWindowYrs}-year low-income window (ages ${safeRetAge + 1}–72). You'll pay ${fmt(conversionSim.totalTax)} in conversion tax now, but save ${fmt(rmdTaxSaved)} in RMD taxes later. Every dollar converted escapes future mandatory withdrawals and grows tax-free forever.`,
         impact: netConversionBenefit,
         impactColor: C.green,
         impactLabel: "net lifetime savings",

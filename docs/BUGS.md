@@ -29,7 +29,126 @@ Apply the correct phase rate per year: use `d["Trad 401k"]` from simData directl
 
 ---
 
+### BUG-16 (Audit Finding C) — Spousal SS benefit not reduced for early spouse claiming
+
+**Reported:** 2026-06-02  
+**Status:** Open — known limitation (needs a new input before it can be fixed)  
+**File:** `src/model/social-security.js` line 44 (`calcSpousal`)
+
+**Symptom:**  
+The spousal Social Security benefit is always computed as if the spouse claims at Full Retirement Age. A spouse who claims early should receive a permanently reduced benefit, but the model has no way to express that.
+
+**Root cause:**  
+There is no spouse-claiming-age input in the UI at all — the model consistently assumes FRA for the spousal benefit. This is a modeling *gap*, not a wrong calculation given the available inputs.
+
+**Impact:**  
+Low. Only affects households relying on a spousal benefit where the spouse plans to claim early. Overstates that benefit (and therefore slightly understates portfolio need). Requires a new input + UI control to fix; tracked for the household-modeling premium feature.
+
+---
+
+### BUG-17 (Audit Finding D) — SS claiming-age slider can be set below current age
+
+**Reported:** 2026-06-02  
+**Status:** Open — cosmetic  
+**File:** `src/App.jsx` ~line 1589 (SS claiming-age slider)
+
+**Symptom:**  
+The Social Security claiming-age slider allows values below the user's current age, which looks odd (you can't claim in the past).
+
+**Root cause:**  
+The slider `min` isn't floored at `currentAge`.
+
+**Impact:**  
+None on the math — the drawdown loops gate SS on `age >= ssClaimingAge`, so a past claiming age is correctly treated as "already claimed / active from the start." Purely a UI affordance issue; fix by raising the slider `min` to `Math.max(62, currentAge)`.
+
+---
+
+### BUG-18 (Audit Finding G) — Retirement age can momentarily exceed `lifeExpectancy − 1`
+
+**Reported:** 2026-06-02  
+**Status:** Open — cosmetic  
+**File:** `src/App.jsx` ~line 987 (life-expectancy `onChange`)
+
+**Symptom:**  
+If the user drags life expectancy *down* below retirement age + 1 after already setting a high retirement age, the two values can momentarily cross.
+
+**Root cause:**  
+The life-expectancy change handler doesn't clamp retirement age back down in the same interaction.
+
+**Impact:**  
+Negligible — React/HTML5 reconcile the constraint on the next interaction, and downstream loops use `Math.max(1, safeLifeExp - safeRetAge)` guards, so no NaN/crash results. Cosmetic only; fix by clamping `retirementAge` to `lifeExpect − 1` inside the life-expectancy handler.
+
+---
+
 ## Resolved Issues
+
+---
+
+### ~~BUG-15~~ (Audit Finding F) — "Household Gross" / "FICA (both earners)" labels shown for non-MFJ filers
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-02  
+**File:** `src/App.jsx` line 794
+
+**Symptom:**  
+The 2026 Tax Breakdown card labeled the gross-income row "Household Gross" whenever `spouseIncome > 0`, even for non-MFJ filers (single / MFS / HoH) where the displayed `householdIncome` is *primary-only*. The label implied the spouse's income was included when it was not.
+
+**Root cause:**  
+The label keyed on `spouseIncome > 0` rather than on filing status. Per CLAUDE.md rules 3 & 9, only MFJ uses combined household income; for every other status `householdIncome = currentIncome` (primary only).
+
+**Fix:**  
+The gross-income label now keys on `filingStatus === "mfj"` ("Household Gross") vs. otherwise ("Gross Income"), matching the value actually shown. The FICA label is left keyed on `spouseIncome > 0` ("FICA (both earners)") — that is correct, because FICA is always computed per-earner across both spouses regardless of filing status.
+
+---
+
+### ~~BUG-14~~ (Audit Finding E) — Flat employer match treated as contingent in the surplus optimizer
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-02  
+**File:** `src/model/budget.js` (`calcOptimizedAllocation`, lines 51–63)
+
+**Symptom:**  
+With employer match set to **flat** mode (employer contributes `salary × pct` unconditionally), the "Optimized" surplus allocation still steered the user's own surplus into the 401k "to capture the match" — money that should go to HSA/Roth first in IRS-priority order. The advice was wrong because a flat match is paid regardless of what the employee contributes.
+
+**Root cause:**  
+The match-capture step ran for both modes and, for flat mode, computed the match *amount* (`salary × employerMatchPct`) and treated it as a contribution the user must make.
+
+**Fix:**  
+The match-capture step now runs only when `matchMode === "formula"` (the only mode where the match is contingent on the employee's own deferral, e.g. "50% of the first 6%"). In flat mode, surplus flows to HSA → Roth → 401k → taxable in correct priority. Added a flat-mode test asserting `extraMatch === 0` with HSA/Roth funded first; kept a formula-mode test asserting the match gap is still captured.
+
+---
+
+### ~~BUG-13~~ (Audit Finding B) — Roth conversion bracket-fill used a single steady-state target for every year
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-02  
+**Files:** `src/App.jsx` (bracket-fill block + display), `src/model/roth-conversion.js`, `src/model/action-cards.js`
+
+**Symptom:**  
+In "fill a bracket" mode, the recommended annual conversion was a single static amount computed as if Social Security and pension income were active in every year of the conversion window. A user who retires early and defers SS has several low-income years with far more bracket room available, but the app recommended the same conservative amount throughout — under-converting in the cheap early years.
+
+**Root cause:**  
+The per-year *tax* was already correct (`convFloors` gates SS/pension on claiming/start age per year, and `calcConversionSim` uses `retIncomeFloors`), but the conversion *target* (`annualConversion`) was a single scalar derived from the steady-state floor.
+
+**Fix:**  
+- `calcConversionSim` gained an optional `annualConversions` array (mirrors the existing `retIncomeFloors` pattern); each loop year uses `annualConversions[yr] ?? annualConversion`. Fully backward-compatible — omitting it reproduces the scalar behavior, so the golden master is unchanged.
+- App.jsx now builds `bracketFillConversions` per year from `convFloors[i]` (bracket top + deduction − that year's income floor) and passes it in bracket mode only.
+- The headline "Annual Conversion" metric and the "Suggested annual conversion" line show a range (`peak → steady`) with a "tapers as SS/pension begin" note when the amounts vary; the Roth-ladder action card wording adapts the same way. The year-by-year table already reflects the varying amounts.
+
+---
+
+### ~~BUG-12~~ (Audit Finding A) — Roth IRA phase-out used combined income for non-MFJ filers
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-02  
+**Files:** `src/App.jsx` (~line 179), `src/model/simulation.js` (~line 81), `src/model/action-cards.js`
+
+**Symptom:**  
+The Roth IRA contribution phase-out was tested against *combined* household income (`currentIncome + spouseIncome`) for every filing status. A single / MFS / HoH filer with a working spouse was falsely warned they were in (or over) the Roth phase-out zone, and the projection simulation wrongly reduced or zeroed their projected Roth contributions.
+
+**Root cause:**  
+Both the live-year flags (`rothPhaseoutWarning`, `rothFullyPhased`) and the per-year simulation phase-out test summed primary + spouse income unconditionally. Per CLAUDE.md rules 3 & 9, only MFJ files jointly; every other status reports separately and should be tested on the primary earner's MAGI alone.
+
+**Fix:**  
+Introduced `rothMAGI = filingStatus === "mfj" ? combinedIncome : currentIncome` (mirrors the existing `agi` gate) and used it for both phase-out flags; the phase-out action card now prints `rothMAGI` with "combined" wording only for MFJ. In `simulation.js`, the per-year test is now `yearMAGI = filingStatus === "mfj" ? primaryMAGI + spouseMAGI : primaryMAGI`. Added simulation tests: a single filer with a high-earning spouse is no longer phased out, while an MFJ household with the same combined income still is.
+
+---
 
 ---
 

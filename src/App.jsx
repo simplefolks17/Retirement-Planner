@@ -175,9 +175,12 @@ export default function App() {
   const takeHome         = householdIncome - fedTax - stateTax - fica - safeDeduc;
   const combinedEffRate  = (fedTax + stateTax + fica) / (householdIncome || 1);
   const noStateTax       = stateRate === 0;
+  // Roth phase-out is tested against combined income only for MFJ filers; every
+  // other status uses the primary earner's income alone (CLAUDE.md rules 3 & 9).
+  const rothMAGI             = filingStatus === "mfj" ? combinedIncome : currentIncome;
   const rothPhaseout         = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
-  const rothPhaseoutWarning  = combinedIncome >= rothPhaseout.start;
-  const rothFullyPhased      = combinedIncome >= rothPhaseout.end;
+  const rothPhaseoutWarning  = rothMAGI >= rothPhaseout.start;
+  const rothFullyPhased      = rothMAGI >= rothPhaseout.end;
 
   const grossAfterTax = calcGrossAfterTax(householdIncome, fedTax, stateTax, fica);
   const { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus } =
@@ -355,17 +358,31 @@ export default function App() {
     22: retTaxData.brackets[2]?.max ?? 105_700,
     24: retTaxData.brackets[3]?.max ?? 201_775,
   };
+  const bracketTarget = bracketTops[conversionBracketTarget] ?? bracketTops[22];
+  // Per-year bracket-fill targets: each year converts up to the bracket top, minus
+  // THAT year's income floor (convFloors gates SS/pension on claiming/start age).
+  // Early-retirement years before SS/pension start have a lower floor → more room.
+  const bracketFillConversions = convFloors.map(floor =>
+    Math.max(0, Math.round(bracketTarget + retTaxData.deduction - floor)));
+  // Steady-state scalar (all sources active) — the lowest target, used as the
+  // headline figure and as the fallback when there are no conversion-window years.
   const bracketFillConversion = Math.max(0, Math.round(
-    (bracketTops[conversionBracketTarget] ?? bracketTops[22]) + retTaxData.deduction - ssTaxableRet - (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0)
+    bracketTarget + retTaxData.deduction - retIncomeFloor
   ));
   const annualConversion = conversionMode === "bracket" ? bracketFillConversion : annualConversionAmt;
+  // Display range for bracket mode: peak (earliest, lowest-income year) → steady.
+  const convPeakTarget  = bracketFillConversions.length ? Math.max(...bracketFillConversions) : bracketFillConversion;
+  const convSteadyTarget = bracketFillConversions.length ? Math.min(...bracketFillConversions) : bracketFillConversion;
+  const convTargetVaries = conversionMode === "bracket" && convPeakTarget !== convSteadyTarget;
 
   const conversionSim = useMemo(() => {
     const retRow = simData.find(d => d.age === safeRetAge)
       ?? (safeRetAge === currentAge ? currentSnapshot : null);
     const raw = calcConversionSim({
       conversionWindowYrs: retRow ? conversionWindowYrs : 0,
-      annualConversion, returnRate, retIncomeFloor, retIncomeFloors: convFloors,
+      annualConversion,
+      annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
+      returnRate, retIncomeFloor, retIncomeFloors: convFloors,
       filingStatus, conversionTaxSource,
       tradGrossAtRetirement: retRow?.tradGross ?? 0,
       rothBalAtRet: retVals["Roth IRA"] ?? 0,
@@ -373,7 +390,7 @@ export default function App() {
     });
     // Model returns year ages as 1-indexed (yr+1); offset by safeRetAge for display.
     return { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + safeRetAge })) };
-  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource]);
+  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion, conversionMode, bracketFillConversions, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource]);
 
   const rmdDataPostConversion = useMemo(() => calcRMDPostConversion({
     conversionWindowYrs, rmdData, tradBal73: conversionSim.tradBal73,
@@ -774,7 +791,7 @@ export default function App() {
               2026 Tax Breakdown
             </p>
             {[
-              { label: spouseIncome > 0 ? "Household Gross" : "Gross Income", val: fmt(householdIncome),                     color: C.text    },
+              { label: filingStatus === "mfj" ? "Household Gross" : "Gross Income", val: fmt(householdIncome),                     color: C.text    },
               { label: "Pre-Tax Deductions",        val: safeDeduc > 0 ? `- ${fmt(safeDeduc)}` : "-",  color: safeDeduc > 0 ? C.blue : C.muted },
               { label: "AGI",                       val: fmt(agi),                                      color: C.gold    },
               { label: "Federal Tax",               val: fmt(fedTax),                                   color: C.orange  },
@@ -1980,8 +1997,12 @@ export default function App() {
                         ))}
                       </div>
                       <p style={{ margin: 0, fontSize: 10, color: C.muted }}>
-                        Suggested annual conversion: <span style={{ color: C.gold, ...mono }}>{fmt(bracketFillConversion)}</span>
-                        <span style={{ color: C.muted }}> · assumes SS ({fmt(householdSS)}/yr, 85% taxable){effectivePension > 0 ? ` + pension (${fmt(effectivePension)}/yr)` : ""} as other ordinary income</span>
+                        Suggested annual conversion: <span style={{ color: C.gold, ...mono }}>
+                          {convTargetVaries ? `${fmt(convPeakTarget)} → ${fmt(convSteadyTarget)}` : fmt(bracketFillConversion)}
+                        </span>
+                        {convTargetVaries
+                          ? <span style={{ color: C.muted }}> · larger in early years before SS/pension start, tapering once they begin</span>
+                          : <span style={{ color: C.muted }}> · assumes SS ({fmt(householdSS)}/yr, 85% taxable){effectivePension > 0 ? ` + pension (${fmt(effectivePension)}/yr)` : ""} as other ordinary income</span>}
                       </p>
                     </div>
                   )}
@@ -2033,7 +2054,10 @@ export default function App() {
                 </div>
                 <div className="det-stat-4" style={{ gap: 10, marginBottom: 14 }}>
                   {[
-                    { label: "Annual Conversion",  val: fmt(annualConversion),            sub: "per year during window",        color: C.blue   },
+                    { label: "Annual Conversion",
+                      val: convTargetVaries ? `${fmt(convPeakTarget)} → ${fmt(convSteadyTarget)}` : fmt(annualConversion),
+                      sub: convTargetVaries ? "tapers as SS/pension begin" : "per year during window",
+                      color: C.blue   },
                     { label: "Conversion Tax Cost", val: fmt(conversionSim.totalTax),      sub: "paid now, pre-RMD",             color: C.orange },
                     { label: "RMD Tax Saved",       val: fmt(rmdTaxSaved),                 sub: "vs no conversions",             color: C.green  },
                     { label: netConversionBenefit >= 0 ? "Net Savings" : "Net Cost",
@@ -2386,9 +2410,10 @@ export default function App() {
               grossAfterTax, currentContribTotal, contrib401k, contribHSA,
               matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
               employerMatchAmt, currentIncome,
-              rothPhaseoutWarning, rothFullyPhased, combinedIncome, filingStatus,
+              rothPhaseoutWarning, rothFullyPhased, rothMAGI, filingStatus,
               megaCapacity,
               netConversionBenefit, conversionSim, annualConversion,
+              convPeakTarget, convSteadyTarget, convTargetVaries,
               conversionWindowYrs, rmdTaxSaved,
               totalRMDs, rmdTaxBite, firstRMD, rate3Combined,
               includeSS, ssClaimingAge, effectiveSS, ss70Annual,

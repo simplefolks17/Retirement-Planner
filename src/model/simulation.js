@@ -75,7 +75,10 @@ export function runSimulation({
       const baseContrib = Math.min(contribRoth, rothCap);
       const primaryMAGI = currentIncome * growFactor;
       const spouseMAGI  = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, y - 1);
-      const yearMAGI    = primaryMAGI + spouseMAGI;
+      // Only MFJ filers report combined income on one return; for every other
+      // status the Roth phase-out is tested against the primary earner's MAGI
+      // alone (spouse income/contributions are tracked separately). See CLAUDE.md rules 3 & 9.
+      const yearMAGI    = filingStatus === "mfj" ? primaryMAGI + spouseMAGI : primaryMAGI;
       const po = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
       if (yearMAGI >= po.end) return 0;
       if (yearMAGI <= po.start) return baseContrib;

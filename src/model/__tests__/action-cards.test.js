@@ -42,7 +42,7 @@ const base = {
 
   rothPhaseoutWarning: false,
   rothFullyPhased: false,
-  combinedIncome: 100_000,
+  rothMAGI: 100_000,
   filingStatus: "single",
 
   megaCapacity: 10_000,
@@ -91,7 +91,7 @@ describe("generatePhaseActions — phase1", () => {
   });
 
   it("returns Roth phase-out comparative card when rothPhaseoutWarning is true", () => {
-    const { phase1Actions } = generatePhaseActions({ ...base, rothPhaseoutWarning: true, combinedIncome: 158_000 });
+    const { phase1Actions } = generatePhaseActions({ ...base, rothPhaseoutWarning: true, rothMAGI: 158_000 });
     expect(phase1Actions.some(c => c.title.includes("Roth IRA"))).toBe(true);
   });
 
