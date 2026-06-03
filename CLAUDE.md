@@ -40,7 +40,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
   4. MFJ tax calc incomplete — AGI, state tax, and `grossAfterTax` now use combined household income
 - Feature backlog expanded to 48 items including premium tier, household modeling,
   Monte Carlo analytics, and new income sources.
-- Three features shipped (Jun 2026):
+- Six features shipped (Jun 2026):
   1. #8 — Additional pre-tax balances: addlPreTaxBal input feeds RMD and conversion basis
   2. #33 — Bracket-accurate retirement tax: `effectiveRMDTaxRate` from real bracket math
      replaces flat `rate3Combined` proxy for `rmdTaxBite`, `netConversionBenefit`, and
@@ -48,6 +48,12 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
   3. Rate3 slider removal: `"Trad 401k"` display now uses `fedMarginal` (bracket-accurate
      working-year rate) computed from actual income/deductions; sliders for phase rates
      removed entirely; TaxTimeline simplified to working/retirement 2-segment view
+  4. #7 — ACA cliff warning: per-year MAGI exposure computed for conversion window years
+     before Medicare age; subsidy cliff threshold and affected ages shown in UI
+  5. #34 — IRMAA exposure: 2-year lookback surcharge computed per conversion year;
+     per-person and 2-person options; total IRMAA cost shown against net conversion benefit
+  6. #46 — Conversion optimizer: coarse $5k-step search maximizing net benefit after
+     IRMAA costs; suggestion shown when optimal differs from current setting by >$5k
 
 ## Commands
 - `npm run dev` — start dev server
