@@ -110,7 +110,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **127 tests across 12 files**, all passing.
+`npm test`. Current count: **134 tests across 12 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the
@@ -139,3 +139,70 @@ regexes must match `\$[\d.]+[MK]?`, never `\$[\d,]+`).
 - $140K earner with 3% growth: Roth contrib = $0 by year 7 (phase-out)
 - yearsSustained with $20K SS must be > yearsSustained without SS (same portfolio)
 - contrib401k at $15K with 3% growth must never exceed elective limit in sim
+
+---
+
+## Feature Design Notes
+
+A running record of design decisions made during feature planning. These persist
+across sessions so decisions don't have to be re-litigated.
+
+---
+
+### MAGI Penalty Warnings — ACA / IRMAA / NIIT (planned feature)
+
+**Decision (2026-06-03):** ACA and IRMAA should be modeled as real dollar costs
+(not just warnings) when applicable. NIIT should be a warning only.
+
+#### ACA Subsidy Cliff
+- Only affects users buying insurance on the ACA marketplace — zero impact for
+  anyone with employer coverage, retiree coverage, or who is already on Medicare.
+- Dollar impact is large (potentially $10k–$20k+/yr lost subsidies) and cliff-like.
+- **Implementation:** Add a yes/no input: "Are you or will you be on an ACA
+  marketplace plan before age 65?" If yes, compute the subsidy loss per conversion
+  year and subtract it from `netConversionBenefit` as a real cost.
+- Subsidy amounts require the `ACA_FPL_2026` table + household size input.
+- **MAGI note:** ACA eligibility uses full MAGI — includes 100% of SS (not the
+  85% taxable fraction used in `convFloors`). A separate `convMAGIFloors[]` array
+  using 100% SS is needed; do not reuse `convFloors` for this calculation.
+
+#### IRMAA (Medicare premium surcharge)
+- Applies to everyone enrolled in Medicare Part B/D whose MAGI exceeds ~$103k
+  (single) / ~$206k (MFJ). Structured tiers, not a cliff — adds $70–$420+/mo per
+  person depending on income tier.
+- Near-universal for 65+ retirees (Medicare enrollment is nearly automatic at 65;
+  only those with qualifying employer coverage past 65 legitimately opt out).
+- **Implementation:** Add a yes/no input: "Will you enroll in Medicare at 65?"
+  Default to yes. If yes, compute IRMAA surcharge per retirement year from MAGI
+  and add it as a real annual cost. Display a UI note: "We've assumed Medicare
+  enrollment at 65. If you will have qualifying employer coverage past 65, toggle
+  this off."
+- **⚠️ 2-year lookback:** IRMAA premiums in year Y are based on MAGI from year
+  Y−2. A large Roth conversion at 67 triggers higher Part B/D premiums at 69.
+  The per-year MAGI from `convFloors` is already available — apply the [yr−2]
+  offset when looking up the IRMAA tier. Do NOT apply the surcharge in the same
+  year as the income; it's a common implementation mistake.
+- All IRMAA bracket thresholds and surcharge amounts belong in `irs-2026.js`.
+
+#### NIIT (Net Investment Income Tax)
+- The Roth conversion itself is ordinary income, NOT investment income — NIIT
+  does not apply to the conversion amount directly.
+- NIIT (3.8%) applies to dividends, capital gains, and passive income when MAGI
+  exceeds $200k (single) / $250k (MFJ). A large conversion can *indirectly* push
+  MAGI above the threshold, making pre-existing investment income newly subject.
+- Impact is modest (3.8% of investment income, not the whole conversion) and
+  conditional on having significant taxable-account income.
+- **Implementation:** Warning only. Estimate the marginal NIIT exposure when
+  conversion pushes MAGI past the threshold. Do not bake into `netConversionBenefit`
+  by default. Threshold constants belong in `irs-2026.js`.
+
+#### Shared implementation note
+All three features derive from per-year projected MAGI during the conversion
+window. The conversion window already has `convFloors[i]` (taxable income floor
+per year, gating SS/pension by age). Extend this pattern:
+- `convTaxableFloors[i]` — current `convFloors` (85% SS + pension), used for
+  bracket-fill conversion targets and income tax calculations.
+- `convMAGIFloors[i]` — new, parallel array using 100% SS + pension, used for
+  ACA/IRMAA/NIIT threshold comparisons.
+Both arrays gate SS and pension on `ssClaimingAge` / `pensionStartAge` per
+year (`>=` comparison per CLAUDE.md rule 5b).
