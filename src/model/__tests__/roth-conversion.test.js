@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcConversionSim } from "../roth-conversion.js";
+import { calcConversionSim, findOptimalConversion } from "../roth-conversion.js";
 
 const base = {
   conversionWindowYrs: 5,
@@ -97,5 +97,32 @@ describe("calcConversionSim — per-year conversion targets (annualConversions)"
     const scalar   = calcConversionSim(base);
     expect(withArr.totalTax).toBe(scalar.totalTax);
     expect(withArr.rothBalEnd).toBe(scalar.rothBalEnd);
+  });
+});
+
+describe("findOptimalConversion", () => {
+  it("returns 0 when no benefit from converting", () => {
+    // Trivial: always returns 0 benefit regardless of amount
+    const { optimalConversion } = findOptimalConversion({
+      getNetBenefit: () => ({ rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 }),
+    });
+    expect(optimalConversion).toBe(0);
+  });
+
+  it("finds amount that maximizes net benefit", () => {
+    // $50k saves the most: rmdTaxSaved=20k, tax=5k, net=15k
+    // $100k saves more but irmaa cost makes it worse: rmdTaxSaved=25k, tax=10k, irmaa=8k, net=7k
+    const { optimalConversion, optimalBenefit } = findOptimalConversion({
+      step: 50_000,
+      getNetBenefit: (amount) => {
+        if (amount === 0)        return { rmdTaxSaved: 0,      totalTax: 0,      irmaaCost: 0     };
+        if (amount === 50_000)   return { rmdTaxSaved: 20_000, totalTax: 5_000,  irmaaCost: 0     };
+        if (amount === 100_000)  return { rmdTaxSaved: 25_000, totalTax: 10_000, irmaaCost: 8_000 };
+        if (amount === 150_000)  return { rmdTaxSaved: 26_000, totalTax: 15_000, irmaaCost: 8_000 };
+        return { rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 };
+      },
+    });
+    expect(optimalConversion).toBe(50_000);
+    expect(optimalBenefit).toBe(15_000);
   });
 });

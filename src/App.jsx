@@ -13,7 +13,8 @@ import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from 
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained } from "./model/drawdown.js";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
-import { calcConversionSim } from "./model/roth-conversion.js";
+import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
+import { calcHealthcareExposure, acaCliffThreshold, irmaaAnnualSurcharge } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import {
@@ -26,6 +27,7 @@ import {
   SS_FACTORS,
   STATE_TAX, RETIREMENT_STATE_TAX,
   ASSUMPTIONS,
+  MEDICARE_AGE,
 } from "./config/irs-2026.js";
 import { Slider }        from "./components/Slider.jsx";
 import { DeferredInput } from "./components/DeferredInput.jsx";
@@ -101,6 +103,12 @@ export default function App() {
   const [matchFormulaCap,         setMatchFormulaCap]         = useState(6);
 
   const [addlPreTaxBal, setAddlPreTaxBal] = useState(0);
+
+  const [hasMarketplaceInsurance, setHasMarketplaceInsurance] = useState(false);
+  const [householdSize, setHouseholdSize] = useState(1);
+  const [marketplaceMonthlyPremium, setMarketplaceMonthlyPremium] = useState(null);
+  const [hasMedicare, setHasMedicare] = useState(false);
+  const [personOnMedicare, setPersonOnMedicare] = useState(1); // 1 or 2 (persons)
 
   const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
 
@@ -421,6 +429,79 @@ export default function App() {
   }, 0);
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
+
+  // MAGI floors for healthcare: 100% SS (ACA/IRMAA use gross SS, not 85% taxable fraction)
+  const convMAGIFloors = Array.from({ length: conversionWindowYrs }, (_, i) => {
+    const age    = safeRetAge + i;
+    const yearSS = includeSS && age >= ssClaimingAge ? householdSS : 0;
+    const yearPen = pensionMonthly > 0 && age >= pensionStartAge
+      ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+    return yearSS + yearPen;
+  });
+
+  const healthcareExposure = calcHealthcareExposure({
+    conversionYears: conversionSim.years,
+    convMAGIFloors,
+    hasMarketplaceInsurance,
+    householdSize,
+    hasMedicare,
+    filingStatus,
+  });
+  const acaCliffYears = healthcareExposure.filter(e => e.aca?.crossesCliff);
+  const totalIRMAACost = healthcareExposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
+  const acaAnnualLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
+    ? acaCliffYears.length * marketplaceMonthlyPremium * 12
+    : 0;
+  const adjustedNetConversionBenefit = netConversionBenefit - totalIRMAACost - acaAnnualLoss;
+
+  // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA
+  const optimizerResult = useMemo(() => {
+    if (conversionWindowYrs === 0 || rmdData.length === 0) return null;
+    const retRow = simData.find(d => d.age === safeRetAge)
+      ?? (safeRetAge === currentAge ? currentSnapshot : null);
+    const tradGross = (retRow?.tradGross ?? 0) + addlPreTaxBal;
+    const rothBal   = retVals["Roth IRA"] ?? 0;
+    const taxableBal = retVals["Taxable"] ?? 0;
+    // Capture loop vars for closure (avoids stale deps)
+    const _convFloors = convFloors;
+    const _convMAGIFloors = convMAGIFloors;
+
+    const getNetBenefit = (amount) => {
+      const sim = calcConversionSim({
+        conversionWindowYrs, annualConversion: amount, returnRate,
+        retIncomeFloor, retIncomeFloors: _convFloors,
+        filingStatus, conversionTaxSource,
+        tradGrossAtRetirement: tradGross, rothBalAtRet: rothBal, taxableBalAtRet: taxableBal,
+      });
+      const rmdPost = calcRMDPostConversion({
+        conversionWindowYrs, rmdData, tradBal73: sim.tradBal73,
+        safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
+      });
+      const rmdTaxPost = rmdPost.reduce((sum, { rmd: r }) => {
+        const { tax } = calcTax(rmdIncomeFloor + r, filingStatus);
+        return sum + Math.round((tax - rmdBaseFedTax) + r * retStateRate);
+      }, 0);
+      const rmdTaxSavedOpt = Math.max(0, rmdTaxBite - rmdTaxPost);
+
+      let irmaaCost = 0;
+      if (hasMedicare) {
+        for (let i = 0; i < sim.years.length; i++) {
+          const age = safeRetAge + i;
+          if (age + 2 >= MEDICARE_AGE) {
+            const magi = (_convMAGIFloors[i] ?? 0) + (sim.years[i]?.conversion ?? amount);
+            irmaaCost += irmaaAnnualSurcharge(magi, filingStatus) * personOnMedicare;
+          }
+        }
+      }
+
+      return { rmdTaxSaved: rmdTaxSavedOpt, totalTax: sim.totalTax, irmaaCost };
+    };
+
+    return findOptimalConversion({ getNetBenefit });
+  }, [conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, rmdBaseFedTax, retStateRate,
+      retVals, returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
+      addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
+      hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot]);
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
@@ -2054,6 +2135,156 @@ export default function App() {
                       <p style={{ margin: 0, fontSize: 9, color: C.muted }}>{sub}</p>
                     </div>
                   ))}
+                </div>
+                {/* Healthcare Cost Impact on Conversions */}
+                <div style={{ background: C.card, borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 11, color: C.text, fontWeight: 600 }}>
+                    Healthcare Cost Impact
+                  </p>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    <button onClick={() => setHasMarketplaceInsurance(v => !v)} style={{
+                      padding: "5px 12px", fontSize: 10, fontWeight: 600, border: "none", borderRadius: 5,
+                      cursor: "pointer",
+                      background: hasMarketplaceInsurance ? C.blue : C.border,
+                      color: hasMarketplaceInsurance ? "#fff" : C.muted,
+                      fontFamily: "'DM Sans', system-ui, sans-serif",
+                    }}>Marketplace Insurance</button>
+                    <button onClick={() => setHasMedicare(v => !v)} style={{
+                      padding: "5px 12px", fontSize: 10, fontWeight: 600, border: "none", borderRadius: 5,
+                      cursor: "pointer",
+                      background: hasMedicare ? C.purple : C.border,
+                      color: hasMedicare ? "#fff" : C.muted,
+                      fontFamily: "'DM Sans', system-ui, sans-serif",
+                    }}>Medicare / IRMAA</button>
+                  </div>
+                  {hasMarketplaceInsurance && (
+                    <div style={{ marginBottom: 10 }}>
+                      <Slider label="Household size" value={householdSize} min={1} max={6} step={1}
+                        format={v => `${v} person${v > 1 ? "s" : ""}`} onChange={setHouseholdSize} valueColor={C.blue} />
+                      <div style={{ marginTop: 8 }}>
+                        <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          Monthly marketplace premium (optional)
+                        </p>
+                        <DeferredInput
+                          value={marketplaceMonthlyPremium ?? ""}
+                          placeholder="e.g. 800"
+                          onChange={v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v))}
+                          style={{ width: 120, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 5,
+                            color: C.text, fontSize: 12, padding: "4px 8px" }}
+                        />
+                      </div>
+                      {acaCliffYears.length > 0 ? (
+                        <div style={{ marginTop: 8, background: "#2a1a0a", border: `1px solid ${C.orange}`,
+                          borderRadius: 6, padding: "8px 10px" }}>
+                          <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.orange }}>
+                            ACA Cliff Warning — {acaCliffYears.length} year{acaCliffYears.length > 1 ? "s" : ""} exceed 400% FPL
+                          </p>
+                          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                            At {householdSize}-person household, the subsidy cliff is{" "}
+                            <span style={{ color: C.text, ...mono }}>{fmt(acaCliffThreshold(householdSize))}</span> MAGI.
+                            Conversions push you over in ages:{" "}
+                            <span style={{ color: C.orange, ...mono }}>{acaCliffYears.map(e => e.age).join(", ")}</span>.
+                            {acaAnnualLoss > 0 && (
+                              <> Estimated subsidy loss: <span style={{ color: C.orange, ...mono }}>{fmt(acaAnnualLoss)}</span> total.</>
+                            )}
+                          </p>
+                        </div>
+                      ) : hasMarketplaceInsurance && safeRetAge < MEDICARE_AGE ? (
+                        <p style={{ margin: "8px 0 0", fontSize: 10, color: C.green }}>
+                          No ACA cliff crossings — conversions stay under {fmt(acaCliffThreshold(householdSize))} each year.
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                  {hasMedicare && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                        {[1, 2].map(n => (
+                          <button key={n} onClick={() => setPersonOnMedicare(n)} style={{
+                            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: "none", borderRadius: 5,
+                            cursor: "pointer",
+                            background: personOnMedicare === n ? C.purple : C.border,
+                            color: personOnMedicare === n ? "#fff" : C.muted,
+                            fontFamily: "'DM Sans', system-ui, sans-serif",
+                          }}>{n === 1 ? "1 person" : "2 persons"}</button>
+                        ))}
+                      </div>
+                      {totalIRMAACost > 0 ? (
+                        <div style={{ background: "#1a0a2a", border: `1px solid ${C.purple}`,
+                          borderRadius: 6, padding: "8px 10px" }}>
+                          <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.purple }}>
+                            IRMAA Surcharge — {fmt(totalIRMAACost)} total ({personOnMedicare === 2 ? "2 persons" : "1 person"})
+                          </p>
+                          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                            Conversion income at these ages triggers Medicare Part B+D surcharges (2-year lookback).
+                            Per-year costs:{" "}
+                            {healthcareExposure.filter(e => (e.irmaa?.surcharge ?? 0) > 0).map(e => (
+                              <span key={e.age} style={{ color: C.purple, ...mono }}>
+                                {e.age}: {fmt(e.irmaa.surcharge * personOnMedicare)}{" "}
+                              </span>
+                            ))}
+                          </p>
+                        </div>
+                      ) : (
+                        <p style={{ margin: "4px 0 0", fontSize: 10, color: C.green }}>
+                          No IRMAA surcharges — conversions stay below Medicare thresholds.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {(hasMarketplaceInsurance || hasMedicare) && (totalIRMAACost > 0 || acaAnnualLoss > 0) && (
+                    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 4 }}>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                          <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>Gross Conversion Benefit</p>
+                          <p style={{ margin: 0, fontSize: 14, color: netConversionBenefit >= 0 ? C.green : C.orange, ...mono }}>
+                            {fmt(Math.abs(netConversionBenefit))}
+                          </p>
+                        </div>
+                        {totalIRMAACost > 0 && (
+                          <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                            <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>IRMAA Cost</p>
+                            <p style={{ margin: 0, fontSize: 14, color: C.purple, ...mono }}>−{fmt(totalIRMAACost)}</p>
+                          </div>
+                        )}
+                        {acaAnnualLoss > 0 && (
+                          <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                            <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>ACA Subsidy Loss</p>
+                            <p style={{ margin: 0, fontSize: 14, color: C.orange, ...mono }}>−{fmt(acaAnnualLoss)}</p>
+                          </div>
+                        )}
+                        <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                          <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>Adjusted Net Benefit</p>
+                          <p style={{ margin: 0, fontSize: 14,
+                            color: adjustedNetConversionBenefit >= 0 ? C.green : C.orange, ...mono }}>
+                            {fmt(Math.abs(adjustedNetConversionBenefit))}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {optimizerResult && hasMedicare && Math.abs(optimizerResult.optimalConversion - annualConversion) > 4_999 && (
+                    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 8,
+                      background: "#0a1a0a", borderRadius: 6, padding: "8px 10px" }}>
+                      <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.green }}>
+                        Optimizer Suggestion
+                      </p>
+                      <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                        Converting{" "}
+                        <span style={{ color: C.green, fontWeight: 600, ...mono }}>{fmt(optimizerResult.optimalConversion)}/yr</span>
+                        {" "}maximizes net benefit after IRMAA costs
+                        (estimated <span style={{ color: C.green, ...mono }}>{fmt(optimizerResult.optimalBenefit)}</span> net).
+                        {" "}Your current setting is{" "}
+                        <span style={{ color: C.blue, ...mono }}>{fmt(annualConversion)}/yr</span>.
+                      </p>
+                    </div>
+                  )}
+                  {!hasMarketplaceInsurance && !hasMedicare && (
+                    <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                      Enable toggles above to model how Roth conversion income affects marketplace insurance
+                      subsidies (ACA cliff) or Medicare premium surcharges (IRMAA).
+                    </p>
+                  )}
                 </div>
                 <div className="det-2col" style={{ gap: 16, marginBottom: 14 }}>
                   <div>

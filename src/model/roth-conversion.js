@@ -1,5 +1,23 @@
 import { marginalRate } from "./taxes.js";
 
+// Optimizer: finds the scalar annual conversion that maximizes net benefit
+// accounting for IRMAA costs. Coarse $5k search up to $300k.
+// getNetBenefit(amount) → { rmdTaxSaved, totalTax, irmaaCost }
+// is provided by the caller (App.jsx) to avoid circular deps with rmd.js.
+export function findOptimalConversion({ maxSearch = 300_000, step = 5_000, getNetBenefit }) {
+  let bestAmount = 0;
+  let bestNet;
+  // Seed with 0
+  { const r = getNetBenefit(0); bestNet = r.rmdTaxSaved - r.totalTax - r.irmaaCost; }
+
+  for (let amount = step; amount <= maxSearch; amount += step) {
+    const r = getNetBenefit(amount);
+    const net = r.rmdTaxSaved - r.totalTax - r.irmaaCost;
+    if (net > bestNet) { bestNet = net; bestAmount = amount; }
+  }
+  return { optimalConversion: bestAmount, optimalBenefit: Math.round(bestNet) };
+}
+
 // Runs the Roth conversion ladder simulation through the conversion window.
 // Computes BOTH scenarios simultaneously:
 //   Scenario A: tax paid from the converted amount (less efficient)
