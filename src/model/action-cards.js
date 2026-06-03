@@ -28,7 +28,7 @@ export function generatePhaseActions({
   convPeakTarget, convSteadyTarget, convTargetVaries,
   conversionWindowYrs, rmdTaxSaved,
   // RMD
-  totalRMDs, rmdTaxBite, firstRMD, rate3Combined,
+  totalRMDs, rmdTaxBite, firstRMD, effectiveRMDTaxRate,
   // SS
   includeSS, ssClaimingAge, effectiveSS, ss70Annual,
   ss70DrawReduction, ssDelayGainYrs, wr70,
@@ -236,7 +236,7 @@ export function generatePhaseActions({
     phase3Actions.push({
       mode: "educational",
       title: "RMDs Will Be a Major Tax Event",
-      body: `Starting at 73, the IRS forces ${fmt(firstRMD?.rmd ?? 0)}/yr out of your 401k (growing each year). Over your lifetime, you'll pay an estimated ${fmt(rmdTaxBite)} in tax on these mandatory withdrawals at your ${(rate3Combined * 100).toFixed(1)}% combined rate. This is exactly why Roth conversions before age 73 are so valuable — every dollar converted is one fewer dollar the IRS can force out.`,
+      body: `Starting at 73, the IRS forces ${fmt(firstRMD?.rmd ?? 0)}/yr out of your 401k (growing each year). Over your lifetime, you'll pay an estimated ${fmt(rmdTaxBite)} in tax on these mandatory withdrawals (~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective, bracket-accurate). This is exactly why Roth conversions before age 73 are so valuable — every dollar converted is one fewer dollar the IRS can force out.`,
       impact: rmdTaxBite,
       impactColor: C.orange,
       impactLabel: "lifetime RMD tax",
@@ -282,7 +282,7 @@ export function generatePhaseActions({
 // flowData: the full flowData object from App's useMemo.
 export function generatePhaseSteps(flowData, {
   returnRate, rReal, netPortfolioNeed, effectivePension,
-  rate3Combined, safeRetAge, currentAge, safeLifeExp,
+  effectiveRMDTaxRate, safeRetAge, currentAge, safeLifeExp,
 }) {
   const phase1Steps = [
     { label: "Starting Portfolio", amount: flowData.startPortfolio, type: "start" },
@@ -318,7 +318,7 @@ export function generatePhaseSteps(flowData, {
       sub: `${fmt(netPortfolioNeed)}/yr × ${flowData.actualSustainedYrs} yrs` },
     ...(flowData.distRMDTax > 0
       ? [{ label: "RMD Tax Bite", amount: flowData.distRMDTax, type: "subtract",
-           sub: `at ${(rate3Combined * 100).toFixed(1)}% combined` }]
+           sub: `~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective (bracket-accurate)` }]
       : []),
     { label: `Remaining at ${flowData.depletionAge ?? safeLifeExp}`, amount: flowData.distEndVal, type: "total" },
   ];

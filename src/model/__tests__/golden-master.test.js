@@ -67,21 +67,29 @@ const rReal  = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
 const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, householdSS, 0);
 const rmd = calcRMDProjection({ tradGrossAtRetirement: at.tradGross, safeRetAge, safeLifeExp, returnRate, useTable2: false, spouseCurrentAge: 18, currentAge });
 const totalRMDs = rmd.reduce((s, d) => s + d.rmd, 0);
-const retStateRate = RETIREMENT_STATE_TAX["TX"]?.rate ?? 0;
-const rate3Combined = Math.min(0.95, rate3 / 100 + retStateRate);
-const rmdTaxBite = Math.round(totalRMDs * rate3Combined);
+const retStateRate  = RETIREMENT_STATE_TAX["TX"]?.rate ?? 0;
+const ssTaxableRet  = householdSS * 0.85;
+// Bracket-accurate RMD tax: SS active at RMD start (claiming age 67 ≤ 73), no pension.
+const rmdIncomeFloor  = ssTaxableRet; // SS taxable fraction, pension = 0
+const { tax: rmdBaseFedTax } = calcTax(rmdIncomeFloor, filingStatus);
+const rmdTaxBite = rmd.reduce((sum, { rmd: r }) => {
+  const { tax } = calcTax(rmdIncomeFloor + r, filingStatus);
+  return sum + Math.round((tax - rmdBaseFedTax) + r * retStateRate);
+}, 0);
 const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
-const ssTaxableRet = householdSS * 0.85;
 const retIncomeFloor = ssTaxableRet;
 const retTaxData = TAX_DATA_2026[filingStatus];
 const annualConversion = Math.max(0, Math.round(retTaxData.brackets[2].max + retTaxData.deduction - ssTaxableRet));
 const conv = calcConversionSim({ conversionWindowYrs, annualConversion, returnRate, retIncomeFloor, filingStatus, conversionTaxSource: "converted", tradGrossAtRetirement: at.tradGross, rothBalAtRet: at["Roth IRA"], taxableBalAtRet: at["Taxable"] });
 const rmdPost = calcRMDPostConversion({ conversionWindowYrs, rmdData: rmd, tradBal73: conv.tradBal73, safeLifeExp, returnRate, useTable2: false, spouseCurrentAge: 18, currentAge });
-const totalRMDsPost = rmdPost.reduce((s, d) => s + d.rmd, 0);
-const rmdTaxSaved = Math.max(0, rmdTaxBite - Math.round(totalRMDsPost * rate3Combined));
+const rmdTaxBitePost = rmdPost.reduce((sum, { rmd: r }) => {
+  const { tax } = calcTax(rmdIncomeFloor + r, filingStatus);
+  return sum + Math.round((tax - rmdBaseFedTax) + r * retStateRate);
+}, 0);
+const rmdTaxSaved = Math.max(0, rmdTaxBite - rmdTaxBitePost);
 const netConversionBenefit = rmdTaxSaved - conv.totalTax;
 
-// ── Expected values (locked from verified run 2026-05-31) ───────────────────
+// ── Expected values (updated 2026-06-03: bracket-accurate RMD tax replaces flat rate3Combined) ───
 
 const E = {
   fedTax:               10_123,
@@ -102,9 +110,9 @@ const E = {
   yearsSustained:       86.08558689162889,
   firstRMD:             118_198,
   totalRMDs:            3_106_334,
-  rmdTaxBite:           559_140,
+  rmdTaxBite:           683_974,   // bracket-accurate (was 559_140 at flat 18%)
   conversionWindowYrs:  7,
-  netConversionBenefit: -34_381,
+  netConversionBenefit: 17_345,    // flipped positive — flat rate was understating RMD burden
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────

@@ -157,7 +157,7 @@ var DATA = [
     cx: "Medium", im: "High", af: ["netConversionBenefit", "conversionSim", "conversion display", "MAGI tracking per year"], sv: "hasMarketplaceInsurance, householdSize"
   },
   {
-    id: 8, pr: 2, sec: "RMDs", st: "planned",
+    id: 8, pr: 2, sec: "RMDs", st: "done",
     ti: "Additional pre-tax balances (old 401k accounts)",
     ds: "Many users have multiple old 401k accounts at different custodians. Each has its own RMD. Add an input for additional pre-tax balance that feeds the RMD projection.",
     dt: "Add addlPreTaxBal input (default 0). The entry point is tradGrossAtRetirement — in simulation.js the accumulation loop already tracks tradGross (pre-tax trad balance) on each simData row; at retirement, App.jsx reads retRow.tradGross. Simply add addlPreTaxBal to that value before passing it into calcRMDProjection (rmd.js) and calcConversionSim (roth-conversion.js): tradGrossAtRetirement = (retRow?.tradGross ?? 0) + addlPreTaxBal. IRS rule: RMDs are calculated on the aggregate pre-tax balance across all traditional accounts (403b, 457, old 401k) — the total is what matters, not each account separately. No change to the accumulation model. Show a note when addlPreTaxBal > 0: 'Includes $X from outside accounts — IRS RMDs are based on your total traditional balance.' Golden master: default addlPreTaxBal = 0 so locked values are unaffected.",
@@ -339,7 +339,7 @@ var DATA = [
     cx: "Low", im: "High", af: ["filingStatus", "spouseIncome", "isPremium", "tax breakdown panel", "optimization section"], sv: "none (detection only)"
   },
   {
-    id: 33, pr: 1, sec: "Tax / Retirement", st: "planned",
+    id: 33, pr: 1, sec: "Tax / Retirement", st: "done",
     ti: "Bracket-accurate retirement tax engine + state exemptions",
     ds: "The model taxes all retirement income at one flat guessed rate (rate3Combined). Replace with real bracket math stacking RMDs + 85% SS + pension through actual tax brackets, plus per-state exemption rules (13 states exempt SS entirely, many exempt 401k). Foundational accuracy that feeds the conversion optimizer, RMD projections, and withdrawal strategy.",
     dt: "Two-part build. (1) Retire the rate3Combined flat proxy: compute actual retirement-phase tax using calcTax/marginalRate from taxes.js (already pure functions, currently unused in retirement). Stack RMD income + ssTaxableRet + effectivePension, apply real brackets per filing status. Replace rate3Combined everywhere it feeds rmdTaxBite, netConversionBenefit, and the withdrawal card. Will intentionally move golden master values — update deliberately per rule #7. (2) State exemptions: extend RETIREMENT_STATE_TAX in irs-2026.js with structured flags per state: ssExempt, pensionExempt, traditionalExempt (the exemption data is already written as comments in the config — mostly data entry). Apply exemptions before the bracket calc. MFJ vs non-MFJ brackets must flow through (CLAUDE.md rules 3 & 9). Build before #7 and #34 since they consume the improved retirement tax estimate.",

@@ -56,7 +56,7 @@ const base = {
   totalRMDs: 800_000,
   rmdTaxBite: 144_000,
   firstRMD: { rmd: 45_000 },
-  rate3Combined: 0.18,
+  effectiveRMDTaxRate: 0.18,
 
   includeSS: true,
   ssClaimingAge: 67,
