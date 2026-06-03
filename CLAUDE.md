@@ -15,6 +15,13 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 
+## Git & PR Workflow
+- **Always use a feature branch.** Never commit directly to `main`.
+- **Open a PR before merging.** For any feature, refactor, or substantive change: push the branch, open a PR with a clear title and description explaining what changed and why, then merge. This creates a permanent GitHub record with the full diff.
+- **Bug fixes** are the exception — small, contained bug fixes can be committed directly to the feature branch and merged without a formal PR, as long as `docs/BUGS.md` is updated with root cause, files changed, and fix description.
+- **`docs/BUGS.md` is the bug record.** Every bug fix must be logged there before merging, whether or not a PR is opened.
+- **Test count in `CLAUDE.md` must stay current.** Update the test count in the Commands section whenever new tests are added.
+
 ## Quick Links
 - Architecture & data flow: `docs/ARCHITECTURE.md`
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
@@ -36,7 +43,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter tests (127 tests)
+- `npm test` — run model + formatter tests (134 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)
