@@ -106,6 +106,8 @@ export default function App() {
   const [matchFormulaRate,        setMatchFormulaRate]        = useState(50);
   const [matchFormulaCap,         setMatchFormulaCap]         = useState(6);
 
+  const [addlPreTaxBal, setAddlPreTaxBal] = useState(0);
+
   const retStateRate  = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
   const rate3Combined = Math.min(0.95, rate3 / 100 + retStateRate);
 
@@ -246,6 +248,7 @@ export default function App() {
   const effectivePension = pensionStartAge <= safeRetAge && pensionMonthly > 0
     ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR
     : 0;
+  const ssTaxableRet = householdSS * ASSUMPTIONS.SS_TAXABLE_PCT;
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
@@ -328,20 +331,36 @@ export default function App() {
       ?? (safeRetAge === currentAge ? currentSnapshot : null);
     if (!retRow) return [];
     return calcRMDProjection({
-      tradGrossAtRetirement: retRow.tradGross ?? 0,
+      tradGrossAtRetirement: (retRow.tradGross ?? 0) + addlPreTaxBal,
       safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
     });
   }, [simData, safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
-      currentSnapshot]);
+      currentSnapshot, addlPreTaxBal]);
 
-  const firstRMD   = rmdData[0];
-  const totalRMDs  = rmdData.reduce((s, d) => s + d.rmd, 0);
-  const rmdTaxBite = Math.round(totalRMDs * rate3Combined);
+  const firstRMD  = rmdData[0];
+  const totalRMDs = rmdData.reduce((s, d) => s + d.rmd, 0);
+
+  // Bracket-accurate RMD tax: stack each year's RMD on top of the SS+pension floor.
+  // SS and pension are assumed active at RMD start (age 73) if claiming/start age ≤ 73.
+  const rmdIncomeSS      = includeSS && ssClaimingAge <= RMD_START_AGE ? ssTaxableRet : 0;
+  const rmdIncomePension = pensionMonthly > 0 && pensionStartAge <= RMD_START_AGE ? effectivePension : 0;
+  const rmdIncomeFloor   = rmdIncomeSS + rmdIncomePension;
+  const { tax: rmdBaseFedTax } = calcTax(rmdIncomeFloor, filingStatus);
+  const rmdDataWithTax = rmdData.map(({ age, rmd, bal, divisor }) => ({
+    age, rmd, bal, divisor,
+    tax: Math.round(
+      (calcTax(rmdIncomeFloor + rmd, filingStatus).tax - rmdBaseFedTax) + rmd * retStateRate
+    ),
+  }));
+  const rmdTaxBite = rmdDataWithTax.reduce((s, d) => s + d.tax, 0);
+  // Effective rate across all RMD years — used for display captions.
+  const effectiveRMDTaxRate = totalRMDs > 0
+    ? rmdTaxBite / totalRMDs
+    : Math.min(0.95, rate3 / 100 + retStateRate);
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
-  const retTaxData       = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
-  const ssTaxableRet     = householdSS * ASSUMPTIONS.SS_TAXABLE_PCT;
+  const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
   // Per-year income floors for the conversion window: SS and pension only count
   // in years when they've actually started (ssClaimingAge / pensionStartAge).
   const convFloors = Array.from({ length: conversionWindowYrs }, (_, i) => {
@@ -384,21 +403,24 @@ export default function App() {
       annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
       returnRate, retIncomeFloor, retIncomeFloors: convFloors,
       filingStatus, conversionTaxSource,
-      tradGrossAtRetirement: retRow?.tradGross ?? 0,
+      tradGrossAtRetirement: (retRow?.tradGross ?? 0) + addlPreTaxBal,
       rothBalAtRet: retVals["Roth IRA"] ?? 0,
       taxableBalAtRet: retVals["Taxable"] ?? 0,
     });
     // Model returns year ages as 1-indexed (yr+1); offset by safeRetAge for display.
     return { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + safeRetAge })) };
-  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion, conversionMode, bracketFillConversions, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource]);
+  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion, conversionMode, bracketFillConversions, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource, addlPreTaxBal]);
 
   const rmdDataPostConversion = useMemo(() => calcRMDPostConversion({
     conversionWindowYrs, rmdData, tradBal73: conversionSim.tradBal73,
     safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
   }), [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
 
-  const totalRMDsPost        = rmdDataPostConversion.reduce((s, d) => s + d.rmd, 0);
-  const rmdTaxSaved          = Math.max(0, rmdTaxBite - Math.round(totalRMDsPost * rate3Combined));
+  const rmdTaxBitePost = rmdDataPostConversion.reduce((sum, { rmd }) => {
+    const { tax } = calcTax(rmdIncomeFloor + rmd, filingStatus);
+    return sum + Math.round((tax - rmdBaseFedTax) + rmd * retStateRate);
+  }, 0);
+  const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
@@ -418,12 +440,14 @@ export default function App() {
   const yr1FromTaxable = Math.min(netPortfolioNeed, retTaxable);
   const yr1FromTrad    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable), retTrad);
   const yr1FromRoth    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable - yr1FromTrad), retRoth);
+  // Marginal rate on trad withdrawals: stacked on top of SS+pension income floor.
+  const yr1TradRate    = Math.min(0.95, marginalRate(rmdIncomeFloor + yr1FromTrad, filingStatus) + retStateRate);
   const yr1TaxOptimal  = Math.round(
     yr1FromTaxable * ltcgRate(0, filingStatus) +
-    yr1FromTrad    * rate3Combined              +
+    yr1FromTrad    * yr1TradRate              +
     yr1FromRoth    * 0
   );
-  const yr1TaxWorstCase = Math.round(Math.min(netPortfolioNeed, retTrad) * rate3Combined);
+  const yr1TaxWorstCase = Math.round(Math.min(netPortfolioNeed, retTrad) * yr1TradRate);
   const yr1TaxSavings   = Math.max(0, yr1TaxWorstCase - yr1TaxOptimal);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
@@ -1120,9 +1144,9 @@ export default function App() {
             combinedRate={rate3Combined}
           >
             <p style={{ margin: "6px 0 0", fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
-              This rate drives all post-retirement calculations: portfolio charts, drawdown
-              model, Roth conversion analysis, and the withdrawal strategy card.
-              An incorrect estimate will silently skew every projection.
+              Used in the accumulation model to estimate growth drag on pre-tax accounts.
+              RMD and withdrawal taxes now use bracket-accurate math — this rate is compared
+              against the projection below as a sanity check.
             </p>
             <div style={{ marginTop: 8 }}>
               <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted }}>
@@ -1870,6 +1894,33 @@ export default function App() {
                 </span>
               </div>
             </div>
+            <div style={{ background: C.card, borderRadius: 8, padding: "10px 14px", marginBottom: 16 }}>
+              <p style={{ margin: "0 0 6px", fontSize: 11, color: C.text, fontWeight: 600 }}>
+                Additional pre-tax balance from outside accounts
+              </p>
+              <p style={{ margin: "0 0 8px", fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
+                Include old 401k, 403b, or IRA balances held at other custodians. The IRS requires RMDs on your
+                <em> total</em> pre-tax balance across all accounts — not just the one tracked above.
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 10, color: C.muted, minWidth: 24 }}>$</span>
+                <input
+                  type="number" min={0} step={1000}
+                  value={addlPreTaxBal || ""}
+                  placeholder="0"
+                  onChange={e => setAddlPreTaxBal(Math.max(0, Number(e.target.value) || 0))}
+                  style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`,
+                    borderRadius: 5, color: C.gold, fontSize: 13, padding: "3px 8px",
+                    outline: "none", ...mono }}
+                />
+              </div>
+              {addlPreTaxBal > 0 && (
+                <p style={{ margin: "6px 0 0", fontSize: 9, color: C.orange, lineHeight: 1.5 }}>
+                  +{fmt(addlPreTaxBal)} from outside accounts added to RMD basis — IRS calculates RMDs on the aggregate total.
+                </p>
+              )}
+            </div>
+
             {safeRetAge >= RMD_START_AGE ? (
               <p style={{ margin: "0 0 16px", fontSize: 12, color: C.muted }}>
                 Your retirement age ({safeRetAge}) is at or after 73 — RMDs begin as soon as you retire.
@@ -1891,7 +1942,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Est. Total Tax on RMDs</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(rmdTaxBite)}</p>
-                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {(rate3Combined*100).toFixed(1)}% combined rate</p>
+                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {(effectiveRMDTaxRate*100).toFixed(1)}% effective rate (bracket-accurate)</p>
                 </div>
               </div>
             )}
@@ -1903,17 +1954,17 @@ export default function App() {
             <div style={{ overflowX: "auto" }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, auto)", gap: "4px 20px",
                 fontSize: 11, minWidth: 440 }}>
-                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (${(rate3Combined*100).toFixed(1)}%)`].map(h => (
+                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (~${(effectiveRMDTaxRate*100).toFixed(1)}% eff.)`].map(h => (
                   <span key={h} style={{ fontSize: 10, color: C.muted, textTransform: "uppercase",
                     letterSpacing: "0.06em", borderBottom: `1px solid ${C.border}`, paddingBottom: 4 }}>{h}</span>
                 ))}
-                {rmdData.slice(0, 10).map(({ age, rmd, bal, divisor }) => (
+                {rmdDataWithTax.slice(0, 10).map(({ age, rmd, bal, divisor, tax }) => (
                   [
                     <span key={`a${age}`} style={{ color: C.gold, ...mono }}>{age}</span>,
                     <span key={`d${age}`} style={{ color: C.muted, ...mono }}>{divisor ?? "—"}</span>,
                     <span key={`b${age}`} style={{ color: C.text, ...mono }}>{fmt(bal)}</span>,
                     <span key={`r${age}`} style={{ color: C.orange, ...mono }}>{fmt(rmd)}</span>,
-                    <span key={`t${age}`} style={{ color: C.muted, ...mono }}>{fmt(Math.round(rmd * rate3Combined))}</span>,
+                    <span key={`t${age}`} style={{ color: C.muted, ...mono }}>{fmt(tax)}</span>,
                   ]
                 ))}
               </div>
@@ -2214,7 +2265,7 @@ export default function App() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[
                     { step: 1, label: "Taxable Brokerage", color: C.green,  detail: `LTCG rates · ${fmt(retTaxable)} available`,   tax: "0–20% on gains" },
-                    { step: 2, label: "Traditional 401k",  color: C.gold,   detail: `Ordinary income · ${fmt(retTrad)} available`,  tax: `${(rate3Combined*100).toFixed(1)}% est.` },
+                    { step: 2, label: "Traditional 401k",  color: C.gold,   detail: `Ordinary income · ${fmt(retTrad)} available`,  tax: `${(yr1TradRate*100).toFixed(1)}% marginal` },
                     { step: 3, label: "Roth IRA",          color: C.blue,   detail: `Tax-free · ${fmt(retRoth)} available`,         tax: "0%" },
                     { step: 4, label: "HSA",               color: C.purple, detail: "Qualified medical only · triple tax-free",     tax: "0% (medical)" },
                   ].map(({ step, label, color, detail, tax }) => (
@@ -2242,7 +2293,7 @@ export default function App() {
                   <p style={{ margin: "0 0 4px", fontSize: 22, color: C.green, ...mono }}>{fmt(yr1TaxOptimal)}</p>
                   <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.7 }}>
                     {yr1FromTaxable > 0 && <p style={{ margin: 0 }}>Taxable: {fmt(yr1FromTaxable)} · LTCG rate</p>}
-                    {yr1FromTrad    > 0 && <p style={{ margin: 0 }}>401k: {fmt(yr1FromTrad)} · {(rate3Combined*100).toFixed(1)}% (fed+state)</p>}
+                    {yr1FromTrad    > 0 && <p style={{ margin: 0 }}>401k: {fmt(yr1FromTrad)} · {(yr1TradRate*100).toFixed(1)}% marginal (fed+state)</p>}
                     {yr1FromRoth    > 0 && <p style={{ margin: 0 }}>Roth: {fmt(yr1FromRoth)} · tax-free</p>}
                   </div>
                 </div>
@@ -2401,7 +2452,7 @@ export default function App() {
           {(() => {
             const { phase1Steps, phase2Steps, phase3Steps } = generatePhaseSteps(flowData, {
               returnRate, rReal, netPortfolioNeed, effectivePension,
-              rate3Combined, safeRetAge, currentAge, safeLifeExp,
+              effectiveRMDTaxRate, safeRetAge, currentAge, safeLifeExp,
             });
             const { phase1Actions, phase2Actions, phase3Actions } = generatePhaseActions({
               totalAtRet, netPortfolioNeed, withdrawalRate, yearsSustained,
@@ -2415,7 +2466,7 @@ export default function App() {
               netConversionBenefit, conversionSim, annualConversion,
               convPeakTarget, convSteadyTarget, convTargetVaries,
               conversionWindowYrs, rmdTaxSaved,
-              totalRMDs, rmdTaxBite, firstRMD, rate3Combined,
+              totalRMDs, rmdTaxBite, firstRMD, effectiveRMDTaxRate,
               includeSS, ssClaimingAge, effectiveSS, ss70Annual,
               ss70DrawReduction, ssDelayGainYrs, wr70,
               pensionMonthly,
