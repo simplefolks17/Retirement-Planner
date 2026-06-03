@@ -30,7 +30,6 @@ import {
 import { Slider }        from "./components/Slider.jsx";
 import { DeferredInput } from "./components/DeferredInput.jsx";
 import { TaxTimeline }   from "./components/TaxTimeline.jsx";
-import { TaxPhaseCard }  from "./components/TaxPhaseCard.jsx";
 import { ChartTooltip }  from "./components/ChartTooltip.jsx";
 import { FlowConn }      from "./components/FlowConn.jsx";
 import { PhaseCard }     from "./components/PhaseCard.jsx";
@@ -50,11 +49,6 @@ export default function App() {
   const [filingStatus,  setFilingStatus]  = useState("single");
   const [otherPreTaxDeduc, setOtherPreTaxDeduc] = useState(0);
 
-  const [rate1,       setRate1]       = useState(22);
-  const [rate2,       setRate2]       = useState(24);
-  const [rate3,       setRate3]       = useState(18);
-  const [showPhase2,  setShowPhase2]  = useState(false);
-  const [phase2Start, setPhase2Start] = useState(2);
   const [retirementState, setRetirementState] = useState(selectedState);
 
   const [bal401k,    setBal401k]    = useState(50_000);
@@ -108,13 +102,10 @@ export default function App() {
 
   const [addlPreTaxBal, setAddlPreTaxBal] = useState(0);
 
-  const retStateRate  = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
-  const rate3Combined = Math.min(0.95, rate3 / 100 + retStateRate);
+  const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
 
-  const safeRetAge  = showPhase2
-    ? Math.max(retirementAge, currentAge + phase2Start + 1)
-    : retirementAge;
-  const phase2End   = safeRetAge - currentAge;
+  const safeRetAge = retirementAge;
+  const phase2End  = safeRetAge - currentAge;
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
 
@@ -123,18 +114,26 @@ export default function App() {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
     });
 
-  const simData = useMemo(() => runSimulation({
-    totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
-    spouseIncome, spouseIncomeGrowth, returnRate,
-    rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
-    bal401k, balRoth, balTaxable, balHSA,
-    contrib401k, contribRoth, contribTaxable, contribHSA,
-    contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-    calcEmployerMatchFn: employerMatch,
-  }), [
+  const simData = useMemo(() => {
+    const raw = runSimulation({
+      totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+      spouseIncome, spouseIncomeGrowth, returnRate,
+      bal401k, balRoth, balTaxable, balHSA,
+      contrib401k, contribRoth, contribTaxable, contribHSA,
+      contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+      calcEmployerMatchFn: employerMatch,
+    });
+    // "Trad 401k" display: normalize to after-tax equivalent using current marginal rate.
+    // fedMarginal is the bracket-accurate working-year rate; effectiveRMDTaxRate (retirement
+    // distribution rate) is computed from rmdData which depends on tradGross — using fedMarginal
+    // here for all years avoids circular dependency and is a close approximation at retirement too.
+    return raw.map(d => ({
+      ...d,
+      "Trad 401k": Math.round((d.tradGross ?? 0) * (1 - fedMarginal)),
+    }));
+  }, [
     returnRate, totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
-    spouseIncome, spouseIncomeGrowth,
-    rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
+    spouseIncome, spouseIncomeGrowth, fedMarginal,
     bal401k, balRoth, balTaxable, balHSA,
     contrib401k, contribRoth, contribTaxable, contribHSA,
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
@@ -145,7 +144,7 @@ export default function App() {
   // and simData has no rows at or before safeRetAge. Use current input balances directly.
   const currentSnapshot = {
     age: currentAge,
-    "Trad 401k": Math.round(bal401k * (1 - rate3 / 100)),
+    "Trad 401k": Math.round(bal401k * (1 - fedMarginal)),
     tradGross: bal401k,
     "Roth IRA": balRoth,
     "Taxable": balTaxable,
@@ -356,7 +355,7 @@ export default function App() {
   // Effective rate across all RMD years — used for display captions.
   const effectiveRMDTaxRate = totalRMDs > 0
     ? rmdTaxBite / totalRMDs
-    : Math.min(0.95, rate3 / 100 + retStateRate);
+    : Math.min(0.95, fedMarginal + retStateRate);
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
@@ -451,7 +450,6 @@ export default function App() {
   const yr1TaxSavings   = Math.max(0, yr1TaxWorstCase - yr1TaxOptimal);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
-  const phase1RateMismatch = Math.abs(rate1 - actualMarginalPct) >= 1;
 
   const contrib401kRoom    = Math.max(0, TRAD_401K_LIMIT_2026 - contrib401k);
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);
@@ -462,8 +460,6 @@ export default function App() {
   const projRetBracket    = retBrackets.find(b => projRetIncome >= b.min && projRetIncome < b.max)
                          ?? retBrackets[retBrackets.length - 1];
   const projRetBracketPct = Math.round(projRetBracket.rate * 100);
-  const projRate3Combined = Math.round((projRetBracket.rate + retStateRate) * 100);
-  const rate3Mismatch     = Math.abs(Math.round(rate3Combined * 100) - projRate3Combined) >= 3;
 
   const ss70Annual       = Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * ASSUMPTIONS.MONTHS_PER_YEAR;
   const household70SS    = ss70Annual + spouseSsBenefit;
@@ -546,13 +542,14 @@ export default function App() {
 
   const optimized = useMemo(() => calcOptimizedScenario({
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
-    rate3, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
+    withdrawalTaxRate: Math.round(effectiveRMDTaxRate * 100),
+    contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
     householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable,
   }), [
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
-    rate3, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
+    effectiveRMDTaxRate, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
     householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable,
@@ -1017,19 +1014,16 @@ export default function App() {
           <Slider label="Current Age" value={currentAge} min={18} max={80}
             onChange={v => {
               setCurrentAge(v);
-              if (showPhase2 && retirementAge < v + 2) setRetirementAge(v + 2);
-              else if (!showPhase2 && retirementAge < v) setRetirementAge(v);
+              if (retirementAge < v) setRetirementAge(v);
               if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
               if (contribEnd401k    <= v) setContribEnd401k(v + 1);
               if (contribEndRoth    <= v) setContribEndRoth(v + 1);
               if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
               if (contribEndHSA     <= v) setContribEndHSA(v + 1);
             }} />
-          <Slider label="Retirement Age" value={retirementAge} min={showPhase2 ? currentAge + 2 : currentAge} max={lifeExpect - 1}
+          <Slider label="Retirement Age" value={retirementAge} min={currentAge} max={lifeExpect - 1}
             valueColor={C.green} onChange={v => {
               setRetirementAge(v);
-              const newPhase2End = v - currentAge;
-              if (phase2Start >= newPhase2End) setPhase2Start(Math.max(1, newPhase2End - 1));
               if (contribEnd401k    === retirementAge) setContribEnd401k(v);
               if (contribEndRoth    === retirementAge) setContribEndRoth(v);
               if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
@@ -1041,9 +1035,7 @@ export default function App() {
               if (retirementAge >= v) {
                 const newRet = v - 1;
                 setRetirementAge(newRet);
-                const newPhase2End = newRet - currentAge;
-                if (phase2Start >= newPhase2End) setPhase2Start(Math.max(1, newPhase2End - 1));
-              }
+                }
               if (contribEnd401k    > v) setContribEnd401k(v);
               if (contribEndRoth    > v) setContribEndRoth(v);
               if (contribEndTaxable > v) setContribEndTaxable(v);
@@ -1062,93 +1054,53 @@ export default function App() {
           </div>
         </div>
         <TaxTimeline
-          phase1End={phase2Start} phase2End={phase2End} totalYears={totalYears}
-          rate1={rate1} rate2={rate2} rate3={rate3} showPhase2={showPhase2}
+          phase2End={phase2End} totalYears={totalYears}
+          fedMarginal={fedMarginal} effectiveRMDTaxRate={effectiveRMDTaxRate}
         />
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
           <span style={{ fontSize: 10, color: C.muted }}>Year 1 (Age {currentAge})</span>
-          {showPhase2 && (
-            <span style={{ fontSize: 10, color: C.muted }}>
-              Year {phase2Start} to {phase2End - 1} (Age {currentAge + phase2Start} to {safeRetAge - 1})
-            </span>
-          )}
           <span style={{ fontSize: 10, color: C.muted }}>Retirement Age {safeRetAge} to {safeLifeExp}</span>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: showPhase2 ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 16 }}>
-          <TaxPhaseCard
-            phaseNum="1" label="Current Federal Rate" color={C.gold}
-            yearRange={showPhase2
-              ? `Years 1 - ${phase2Start - 1} / Age ${currentAge} - ${currentAge + phase2Start - 1}`
-              : `Years 1 - ${phase2End - 1} / Age ${currentAge} - ${safeRetAge - 1}`}
-            rate={rate1} setRate={setRate1}
-          >
-            {phase1RateMismatch && (
-              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 9, color: C.muted }}>Actual marginal: {actualMarginalPct}%</span>
-                <button onClick={() => setRate1(actualMarginalPct)} style={{
-                  padding: "2px 7px", fontSize: 9, fontWeight: 600, border: `1px solid ${C.gold}60`,
-                  borderRadius: 3, background: "transparent", color: C.gold, cursor: "pointer",
-                  fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-                  ← sync
-                </button>
-              </div>
-            )}
-            <button
-              onClick={() => {
-                const enabling = !showPhase2;
-                setShowPhase2(enabling);
-                setPhase2Start(2);
-                if (enabling && retirementAge < currentAge + 2) setRetirementAge(currentAge + 2);
-              }}
-              style={{
-                marginTop: 8, width: "100%", padding: "3px 0", borderRadius: 5,
-                border: `1px solid ${C.border}`, cursor: "pointer", transition: "all 0.15s",
-                background: showPhase2 ? "#21262d" : "transparent",
-                color: showPhase2 ? C.muted : "#3d444d",
-                fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase",
-                fontFamily: "'DM Sans', system-ui, sans-serif", fontWeight: 600,
-              }}
-            >{showPhase2 ? "- mid-career phase" : "+ mid-career phase"}</button>
-          </TaxPhaseCard>
-          {showPhase2 && (
-            <TaxPhaseCard
-              phaseNum="2" label="Mid-Career Federal Rate" color={C.blue}
-              yearRange={`Years ${phase2Start} - ${phase2End - 1} / Age ${currentAge + phase2Start} - ${safeRetAge - 1}`}
-              rate={rate2} setRate={setRate2}
-            >
-              <div style={{ marginTop: 8 }}>
-                <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted }}>Starts at year</p>
-                <DeferredInput
-                  value={phase2Start} min={1} max={phase2End - 1}
-                  onChange={setPhase2Start}
-                  style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`,
-                    borderRadius: 5, color: C.blue, fontSize: 13, padding: "3px 8px",
-                    outline: "none", ...mono }}
-                />
-              </div>
-              <button
-                onClick={() => { setShowPhase2(false); setPhase2Start(2); }}
-                style={{
-                  marginTop: 6, width: "100%", padding: "3px 0", borderRadius: 5,
-                  border: `1px solid ${C.border}`, background: "transparent",
-                  color: C.muted, fontSize: 10, cursor: "pointer",
-                  fontFamily: "'DM Sans', system-ui, sans-serif",
-                }}
-              >Remove</button>
-            </TaxPhaseCard>
-          )}
-          <TaxPhaseCard
-            phaseNum="3" label="Retirement Federal Rate" color={C.green}
-            yearRange={`Year ${phase2End}+ / Age ${safeRetAge} - ${safeLifeExp}`}
-            rate={rate3} setRate={setRate3}
-            combinedRate={rate3Combined}
-          >
-            <p style={{ margin: "6px 0 0", fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
-              Used in the accumulation model to estimate growth drag on pre-tax accounts.
-              RMD and withdrawal taxes now use bracket-accurate math — this rate is compared
-              against the projection below as a sanity check.
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+          {/* Working-years panel — computed from actual bracket math, no manual slider */}
+          <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${C.gold}` }}>
+            <p style={{ margin: "0 0 2px", fontSize: 10, color: C.gold, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              1 Working Years Tax Rate
             </p>
-            <div style={{ marginTop: 8 }}>
+            <p style={{ margin: "0 0 8px", fontSize: 10, color: C.muted }}>
+              Years 1–{phase2End - 1} / Age {currentAge}–{safeRetAge - 1}
+            </p>
+            <p style={{ margin: "0 0 4px", fontSize: 26, color: C.gold, ...mono, fontWeight: 700 }}>
+              {actualMarginalPct}%
+            </p>
+            <p style={{ margin: 0, fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
+              Federal marginal rate computed from your income and deductions.
+              Pre-tax 401k balances are normalized to after-tax equivalent
+              using this rate for chart display.
+            </p>
+          </div>
+          {/* Retirement panel — bracket-accurate effective RMD rate, with state selector */}
+          <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${C.green}` }}>
+            <p style={{ margin: "0 0 2px", fontSize: 10, color: C.green, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              3 Retirement Effective Rate
+            </p>
+            <p style={{ margin: "0 0 8px", fontSize: 10, color: C.muted }}>
+              Year {phase2End}+ / Age {safeRetAge}–{safeLifeExp}
+            </p>
+            <p style={{ margin: "0 0 2px", fontSize: 26, color: C.green, ...mono, fontWeight: 700 }}>
+              {(effectiveRMDTaxRate * 100).toFixed(1)}%
+              {retStateRate > 0 && (
+                <span style={{ fontSize: 13, color: C.orange, marginLeft: 6 }}>
+                  +{(retStateRate * 100).toFixed(1)}% state
+                </span>
+              )}
+            </p>
+            {rmdData.length > 0 && (
+              <p style={{ margin: "0 0 6px", fontSize: 9, color: C.muted }}>
+                Bracket-accurate across all RMD years · projected {projRetBracketPct}% marginal bracket
+              </p>
+            )}
+            <div>
               <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted }}>
                 Retirement state
                 {retStateRate > 0
@@ -1170,23 +1122,7 @@ export default function App() {
                 </p>
               )}
             </div>
-            {rate3Mismatch && rmdData.length > 0 && (
-              <div style={{ marginTop: 6 }}>
-                <p style={{ margin: 0, fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
-                  Avg RMD + SS puts you in the{" "}
-                  <span style={{ color: C.orange, fontWeight: 700 }}>{projRetBracketPct}% fed bracket</span>
-                  {retStateRate > 0 && <span> (+{(retStateRate*100).toFixed(1)}% state = {projRate3Combined}% combined)</span>}
-                </p>
-                <button onClick={() => setRate3(projRetBracketPct)} style={{
-                  marginTop: 3, padding: "2px 7px", fontSize: 9, fontWeight: 600,
-                  border: `1px solid ${C.green}60`, borderRadius: 3, background: "transparent",
-                  color: C.green, cursor: "pointer",
-                  fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-                  ← sync fed to {projRetBracketPct}%
-                </button>
-              </div>
-            )}
-          </TaxPhaseCard>
+          </div>
         </div>
       </div>
 
@@ -1529,17 +1465,13 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Portfolio Growth Over Time</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
-          After-tax values year by year. Trad 401k normalized to{" "}
-          {showPhase2 ? `Phase 1 rate (${rate1}%) across all working years` : `Phase 1 rate (${rate1}%)`}{" "}
-          for a smooth growth line — the retirement-rate after-tax value is in the snapshot cards below.
+          After-tax values year by year. Trad 401k normalized to current marginal rate ({actualMarginalPct}%)
+          for an apples-to-apples comparison with Roth and taxable accounts.
           Dashed line marks retirement age.
         </p>
         <ResponsiveContainer width="100%" height={320}>
           <LineChart
-            data={simData.filter(d => d.age <= safeRetAge).map(d => ({
-              ...d,
-              "Trad 401k": Math.round((d.tradGross ?? 0) * (1 - rate1 / 100)),
-            }))}
+            data={simData.filter(d => d.age <= safeRetAge)}
             margin={{ top: 10, right: 16, left: 16, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
             <XAxis dataKey="age" stroke={C.muted} tick={{ fontSize: 11, fill: C.muted }}

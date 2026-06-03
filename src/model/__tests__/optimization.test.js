@@ -14,7 +14,7 @@ const base = {
   incomeGrowth: 3,
   safeRetAge: 65,
   currentAge: 30,
-  rate3: 18,
+  withdrawalTaxRate: 18,
   contrib401k: 10_000,
   includeSS: true,
   ssClaimingAge: 67,

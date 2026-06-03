@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runSimulation, getTaxRate } from "../simulation.js";
+import { runSimulation } from "../simulation.js";
 import { calcEmployerMatch } from "../employer-match.js";
 
 const defaultSim = (overrides = {}) => {
@@ -13,8 +13,6 @@ const defaultSim = (overrides = {}) => {
     spouseIncome: 0,
     spouseIncomeGrowth: 3,
     returnRate: 5,
-    rate1: 22, rate2: 24, rate3: 18,
-    phase2Start: 2, phase2End: 35, showPhase2: false,
     bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
     contrib401k: 10_000, contribRoth: 7_000, contribTaxable: 4_000, contribHSA: 3_850,
     contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
@@ -95,12 +93,13 @@ describe("runSimulation — output structure", () => {
     expect(rows[0].age).toBe(31);
   });
 
-  it("all four account balances grow over time with positive return", () => {
+  it("all account balances grow over time with positive return", () => {
     const rows = defaultSim();
     const first = rows[0];
     const last  = rows[rows.length - 1];
     expect(last["Roth IRA"]).toBeGreaterThan(first["Roth IRA"]);
     expect(last["HSA"]).toBeGreaterThan(first["HSA"]);
+    expect(last.tradGross).toBeGreaterThan(first.tradGross);
   });
 
   it("accounts stop contributing after contribEnd ages", () => {
@@ -113,22 +112,17 @@ describe("runSimulation — output structure", () => {
   });
 });
 
-describe("getTaxRate", () => {
-  const opts = { rate1: 22, rate2: 24, rate3: 18, phase2Start: 5, phase2End: 35, showPhase2: false };
-
-  it("returns rate1 before retirement when no phase2", () => {
-    expect(getTaxRate(10, opts)).toBe(0.22);
+describe("runSimulation — tradGross output", () => {
+  it("tradGross grows with positive return rate", () => {
+    const rows = defaultSim({ returnRate: 5 });
+    expect(rows[rows.length - 1].tradGross).toBeGreaterThan(rows[0].tradGross);
   });
 
-  it("returns rate3 at and after retirement year", () => {
-    expect(getTaxRate(35, opts)).toBe(0.18);
-    expect(getTaxRate(40, opts)).toBe(0.18);
-  });
-
-  it("respects phase2 when showPhase2 is true", () => {
-    const p2opts = { ...opts, showPhase2: true };
-    expect(getTaxRate(3, p2opts)).toBe(0.22); // before phase2Start (5)
-    expect(getTaxRate(10, p2opts)).toBe(0.24); // phase2Start <= 10 < phase2End
-    expect(getTaxRate(35, p2opts)).toBe(0.18); // retirement
+  it("tradGross output is independent of any tax rate", () => {
+    // After rate3 removal, simulation has no rate params — tradGross is raw balance
+    const rows = defaultSim();
+    expect(rows[0].tradGross).toBeGreaterThan(0);
+    // No "Trad 401k" field in raw simulation output
+    expect(rows[0]["Trad 401k"]).toBeUndefined();
   });
 });
