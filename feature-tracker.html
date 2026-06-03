@@ -150,11 +150,11 @@ var DATA = [
     cx: "Medium", im: "High", af: ["conversionSim", "netConversionBenefit", "taxable balance projection"], sv: "conversionTaxSource"
   },
   {
-    id: 7, pr: 3, sec: "Roth Strategy", st: "planned",
-    ti: "ACA subsidy cliff awareness (pre-Medicare gap)",
-    ds: "For users retiring before 65, Roth conversions raise MAGI and can eliminate ACA marketplace subsidies at 400% FPL. Show estimated subsidy impact alongside conversion planning.",
-    dt: "The Roth conversion window is exactly when many early retirees depend on marketplace insurance. ACA subsidies phase out at ~$60k single / ~$82k couple (2026, 400% FPL). A $20k conversion could cost $8–12k in lost subsidies. Add a hasMarketplaceInsurance toggle and show MAGI during conversion window vs the cliff threshold. Flag when a planned conversion would cross the cliff.",
-    cx: "Medium", im: "High", af: ["conversion strategy", "effective tax cost of conversions", "conversion window display"], sv: "hasMarketplaceInsurance, householdSize"
+    id: 7, pr: 2, sec: "Roth Strategy", st: "planned",
+    ti: "ACA subsidy cliff modeling (pre-Medicare gap)",
+    ds: "For users retiring before 65 on marketplace insurance, Roth conversions raise MAGI and can eliminate ACA subsidies — a hard cliff that can cost $8–12k+/yr, often more than the conversion tax itself. Modeled as a real dollar cost subtracted from the conversion benefit, not just a warning.",
+    dt: "Design decision (2026-06-03): ACA impact is a real cost (subtracted from netConversionBenefit) when the user is on marketplace insurance — not a warning. Add a hasMarketplaceInsurance toggle and householdSize input. Compute per-year subsidy loss using ACA_FPL_2026 table + household size + per-year MAGI (retIncomeFloor + conversion). CRITICAL: ACA MAGI uses 100% of SS (not the 85% taxable fraction in convFloors). Requires a separate convMAGIFloors[] array — do NOT reuse convFloors for this. Only fires when hasMarketplaceInsurance is true and age < 65 during conversion window years. Sequence with #34 (IRMAA) — both share the convMAGIFloors[] infrastructure. See ARCHITECTURE.md Feature Design Notes for full spec.",
+    cx: "Medium", im: "High", af: ["netConversionBenefit", "conversionSim", "conversion display", "MAGI tracking per year"], sv: "hasMarketplaceInsurance, householdSize"
   },
   {
     id: 8, pr: 2, sec: "RMDs", st: "planned",
@@ -340,17 +340,17 @@ var DATA = [
   },
   {
     id: 33, pr: 1, sec: "Tax / Retirement", st: "planned",
-    ti: "State retirement income tax exemptions",
-    ds: "The model applies the flat state income tax rate to all retirement withdrawals. Most states treat retirement income differently — 13 states exempt SS entirely, many exempt pension and 401k distributions. For PA retirees the current model overstates state tax to near zero; for others it's the opposite. This is a correctness issue, not just a feature.",
-    dt: "Extend RETIREMENT_STATE_TAX in irs-2026.js with per-state exemption rules: ssExempt (bool), pensionExempt (bool), traditionalExempt (bool), rothExempt (bool). In the retirement tax calculation (rate3Combined), apply exemptions before computing the effective rate. Show breakdown in the Roth conversion section: 'State tax on RMDs in [state]'. Affects rmdTaxBite, rate3Combined, netConversionBenefit, and the retirement tax callout. Low complexity since the config and display infrastructure exist — mostly a data entry + conditional logic task.",
-    cx: "Low", im: "High", af: ["rate3Combined", "rmdTaxBite", "netConversionBenefit", "retStateRate", "retirement tax display"], sv: "none (config + logic)"
+    ti: "Bracket-accurate retirement tax engine + state exemptions",
+    ds: "The model taxes all retirement income at one flat guessed rate (rate3Combined). Replace with real bracket math stacking RMDs + 85% SS + pension through actual tax brackets, plus per-state exemption rules (13 states exempt SS entirely, many exempt 401k). Foundational accuracy that feeds the conversion optimizer, RMD projections, and withdrawal strategy.",
+    dt: "Two-part build. (1) Retire the rate3Combined flat proxy: compute actual retirement-phase tax using calcTax/marginalRate from taxes.js (already pure functions, currently unused in retirement). Stack RMD income + ssTaxableRet + effectivePension, apply real brackets per filing status. Replace rate3Combined everywhere it feeds rmdTaxBite, netConversionBenefit, and the withdrawal card. Will intentionally move golden master values — update deliberately per rule #7. (2) State exemptions: extend RETIREMENT_STATE_TAX in irs-2026.js with structured flags per state: ssExempt, pensionExempt, traditionalExempt (the exemption data is already written as comments in the config — mostly data entry). Apply exemptions before the bracket calc. MFJ vs non-MFJ brackets must flow through (CLAUDE.md rules 3 & 9). Build before #7 and #34 since they consume the improved retirement tax estimate.",
+    cx: "Medium", im: "High", af: ["rate3Combined", "rmdTaxBite", "netConversionBenefit", "retStateRate", "retirement tax display", "calcTax (now used in retirement)"], sv: "none (config + logic replacement)"
   },
   {
-    id: 34, pr: 2, sec: "Tax / Retirement", st: "planned",
+    id: 34, pr: 1, sec: "Tax / Retirement", st: "planned",
     ti: "IRMAA Medicare surcharge modeling",
-    ds: "Medicare Part B and D premiums increase significantly above certain MAGI thresholds (IRMAA). A $20K Roth conversion can trigger $3,000+ in extra Medicare premiums per year — changing the true cost of conversion. This is directly relevant to the conversion window the app already models.",
-    dt: "Add IRMAA_BRACKETS_2026 to irs-2026.js (6 tiers for single/MFJ). In the conversion window section, compute projected MAGI for each year (retIncomeFloor + annualConversion) and look up the IRMAA surcharge. Show IRMAA surcharge as an additional cost per conversion year alongside the tax. Update netConversionBenefit to include IRMAA cost. Add IRMAA warning callout when projected conversion MAGI crosses a tier boundary. Affects users on Medicare (age 65+) during the conversion window — most relevant when retirement age < 65 and conversion window extends past 65.",
-    cx: "Medium", im: "High", af: ["netConversionBenefit", "conversionSim", "retIncomeFloor", "conversion display"], sv: "none (new config + display)"
+    ds: "Medicare Part B/D premiums increase sharply above MAGI thresholds (IRMAA). A large Roth conversion can trigger $3,000–$10,000+ in extra annual Medicare premiums — changing the true cost of conversion. Modeled as a real dollar cost, not a warning.",
+    dt: "Design decision (2026-06-03): IRMAA is a real cost subtracted from netConversionBenefit when the user is on Medicare. Add a hasMedicare toggle (default true for age >= 65; can disable if user has qualifying employer coverage past 65). UI note: 'We assume Medicare enrollment at 65 — toggle off if you have qualifying employer coverage past 65.' Add IRMAA_BRACKETS_2026 to irs-2026.js (6 tiers, single/MFJ). CRITICAL: Apply the 2-year lookback — IRMAA premiums in year Y are based on MAGI from year Y-2. A conversion at 67 triggers higher premiums at 69. Do NOT apply the surcharge in the same year as the income. IRMAA MAGI uses 100% of SS (not 85%) — use convMAGIFloors[] (shared with #7), not convFloors[]. See ARCHITECTURE.md Feature Design Notes for full spec. Build together with #7 since both need convMAGIFloors[].",
+    cx: "Medium", im: "High", af: ["netConversionBenefit", "conversionSim", "conversion display", "MAGI tracking per year"], sv: "hasMedicare (new toggle)"
   },
   {
     id: 35, pr: 2, sec: "Income / Retirement", st: "planned",
@@ -424,10 +424,31 @@ var DATA = [
   },
   {
     id: 45, pr: 4, sec: "Tax / Retirement", st: "planned",
-    ti: "Net Investment Income Tax (NIIT) surtax awareness",
-    ds: "A 3.8% surtax applies to investment income (dividends, capital gains, rental income) above $200K/$250K MAGI. Affects Roth conversion planning and taxable brokerage withdrawals for higher earners. Currently invisible.",
-    dt: "Add NIIT_THRESHOLD_2026 to irs-2026.js ({single: 200_000, mfj: 250_000}). In the conversion window display, flag when projected MAGI (retIncomeFloor + conversion) exceeds the NIIT threshold — show the 3.8% surcharge on investment income above the threshold. Also flag in the taxable brokerage withdrawal section. Niche — only materially relevant above $200K investment income — but important for high-net-worth users.",
-    cx: "Low", im: "Low", af: ["conversion display", "taxable withdrawal section", "netConversionBenefit (minor)"], sv: "none (config + display)"
+    ti: "Net Investment Income Tax (NIIT) surtax awareness (warning only)",
+    ds: "A 3.8% surtax applies to investment income (dividends, capital gains) above $200K/$250K MAGI. Roth conversions do NOT directly trigger NIIT — it is ordinary income, not investment income. Warning only for high-income users whose conversions push MAGI above the threshold, making pre-existing investment income newly subject.",
+    dt: "Design decision (2026-06-03): NIIT is a warning only — do NOT bake into netConversionBenefit by default. The mechanism is: large conversions push MAGI above the threshold, making pre-existing dividends/capital gains from a taxable brokerage newly subject to 3.8%. The conversion itself is exempt. Add NIIT_THRESHOLD_2026 to irs-2026.js ({single: 200_000, mfj: 250_000}). In the conversion window display, flag when projected MAGI (convMAGIFloors[i] + conversion) exceeds the threshold and estimate the marginal NIIT exposure on investment income. Niche — only relevant for users with significant taxable dividend/gains income AND large conversions pushing past $200k.",
+    cx: "Low", im: "Low", af: ["conversion display", "MAGI tracking"], sv: "none (warning display only)"
+  },
+  {
+    id: 46, pr: 2, sec: "Roth Strategy", st: "planned",
+    ti: "Roth conversion amount optimizer",
+    ds: "Rather than just pricing the conversion amount you picked, find the amount that maximizes your lifetime tax benefit — accounting for conversion tax now, RMD taxes saved later, and (once ACA/IRMAA are live) subsidy and premium costs. Turns the conversion calculator into an advisor.",
+    dt: "calcConversionSim is pure and already parameterized — the optimizer loops over candidate amounts (search in $5k increments from $0 to the bracket ceiling, then binary-search around the optimum) calling the existing function and picking the max netConversionBenefit. Add calcConversionOptimizer to roth-conversion.js (already a [SERVER] file — keeps optimization logic protected). Score function: netConversionBenefit = rmdTaxSaved - totalTax - ACA subsidy loss (if #7 active) - IRMAA cost (if #34 active). Display: recommended amount card alongside the current bracket-fill suggestion, with 'This beats the 22% bracket fill by $X' explanation. Sequence after #7 and #34 so the optimizer's objective includes all real costs. New golden master values needed for the recommended amount output.",
+    cx: "Medium", im: "High", af: ["netConversionBenefit", "calcConversionSim", "roth-conversion.js", "conversion display"], sv: "conversionOptimized (derived)"
+  },
+  {
+    id: 47, pr: 2, sec: "Drawdown / Withdrawal", st: "planned",
+    ti: "Tax-optimal withdrawal sequencing in drawdown engine",
+    ds: "The app tells you to spend taxable money first, then 401k, then Roth — but the charts don't model that order. Make the drawdown engine actually pull from the right accounts each year so portfolio longevity and lifetime tax projections reflect a real strategy instead of one undifferentiated pot.",
+    dt: "Add calcWithdrawalSequence to a new withdrawal-sequence.js model file. Per-year allocator: (1) satisfy RMD from trad (mandatory after 73), (2) fill remaining need from taxable (lowest rate), (3) then trad up to top of current bracket, (4) Roth last (preserve tax-free growth). Use calcOptimizedAllocation as the design template — this is its inverse. Track 4 separate account balances through drawdown instead of one combined total. totalChartData must carry per-account balances. yearsSustained and depletion age will change — update golden master deliberately (this is a correctness improvement). RMDs must be satisfied first each year regardless of optimal order (legal constraint). Prerequisite for honest Monte Carlo (#38) since sequencing changes survival probability.",
+    cx: "High", im: "High", af: ["totalChartData", "yearsSustained", "drawdown.js", "new withdrawal-sequence.js", "flowData"], sv: "none (new model function + per-account tracking)"
+  },
+  {
+    id: 48, pr: 2, sec: "Income / Retirement", st: "planned",
+    ti: "Generic income/expense timeline primitive (consolidates #10, #17, #35, #36, #43)",
+    ds: "One reusable 'money that starts and stops at certain ages' component — bridge income, rental income, variable spending, long-term care costs, and pension timing granularity all become the same thing with different settings. Eliminates the class of off-by-one income-timing bugs the audit campaign repeatedly found.",
+    dt: "Add an incomeSources[] array to app state. Each source: { label, amount, growth, startAge, endAge, isTaxable, isPassive, isExpense }. Derive per-year impact in a single reducer feeding netPortfolioNeed (same >= age gate as SS/pension per CLAUDE.md rule 5b — never use the static scalar). isExpense=true adds to need (LTC, spending spike); false reduces it (bridge income, rental). isTaxable routes to AGI for pre-retirement years; isPassive skips FICA. UI: collapsible 'Additional income/expenses' section with Add button and a row per source. Supersedes #35 (bridge income), #36 (rental), #43 (LTC), #17 (pension timing granularity), and #10 (variable spending) — those ship as pre-configured source types within this primitive. Build the primitive once; each source type is a thin wrapper.",
+    cx: "Medium", im: "High", af: ["netPortfolioNeed (per year)", "totalChartData", "yearsSustained", "flowData waterfall", "drawdown callout"], sv: "incomeSources[]"
   }
 ];
 
