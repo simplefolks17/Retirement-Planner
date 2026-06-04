@@ -39,26 +39,27 @@ const returnRate = 5, inflationRate = 4, incomeGrowth = 3;
 const currentIncome = 100_000, filingStatus = "single";
 const bal401k = 50_000, balRoth = 25_000, balTaxable = 80_000, balHSA = 10_000;
 const contrib401k = 10_000, contribRoth = 7_000, contribTaxable = 4_000, contribHSA = 3_850;
-const rate1 = 22, rate2 = 24, rate3 = 18, showPhase2 = false, phase2Start = 2;
 const employerMatchPct = 3, matchMode = "flat", matchFormulaRate = 50, matchFormulaCap = 6;
 const totalYears = safeLifeExp - currentAge;
 const phase2End  = safeRetAge - currentAge;
 
 const safeDeduc  = Math.min(contrib401k + contribHSA, currentIncome);
 const agi        = currentIncome - safeDeduc;
+const fedMarginal = marginalRate(agi, filingStatus);
 const em = (s, c) => calcEmployerMatch(s, c, { matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct });
 
 const sim = runSimulation({
   totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
   spouseIncome: 0, spouseIncomeGrowth: 3, returnRate,
-  rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
   bal401k, balRoth, balTaxable, balHSA,
   contrib401k, contribRoth, contribTaxable, contribHSA,
   contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
   calcEmployerMatchFn: em,
 });
 const at = sim[phase2End - 1];
-const totalAtRet = at["Trad 401k"] + at["Roth IRA"] + at["Taxable"] + at["HSA"];
+// "Trad 401k" display is computed in App.jsx using fedMarginal — mirror that here.
+const retTrad401k = Math.round(at.tradGross * (1 - fedMarginal));
+const totalAtRet = retTrad401k + at["Roth IRA"] + at["Taxable"] + at["HSA"];
 const effectiveExpenses = Math.round(totalAtRet * 0.03);
 const ssAIME = calcAIME(currentIncome, incomeGrowth, Math.max(1, safeRetAge - currentAge));
 const ssPIA  = calcPIA(ssAIME);
@@ -99,15 +100,15 @@ const E = {
   ssPIA:                3827.422691952266,
   ssMonthlyBenefit:     3827,
   ssAnnualBenefit:      45_924,
-  retTrad401k:          1_738_421,
+  retTrad401k:          1_653_620,   // tradGross × (1 − fedMarginal 22%), was tradGross × 82% with rate3=18%
   retTradGross:         2_120_026,
   retRoth:              573_820,
   retTaxable:           836_477,
   retHSA:               420_280,
-  totalAtRet:           3_568_998,
-  netPortfolioNeed:     61_146,
-  withdrawalRate:       1.7132539721232682,
-  yearsSustained:       86.08558689162889,
+  totalAtRet:           3_484_197,
+  netPortfolioNeed:     58_602,
+  withdrawalRate:       1.6819370431694878,
+  yearsSustained:       88.60453585267652,
   firstRMD:             118_198,
   totalRMDs:            3_106_334,
   rmdTaxBite:           683_974,   // bracket-accurate (was 559_140 at flat 18%)
@@ -133,7 +134,7 @@ describe("golden master — default state", () => {
   });
 
   it("simulation retirement snapshot", () => {
-    expect(at["Trad 401k"]).toBe(E.retTrad401k);
+    expect(retTrad401k).toBe(E.retTrad401k);
     expect(at.tradGross).toBe(E.retTradGross);
     expect(at["Roth IRA"]).toBe(E.retRoth);
     expect(at["Taxable"]).toBe(E.retTaxable);

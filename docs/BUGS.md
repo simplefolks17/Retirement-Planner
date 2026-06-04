@@ -9,6 +9,32 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### BUG-26 — `ysSS70` uses full retirement portfolio, ignoring pre-70 drawdowns
+
+**Reported:** 2026-06-04  
+**Status:** Open — known approximation  
+**File:** `src/App.jsx` lines 574–583 (`ysSS70` calculation)
+
+**Symptom:**  
+The "SS delay gain years" metric (`ssDelayGainYrs = ysSS70 − yearsSustained`) can overstate the portfolio-longevity benefit of delaying Social Security to age 70. For a user who retires several years before 70, the app shows more extra years from SS delay than they'd actually gain.
+
+**Root cause:**  
+`ysSS70` solves: "how long does the portfolio last drawing at the post-SS-70 rate, starting from `totalAtRet`?" But between retirement (age `safeRetAge`) and SS-70 claim, the user is drawing at a *higher* rate (less SS income reducing the portfolio need). By age 70 the portfolio has already been partially depleted — so the correct starting value is `portfolioAt70`, not `totalAtRet`. Using `totalAtRet` (larger) makes the portfolio appear to sustain longer at `need70`, overstating the SS-delay benefit.
+
+**Worked example (retire 60, SS at 70):**  
+`$1M` portfolio, `netPortfolioNeed` pre-70 = $80k/yr, `need70` post-SS = $35k/yr, `rReal` = 4.5%.  
+- Current code (using `$1M`): `ysSS70 ≈ 18.8 years`  
+- Correct (using `portfolioAt70 ≈ $800k` after 10 years of $80k draws): `ysSS70 ≈ 13.6 years`  
+- `ssDelayGainYrs` overstated by ~5 years for this profile.
+
+**Impact:**  
+Directional error only (always overstates the SS-delay benefit). Negligible for retire-at-65 cases (2-year gap); material (3–6 year overstatement) for users who retire well before 70 and defer SS to the maximum.
+
+**Fix path:**  
+Option A — Add an inner loop from `safeRetAge` to 70 drawing at `netPortfolioNeed` per year, deriving `portfolioAt70` before computing `ysSS70`. Option B — Read `portfolioAt70` from `totalChartData` (already computed per year in the drawdown chart), avoiding the extra loop. Option B is preferred but requires `totalChartData` to be in scope above `ysSS70` (currently defined just below it).
+
+---
+
 ### BUG-07 — Chart 1 Trad 401k normalization uses Phase 1 rate for Phase 2 years
 
 **Reported:** 2026-06-01  
@@ -81,6 +107,80 @@ Negligible — React/HTML5 reconcile the constraint on the next interaction, and
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-25~~ — Optimizer bracket-mode mismatch, ACA omission, floor off-by-one, rmdTaxPost duplication
+
+**Reported:** 2026-06-04 · **Fixed:** 2026-06-04 (code review findings 1–5)  
+**Files:** `src/App.jsx`, `src/model/roth-conversion.js`
+
+**Three correctness bugs + two architectural fixes from a post-batch-2 code review:**
+
+**Finding 1 — Optimizer ignored ACA cliff costs (most severe).**  
+`getNetBenefit` in `optimizerResult` returned `{ rmdTaxSaved, totalTax, irmaaCost }` and maximized `rmdTaxSaved − totalTax − irmaaCost`. The displayed "Adjusted Net Benefit" correctly subtracts `acaAnnualLoss` (lost ACA subsidies when a conversion crosses the 400% FPL cliff), but the optimizer never computed this. A user on marketplace insurance could receive an optimizer recommendation that crossed the ACA cliff, while the display simultaneously showed a negative adjusted benefit. Fix: replaced the inline IRMAA loop with a `calcHealthcareExposure` call (which already computes both IRMAA and ACA cliff exposure per year). Added `acaLoss` to the `getNetBenefit` return shape and updated `findOptimalConversion` to subtract it: `rmdTaxSaved − totalTax − irmaaCost − (acaLoss ?? 0)`. Optimizer display guard widened from `hasMedicare` to `hasMedicare || hasMarketplaceInsurance`.
+
+**Finding 2 — Optimizer ran in bracket mode against a different model than displayed.**  
+In bracket mode, `conversionSim` uses `annualConversions: bracketFillConversions` (a per-year array where pre-SS/pension years have more bracket room). The optimizer's inner `calcConversionSim` only received `annualConversion: amount` — a flat scalar that always overrides the array. Optimizing a flat scalar produces a different conversion profile than what bracket mode computes, making the suggestion inconsistent with the numbers shown. Fix: `optimizerResult` now early-returns `null` in bracket mode. The optimizer is only meaningful in custom mode (choosing the best flat annual amount); the per-year bracket targets are already determined by the bracket choice.
+
+**Finding 3 — `buildIncomeFloors` age gate off by one (SS floor missing from the first SS year).**  
+The `buildIncomeFloors` helper computed `age = safeRetAge + i` for i = 0…N−1, so `convFloors[0]` applied the SS gate using age `safeRetAge`. But the first conversion year in the simulation is displayed as age `safeRetAge + 1` (because `calcConversionSim` produces 1-indexed years and App.jsx adds the offset). The arrays are paired by index, so `convFloors[0]` (gate at `safeRetAge`) was used as the income floor for the year displayed as `safeRetAge + 1`. When `ssClaimingAge == safeRetAge + 1` (e.g., retire at 65, claim SS at 66 — a common setup), `convFloors[0]` checked `65 >= 66 = false` (no SS), but the displayed conversion year 0 IS the first SS year. The bracket-fill conversion target for that year was computed without the SS income floor — over-estimating the available room by approximately `ssTaxableRet` (~$20–24k). The same error propagated into `calcConversionSim`'s `retIncomeFloors`, understating the tax on that year's conversion. Fix: `age = safeRetAge + i + 1` — now aligned with the displayed year ages.
+
+**Finding 4 — `rmdTaxPost` reduce in optimizer duplicated `rmdTaxBitePost` formula.**  
+The same reduce (calcTax on rmdIncomeFloor + rmd, accumulate (tax − rmdBaseFedTax) + rmd × retStateRate) appeared verbatim at two sites: lines ~448–451 (display path) and lines ~493–496 (optimizer inner loop). Fix: extracted a `calcRMDTax(rows)` helper defined once in the component and called at both sites.
+
+**Finding 5 — `healthcareExposure` not memoized.**  
+`calcHealthcareExposure` and its three derived values (`acaCliffYears`, `totalIRMAACost`, `acaAnnualLoss`) were computed inline on every render, including unrelated UI events like tab switches. Fix: wrapped in `useMemo([conversionSim, convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, filingStatus])` — recomputes only when healthcare-relevant inputs actually change.
+
+**Tests added:** `findOptimalConversion` subtracts `acaLoss`; `acaLoss ?? 0` backward compatibility; per-year floor produces higher tax once SS income is included in the floor (guards the off-by-one fix).
+
+---
+
+### ~~BUG-22~~ — `convFloors` / `convMAGIFloors` duplicated loop + optimizer re-ran every render
+
+**Reported:** 2026-06-03 · **Fixed:** 2026-06-03  
+**File:** `src/App.jsx`
+
+**Symptom:**  
+Two nearly identical per-year income-floor loops existed (`convFloors` for tax math using 85% taxable SS, `convMAGIFloors` for ACA/IRMAA MAGI using 100% SS). Separately, `convFloors`, `convMAGIFloors`, `retVals`, `currentSnapshot`, and `bracketFillConversions` were all created inline (`Array.from` / `Object.fromEntries` / object literal) on every render, so they produced new references each render. Because those references are dependencies of the `conversionSim` and `optimizerResult` memos, the 61-candidate conversion optimizer (≈3,000 inner iterations) re-ran on **every keystroke**, not only when its real inputs changed.
+
+**Root cause:**  
+The duplicated loop differed only in the SS amount; the unstable references defeated `useMemo` dependency comparison.
+
+**Fix:**  
+Extracted a single `buildIncomeFloors(ssAmount)` helper used for both arrays (the only difference — `ssTaxableRet` vs `householdSS` — is now an explicit argument). Memoized `convFloors`, `convMAGIFloors`, `bracketFillConversions`, `retVals`, and `currentSnapshot` with complete dependency lists (every reactive value each one reads), so they refresh exactly when an input changes and stay referentially stable otherwise. The optimizer now re-runs only when a genuine input changes. Pure refactor — all computed values are byte-identical (golden master unchanged).
+
+---
+
+### ~~BUG-21~~ — Roth-conversion optimizer dropped the first IRMAA year for early retirees
+
+**Reported:** 2026-06-03 · **Fixed:** 2026-06-03  
+**File:** `src/App.jsx` (`optimizerResult` IRMAA loop)
+
+**Symptom:**  
+The conversion optimizer's IRMAA cost loop computed each conversion year's age as `safeRetAge + i`, but the conversion sim (and the on-screen IRMAA figure via `calcHealthcareExposure`) treats conversion year `i` as age `safeRetAge + i + 1` — conversions start the tax year **after** retirement, ending at age 72 before RMDs at 73. For an early retiree (≈ `safeRetAge ≤ 63`), the optimizer's age was one year low, so the first conversion year's IRMAA surcharge (`age + 2 ≥ 65`) fell below the Medicare threshold and was skipped. The optimizer therefore under-counted IRMAA cost and could recommend a larger conversion than the displayed numbers support.
+
+**Root cause:**  
+Same off-by-one family as ~~BUG-11~~ (age-gated conversion-window loop starting at `safeRetAge + i` instead of `safeRetAge + i + 1`), reintroduced in the new optimizer code (batch-2).
+
+**Fix:**  
+The optimizer now derives the age from the conversion sim's own 1-indexed `years[i].age` (`safeRetAge + (sim.years[i].age ?? i + 1)`), identical to the display path in `calcHealthcareExposure`. Verified against a retire-at-62 scenario: optimizer and UI now both count 10 IRMAA years (previously 9 vs 10). Also tightened the MAGI fallback from `?? amount` to `?? 0` for clarity (the year row always exists, and `??` never triggered on a `0` conversion anyway). Test-side: `action-cards.test.js` was passing the obsolete `rate3Combined` key instead of `effectiveRMDTaxRate`, leaving the rate `undefined` ("~NaN% effective") with no assertion to catch it — renamed the key and added a test asserting the RMD row renders the rate and contains no "NaN".
+
+---
+
+### ~~BUG-20~~ — App crashed on render: `fedMarginal` used before initialization (TDZ)
+
+**Reported:** 2026-06-03 · **Fixed:** 2026-06-03  
+**File:** `src/App.jsx` (lines ~140 / ~144 / ~155, declaration at ~177)
+
+**Symptom:**  
+The entire app threw `ReferenceError: Cannot access 'fedMarginal' before initialization` on first render — a blank page. The `simData` memo (body + dependency array) and `currentSnapshot` read `fedMarginal`, but it was declared ~35 lines further down. `const` bindings sit in the temporal dead zone until their declaration line runs, so reading it earlier is a hard crash.
+
+**Root cause:**  
+The rate3-slider removal (batch-2) switched the `"Trad 401k"` after-tax normalization from the early `rate3` state to the later-computed `fedMarginal`, but left `fedMarginal`'s declaration below the code that now consumes it. It shipped undetected because `npm test` only exercises the pure-function model layer — nothing rendered `App.jsx`.
+
+**Fix:**  
+Moved the tax-basis block (`combinedIncome`, `totalPreTaxDeduc`, `safeDeduc`, `agi`, `fedTax`/`fedEffRate`, `fedMarginal`) above the `simData` memo so the value exists before it's read. Added a permanent render smoke test (`src/__tests__/render-smoke.test.js`) that `renderToString`s `App` once, so any future TDZ/runtime error in the component body fails CI instead of only the browser.
 
 ---
 

@@ -233,6 +233,37 @@ export const RETIREMENT_STATE_TAX = {
   DC: { name: "Dist. of Columbia", rate: 0.085, note: "Taxes 401k/IRA; ~8.5% at typical retirement income" },
 };
 
+// ── ACA / Marketplace Insurance (2026 estimated FPL) ─────────────────────────
+export const ACA_FPL_2026 = {
+  1: 15_060, 2: 20_440, 3: 25_820, 4: 31_200,
+  5: 36_580, 6: 41_960,
+};
+export const ACA_CLIFF_PCT  = 400; // subsidy disappears at 400% FPL
+
+// ── Medicare IRMAA 2026 ───────────────────────────────────────────────────────
+// 2-year lookback: IRMAA in 2026 is based on 2024 MAGI.
+// Use these brackets to project future IRMAA from future conversion income.
+// annualSurcharge = monthly surcharge × 12 (per person on Medicare).
+export const IRMAA_BRACKETS_2026 = {
+  single: [
+    { magi:       0, annualSurcharge:     0 },
+    { magi: 103_000, annualSurcharge: 1_044 },
+    { magi: 129_000, annualSurcharge: 2_640 },
+    { magi: 161_000, annualSurcharge: 4_224 },
+    { magi: 193_000, annualSurcharge: 5_820 },
+    { magi: 500_000, annualSurcharge: 6_708 },
+  ],
+  mfj: [
+    { magi:       0, annualSurcharge:     0 },
+    { magi: 206_000, annualSurcharge: 1_044 },
+    { magi: 258_000, annualSurcharge: 2_640 },
+    { magi: 322_000, annualSurcharge: 4_224 },
+    { magi: 386_000, annualSurcharge: 5_820 },
+    { magi: 750_000, annualSurcharge: 6_708 },
+  ],
+};
+export const MEDICARE_AGE = 65;
+
 // ── Model assumptions (heuristics, not IRS rules) ─────────────────────────────
 // These are modeling choices documented in docs/FINANCIAL-MODEL.md.
 // Separate from IRS statutory constants so they're easy to find and update.

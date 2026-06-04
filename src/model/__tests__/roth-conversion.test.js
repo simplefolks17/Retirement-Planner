@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcConversionSim } from "../roth-conversion.js";
+import { calcConversionSim, findOptimalConversion } from "../roth-conversion.js";
 
 const base = {
   conversionWindowYrs: 5,
@@ -97,5 +97,79 @@ describe("calcConversionSim — per-year conversion targets (annualConversions)"
     const scalar   = calcConversionSim(base);
     expect(withArr.totalTax).toBe(scalar.totalTax);
     expect(withArr.rothBalEnd).toBe(scalar.rothBalEnd);
+  });
+});
+
+describe("calcConversionSim — per-year income floors (retIncomeFloors)", () => {
+  it("higher floor in year 1 produces more tax than year 0 (SS income starts)", () => {
+    // Guard for the App.jsx buildIncomeFloors off-by-one fix: when SS starts in conversion
+    // year 1, retIncomeFloors[1] must include SS income (higher floor → higher marginal
+    // rate on the same conversion amount → more tax). Floor must exceed the standard
+    // deduction boundary to cross bracket: 40k floor + 30k conversion = 70k,
+    // taxable = 70k − 16.1k = 53.9k → 22% bracket; year 0 floor=0 stays in 12%.
+    const floors = [0, 40_000, 40_000, 40_000, 40_000]; // year 0: no SS, years 1-4: SS active
+    const result = calcConversionSim({ ...base, retIncomeFloors: floors });
+    // Year 0 (floor=0, 12% bracket) → tax < year 1 (floor=40k, 22% bracket)
+    expect(result.years[0].tax).toBeLessThan(result.years[1].tax);
+  });
+
+  it("floor=0 in all years matches retIncomeFloor scalar behavior", () => {
+    const scalarResult = calcConversionSim({ ...base, retIncomeFloor: 0 });
+    const arrayResult  = calcConversionSim({ ...base, retIncomeFloors: [0, 0, 0, 0, 0] });
+    expect(arrayResult.totalTax).toBe(scalarResult.totalTax);
+  });
+});
+
+describe("findOptimalConversion", () => {
+  it("returns 0 when no benefit from converting", () => {
+    const { optimalConversion } = findOptimalConversion({
+      getNetBenefit: () => ({ rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 }),
+    });
+    expect(optimalConversion).toBe(0);
+  });
+
+  it("finds amount that maximizes net benefit after IRMAA", () => {
+    // $50k: saves 20k, pays 5k tax → net 15k
+    // $100k: saves 25k, pays 10k tax, 8k IRMAA → net 7k
+    const { optimalConversion, optimalBenefit } = findOptimalConversion({
+      step: 50_000,
+      getNetBenefit: (amount) => {
+        if (amount === 0)        return { rmdTaxSaved: 0,      totalTax: 0,      irmaaCost: 0     };
+        if (amount === 50_000)   return { rmdTaxSaved: 20_000, totalTax: 5_000,  irmaaCost: 0     };
+        if (amount === 100_000)  return { rmdTaxSaved: 25_000, totalTax: 10_000, irmaaCost: 8_000 };
+        if (amount === 150_000)  return { rmdTaxSaved: 26_000, totalTax: 15_000, irmaaCost: 8_000 };
+        return { rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 };
+      },
+    });
+    expect(optimalConversion).toBe(50_000);
+    expect(optimalBenefit).toBe(15_000);
+  });
+
+  it("subtracts acaLoss from objective — ACA cliff cost reduces the optimal amount", () => {
+    // Without ACA: $100k is optimal (net 15k). With $20k ACA penalty at $100k, $50k wins (net 14k > 5k).
+    // This guards against the bug where getNetBenefit returned acaLoss but optimizer ignored it.
+    const { optimalConversion } = findOptimalConversion({
+      step: 50_000,
+      getNetBenefit: (amount) => {
+        if (amount === 0)       return { rmdTaxSaved: 0,      totalTax: 0,      irmaaCost: 0, acaLoss: 0      };
+        if (amount === 50_000)  return { rmdTaxSaved: 20_000, totalTax: 6_000,  irmaaCost: 0, acaLoss: 0      };
+        if (amount === 100_000) return { rmdTaxSaved: 28_000, totalTax: 8_000,  irmaaCost: 0, acaLoss: 20_000 };
+        return { rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0, acaLoss: 0 };
+      },
+    });
+    // $100k gross net = 28k-8k-20k = 0; $50k = 20k-6k = 14k → $50k wins
+    expect(optimalConversion).toBe(50_000);
+  });
+
+  it("acaLoss defaults to 0 when absent — backward compatible with old getNetBenefit shape", () => {
+    // Old callers that don't return acaLoss should still work correctly.
+    const { optimalConversion } = findOptimalConversion({
+      step: 50_000,
+      getNetBenefit: (amount) => {
+        if (amount === 50_000) return { rmdTaxSaved: 10_000, totalTax: 2_000, irmaaCost: 0 };
+        return { rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 };
+      },
+    });
+    expect(optimalConversion).toBe(50_000);
   });
 });

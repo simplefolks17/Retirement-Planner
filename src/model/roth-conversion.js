@@ -1,5 +1,21 @@
 import { marginalRate } from "./taxes.js";
 
+// Optimizer: finds the scalar annual conversion that maximizes net benefit
+// accounting for IRMAA and ACA subsidy costs. Coarse $5k search up to $300k.
+// getNetBenefit(amount) → { rmdTaxSaved, totalTax, irmaaCost, acaLoss? }
+// is provided by the caller (App.jsx) to avoid circular deps with rmd.js.
+export function findOptimalConversion({ maxSearch = 300_000, step = 5_000, getNetBenefit }) {
+  const netOf = (r) => r.rmdTaxSaved - r.totalTax - r.irmaaCost - (r.acaLoss ?? 0);
+  let bestAmount = 0;
+  let bestNet = netOf(getNetBenefit(0));
+
+  for (let amount = step; amount <= maxSearch; amount += step) {
+    const net = netOf(getNetBenefit(amount));
+    if (net > bestNet) { bestNet = net; bestAmount = amount; }
+  }
+  return { optimalConversion: bestAmount, optimalBenefit: Math.round(bestNet) };
+}
+
 // Runs the Roth conversion ladder simulation through the conversion window.
 // Computes BOTH scenarios simultaneously:
 //   Scenario A: tax paid from the converted amount (less efficient)

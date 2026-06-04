@@ -10,7 +10,7 @@ export function calcOptimizedScenario({
   incomeGrowth,
   safeRetAge,
   currentAge,
-  rate3,
+  withdrawalTaxRate,
   contrib401k,
   includeSS,
   ssClaimingAge,
@@ -50,7 +50,7 @@ export function calcOptimizedScenario({
       const extraThisYr = Math.min(oa.extra401k, roomThisYr);
       extra401kFV += extraThisYr * Math.pow(1 + r, yearsToRet - y);
     }
-    extra401kFV *= (1 - rate3 / 100);
+    extra401kFV *= (1 - withdrawalTaxRate / 100);
   }
 
   const extraHSAFV     = fvAnnuity(oa.extraHSA, r, yearsToRet);

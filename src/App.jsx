@@ -13,7 +13,8 @@ import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from 
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained } from "./model/drawdown.js";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
-import { calcConversionSim } from "./model/roth-conversion.js";
+import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
+import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import {
@@ -26,11 +27,11 @@ import {
   SS_FACTORS,
   STATE_TAX, RETIREMENT_STATE_TAX,
   ASSUMPTIONS,
+  MEDICARE_AGE,
 } from "./config/irs-2026.js";
 import { Slider }        from "./components/Slider.jsx";
 import { DeferredInput } from "./components/DeferredInput.jsx";
 import { TaxTimeline }   from "./components/TaxTimeline.jsx";
-import { TaxPhaseCard }  from "./components/TaxPhaseCard.jsx";
 import { ChartTooltip }  from "./components/ChartTooltip.jsx";
 import { FlowConn }      from "./components/FlowConn.jsx";
 import { PhaseCard }     from "./components/PhaseCard.jsx";
@@ -50,11 +51,6 @@ export default function App() {
   const [filingStatus,  setFilingStatus]  = useState("single");
   const [otherPreTaxDeduc, setOtherPreTaxDeduc] = useState(0);
 
-  const [rate1,       setRate1]       = useState(22);
-  const [rate2,       setRate2]       = useState(24);
-  const [rate3,       setRate3]       = useState(18);
-  const [showPhase2,  setShowPhase2]  = useState(false);
-  const [phase2Start, setPhase2Start] = useState(2);
   const [retirementState, setRetirementState] = useState(selectedState);
 
   const [bal401k,    setBal401k]    = useState(50_000);
@@ -108,13 +104,16 @@ export default function App() {
 
   const [addlPreTaxBal, setAddlPreTaxBal] = useState(0);
 
-  const retStateRate  = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
-  const rate3Combined = Math.min(0.95, rate3 / 100 + retStateRate);
+  const [hasMarketplaceInsurance, setHasMarketplaceInsurance] = useState(false);
+  const [householdSize, setHouseholdSize] = useState(1);
+  const [marketplaceMonthlyPremium, setMarketplaceMonthlyPremium] = useState(null);
+  const [hasMedicare, setHasMedicare] = useState(false);
+  const [personOnMedicare, setPersonOnMedicare] = useState(1); // 1 or 2 (persons)
 
-  const safeRetAge  = showPhase2
-    ? Math.max(retirementAge, currentAge + phase2Start + 1)
-    : retirementAge;
-  const phase2End   = safeRetAge - currentAge;
+  const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
+
+  const safeRetAge = retirementAge;
+  const phase2End  = safeRetAge - currentAge;
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
 
@@ -123,40 +122,10 @@ export default function App() {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
     });
 
-  const simData = useMemo(() => runSimulation({
-    totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
-    spouseIncome, spouseIncomeGrowth, returnRate,
-    rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
-    bal401k, balRoth, balTaxable, balHSA,
-    contrib401k, contribRoth, contribTaxable, contribHSA,
-    contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-    calcEmployerMatchFn: employerMatch,
-  }), [
-    returnRate, totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
-    spouseIncome, spouseIncomeGrowth,
-    rate1, rate2, rate3, phase2Start, phase2End, showPhase2,
-    bal401k, balRoth, balTaxable, balHSA,
-    contrib401k, contribRoth, contribTaxable, contribHSA,
-    contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-    employerMatchPct, matchMode, matchFormulaRate, matchFormulaCap,
-  ]);
-
-  // Year-0 fallback: when retirementAge === currentAge the user is already retired
-  // and simData has no rows at or before safeRetAge. Use current input balances directly.
-  const currentSnapshot = {
-    age: currentAge,
-    "Trad 401k": Math.round(bal401k * (1 - rate3 / 100)),
-    tradGross: bal401k,
-    "Roth IRA": balRoth,
-    "Taxable": balTaxable,
-    "HSA": balHSA,
-  };
-  const atRetirement = phase2End > 0
-    ? (simData[phase2End - 1] ?? currentSnapshot)
-    : currentSnapshot;
-
+  // Tax basis must be computed BEFORE simData / currentSnapshot, which normalize
+  // "Trad 401k" to its after-tax value using fedMarginal. (Declared here to avoid
+  // a temporal-dead-zone reference — these consts are read by the simData memo below.)
   const combinedIncome       = currentIncome + spouseIncome;
-
   // For MFJ filers, both incomes are reported on the same return.
   // Primary pre-tax deductions (401k, HSA) reduce primary income first;
   // spouse deductions aren't tracked (no sliders), so spouse income enters
@@ -168,6 +137,49 @@ export default function App() {
     : currentIncome - safeDeduc;
   const { tax: fedTax, effectiveRate: fedEffRate } = calcTax(agi, filingStatus);
   const fedMarginal      = marginalRate(agi, filingStatus);
+
+  const simData = useMemo(() => {
+    const raw = runSimulation({
+      totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+      spouseIncome, spouseIncomeGrowth, returnRate,
+      bal401k, balRoth, balTaxable, balHSA,
+      contrib401k, contribRoth, contribTaxable, contribHSA,
+      contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+      calcEmployerMatchFn: employerMatch,
+    });
+    // "Trad 401k" display: normalize to after-tax equivalent using current marginal rate.
+    // fedMarginal is the bracket-accurate working-year rate; effectiveRMDTaxRate (retirement
+    // distribution rate) is computed from rmdData which depends on tradGross — using fedMarginal
+    // here for all years avoids circular dependency and is a close approximation at retirement too.
+    return raw.map(d => ({
+      ...d,
+      "Trad 401k": Math.round((d.tradGross ?? 0) * (1 - fedMarginal)),
+    }));
+  }, [
+    returnRate, totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+    spouseIncome, spouseIncomeGrowth, fedMarginal,
+    bal401k, balRoth, balTaxable, balHSA,
+    contrib401k, contribRoth, contribTaxable, contribHSA,
+    contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+    employerMatchPct, matchMode, matchFormulaRate, matchFormulaCap,
+  ]);
+
+  // Year-0 fallback: when retirementAge === currentAge the user is already retired
+  // and simData has no rows at or before safeRetAge. Use current input balances directly.
+  // Memoized so downstream memos (conversionSim, optimizer) that take it as a dep get a
+  // stable reference and only re-run when an actual balance / rate input changes.
+  const currentSnapshot = useMemo(() => ({
+    age: currentAge,
+    "Trad 401k": Math.round(bal401k * (1 - fedMarginal)),
+    tradGross: bal401k,
+    "Roth IRA": balRoth,
+    "Taxable": balTaxable,
+    "HSA": balHSA,
+  }), [currentAge, fedMarginal, bal401k, balRoth, balTaxable, balHSA]);
+  const atRetirement = phase2End > 0
+    ? (simData[phase2End - 1] ?? currentSnapshot)
+    : currentSnapshot;
+
   const stateRateDefault = STATE_TAX[selectedState]?.rate ?? 0;
   const stateRate        = stateRateOverride !== null ? stateRateOverride : stateRateDefault;
   const stateTax         = agi * stateRate;
@@ -220,9 +232,13 @@ export default function App() {
       endAge: contribEndHSA,   setEndAge: setContribEndHSA },
   ];
 
-  const retVals = Object.fromEntries(
+  // Memoized on atRetirement (a stable reference: either a memoized simData row or
+  // the memoized currentSnapshot). ACCOUNTS' dataKeys are static, so atRetirement is
+  // the only varying input — keeping retVals stable lets conversionSim/optimizer skip
+  // re-running unless the retirement balances actually change.
+  const retVals = useMemo(() => Object.fromEntries(
     ACCOUNTS.map(a => [a.dataKey, atRetirement[a.dataKey] ?? 0])
-  );
+  ), [atRetirement]);
   const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
 
   const totalAtRet        = Object.values(retVals).reduce((s, v) => s + v, 0);
@@ -356,20 +372,35 @@ export default function App() {
   // Effective rate across all RMD years — used for display captions.
   const effectiveRMDTaxRate = totalRMDs > 0
     ? rmdTaxBite / totalRMDs
-    : Math.min(0.95, rate3 / 100 + retStateRate);
+    : Math.min(0.95, fedMarginal + retStateRate);
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
   // Per-year income floors for the conversion window: SS and pension only count
   // in years when they've actually started (ssClaimingAge / pensionStartAge).
-  const convFloors = Array.from({ length: conversionWindowYrs }, (_, i) => {
-    const age         = safeRetAge + i;
-    const yearSSTax   = includeSS && age >= ssClaimingAge ? ssTaxableRet : 0;
-    const yearPension = pensionMonthly > 0 && age >= pensionStartAge
-      ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-    return yearSSTax + yearPension;
-  });
+  // Per-year income floor for the conversion window. SS/pension only count in
+  // years they've actually started (ssClaimingAge / pensionStartAge). The only
+  // difference between the tax floor and the MAGI floor is the SS amount used:
+  //   convFloors      → ssTaxableRet (85% taxable fraction, for marginal-rate math)
+  //   convMAGIFloors  → householdSS  (100% gross SS, for ACA/IRMAA MAGI)
+  // Memoized so the conversion sim and optimizer (which take these as deps) don't
+  // re-run on every render — only when an input that actually changes the floors does.
+  const buildIncomeFloors = (ssAmount) =>
+    Array.from({ length: conversionWindowYrs }, (_, i) => {
+      // age = safeRetAge + i + 1: year i is displayed at safeRetAge+i+1 (calcConversionSim
+      // returns yr+1 offsets, App adds safeRetAge). The floor must match that displayed age
+      // so the SS/pension gate fires in the right conversion year.
+      const age         = safeRetAge + i + 1;
+      const yearSS      = includeSS && age >= ssClaimingAge ? ssAmount : 0;
+      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
+        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+      return yearSS + yearPension;
+    });
+  const convFloors = useMemo(() => buildIncomeFloors(ssTaxableRet),
+    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
+  const convMAGIFloors = useMemo(() => buildIncomeFloors(householdSS),
+    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
   const retIncomeFloor   = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
   const bracketTops      = {
@@ -381,8 +412,9 @@ export default function App() {
   // Per-year bracket-fill targets: each year converts up to the bracket top, minus
   // THAT year's income floor (convFloors gates SS/pension on claiming/start age).
   // Early-retirement years before SS/pension start have a lower floor → more room.
-  const bracketFillConversions = convFloors.map(floor =>
-    Math.max(0, Math.round(bracketTarget + retTaxData.deduction - floor)));
+  const bracketFillConversions = useMemo(() => convFloors.map(floor =>
+    Math.max(0, Math.round(bracketTarget + retTaxData.deduction - floor))),
+    [convFloors, bracketTarget, retTaxData]);
   // Steady-state scalar (all sources active) — the lowest target, used as the
   // headline figure and as the fallback when there are no conversion-window years.
   const bracketFillConversion = Math.max(0, Math.round(
@@ -416,12 +448,86 @@ export default function App() {
     safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
   }), [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
 
-  const rmdTaxBitePost = rmdDataPostConversion.reduce((sum, { rmd }) => {
+  // Shared RMD tax reducer — used by both display path (rmdTaxBitePost) and optimizer
+  // (rmdTaxPost) so the formula stays in sync when the tax model changes.
+  const calcRMDTax = (rows) => rows.reduce((sum, { rmd }) => {
     const { tax } = calcTax(rmdIncomeFloor + rmd, filingStatus);
     return sum + Math.round((tax - rmdBaseFedTax) + rmd * retStateRate);
   }, 0);
+
+  const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion);
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
+
+  const healthcareExposure = useMemo(() => calcHealthcareExposure({
+    conversionYears: conversionSim.years,
+    convMAGIFloors,
+    hasMarketplaceInsurance,
+    householdSize,
+    hasMedicare,
+    filingStatus,
+  }), [conversionSim, convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, filingStatus]);
+  const acaCliffYears = healthcareExposure.filter(e => e.aca?.crossesCliff);
+  const totalIRMAACost = healthcareExposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
+  const acaAnnualLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
+    ? acaCliffYears.length * marketplaceMonthlyPremium * 12
+    : 0;
+  const adjustedNetConversionBenefit = netConversionBenefit - totalIRMAACost - acaAnnualLoss;
+
+  // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA + ACA.
+  // Only runs in custom mode — bracket mode uses per-year targets derived from the bracket
+  // choice, not a searchable flat scalar; optimizing a flat amount there produces a different
+  // model than what the display shows.
+  const optimizerResult = useMemo(() => {
+    if (conversionMode === "bracket" || conversionWindowYrs === 0 || rmdData.length === 0) return null;
+    const retRow = simData.find(d => d.age === safeRetAge)
+      ?? (safeRetAge === currentAge ? currentSnapshot : null);
+    const tradGross = (retRow?.tradGross ?? 0) + addlPreTaxBal;
+    const rothBal   = retVals["Roth IRA"] ?? 0;
+    const taxableBal = retVals["Taxable"] ?? 0;
+    // Capture loop vars for closure (avoids stale deps)
+    const _convFloors = convFloors;
+    const _convMAGIFloors = convMAGIFloors;
+
+    const getNetBenefit = (amount) => {
+      const sim = calcConversionSim({
+        conversionWindowYrs, annualConversion: amount, returnRate,
+        retIncomeFloor, retIncomeFloors: _convFloors,
+        filingStatus, conversionTaxSource,
+        tradGrossAtRetirement: tradGross, rothBalAtRet: rothBal, taxableBalAtRet: taxableBal,
+      });
+      const rmdPost = calcRMDPostConversion({
+        conversionWindowYrs, rmdData, tradBal73: sim.tradBal73,
+        safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
+      });
+      const rmdTaxPost     = calcRMDTax(rmdPost);
+      const rmdTaxSavedOpt = Math.max(0, rmdTaxBite - rmdTaxPost);
+
+      // Apply safeRetAge offset so calcHealthcareExposure receives the same ages
+      // as the display path (conversionSim.years already has this offset applied).
+      const offsetYears = sim.years.map(y => ({ ...y, age: y.age + safeRetAge }));
+      const exposure = calcHealthcareExposure({
+        conversionYears: offsetYears,
+        convMAGIFloors: _convMAGIFloors,
+        hasMarketplaceInsurance,
+        householdSize,
+        hasMedicare,
+        filingStatus,
+      });
+      const irmaaCost = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
+      const acaLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
+        ? exposure.filter(e => e.aca?.crossesCliff).length * marketplaceMonthlyPremium * 12
+        : 0;
+
+      return { rmdTaxSaved: rmdTaxSavedOpt, totalTax: sim.totalTax, irmaaCost, acaLoss };
+    };
+
+    return findOptimalConversion({ getNetBenefit });
+  }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, rmdBaseFedTax, retStateRate,
+      retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
+      addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
+      hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot,
+      hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
@@ -433,9 +539,11 @@ export default function App() {
       : megaCapacity * yrs,
   }));
 
-  const retTaxable = retVals["Taxable"]   ?? 0;
-  const retTrad    = retVals["Trad 401k"] ?? 0;
-  const retRoth    = retVals["Roth IRA"]  ?? 0;
+  const retTaxable     = retVals["Taxable"]   ?? 0;
+  const retTrad        = retVals["Trad 401k"] ?? 0;
+  const retRoth        = retVals["Roth IRA"]  ?? 0;
+  // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
+  const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
   const yr1FromTaxable = Math.min(netPortfolioNeed, retTaxable);
   const yr1FromTrad    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable), retTrad);
@@ -447,11 +555,13 @@ export default function App() {
     yr1FromTrad    * yr1TradRate              +
     yr1FromRoth    * 0
   );
-  const yr1TaxWorstCase = Math.round(Math.min(netPortfolioNeed, retTrad) * yr1TradRate);
+  // Worst case: draw all spending from pre-tax trad first; cap at actual gross balance.
+  const worstCaseDraw   = Math.min(netPortfolioNeed, tradGrossAtRet);
+  const yr1TradRateWC   = Math.min(0.95, marginalRate(rmdIncomeFloor + worstCaseDraw, filingStatus) + retStateRate);
+  const yr1TaxWorstCase = Math.round(worstCaseDraw * yr1TradRateWC);
   const yr1TaxSavings   = Math.max(0, yr1TaxWorstCase - yr1TaxOptimal);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
-  const phase1RateMismatch = Math.abs(rate1 - actualMarginalPct) >= 1;
 
   const contrib401kRoom    = Math.max(0, TRAD_401K_LIMIT_2026 - contrib401k);
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);
@@ -462,8 +572,6 @@ export default function App() {
   const projRetBracket    = retBrackets.find(b => projRetIncome >= b.min && projRetIncome < b.max)
                          ?? retBrackets[retBrackets.length - 1];
   const projRetBracketPct = Math.round(projRetBracket.rate * 100);
-  const projRate3Combined = Math.round((projRetBracket.rate + retStateRate) * 100);
-  const rate3Mismatch     = Math.abs(Math.round(rate3Combined * 100) - projRate3Combined) >= 3;
 
   const ss70Annual       = Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * ASSUMPTIONS.MONTHS_PER_YEAR;
   const household70SS    = ss70Annual + spouseSsBenefit;
@@ -546,13 +654,14 @@ export default function App() {
 
   const optimized = useMemo(() => calcOptimizedScenario({
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
-    rate3, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
+    withdrawalTaxRate: Math.round(effectiveRMDTaxRate * 100),
+    contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
     householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable,
   }), [
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
-    rate3, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
+    effectiveRMDTaxRate, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
     householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable,
@@ -1017,19 +1126,16 @@ export default function App() {
           <Slider label="Current Age" value={currentAge} min={18} max={80}
             onChange={v => {
               setCurrentAge(v);
-              if (showPhase2 && retirementAge < v + 2) setRetirementAge(v + 2);
-              else if (!showPhase2 && retirementAge < v) setRetirementAge(v);
+              if (retirementAge < v) setRetirementAge(v);
               if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
               if (contribEnd401k    <= v) setContribEnd401k(v + 1);
               if (contribEndRoth    <= v) setContribEndRoth(v + 1);
               if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
               if (contribEndHSA     <= v) setContribEndHSA(v + 1);
             }} />
-          <Slider label="Retirement Age" value={retirementAge} min={showPhase2 ? currentAge + 2 : currentAge} max={lifeExpect - 1}
+          <Slider label="Retirement Age" value={retirementAge} min={currentAge} max={lifeExpect - 1}
             valueColor={C.green} onChange={v => {
               setRetirementAge(v);
-              const newPhase2End = v - currentAge;
-              if (phase2Start >= newPhase2End) setPhase2Start(Math.max(1, newPhase2End - 1));
               if (contribEnd401k    === retirementAge) setContribEnd401k(v);
               if (contribEndRoth    === retirementAge) setContribEndRoth(v);
               if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
@@ -1041,9 +1147,7 @@ export default function App() {
               if (retirementAge >= v) {
                 const newRet = v - 1;
                 setRetirementAge(newRet);
-                const newPhase2End = newRet - currentAge;
-                if (phase2Start >= newPhase2End) setPhase2Start(Math.max(1, newPhase2End - 1));
-              }
+                }
               if (contribEnd401k    > v) setContribEnd401k(v);
               if (contribEndRoth    > v) setContribEndRoth(v);
               if (contribEndTaxable > v) setContribEndTaxable(v);
@@ -1062,93 +1166,53 @@ export default function App() {
           </div>
         </div>
         <TaxTimeline
-          phase1End={phase2Start} phase2End={phase2End} totalYears={totalYears}
-          rate1={rate1} rate2={rate2} rate3={rate3} showPhase2={showPhase2}
+          phase2End={phase2End} totalYears={totalYears}
+          fedMarginal={fedMarginal} effectiveRMDTaxRate={effectiveRMDTaxRate}
         />
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
           <span style={{ fontSize: 10, color: C.muted }}>Year 1 (Age {currentAge})</span>
-          {showPhase2 && (
-            <span style={{ fontSize: 10, color: C.muted }}>
-              Year {phase2Start} to {phase2End - 1} (Age {currentAge + phase2Start} to {safeRetAge - 1})
-            </span>
-          )}
           <span style={{ fontSize: 10, color: C.muted }}>Retirement Age {safeRetAge} to {safeLifeExp}</span>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: showPhase2 ? "1fr 1fr 1fr" : "1fr 1fr", gap: 10, marginBottom: 16 }}>
-          <TaxPhaseCard
-            phaseNum="1" label="Current Federal Rate" color={C.gold}
-            yearRange={showPhase2
-              ? `Years 1 - ${phase2Start - 1} / Age ${currentAge} - ${currentAge + phase2Start - 1}`
-              : `Years 1 - ${phase2End - 1} / Age ${currentAge} - ${safeRetAge - 1}`}
-            rate={rate1} setRate={setRate1}
-          >
-            {phase1RateMismatch && (
-              <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 9, color: C.muted }}>Actual marginal: {actualMarginalPct}%</span>
-                <button onClick={() => setRate1(actualMarginalPct)} style={{
-                  padding: "2px 7px", fontSize: 9, fontWeight: 600, border: `1px solid ${C.gold}60`,
-                  borderRadius: 3, background: "transparent", color: C.gold, cursor: "pointer",
-                  fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-                  ← sync
-                </button>
-              </div>
-            )}
-            <button
-              onClick={() => {
-                const enabling = !showPhase2;
-                setShowPhase2(enabling);
-                setPhase2Start(2);
-                if (enabling && retirementAge < currentAge + 2) setRetirementAge(currentAge + 2);
-              }}
-              style={{
-                marginTop: 8, width: "100%", padding: "3px 0", borderRadius: 5,
-                border: `1px solid ${C.border}`, cursor: "pointer", transition: "all 0.15s",
-                background: showPhase2 ? "#21262d" : "transparent",
-                color: showPhase2 ? C.muted : "#3d444d",
-                fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase",
-                fontFamily: "'DM Sans', system-ui, sans-serif", fontWeight: 600,
-              }}
-            >{showPhase2 ? "- mid-career phase" : "+ mid-career phase"}</button>
-          </TaxPhaseCard>
-          {showPhase2 && (
-            <TaxPhaseCard
-              phaseNum="2" label="Mid-Career Federal Rate" color={C.blue}
-              yearRange={`Years ${phase2Start} - ${phase2End - 1} / Age ${currentAge + phase2Start} - ${safeRetAge - 1}`}
-              rate={rate2} setRate={setRate2}
-            >
-              <div style={{ marginTop: 8 }}>
-                <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted }}>Starts at year</p>
-                <DeferredInput
-                  value={phase2Start} min={1} max={phase2End - 1}
-                  onChange={setPhase2Start}
-                  style={{ width: "100%", background: C.surface, border: `1px solid ${C.border}`,
-                    borderRadius: 5, color: C.blue, fontSize: 13, padding: "3px 8px",
-                    outline: "none", ...mono }}
-                />
-              </div>
-              <button
-                onClick={() => { setShowPhase2(false); setPhase2Start(2); }}
-                style={{
-                  marginTop: 6, width: "100%", padding: "3px 0", borderRadius: 5,
-                  border: `1px solid ${C.border}`, background: "transparent",
-                  color: C.muted, fontSize: 10, cursor: "pointer",
-                  fontFamily: "'DM Sans', system-ui, sans-serif",
-                }}
-              >Remove</button>
-            </TaxPhaseCard>
-          )}
-          <TaxPhaseCard
-            phaseNum="3" label="Retirement Federal Rate" color={C.green}
-            yearRange={`Year ${phase2End}+ / Age ${safeRetAge} - ${safeLifeExp}`}
-            rate={rate3} setRate={setRate3}
-            combinedRate={rate3Combined}
-          >
-            <p style={{ margin: "6px 0 0", fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
-              Used in the accumulation model to estimate growth drag on pre-tax accounts.
-              RMD and withdrawal taxes now use bracket-accurate math — this rate is compared
-              against the projection below as a sanity check.
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+          {/* Working-years panel — computed from actual bracket math, no manual slider */}
+          <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${C.gold}` }}>
+            <p style={{ margin: "0 0 2px", fontSize: 10, color: C.gold, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              1 Working Years Tax Rate
             </p>
-            <div style={{ marginTop: 8 }}>
+            <p style={{ margin: "0 0 8px", fontSize: 10, color: C.muted }}>
+              Years 1–{phase2End - 1} / Age {currentAge}–{safeRetAge - 1}
+            </p>
+            <p style={{ margin: "0 0 4px", fontSize: 26, color: C.gold, ...mono, fontWeight: 700 }}>
+              {actualMarginalPct}%
+            </p>
+            <p style={{ margin: 0, fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
+              Federal marginal rate computed from your income and deductions.
+              Pre-tax 401k balances are normalized to after-tax equivalent
+              using this rate for chart display.
+            </p>
+          </div>
+          {/* Retirement panel — bracket-accurate effective RMD rate, with state selector */}
+          <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${C.green}` }}>
+            <p style={{ margin: "0 0 2px", fontSize: 10, color: C.green, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              3 Retirement Effective Rate
+            </p>
+            <p style={{ margin: "0 0 8px", fontSize: 10, color: C.muted }}>
+              Year {phase2End}+ / Age {safeRetAge}–{safeLifeExp}
+            </p>
+            <p style={{ margin: "0 0 2px", fontSize: 26, color: C.green, ...mono, fontWeight: 700 }}>
+              {(effectiveRMDTaxRate * 100).toFixed(1)}%
+              {retStateRate > 0 && (
+                <span style={{ fontSize: 13, color: C.orange, marginLeft: 6 }}>
+                  +{(retStateRate * 100).toFixed(1)}% state
+                </span>
+              )}
+            </p>
+            {rmdData.length > 0 && (
+              <p style={{ margin: "0 0 6px", fontSize: 9, color: C.muted }}>
+                Bracket-accurate across all RMD years · projected {projRetBracketPct}% marginal bracket
+              </p>
+            )}
+            <div>
               <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted }}>
                 Retirement state
                 {retStateRate > 0
@@ -1170,23 +1234,7 @@ export default function App() {
                 </p>
               )}
             </div>
-            {rate3Mismatch && rmdData.length > 0 && (
-              <div style={{ marginTop: 6 }}>
-                <p style={{ margin: 0, fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
-                  Avg RMD + SS puts you in the{" "}
-                  <span style={{ color: C.orange, fontWeight: 700 }}>{projRetBracketPct}% fed bracket</span>
-                  {retStateRate > 0 && <span> (+{(retStateRate*100).toFixed(1)}% state = {projRate3Combined}% combined)</span>}
-                </p>
-                <button onClick={() => setRate3(projRetBracketPct)} style={{
-                  marginTop: 3, padding: "2px 7px", fontSize: 9, fontWeight: 600,
-                  border: `1px solid ${C.green}60`, borderRadius: 3, background: "transparent",
-                  color: C.green, cursor: "pointer",
-                  fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-                  ← sync fed to {projRetBracketPct}%
-                </button>
-              </div>
-            )}
-          </TaxPhaseCard>
+          </div>
         </div>
       </div>
 
@@ -1529,17 +1577,13 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Portfolio Growth Over Time</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
-          After-tax values year by year. Trad 401k normalized to{" "}
-          {showPhase2 ? `Phase 1 rate (${rate1}%) across all working years` : `Phase 1 rate (${rate1}%)`}{" "}
-          for a smooth growth line — the retirement-rate after-tax value is in the snapshot cards below.
+          After-tax values year by year. Trad 401k normalized to current marginal rate ({actualMarginalPct}%)
+          for an apples-to-apples comparison with Roth and taxable accounts.
           Dashed line marks retirement age.
         </p>
         <ResponsiveContainer width="100%" height={320}>
           <LineChart
-            data={simData.filter(d => d.age <= safeRetAge).map(d => ({
-              ...d,
-              "Trad 401k": Math.round((d.tradGross ?? 0) * (1 - rate1 / 100)),
-            }))}
+            data={simData.filter(d => d.age <= safeRetAge)}
             margin={{ top: 10, right: 16, left: 16, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
             <XAxis dataKey="age" stroke={C.muted} tick={{ fontSize: 11, fill: C.muted }}
@@ -2122,6 +2166,156 @@ export default function App() {
                       <p style={{ margin: 0, fontSize: 9, color: C.muted }}>{sub}</p>
                     </div>
                   ))}
+                </div>
+                {/* Healthcare Cost Impact on Conversions */}
+                <div style={{ background: C.card, borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 11, color: C.text, fontWeight: 600 }}>
+                    Healthcare Cost Impact
+                  </p>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    <button onClick={() => setHasMarketplaceInsurance(v => !v)} style={{
+                      padding: "5px 12px", fontSize: 10, fontWeight: 600, border: "none", borderRadius: 5,
+                      cursor: "pointer",
+                      background: hasMarketplaceInsurance ? C.blue : C.border,
+                      color: hasMarketplaceInsurance ? "#fff" : C.muted,
+                      fontFamily: "'DM Sans', system-ui, sans-serif",
+                    }}>Marketplace Insurance</button>
+                    <button onClick={() => setHasMedicare(v => !v)} style={{
+                      padding: "5px 12px", fontSize: 10, fontWeight: 600, border: "none", borderRadius: 5,
+                      cursor: "pointer",
+                      background: hasMedicare ? C.purple : C.border,
+                      color: hasMedicare ? "#fff" : C.muted,
+                      fontFamily: "'DM Sans', system-ui, sans-serif",
+                    }}>Medicare / IRMAA</button>
+                  </div>
+                  {hasMarketplaceInsurance && (
+                    <div style={{ marginBottom: 10 }}>
+                      <Slider label="Household size" value={householdSize} min={1} max={6} step={1}
+                        format={v => `${v} person${v > 1 ? "s" : ""}`} onChange={setHouseholdSize} valueColor={C.blue} />
+                      <div style={{ marginTop: 8 }}>
+                        <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          Monthly marketplace premium (optional)
+                        </p>
+                        <DeferredInput
+                          value={marketplaceMonthlyPremium ?? ""}
+                          placeholder="e.g. 800"
+                          onChange={v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v))}
+                          style={{ width: 120, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 5,
+                            color: C.text, fontSize: 12, padding: "4px 8px" }}
+                        />
+                      </div>
+                      {acaCliffYears.length > 0 ? (
+                        <div style={{ marginTop: 8, background: "#2a1a0a", border: `1px solid ${C.orange}`,
+                          borderRadius: 6, padding: "8px 10px" }}>
+                          <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.orange }}>
+                            ACA Cliff Warning — {acaCliffYears.length} year{acaCliffYears.length > 1 ? "s" : ""} exceed 400% FPL
+                          </p>
+                          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                            At {householdSize}-person household, the subsidy cliff is{" "}
+                            <span style={{ color: C.text, ...mono }}>{fmt(acaCliffThreshold(householdSize))}</span> MAGI.
+                            Conversions push you over in ages:{" "}
+                            <span style={{ color: C.orange, ...mono }}>{acaCliffYears.map(e => e.age).join(", ")}</span>.
+                            {acaAnnualLoss > 0 && (
+                              <> Estimated subsidy loss: <span style={{ color: C.orange, ...mono }}>{fmt(acaAnnualLoss)}</span> total.</>
+                            )}
+                          </p>
+                        </div>
+                      ) : hasMarketplaceInsurance && safeRetAge < MEDICARE_AGE ? (
+                        <p style={{ margin: "8px 0 0", fontSize: 10, color: C.green }}>
+                          No ACA cliff crossings — conversions stay under {fmt(acaCliffThreshold(householdSize))} each year.
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                  {hasMedicare && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                        {[1, 2].map(n => (
+                          <button key={n} onClick={() => setPersonOnMedicare(n)} style={{
+                            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: "none", borderRadius: 5,
+                            cursor: "pointer",
+                            background: personOnMedicare === n ? C.purple : C.border,
+                            color: personOnMedicare === n ? "#fff" : C.muted,
+                            fontFamily: "'DM Sans', system-ui, sans-serif",
+                          }}>{n === 1 ? "1 person" : "2 persons"}</button>
+                        ))}
+                      </div>
+                      {totalIRMAACost > 0 ? (
+                        <div style={{ background: "#1a0a2a", border: `1px solid ${C.purple}`,
+                          borderRadius: 6, padding: "8px 10px" }}>
+                          <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.purple }}>
+                            IRMAA Surcharge — {fmt(totalIRMAACost)} total ({personOnMedicare === 2 ? "2 persons" : "1 person"})
+                          </p>
+                          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                            Conversion income at these ages triggers Medicare Part B+D surcharges (2-year lookback).
+                            Per-year costs:{" "}
+                            {healthcareExposure.filter(e => (e.irmaa?.surcharge ?? 0) > 0).map(e => (
+                              <span key={e.age} style={{ color: C.purple, ...mono }}>
+                                {e.age}: {fmt(e.irmaa.surcharge * personOnMedicare)}{" "}
+                              </span>
+                            ))}
+                          </p>
+                        </div>
+                      ) : (
+                        <p style={{ margin: "4px 0 0", fontSize: 10, color: C.green }}>
+                          No IRMAA surcharges — conversions stay below Medicare thresholds.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {(hasMarketplaceInsurance || hasMedicare) && (totalIRMAACost > 0 || acaAnnualLoss > 0) && (
+                    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10, marginTop: 4 }}>
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                          <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>Gross Conversion Benefit</p>
+                          <p style={{ margin: 0, fontSize: 14, color: netConversionBenefit >= 0 ? C.green : C.orange, ...mono }}>
+                            {fmt(Math.abs(netConversionBenefit))}
+                          </p>
+                        </div>
+                        {totalIRMAACost > 0 && (
+                          <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                            <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>IRMAA Cost</p>
+                            <p style={{ margin: 0, fontSize: 14, color: C.purple, ...mono }}>−{fmt(totalIRMAACost)}</p>
+                          </div>
+                        )}
+                        {acaAnnualLoss > 0 && (
+                          <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                            <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>ACA Subsidy Loss</p>
+                            <p style={{ margin: 0, fontSize: 14, color: C.orange, ...mono }}>−{fmt(acaAnnualLoss)}</p>
+                          </div>
+                        )}
+                        <div style={{ background: C.bg, borderRadius: 6, padding: "6px 10px", minWidth: 110 }}>
+                          <p style={{ margin: "0 0 2px", fontSize: 9, color: C.muted }}>Adjusted Net Benefit</p>
+                          <p style={{ margin: 0, fontSize: 14,
+                            color: adjustedNetConversionBenefit >= 0 ? C.green : C.orange, ...mono }}>
+                            {fmt(Math.abs(adjustedNetConversionBenefit))}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {optimizerResult && (hasMedicare || hasMarketplaceInsurance) && Math.abs(optimizerResult.optimalConversion - annualConversion) > 4_999 && (
+                    <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 8,
+                      background: "#0a1a0a", borderRadius: 6, padding: "8px 10px" }}>
+                      <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.green }}>
+                        Optimizer Suggestion
+                      </p>
+                      <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                        Converting{" "}
+                        <span style={{ color: C.green, fontWeight: 600, ...mono }}>{fmt(optimizerResult.optimalConversion)}/yr</span>
+                        {" "}maximizes net benefit after healthcare costs (IRMAA{hasMarketplaceInsurance ? " + ACA" : ""})
+                        (estimated <span style={{ color: C.green, ...mono }}>{fmt(optimizerResult.optimalBenefit)}</span> net).
+                        {" "}Your current setting is{" "}
+                        <span style={{ color: C.blue, ...mono }}>{fmt(annualConversion)}/yr</span>.
+                      </p>
+                    </div>
+                  )}
+                  {!hasMarketplaceInsurance && !hasMedicare && (
+                    <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                      Enable toggles above to model how Roth conversion income affects marketplace insurance
+                      subsidies (ACA cliff) or Medicare premium surcharges (IRMAA).
+                    </p>
+                  )}
                 </div>
                 <div className="det-2col" style={{ gap: 16, marginBottom: 14 }}>
                   <div>

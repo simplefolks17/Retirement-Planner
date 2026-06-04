@@ -11,17 +11,10 @@ import {
 } from "../config/irs-2026.js";
 import { ltcgRate } from "./taxes.js";
 
-// Returns the tax phase rate for a given simulation year.
-// year: 1-indexed from currentAge. phase2End is the year retirement starts.
-export function getTaxRate(year, { rate1, rate2, rate3, phase2Start, phase2End, showPhase2 }) {
-  if (!showPhase2) return year < phase2End ? rate1 / 100 : rate3 / 100;
-  if (year < phase2Start) return rate1 / 100;
-  if (year < phase2End)   return rate2 / 100;
-  return rate3 / 100;
-}
-
 // Runs the accumulation simulation.
 // Returns an array of yearly rows from year 1 through totalYears.
+// "Trad 401k" display normalization is computed in App.jsx using bracket-accurate rates;
+// this function outputs tradGross (pre-tax balance) only.
 // calcEmployerMatchFn: bound function (salary, employeeContrib) → match amount
 export function runSimulation({
   totalYears,
@@ -32,8 +25,6 @@ export function runSimulation({
   spouseIncome,
   spouseIncomeGrowth,
   returnRate,
-  rate1, rate2, rate3,
-  phase2Start, phase2End, showPhase2,
   bal401k, balRoth, balTaxable, balHSA,
   contrib401k, contribRoth, contribTaxable, contribHSA,
   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
@@ -50,7 +41,6 @@ export function runSimulation({
 
   for (let y = 1; y <= totalYears; y++) {
     const age        = currentAge + y;
-    const taxRate    = getTaxRate(y, { rate1, rate2, rate3, phase2Start, phase2End, showPhase2 });
     const growFactor = Math.pow(1 + g, y - 1);
 
     const isEligibleForCatchup = currentAge + (y - 1) >= CATCHUP_AGE;
@@ -99,7 +89,6 @@ export function runSimulation({
 
     arr.push({
       age,
-      "Trad 401k": Math.round(trad * (1 - taxRate)),
       "Roth IRA":  Math.round(roth),
       "Taxable":   Math.round(taxable),
       "HSA":       Math.round(hsa),
