@@ -10,7 +10,7 @@ import { calcTax, marginalRate, ltcgRate } from "./model/taxes.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained } from "./model/drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears } from "./model/drawdown.js";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
 import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
@@ -576,19 +576,26 @@ export default function App() {
   const ss70Annual       = Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * ASSUMPTIONS.MONTHS_PER_YEAR;
   const household70SS    = ss70Annual + spouseSsBenefit;
   const ss70DrawReduction = Math.max(0, household70SS - householdSS);
-  const ysSS70 = (() => {
-    if (!includeSS || ssClaimingAge >= SS_MAX_CLAIM_AGE) return null;
-    const need70 = Math.max(0, effectiveExpenses - household70SS - effectivePension);
-    if (need70 <= 0 || totalAtRet * rReal >= need70) return Infinity;
-    if (rReal !== 0) {
-      const arg = 1 - (totalAtRet * rReal) / need70;
-      return arg > 0 ? Math.log(arg) / Math.log(1 / (1 + rReal)) : 0;
-    }
-    return totalAtRet / need70;
+  // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
+  // SS plan vs. delaying SS to 70, both walked year-by-year from the same starting
+  // portfolio. The per-year walk is essential — between retirement and 70 the
+  // delayed plan draws more (no SS yet), depleting the portfolio faster, so the
+  // age-70 starting balance is lower than totalAtRet. The old closed-form solved
+  // longevity at the post-70 (lower) draw rate from the full retirement balance,
+  // which ignored those higher pre-70 draws and overstated the delay benefit
+  // (3–6 yrs for users who retire well before 70).
+  const ssDelayGainYrs = (() => {
+    if (!includeSS || ssClaimingAge >= SS_MAX_CLAIM_AGE || yearsSustained === Infinity) return null;
+    const pensionAnnual = pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+    const common = {
+      startBal: totalAtRet, startAge: safeRetAge, effectiveExpenses, rReal,
+      pensionAmount: pensionAnnual, pensionStartAge,
+    };
+    const baseYrs  = calcDrawdownYears({ ...common, ssAmount: householdSS,   ssClaimAge: ssClaimingAge });
+    const delayYrs = calcDrawdownYears({ ...common, ssAmount: household70SS, ssClaimAge: SS_MAX_CLAIM_AGE });
+    if (baseYrs === Infinity || delayYrs === Infinity) return null;
+    return Math.max(0, Math.round(delayYrs - baseYrs));
   })();
-  const ssDelayGainYrs = (ysSS70 !== null && ysSS70 !== Infinity && yearsSustained !== Infinity)
-    ? Math.max(0, Math.round(ysSS70 - yearsSustained))
-    : null;
   const wr70 = totalAtRet > 0
     ? Math.max(0, effectiveExpenses - household70SS - effectivePension) / totalAtRet * 100
     : 0;
@@ -1671,7 +1678,7 @@ export default function App() {
             )}
             <div className="det-2col" style={{ gap: 24 }}>
               <div>
-                <Slider label="Claiming Age" value={ssClaimingAge} min={SS_MIN_CLAIM_AGE} max={SS_MAX_CLAIM_AGE}
+                <Slider label="Claiming Age" value={ssClaimingAge} min={Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge))} max={SS_MAX_CLAIM_AGE}
                   format={v => v === SS_FRA ? `${v} (FRA)` : v < SS_FRA ? `${v} (early)` : `${v} (delayed)`}
                   onChange={setSsClaimingAge} valueColor={ssClaimingAge < SS_FRA ? C.orange : ssClaimingAge > SS_FRA ? C.green : C.gold} />
                 <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.7, marginTop: 4 }}>

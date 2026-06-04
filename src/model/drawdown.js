@@ -19,3 +19,37 @@ export function calcYearsSustained(netPortfolioNeed, totalAtRet, rReal) {
   }
   return totalAtRet / netPortfolioNeed;
 }
+
+// Simulates per-year portfolio drawdown from startAge and returns the number of
+// years the portfolio is sustained. SS and pension are gated on their start ages
+// *per year* (mirrors the drawdown chart loop in App.jsx), so income that begins
+// after retirement only reduces the draw in the years it is actually received.
+// Returns Infinity if the portfolio survives to maxAge (grows at least as fast
+// as it is drawn).
+//
+// Unlike the closed-form calcYearsSustained — which assumes a single static draw
+// for the whole horizon — this walks year by year, so it correctly captures the
+// higher pre-claim draws before a deferred income source begins. Used by the
+// SS-delay comparison (BUG-26): delaying SS to 70 depletes the portfolio faster
+// between retirement and 70, which a static draw cannot represent.
+export function calcDrawdownYears({
+  startBal,
+  startAge,
+  effectiveExpenses,
+  rReal,
+  ssAmount = 0,
+  ssClaimAge = Infinity,
+  pensionAmount = 0,
+  pensionStartAge = Infinity,
+  maxAge = 200,
+}) {
+  let bal = startBal;
+  for (let age = startAge + 1; age <= maxAge; age++) {
+    const yearSS      = age >= ssClaimAge ? ssAmount : 0;
+    const yearPension = age >= pensionStartAge ? pensionAmount : 0;
+    const yearNeed    = calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
+    bal = bal * (1 + rReal) - yearNeed;
+    if (bal <= 0) return age - startAge;
+  }
+  return Infinity;
+}
