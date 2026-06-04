@@ -122,6 +122,22 @@ export default function App() {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
     });
 
+  // Tax basis must be computed BEFORE simData / currentSnapshot, which normalize
+  // "Trad 401k" to its after-tax value using fedMarginal. (Declared here to avoid
+  // a temporal-dead-zone reference — these consts are read by the simData memo below.)
+  const combinedIncome       = currentIncome + spouseIncome;
+  // For MFJ filers, both incomes are reported on the same return.
+  // Primary pre-tax deductions (401k, HSA) reduce primary income first;
+  // spouse deductions aren't tracked (no sliders), so spouse income enters
+  // as gross. For all other filing statuses, spouse income is separate.
+  const totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc;
+  const safeDeduc        = Math.min(totalPreTaxDeduc, currentIncome);
+  const agi              = filingStatus === "mfj"
+    ? currentIncome - safeDeduc + spouseIncome
+    : currentIncome - safeDeduc;
+  const { tax: fedTax, effectiveRate: fedEffRate } = calcTax(agi, filingStatus);
+  const fedMarginal      = marginalRate(agi, filingStatus);
+
   const simData = useMemo(() => {
     const raw = runSimulation({
       totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
@@ -150,31 +166,20 @@ export default function App() {
 
   // Year-0 fallback: when retirementAge === currentAge the user is already retired
   // and simData has no rows at or before safeRetAge. Use current input balances directly.
-  const currentSnapshot = {
+  // Memoized so downstream memos (conversionSim, optimizer) that take it as a dep get a
+  // stable reference and only re-run when an actual balance / rate input changes.
+  const currentSnapshot = useMemo(() => ({
     age: currentAge,
     "Trad 401k": Math.round(bal401k * (1 - fedMarginal)),
     tradGross: bal401k,
     "Roth IRA": balRoth,
     "Taxable": balTaxable,
     "HSA": balHSA,
-  };
+  }), [currentAge, fedMarginal, bal401k, balRoth, balTaxable, balHSA]);
   const atRetirement = phase2End > 0
     ? (simData[phase2End - 1] ?? currentSnapshot)
     : currentSnapshot;
 
-  const combinedIncome       = currentIncome + spouseIncome;
-
-  // For MFJ filers, both incomes are reported on the same return.
-  // Primary pre-tax deductions (401k, HSA) reduce primary income first;
-  // spouse deductions aren't tracked (no sliders), so spouse income enters
-  // as gross. For all other filing statuses, spouse income is separate.
-  const totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc;
-  const safeDeduc        = Math.min(totalPreTaxDeduc, currentIncome);
-  const agi              = filingStatus === "mfj"
-    ? currentIncome - safeDeduc + spouseIncome
-    : currentIncome - safeDeduc;
-  const { tax: fedTax, effectiveRate: fedEffRate } = calcTax(agi, filingStatus);
-  const fedMarginal      = marginalRate(agi, filingStatus);
   const stateRateDefault = STATE_TAX[selectedState]?.rate ?? 0;
   const stateRate        = stateRateOverride !== null ? stateRateOverride : stateRateDefault;
   const stateTax         = agi * stateRate;
@@ -227,9 +232,13 @@ export default function App() {
       endAge: contribEndHSA,   setEndAge: setContribEndHSA },
   ];
 
-  const retVals = Object.fromEntries(
+  // Memoized on atRetirement (a stable reference: either a memoized simData row or
+  // the memoized currentSnapshot). ACCOUNTS' dataKeys are static, so atRetirement is
+  // the only varying input — keeping retVals stable lets conversionSim/optimizer skip
+  // re-running unless the retirement balances actually change.
+  const retVals = useMemo(() => Object.fromEntries(
     ACCOUNTS.map(a => [a.dataKey, atRetirement[a.dataKey] ?? 0])
-  );
+  ), [atRetirement]);
   const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
 
   const totalAtRet        = Object.values(retVals).reduce((s, v) => s + v, 0);
@@ -370,13 +379,25 @@ export default function App() {
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
   // Per-year income floors for the conversion window: SS and pension only count
   // in years when they've actually started (ssClaimingAge / pensionStartAge).
-  const convFloors = Array.from({ length: conversionWindowYrs }, (_, i) => {
-    const age         = safeRetAge + i;
-    const yearSSTax   = includeSS && age >= ssClaimingAge ? ssTaxableRet : 0;
-    const yearPension = pensionMonthly > 0 && age >= pensionStartAge
-      ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-    return yearSSTax + yearPension;
-  });
+  // Per-year income floor for the conversion window. SS/pension only count in
+  // years they've actually started (ssClaimingAge / pensionStartAge). The only
+  // difference between the tax floor and the MAGI floor is the SS amount used:
+  //   convFloors      → ssTaxableRet (85% taxable fraction, for marginal-rate math)
+  //   convMAGIFloors  → householdSS  (100% gross SS, for ACA/IRMAA MAGI)
+  // Memoized so the conversion sim and optimizer (which take these as deps) don't
+  // re-run on every render — only when an input that actually changes the floors does.
+  const buildIncomeFloors = (ssAmount) =>
+    Array.from({ length: conversionWindowYrs }, (_, i) => {
+      const age         = safeRetAge + i;
+      const yearSS      = includeSS && age >= ssClaimingAge ? ssAmount : 0;
+      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
+        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+      return yearSS + yearPension;
+    });
+  const convFloors = useMemo(() => buildIncomeFloors(ssTaxableRet),
+    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
+  const convMAGIFloors = useMemo(() => buildIncomeFloors(householdSS),
+    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
   const retIncomeFloor   = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
   const bracketTops      = {
@@ -388,8 +409,9 @@ export default function App() {
   // Per-year bracket-fill targets: each year converts up to the bracket top, minus
   // THAT year's income floor (convFloors gates SS/pension on claiming/start age).
   // Early-retirement years before SS/pension start have a lower floor → more room.
-  const bracketFillConversions = convFloors.map(floor =>
-    Math.max(0, Math.round(bracketTarget + retTaxData.deduction - floor)));
+  const bracketFillConversions = useMemo(() => convFloors.map(floor =>
+    Math.max(0, Math.round(bracketTarget + retTaxData.deduction - floor))),
+    [convFloors, bracketTarget, retTaxData]);
   // Steady-state scalar (all sources active) — the lowest target, used as the
   // headline figure and as the fallback when there are no conversion-window years.
   const bracketFillConversion = Math.max(0, Math.round(
@@ -429,15 +451,6 @@ export default function App() {
   }, 0);
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
-
-  // MAGI floors for healthcare: 100% SS (ACA/IRMAA use gross SS, not 85% taxable fraction)
-  const convMAGIFloors = Array.from({ length: conversionWindowYrs }, (_, i) => {
-    const age    = safeRetAge + i;
-    const yearSS = includeSS && age >= ssClaimingAge ? householdSS : 0;
-    const yearPen = pensionMonthly > 0 && age >= pensionStartAge
-      ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-    return yearSS + yearPen;
-  });
 
   const healthcareExposure = calcHealthcareExposure({
     conversionYears: conversionSim.years,
@@ -486,9 +499,14 @@ export default function App() {
       let irmaaCost = 0;
       if (hasMedicare) {
         for (let i = 0; i < sim.years.length; i++) {
-          const age = safeRetAge + i;
+          // calcConversionSim ages are 1-indexed (yr+1) and shown at safeRetAge+yr+1.
+          // Recompute the real conversion-year age the same way the display path
+          // (calcHealthcareExposure via conversionSim.years[i].age) does, so the
+          // optimizer's IRMAA years match what the user sees — otherwise an early
+          // retiree's first conversion year is dropped here but counted in the UI.
+          const age = safeRetAge + (sim.years[i]?.age ?? i + 1);
           if (age + 2 >= MEDICARE_AGE) {
-            const magi = (_convMAGIFloors[i] ?? 0) + (sim.years[i]?.conversion ?? amount);
+            const magi = (_convMAGIFloors[i] ?? 0) + (sim.years[i]?.conversion ?? 0);
             irmaaCost += irmaaAnnualSurcharge(magi, filingStatus) * personOnMedicare;
           }
         }

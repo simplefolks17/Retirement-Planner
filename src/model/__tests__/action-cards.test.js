@@ -188,7 +188,7 @@ describe("generatePhaseSteps", () => {
     rReal: 0.0096,
     netPortfolioNeed: 40_000,
     effectivePension: 0,
-    rate3Combined: 0.18,
+    effectiveRMDTaxRate: 0.18,
     safeRetAge: 65,
     currentAge: 30,
     safeLifeExp: 90,
@@ -212,6 +212,16 @@ describe("generatePhaseSteps", () => {
   it("phase3Steps includes RMD row when distRMDTax > 0", () => {
     const { phase3Steps } = generatePhaseSteps(flowData, opts);
     expect(phase3Steps.some(s => s.label.includes("RMD"))).toBe(true);
+  });
+
+  it("RMD row formats the effective tax rate from the passed-in value (not NaN)", () => {
+    // Guards against the param-name drift that previously left effectiveRMDTaxRate
+    // undefined → "~NaN% effective". The rate here is derived from opts, so this
+    // tests the function's formatting of its input, not a hard-coded model output.
+    const { phase3Steps } = generatePhaseSteps(flowData, opts);
+    const rmdRow = phase3Steps.find(s => s.label.includes("RMD"));
+    expect(rmdRow.sub).toContain(`${(opts.effectiveRMDTaxRate * 100).toFixed(1)}%`);
+    expect(rmdRow.sub).not.toContain("NaN");
   });
 
   it("phase1Steps last entry is type 'total'", () => {
