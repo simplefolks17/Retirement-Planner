@@ -539,9 +539,11 @@ export default function App() {
       : megaCapacity * yrs,
   }));
 
-  const retTaxable = retVals["Taxable"]   ?? 0;
-  const retTrad    = retVals["Trad 401k"] ?? 0;
-  const retRoth    = retVals["Roth IRA"]  ?? 0;
+  const retTaxable     = retVals["Taxable"]   ?? 0;
+  const retTrad        = retVals["Trad 401k"] ?? 0;
+  const retRoth        = retVals["Roth IRA"]  ?? 0;
+  // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
+  const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
   const yr1FromTaxable = Math.min(netPortfolioNeed, retTaxable);
   const yr1FromTrad    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable), retTrad);
@@ -553,7 +555,10 @@ export default function App() {
     yr1FromTrad    * yr1TradRate              +
     yr1FromRoth    * 0
   );
-  const yr1TaxWorstCase = Math.round(Math.min(netPortfolioNeed, retTrad) * yr1TradRate);
+  // Worst case: draw all spending from pre-tax trad first; cap at actual gross balance.
+  const worstCaseDraw   = Math.min(netPortfolioNeed, tradGrossAtRet);
+  const yr1TradRateWC   = Math.min(0.95, marginalRate(rmdIncomeFloor + worstCaseDraw, filingStatus) + retStateRate);
+  const yr1TaxWorstCase = Math.round(worstCaseDraw * yr1TradRateWC);
   const yr1TaxSavings   = Math.max(0, yr1TaxWorstCase - yr1TaxOptimal);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);

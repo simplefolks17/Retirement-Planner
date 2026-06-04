@@ -57,7 +57,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (153 tests)
+- `npm test` — run model + formatter + render-smoke tests (162 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)

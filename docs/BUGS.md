@@ -9,6 +9,32 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### BUG-26 — `ysSS70` uses full retirement portfolio, ignoring pre-70 drawdowns
+
+**Reported:** 2026-06-04  
+**Status:** Open — known approximation  
+**File:** `src/App.jsx` lines 574–583 (`ysSS70` calculation)
+
+**Symptom:**  
+The "SS delay gain years" metric (`ssDelayGainYrs = ysSS70 − yearsSustained`) can overstate the portfolio-longevity benefit of delaying Social Security to age 70. For a user who retires several years before 70, the app shows more extra years from SS delay than they'd actually gain.
+
+**Root cause:**  
+`ysSS70` solves: "how long does the portfolio last drawing at the post-SS-70 rate, starting from `totalAtRet`?" But between retirement (age `safeRetAge`) and SS-70 claim, the user is drawing at a *higher* rate (less SS income reducing the portfolio need). By age 70 the portfolio has already been partially depleted — so the correct starting value is `portfolioAt70`, not `totalAtRet`. Using `totalAtRet` (larger) makes the portfolio appear to sustain longer at `need70`, overstating the SS-delay benefit.
+
+**Worked example (retire 60, SS at 70):**  
+`$1M` portfolio, `netPortfolioNeed` pre-70 = $80k/yr, `need70` post-SS = $35k/yr, `rReal` = 4.5%.  
+- Current code (using `$1M`): `ysSS70 ≈ 18.8 years`  
+- Correct (using `portfolioAt70 ≈ $800k` after 10 years of $80k draws): `ysSS70 ≈ 13.6 years`  
+- `ssDelayGainYrs` overstated by ~5 years for this profile.
+
+**Impact:**  
+Directional error only (always overstates the SS-delay benefit). Negligible for retire-at-65 cases (2-year gap); material (3–6 year overstatement) for users who retire well before 70 and defer SS to the maximum.
+
+**Fix path:**  
+Option A — Add an inner loop from `safeRetAge` to 70 drawing at `netPortfolioNeed` per year, deriving `portfolioAt70` before computing `ysSS70`. Option B — Read `portfolioAt70` from `totalChartData` (already computed per year in the drawdown chart), avoiding the extra loop. Option B is preferred but requires `totalChartData` to be in scope above `ysSS70` (currently defined just below it).
+
+---
+
 ### BUG-07 — Chart 1 Trad 401k normalization uses Phase 1 rate for Phase 2 years
 
 **Reported:** 2026-06-01  
