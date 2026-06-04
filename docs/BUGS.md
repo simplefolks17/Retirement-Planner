@@ -375,3 +375,6 @@ Changed the gate to `safeRetAge < RMD_START_AGE`. The RMD marker now appears whe
 - Add new entries at the top of "Open Issues."
 - When fixing a bug, move it to "Resolved" and add: **Fixed:** date, commit SHA, brief description of change.
 - Link relevant file + line numbers for every entry so they stay navigable as the codebase evolves.
+- **Re-verify, don't just append.** "Make BUGS.md up to date" means a *verification pass*, not a logging pass. For **every** entry still under "Open Issues," open the referenced file + line and confirm the symptom still reproduces in the current code before leaving it open. If the cause is gone (the code was removed/refactored — e.g. BUG-07) or already guarded (e.g. BUG-18), move it to Resolved with a dated note explaining why. Stale-open entries are a documentation bug.
+- **When you change code, sweep the open list.** A refactor or removal can silently moot an open entry that lives in a different file. After any non-trivial code change, scan "Open Issues" for anything the change affects and reconcile it in the same session — don't let obsolescence outlive the commit that caused it.
+- A speculative or audit finding must be **verified against the code before** it is filed as Open. If it can't be reproduced, either don't file it or file it as Resolved/"already guarded" with the reason.

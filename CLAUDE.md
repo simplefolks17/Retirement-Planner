@@ -22,6 +22,18 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 - **`docs/BUGS.md` is the bug record.** Every bug fix must be logged there before merging, whether or not a PR is opened.
 - **Test count in `CLAUDE.md` must stay current.** Update the test count in the Commands section whenever new tests are added.
 
+## Session Close-Out (run when the user ends/closes a session, or asks to "make sure files are up to date")
+"Up to date" means a **thorough read + re-verification pass**, never a quick append. Do all of the following before reporting the session done:
+
+1. **Read each doc end-to-end** — `docs/BUGS.md`, `CLAUDE.md`, `feature-tracker.html`, and any `docs/*.md` this session touched. Read the whole file, not just the section you edited, so cross-references and counts stay consistent.
+2. **Re-verify every open bug.** For each entry under "Open Issues" in `docs/BUGS.md`, open the referenced file + line and confirm it still reproduces in the *current* code. Close (move to Resolved, with a dated reason) anything that's been fixed, made obsolete by a refactor/removal, or was never actually live. See the re-verification rules in `docs/BUGS.md` → Conventions.
+3. **Reconcile what changed this session.** Every code change must be reflected in the docs: bugs fixed → moved to Resolved with root cause + files + fix; new bugs found → filed (verified first); features shipped/repriotized → `feature-tracker.html` updated.
+4. **Reconcile all counts and cross-links.** Test count appears in *two* places in `CLAUDE.md` (rule 7 and Commands) — both must match `npm test`. Feature-tracker header counts (done/planned) must match the entries. Any "BUG-NN ↔ feature #NN" link must be consistent in both files.
+5. **Run `npm test` and confirm green**, and confirm the count matches the docs.
+6. **Report the close-out explicitly** — list which files were read, which entries were re-verified (and the outcome of each), and what was reconciled. If something was checked and needed no change, say so; don't go silent on it.
+
+The failure mode to avoid: logging new work while leaving stale "Open" entries un-rechecked. A refactor in one file can silently moot a bug documented in another — the close-out pass is what catches that.
+
 ## Quick Links
 - Architecture & data flow: `docs/ARCHITECTURE.md`
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
