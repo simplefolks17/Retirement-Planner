@@ -14,7 +14,7 @@ import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained } from "./
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
 import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
-import { calcHealthcareExposure, acaCliffThreshold, irmaaAnnualSurcharge } from "./model/healthcare.js";
+import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import {
@@ -388,7 +388,10 @@ export default function App() {
   // re-run on every render — only when an input that actually changes the floors does.
   const buildIncomeFloors = (ssAmount) =>
     Array.from({ length: conversionWindowYrs }, (_, i) => {
-      const age         = safeRetAge + i;
+      // age = safeRetAge + i + 1: year i is displayed at safeRetAge+i+1 (calcConversionSim
+      // returns yr+1 offsets, App adds safeRetAge). The floor must match that displayed age
+      // so the SS/pension gate fires in the right conversion year.
+      const age         = safeRetAge + i + 1;
       const yearSS      = includeSS && age >= ssClaimingAge ? ssAmount : 0;
       const yearPension = pensionMonthly > 0 && age >= pensionStartAge
         ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
@@ -445,21 +448,25 @@ export default function App() {
     safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
   }), [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
 
-  const rmdTaxBitePost = rmdDataPostConversion.reduce((sum, { rmd }) => {
+  // Shared RMD tax reducer — used by both display path (rmdTaxBitePost) and optimizer
+  // (rmdTaxPost) so the formula stays in sync when the tax model changes.
+  const calcRMDTax = (rows) => rows.reduce((sum, { rmd }) => {
     const { tax } = calcTax(rmdIncomeFloor + rmd, filingStatus);
     return sum + Math.round((tax - rmdBaseFedTax) + rmd * retStateRate);
   }, 0);
+
+  const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion);
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
 
-  const healthcareExposure = calcHealthcareExposure({
+  const healthcareExposure = useMemo(() => calcHealthcareExposure({
     conversionYears: conversionSim.years,
     convMAGIFloors,
     hasMarketplaceInsurance,
     householdSize,
     hasMedicare,
     filingStatus,
-  });
+  }), [conversionSim, convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, filingStatus]);
   const acaCliffYears = healthcareExposure.filter(e => e.aca?.crossesCliff);
   const totalIRMAACost = healthcareExposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
   const acaAnnualLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
@@ -467,9 +474,12 @@ export default function App() {
     : 0;
   const adjustedNetConversionBenefit = netConversionBenefit - totalIRMAACost - acaAnnualLoss;
 
-  // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA
+  // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA + ACA.
+  // Only runs in custom mode — bracket mode uses per-year targets derived from the bracket
+  // choice, not a searchable flat scalar; optimizing a flat amount there produces a different
+  // model than what the display shows.
   const optimizerResult = useMemo(() => {
-    if (conversionWindowYrs === 0 || rmdData.length === 0) return null;
+    if (conversionMode === "bracket" || conversionWindowYrs === 0 || rmdData.length === 0) return null;
     const retRow = simData.find(d => d.age === safeRetAge)
       ?? (safeRetAge === currentAge ? currentSnapshot : null);
     const tradGross = (retRow?.tradGross ?? 0) + addlPreTaxBal;
@@ -490,36 +500,34 @@ export default function App() {
         conversionWindowYrs, rmdData, tradBal73: sim.tradBal73,
         safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
       });
-      const rmdTaxPost = rmdPost.reduce((sum, { rmd: r }) => {
-        const { tax } = calcTax(rmdIncomeFloor + r, filingStatus);
-        return sum + Math.round((tax - rmdBaseFedTax) + r * retStateRate);
-      }, 0);
+      const rmdTaxPost     = calcRMDTax(rmdPost);
       const rmdTaxSavedOpt = Math.max(0, rmdTaxBite - rmdTaxPost);
 
-      let irmaaCost = 0;
-      if (hasMedicare) {
-        for (let i = 0; i < sim.years.length; i++) {
-          // calcConversionSim ages are 1-indexed (yr+1) and shown at safeRetAge+yr+1.
-          // Recompute the real conversion-year age the same way the display path
-          // (calcHealthcareExposure via conversionSim.years[i].age) does, so the
-          // optimizer's IRMAA years match what the user sees — otherwise an early
-          // retiree's first conversion year is dropped here but counted in the UI.
-          const age = safeRetAge + (sim.years[i]?.age ?? i + 1);
-          if (age + 2 >= MEDICARE_AGE) {
-            const magi = (_convMAGIFloors[i] ?? 0) + (sim.years[i]?.conversion ?? 0);
-            irmaaCost += irmaaAnnualSurcharge(magi, filingStatus) * personOnMedicare;
-          }
-        }
-      }
+      // Apply safeRetAge offset so calcHealthcareExposure receives the same ages
+      // as the display path (conversionSim.years already has this offset applied).
+      const offsetYears = sim.years.map(y => ({ ...y, age: y.age + safeRetAge }));
+      const exposure = calcHealthcareExposure({
+        conversionYears: offsetYears,
+        convMAGIFloors: _convMAGIFloors,
+        hasMarketplaceInsurance,
+        householdSize,
+        hasMedicare,
+        filingStatus,
+      });
+      const irmaaCost = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
+      const acaLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
+        ? exposure.filter(e => e.aca?.crossesCliff).length * marketplaceMonthlyPremium * 12
+        : 0;
 
-      return { rmdTaxSaved: rmdTaxSavedOpt, totalTax: sim.totalTax, irmaaCost };
+      return { rmdTaxSaved: rmdTaxSavedOpt, totalTax: sim.totalTax, irmaaCost, acaLoss };
     };
 
     return findOptimalConversion({ getNetBenefit });
-  }, [conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, rmdBaseFedTax, retStateRate,
-      retVals, returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
+  }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, rmdBaseFedTax, retStateRate,
+      retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
       addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
-      hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot]);
+      hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot,
+      hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
@@ -2281,7 +2289,7 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  {optimizerResult && hasMedicare && Math.abs(optimizerResult.optimalConversion - annualConversion) > 4_999 && (
+                  {optimizerResult && (hasMedicare || hasMarketplaceInsurance) && Math.abs(optimizerResult.optimalConversion - annualConversion) > 4_999 && (
                     <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 8,
                       background: "#0a1a0a", borderRadius: 6, padding: "8px 10px" }}>
                       <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.green }}>
@@ -2290,7 +2298,7 @@ export default function App() {
                       <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
                         Converting{" "}
                         <span style={{ color: C.green, fontWeight: 600, ...mono }}>{fmt(optimizerResult.optimalConversion)}/yr</span>
-                        {" "}maximizes net benefit after IRMAA costs
+                        {" "}maximizes net benefit after healthcare costs (IRMAA{hasMarketplaceInsurance ? " + ACA" : ""})
                         (estimated <span style={{ color: C.green, ...mono }}>{fmt(optimizerResult.optimalBenefit)}</span> net).
                         {" "}Your current setting is{" "}
                         <span style={{ color: C.blue, ...mono }}>{fmt(annualConversion)}/yr</span>.

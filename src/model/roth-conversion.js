@@ -1,18 +1,16 @@
 import { marginalRate } from "./taxes.js";
 
 // Optimizer: finds the scalar annual conversion that maximizes net benefit
-// accounting for IRMAA costs. Coarse $5k search up to $300k.
-// getNetBenefit(amount) → { rmdTaxSaved, totalTax, irmaaCost }
+// accounting for IRMAA and ACA subsidy costs. Coarse $5k search up to $300k.
+// getNetBenefit(amount) → { rmdTaxSaved, totalTax, irmaaCost, acaLoss? }
 // is provided by the caller (App.jsx) to avoid circular deps with rmd.js.
 export function findOptimalConversion({ maxSearch = 300_000, step = 5_000, getNetBenefit }) {
+  const netOf = (r) => r.rmdTaxSaved - r.totalTax - r.irmaaCost - (r.acaLoss ?? 0);
   let bestAmount = 0;
-  let bestNet;
-  // Seed with 0
-  { const r = getNetBenefit(0); bestNet = r.rmdTaxSaved - r.totalTax - r.irmaaCost; }
+  let bestNet = netOf(getNetBenefit(0));
 
   for (let amount = step; amount <= maxSearch; amount += step) {
-    const r = getNetBenefit(amount);
-    const net = r.rmdTaxSaved - r.totalTax - r.irmaaCost;
+    const net = netOf(getNetBenefit(amount));
     if (net > bestNet) { bestNet = net; bestAmount = amount; }
   }
   return { optimalConversion: bestAmount, optimalBenefit: Math.round(bestNet) };
