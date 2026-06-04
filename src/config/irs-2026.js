@@ -279,6 +279,15 @@ export const ASSUMPTIONS = {
   // Spousal SS benefit = 50% of primary's PIA (before any claiming-age adjustments)
   SPOUSAL_BENEFIT_PCT:  0.5,
 
+  // Default annual retirement expenses when the user hasn't entered a figure:
+  // a percent of the projected portfolio at retirement. Drives the entire
+  // drawdown in that default case, so it lives here, not inline in App.jsx.
+  DEFAULT_RETIREMENT_EXPENSE_RATE: 0.03,
+
+  // Sanity clamp on the combined (federal marginal + state) tax rate applied to
+  // trad withdrawals / conversions, so a stacked rate can never exceed 95%.
+  MAX_COMBINED_MARGINAL_RATE: 0.95,
+
   // PIA formula factors (AIME segments)
   PIA_FACTOR_1:         0.90, // first bend point segment
   PIA_FACTOR_2:         0.32, // middle segment

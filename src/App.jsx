@@ -242,7 +242,7 @@ export default function App() {
   const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
 
   const totalAtRet        = Object.values(retVals).reduce((s, v) => s + v, 0);
-  const effectiveExpenses = annualExpenses ?? Math.round(totalAtRet * 0.03);
+  const effectiveExpenses = annualExpenses ?? Math.round(totalAtRet * ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE);
   const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
 
   const ssWorkYears = Math.max(1, safeRetAge - currentAge);
@@ -327,8 +327,8 @@ export default function App() {
 
   const ssBreakEven = ssClaimingAge === SS_FRA ? null : (() => {
     let cumClaim = 0, cum67 = 0;
-    for (let m = 1; m <= 50 * 12; m++) {
-      const ageNow = ssClaimingAge + m / 12;
+    for (let m = 1; m <= 50 * ASSUMPTIONS.MONTHS_PER_YEAR; m++) {
+      const ageNow = ssClaimingAge + m / ASSUMPTIONS.MONTHS_PER_YEAR;
       if (ageNow >= ssClaimingAge) cumClaim += ssMonthlyBenefit;
       if (ageNow >= SS_FRA)        cum67    += ss67Monthly;
       if (ssClaimingAge < SS_FRA && cum67 >= cumClaim && ageNow > SS_FRA)
@@ -372,7 +372,7 @@ export default function App() {
   // Effective rate across all RMD years — used for display captions.
   const effectiveRMDTaxRate = totalRMDs > 0
     ? rmdTaxBite / totalRMDs
-    : Math.min(0.95, fedMarginal + retStateRate);
+    : Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, fedMarginal + retStateRate);
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
@@ -403,10 +403,14 @@ export default function App() {
     [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
   const retIncomeFloor   = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
+  // Bracket tops read by rate from the ACTIVE filing status's brackets — never
+  // hardcoded, so they stay correct for every status (single/mfj/mfs/hoh) and
+  // self-update when the IRS brackets in irs-2026.js change.
+  const bracketTopForRate = (pct) => retTaxData.brackets.find(b => b.rate === pct / 100)?.max;
   const bracketTops      = {
-    12: retTaxData.brackets[1]?.max ?? 50_400,
-    22: retTaxData.brackets[2]?.max ?? 105_700,
-    24: retTaxData.brackets[3]?.max ?? 201_775,
+    12: bracketTopForRate(12),
+    22: bracketTopForRate(22),
+    24: bracketTopForRate(24),
   };
   const bracketTarget = bracketTops[conversionBracketTarget] ?? bracketTops[22];
   // Per-year bracket-fill targets: each year converts up to the bracket top, minus
@@ -470,7 +474,7 @@ export default function App() {
   const acaCliffYears = healthcareExposure.filter(e => e.aca?.crossesCliff);
   const totalIRMAACost = healthcareExposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
   const acaAnnualLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
-    ? acaCliffYears.length * marketplaceMonthlyPremium * 12
+    ? acaCliffYears.length * marketplaceMonthlyPremium * ASSUMPTIONS.MONTHS_PER_YEAR
     : 0;
   const adjustedNetConversionBenefit = netConversionBenefit - totalIRMAACost - acaAnnualLoss;
 
@@ -516,7 +520,7 @@ export default function App() {
       });
       const irmaaCost = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
       const acaLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
-        ? exposure.filter(e => e.aca?.crossesCliff).length * marketplaceMonthlyPremium * 12
+        ? exposure.filter(e => e.aca?.crossesCliff).length * marketplaceMonthlyPremium * ASSUMPTIONS.MONTHS_PER_YEAR
         : 0;
 
       return { rmdTaxSaved: rmdTaxSavedOpt, totalTax: sim.totalTax, irmaaCost, acaLoss };
@@ -549,7 +553,7 @@ export default function App() {
   const yr1FromTrad    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable), retTrad);
   const yr1FromRoth    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable - yr1FromTrad), retRoth);
   // Marginal rate on trad withdrawals: stacked on top of SS+pension income floor.
-  const yr1TradRate    = Math.min(0.95, marginalRate(rmdIncomeFloor + yr1FromTrad, filingStatus) + retStateRate);
+  const yr1TradRate    = Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, marginalRate(rmdIncomeFloor + yr1FromTrad, filingStatus) + retStateRate);
   const yr1TaxOptimal  = Math.round(
     yr1FromTaxable * ltcgRate(0, filingStatus) +
     yr1FromTrad    * yr1TradRate              +
@@ -557,7 +561,7 @@ export default function App() {
   );
   // Worst case: draw all spending from pre-tax trad first; cap at actual gross balance.
   const worstCaseDraw   = Math.min(netPortfolioNeed, tradGrossAtRet);
-  const yr1TradRateWC   = Math.min(0.95, marginalRate(rmdIncomeFloor + worstCaseDraw, filingStatus) + retStateRate);
+  const yr1TradRateWC   = Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, marginalRate(rmdIncomeFloor + worstCaseDraw, filingStatus) + retStateRate);
   const yr1TaxWorstCase = Math.round(worstCaseDraw * yr1TradRateWC);
   const yr1TaxSavings   = Math.max(0, yr1TaxWorstCase - yr1TaxOptimal);
 
@@ -985,7 +989,7 @@ export default function App() {
               onChange={v => { setLivingExpenses(v); setPreApplySnapshot(null); }}
             />
             <p style={{ margin: "-8px 0 0", fontSize: 10, color: C.muted }}>
-              Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveLiving / 12).toLocaleString()}</span>
+              Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveLiving / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}</span>
               {livingExpenses === null && (
                 <span style={{ color: C.muted, fontStyle: "italic" }}> · auto-derived from take-home minus contributions</span>
               )}
@@ -1464,14 +1468,14 @@ export default function App() {
               format={v => `$${v.toLocaleString()}`}
               onChange={v => setAnnualExpenses(v)} />
             <p style={{ margin: "4px 0 0", fontSize: 10, color: C.muted }}>
-              Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveExpenses / 12).toLocaleString()}</span>
-              &nbsp;·&nbsp; default = 3% of projected portfolio
+              Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}</span>
+              &nbsp;·&nbsp; default = {Math.round(ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE * 100)}% of projected portfolio
               {annualExpenses !== null && (
                 <button onClick={() => setAnnualExpenses(null)} style={{
                   marginLeft: 8, fontSize: 9, color: C.blue, background: "transparent",
                   border: "none", cursor: "pointer", padding: 0, textDecoration: "underline",
                   fontFamily: "'DM Sans', system-ui, sans-serif",
-                }}>reset to 3%</button>
+                }}>reset to {Math.round(ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE * 100)}%</button>
               )}
             </p>
             {(householdSS > 0 || effectivePension > 0) && (
@@ -1723,7 +1727,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", opacity: includeSS ? 1 : 0.4 }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Monthly Benefit</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>
-                    ${ssOverride !== null ? Math.round(ssOverride / 12).toLocaleString() : ssMonthlyBenefit.toLocaleString()}
+                    ${ssOverride !== null ? Math.round(ssOverride / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString() : ssMonthlyBenefit.toLocaleString()}
                   </p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at age {ssClaimingAge}</p>
                 </div>
@@ -1787,7 +1791,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", opacity: includeSS ? 1 : 0.4 }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Combined Household SS</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>{fmt(householdSS)}/yr</p>
-                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>${Math.round(householdSS / 12).toLocaleString()}/mo</p>
+                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>${Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}/mo</p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>SS Coverage</p>

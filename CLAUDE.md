@@ -76,6 +76,17 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   4. BUG-18 closed (already guarded) — slider min/max + onChange clamp prevent the cross.
   5. BUG-16 left open but reassigned to premium feature #30 (Spouse account modeling);
      #30 priority bumped P2 → P1 and its tracker entry now owns the BUG-16 fix.
+- Constants-hygiene pass (Jun 4 2026) — value-preserving, golden master unchanged:
+  1. `bracketTops` (App.jsx) now reads bracket tops by rate from the active filing
+     status's brackets — dropped hardcoded single-filer fallbacks (`?? 50_400…`)
+     that were stale duplicates of config and wrong for MFJ/HoH if ever reached.
+  2. Default retirement-expense rate (3% of portfolio) moved inline → `ASSUMPTIONS.
+     DEFAULT_RETIREMENT_EXPENSE_RATE`; UI labels derive the % from it.
+  3. 95% combined-marginal-rate clamp (3 call sites) → `ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE`.
+  4. Display month↔year conversions in App.jsx now use `ASSUMPTIONS.MONTHS_PER_YEAR`
+     instead of raw `* 12` / `/ 12`.
+  5. `optimization.js` imports `calcYearsSustained` instead of re-implementing the
+     closed form, so the optimizer and headline longevity can't diverge.
 
 ## Commands
 - `npm run dev` — start dev server

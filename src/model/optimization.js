@@ -1,4 +1,5 @@
 import { TRAD_401K_LIMIT_2026, SS_MAX_CLAIM_AGE, ASSUMPTIONS } from "../config/irs-2026.js";
+import { calcYearsSustained } from "./drawdown.js";
 
 // Returns the optimized "what-if" scenario projecting additional portfolio value
 // from deploying surplus + delaying SS to 70.
@@ -68,11 +69,9 @@ export function calcOptimizedScenario({
   const optNetNeed = Math.max(0, effectiveExpenses - optSS - effectivePension);
   const optWR = optTotalAtRet > 0 ? (optNetNeed / optTotalAtRet) * 100 : 0;
 
-  const optYS = optNetNeed <= 0 || optTotalAtRet * rReal >= optNetNeed
-    ? Infinity
-    : rReal !== 0
-      ? Math.log(1 - (optTotalAtRet * rReal) / optNetNeed) / Math.log(1 / (1 + rReal))
-      : optTotalAtRet / optNetNeed;
+  // Same longevity math as the headline metric — imported, not re-derived, so the
+  // two can't silently diverge if the formula changes.
+  const optYS = calcYearsSustained(optNetNeed, optTotalAtRet, rReal);
 
   const optSustainable  = optYS === Infinity || optYS >= (safeLifeExp - safeRetAge);
   const optDepletionAge = optYS === Infinity ? null : Math.floor(safeRetAge + optYS);
