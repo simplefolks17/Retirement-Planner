@@ -3,6 +3,7 @@ import {
   calcNetPortfolioNeed,
   calcWithdrawalRate,
   calcYearsSustained,
+  calcDrawdownYears,
 } from "../drawdown.js";
 
 describe("calcNetPortfolioNeed", () => {
@@ -61,5 +62,69 @@ describe("calcYearsSustained", () => {
   it("handles rReal = 0 (no real return)", () => {
     const yrs = calcYearsSustained(40_000, 1_000_000, 0);
     expect(yrs).toBeCloseTo(25, 0); // $1M / $40K = 25 years
+  });
+});
+
+describe("calcDrawdownYears (BUG-26)", () => {
+  it("returns Infinity when SS+pension cover all expenses (no draw)", () => {
+    const yrs = calcDrawdownYears({
+      startBal: 1_000_000, startAge: 65, effectiveExpenses: 40_000, rReal: 0.02,
+      ssAmount: 50_000, ssClaimAge: 65,
+    });
+    expect(yrs).toBe(Infinity);
+  });
+
+  it("returns Infinity when portfolio growth covers the draw", () => {
+    // $1M * 3% real = $30K, exactly the net need ($40K - $10K SS active from age 65)
+    const yrs = calcDrawdownYears({
+      startBal: 1_000_000, startAge: 65, effectiveExpenses: 40_000, rReal: 0.03,
+      ssAmount: 10_000, ssClaimAge: 65,
+    });
+    expect(yrs).toBe(Infinity);
+  });
+
+  it("matches the no-real-return closed form when SS is active from day one", () => {
+    // No SS/pension, rReal=0: $1M / $40K = 25 years. Year-by-year depletes during year 25.
+    const yrs = calcDrawdownYears({
+      startBal: 1_000_000, startAge: 65, effectiveExpenses: 40_000, rReal: 0,
+    });
+    expect(yrs).toBe(25);
+  });
+
+  it("counts higher pre-claim draws — deferred SS lasts no longer than immediate SS at the same amount", () => {
+    // Same portfolio and SS amount, but claiming later means more full-expense years
+    // up front, so the portfolio cannot last longer than the claim-now case.
+    const common = {
+      startBal: 800_000, startAge: 60, effectiveExpenses: 80_000, rReal: 0.02,
+      ssAmount: 45_000,
+    };
+    const claimNow   = calcDrawdownYears({ ...common, ssClaimAge: 60 });
+    const claimAt70  = calcDrawdownYears({ ...common, ssClaimAge: 70 });
+    expect(claimAt70).toBeLessThanOrEqual(claimNow);
+  });
+
+  it("a larger delayed benefit can still beat a smaller immediate benefit", () => {
+    // Delaying to 70 raises the benefit; with enough uplift the lifetime longevity wins.
+    const common = {
+      startBal: 1_500_000, startAge: 65, effectiveExpenses: 70_000, rReal: 0.015,
+    };
+    const claimAt67 = calcDrawdownYears({ ...common, ssAmount: 36_000, ssClaimAge: 67 });
+    const claimAt70 = calcDrawdownYears({ ...common, ssAmount: 45_000, ssClaimAge: 70 });
+    expect(claimAt70).toBeGreaterThan(claimAt67);
+  });
+
+  it("the BUG-26 fix yields fewer delay-gain years than the old closed-form overstatement", () => {
+    // Worked example from BUGS.md: retire 60, claim 70. Pre-70 need ~$80k, post-70 ~$35k.
+    // Old code solved ysSS70 from the FULL retirement balance at the post-70 draw rate.
+    const startBal = 1_000_000, startAge = 60, effectiveExpenses = 80_000, rReal = 0.045;
+    const need70   = 35_000; // effectiveExpenses - household70SS
+    // Old (buggy) closed form: longevity at the low post-70 draw, from totalAtRet.
+    const oldYsSS70 = calcYearsSustained(need70, startBal, rReal);
+    // New: walk year-by-year, full-expense draws until 70, then $35k net need.
+    const newDelayYrs = calcDrawdownYears({
+      startBal, startAge, effectiveExpenses, rReal,
+      ssAmount: effectiveExpenses - need70, ssClaimAge: 70,
+    });
+    expect(newDelayYrs).toBeLessThan(oldYsSS70);
   });
 });

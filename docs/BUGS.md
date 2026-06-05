@@ -9,56 +9,10 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
-### BUG-26 — `ysSS70` uses full retirement portfolio, ignoring pre-70 drawdowns
-
-**Reported:** 2026-06-04  
-**Status:** Open — known approximation  
-**File:** `src/App.jsx` lines 574–583 (`ysSS70` calculation)
-
-**Symptom:**  
-The "SS delay gain years" metric (`ssDelayGainYrs = ysSS70 − yearsSustained`) can overstate the portfolio-longevity benefit of delaying Social Security to age 70. For a user who retires several years before 70, the app shows more extra years from SS delay than they'd actually gain.
-
-**Root cause:**  
-`ysSS70` solves: "how long does the portfolio last drawing at the post-SS-70 rate, starting from `totalAtRet`?" But between retirement (age `safeRetAge`) and SS-70 claim, the user is drawing at a *higher* rate (less SS income reducing the portfolio need). By age 70 the portfolio has already been partially depleted — so the correct starting value is `portfolioAt70`, not `totalAtRet`. Using `totalAtRet` (larger) makes the portfolio appear to sustain longer at `need70`, overstating the SS-delay benefit.
-
-**Worked example (retire 60, SS at 70):**  
-`$1M` portfolio, `netPortfolioNeed` pre-70 = $80k/yr, `need70` post-SS = $35k/yr, `rReal` = 4.5%.  
-- Current code (using `$1M`): `ysSS70 ≈ 18.8 years`  
-- Correct (using `portfolioAt70 ≈ $800k` after 10 years of $80k draws): `ysSS70 ≈ 13.6 years`  
-- `ssDelayGainYrs` overstated by ~5 years for this profile.
-
-**Impact:**  
-Directional error only (always overstates the SS-delay benefit). Negligible for retire-at-65 cases (2-year gap); material (3–6 year overstatement) for users who retire well before 70 and defer SS to the maximum.
-
-**Fix path:**  
-Option A — Add an inner loop from `safeRetAge` to 70 drawing at `netPortfolioNeed` per year, deriving `portfolioAt70` before computing `ysSS70`. Option B — Read `portfolioAt70` from `totalChartData` (already computed per year in the drawdown chart), avoiding the extra loop. Option B is preferred but requires `totalChartData` to be in scope above `ysSS70` (currently defined just below it).
-
----
-
-### BUG-07 — Chart 1 Trad 401k normalization uses Phase 1 rate for Phase 2 years
-
-**Reported:** 2026-06-01  
-**Status:** Open — deferred until Phase 2 feature review  
-**File:** `src/App.jsx` line 1475
-
-**Symptom:**  
-In "Portfolio Growth Over Time," the BUG-06 fix normalizes all Trad 401k values to `rate1` for a smooth accumulation line. When the mid-career Phase 2 toggle is on and `rate2 ≠ rate1`, Phase 2 years are displayed using `rate1` instead of `rate2`. The chart description says "Phase 1 rate" which partially explains this, but a user with Phase 2 enabled at a higher bracket would see Phase 2 years overstated (if `rate2 > rate1`) or understated (if `rate2 < rate1`).
-
-**Root cause:**  
-The inline `.map()` on chart data applies `tradGross × (1 − rate1/100)` unconditionally for every accumulation year, regardless of which phase that year belongs to.
-
-**Impact:**  
-Phase 2 is off by default and rarely enabled. The inaccuracy is purely visual (the model is unaffected). Individual account growth trends are still directionally correct.
-
-**Recommended fix:**  
-Apply the correct phase rate per year: use `d["Trad 401k"]` from simData directly for all years *except* the retirement year (where rate3 causes the dip). For the retirement year only, substitute `tradGross × (1 − rate_last_working_phase / 100)`. This requires knowing whether the year falls in Phase 1 or Phase 2, which can be determined by comparing `d.age` to `currentAge + phase2Start`.
-
----
-
 ### BUG-16 (Audit Finding C) — Spousal SS benefit not reduced for early spouse claiming
 
 **Reported:** 2026-06-02  
-**Status:** Open — known limitation (needs a new input before it can be fixed)  
+**Status:** Open — **deferred to premium feature #30** (Spouse account modeling engine). Closing this bug is a deliverable of that feature, not a standalone fix. See `feature-tracker.html` #30 (priority raised P2 → P1).  
 **File:** `src/model/social-security.js` line 44 (`calcSpousal`)
 
 **Symptom:**  
@@ -68,45 +22,63 @@ The spousal Social Security benefit is always computed as if the spouse claims a
 There is no spouse-claiming-age input in the UI at all — the model consistently assumes FRA for the spousal benefit. This is a modeling *gap*, not a wrong calculation given the available inputs.
 
 **Impact:**  
-Low. Only affects households relying on a spousal benefit where the spouse plans to claim early. Overstates that benefit (and therefore slightly understates portfolio need). Requires a new input + UI control to fix; tracked for the household-modeling premium feature.
+Low. Only affects households relying on a spousal benefit where the spouse plans to claim early. Overstates that benefit (and therefore slightly understates portfolio need).
 
----
-
-### BUG-17 (Audit Finding D) — SS claiming-age slider can be set below current age
-
-**Reported:** 2026-06-02  
-**Status:** Open — cosmetic  
-**File:** `src/App.jsx` ~line 1589 (SS claiming-age slider)
-
-**Symptom:**  
-The Social Security claiming-age slider allows values below the user's current age, which looks odd (you can't claim in the past).
-
-**Root cause:**  
-The slider `min` isn't floored at `currentAge`.
-
-**Impact:**  
-None on the math — the drawdown loops gate SS on `age >= ssClaimingAge`, so a past claiming age is correctly treated as "already claimed / active from the start." Purely a UI affordance issue; fix by raising the slider `min` to `Math.max(62, currentAge)`.
-
----
-
-### BUG-18 (Audit Finding G) — Retirement age can momentarily exceed `lifeExpectancy − 1`
-
-**Reported:** 2026-06-02  
-**Status:** Open — cosmetic  
-**File:** `src/App.jsx` ~line 987 (life-expectancy `onChange`)
-
-**Symptom:**  
-If the user drags life expectancy *down* below retirement age + 1 after already setting a high retirement age, the two values can momentarily cross.
-
-**Root cause:**  
-The life-expectancy change handler doesn't clamp retirement age back down in the same interaction.
-
-**Impact:**  
-Negligible — React/HTML5 reconcile the constraint on the next interaction, and downstream loops use `Math.max(1, safeLifeExp - safeRetAge)` guards, so no NaN/crash results. Cosmetic only; fix by clamping `retirementAge` to `lifeExpect − 1` inside the life-expectancy handler.
+**Why deferred (decision 2026-06-04, owner):**  
+The fix requires a new `spouseClaimingAge` input + UI control, then applying `SS_FACTORS[spouseClaimingAge]` to both the spouse's own benefit and the 50% spousal floor inside `calcSpousal`. A spouse-claiming-age control only makes sense alongside the broader spouse profile, so this work belongs to the premium household-modeling scope rather than a one-off change. Feature #30's tracker entry now lists **"calcSpousal (BUG-16 fix)"** as an explicit deliverable and flags it as the quick-win to ship first within that feature. Feature #30 priority was bumped **P2 → P1** specifically so this bug is not stranded waiting on the full engine. When #30 ships, move this entry to Resolved.
 
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-26~~ — SS-delay gain years overstated (used full retirement portfolio, ignoring pre-70 drawdowns)
+
+**Reported:** 2026-06-04 · **Fixed:** 2026-06-04  
+**Files:** `src/model/drawdown.js` (new `calcDrawdownYears`), `src/App.jsx` (`ssDelayGainYrs`), `src/model/__tests__/drawdown.test.js`
+
+**Symptom:**  
+The "SS delay gain years" metric (`~X yrs longer`) overstated the portfolio-longevity benefit of delaying Social Security to age 70 — by 3–6 years for users who retire well before 70 and defer SS to the maximum.
+
+**Root cause:**  
+The old `ysSS70` solved a closed-form: "how long does the portfolio last drawing at the *post-SS-70* (lower) rate, starting from the full `totalAtRet`?" But between retirement and the age-70 claim, the user draws at a *higher* rate (no SS yet), so the portfolio is already partly depleted by 70. Starting the calculation from `totalAtRet` at the low post-70 draw ignored those higher pre-70 draws and inflated the result.
+
+**Fix:**  
+Replaced the closed-form with a new pure helper `calcDrawdownYears({ startBal, startAge, effectiveExpenses, rReal, ssAmount, ssClaimAge, pensionAmount, pensionStartAge })` that walks the drawdown **year by year**, gating SS and pension on their start ages per year — exactly mirroring the `totalChartData` chart loop (and honoring CLAUDE.md rule 5b: per-year income timing). `ssDelayGainYrs` now computes two year-by-year longevities from the same `totalAtRet` — one under the user's actual claiming age, one delaying to 70 with the larger age-70 benefit — and reports the rounded difference. The higher pre-70 draws in the delay scenario are now correctly captured. Returns `null` (no badge) when either scenario is sustainable indefinitely, matching prior behavior. The headline `yearsSustained` closed-form is unchanged; only this comparison metric moved to the per-year walk. Model layer, so golden master and all model tests still pass (6 new tests added for `calcDrawdownYears`, including a regression asserting the new delay figure is below the old closed-form overstatement).
+
+---
+
+### ~~BUG-17~~ (Audit Finding D) — SS claiming-age slider could be set below current age
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-04  
+**File:** `src/App.jsx` (SS claiming-age `Slider`)
+
+**Symptom:**  
+The Social Security claiming-age slider allowed values below the user's current age (you can't claim in the past). Cosmetic only — the drawdown loops gate SS on `age >= ssClaimingAge`, so a past claiming age was already treated as "active from the start."
+
+**Fix:**  
+Slider `min` is now `Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge))` — floored at the current age but never exceeding the max claiming age (70), so the control stays valid even for users already past 70. No model change.
+
+---
+
+### ~~BUG-07~~ — Chart 1 Trad 401k normalization used Phase 1 rate for Phase 2 years
+
+**Reported:** 2026-06-01 · **Closed (obsolete):** 2026-06-04  
+**File:** `src/App.jsx` (Trad 401k chart normalization)
+
+**Resolution — obsolete by refactor.**  
+This bug described a mismatch between the mid-career *Phase 2 tax rate* (`rate2`) and the rate used to normalize the Trad 401k accumulation line. The entire phase-rate mechanism it depended on no longer exists: the rate1/rate2/rate3 sliders were removed in commit `cdca9be` ("Remove rate3/phase sliders — all tax rates now bracket-accurate"). The Trad 401k line is now normalized for **every** accumulation year at a single bracket-accurate `fedMarginal` rate (`App.jsx` `simData`), so there is no per-phase rate to mismatch and no retirement-year dip. The mid-career *scenario tool* itself is now tracked as premium feature #29.5 with its own state; the `phase2Actions` references that remain in `action-cards.js` are the unrelated action-plan grouping (Phase 1/2/3 = now / mid-career / retirement). Nothing to fix.
+
+---
+
+### ~~BUG-18~~ (Audit Finding G) — Retirement age could momentarily exceed `lifeExpectancy − 1`
+
+**Reported:** 2026-06-02 · **Closed (already guarded):** 2026-06-04  
+**File:** `src/App.jsx` (life-expectancy and retirement-age `Slider`s)
+
+**Resolution — already guarded; verified.**  
+The crossing is prevented by two independent layers that are both present in the current code: (1) the Life Expectancy slider has `min={retirementAge + 1}` and the Retirement Age slider has `max={lifeExpect - 1}`, so neither can be dragged past the other; and (2) the life-expectancy `onChange` handler explicitly clamps retirement age down (`if (retirementAge >= v) setRetirementAge(v - 1)`) within the same interaction. Verified by reading both handlers — no gap remains. Downstream loops additionally use `Math.max(1, safeLifeExp - safeRetAge)` guards as defense in depth. No change required.
 
 ---
 
@@ -403,3 +375,6 @@ Changed the gate to `safeRetAge < RMD_START_AGE`. The RMD marker now appears whe
 - Add new entries at the top of "Open Issues."
 - When fixing a bug, move it to "Resolved" and add: **Fixed:** date, commit SHA, brief description of change.
 - Link relevant file + line numbers for every entry so they stay navigable as the codebase evolves.
+- **Re-verify, don't just append.** "Make BUGS.md up to date" means a *verification pass*, not a logging pass. For **every** entry still under "Open Issues," open the referenced file + line and confirm the symptom still reproduces in the current code before leaving it open. If the cause is gone (the code was removed/refactored — e.g. BUG-07) or already guarded (e.g. BUG-18), move it to Resolved with a dated note explaining why. Stale-open entries are a documentation bug.
+- **When you change code, sweep the open list.** A refactor or removal can silently moot an open entry that lives in a different file. After any non-trivial code change, scan "Open Issues" for anything the change affects and reconcile it in the same session — don't let obsolescence outlive the commit that caused it.
+- A speculative or audit finding must be **verified against the code before** it is filed as Open. If it can't be reproduced, either don't file it or file it as Resolved/"already guarded" with the reason.
