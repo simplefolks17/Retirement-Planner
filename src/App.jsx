@@ -13,7 +13,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js"
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcDrawdownYears } from "./model/drawdown.js";
 import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
-import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
+import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
 import { calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
 import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
@@ -27,7 +27,6 @@ import {
   LIMIT_415C_2026, LIMIT_415C_CATCHUP_2026, CATCHUP_AGE,
   RMD_START_AGE,
   SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE,
-  SS_FACTORS,
   STATE_TAX, RETIREMENT_STATE_TAX,
   ASSUMPTIONS,
   MEDICARE_AGE,
@@ -231,26 +230,19 @@ export default function App() {
   const effectiveExpenses = annualExpenses ?? Math.round(totalAtRet * ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE);
   const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
 
-  const ssWorkYears = Math.max(1, safeRetAge - currentAge);
-  const ssAIME = calcAIME(currentIncome, incomeGrowth, ssWorkYears);
-  const ssPIA  = calcPIA(ssAIME);
-  const ssMonthlyBenefit = calcBenefit(ssPIA, ssClaimingAge);
-  const ssAnnualBenefit  = ssMonthlyBenefit * ASSUMPTIONS.MONTHS_PER_YEAR;
-  const ss67Monthly      = calcBenefit(ssPIA, SS_FRA);
-  const effectiveSS = includeSS
-    ? (ssOverride !== null ? ssOverride : ssAnnualBenefit)
-    : 0;
-
-  const spouseSsBenefit = calcSpousal(ssPIA, spouseSsEstimate);
-  const householdSS = includeSS ? effectiveSS + spouseSsBenefit : 0;
-  // SS only reduces the headline portfolio need if it's already active at retirement.
-  // Mirrors effectivePension which uses the same gate (pensionStartAge <= safeRetAge).
-  const ssAtRet = includeSS && ssClaimingAge <= safeRetAge ? householdSS : 0;
-
-  const effectivePension = pensionStartAge <= safeRetAge && pensionMonthly > 0
-    ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR
-    : 0;
-  const ssTaxableRet = householdSS * ASSUMPTIONS.SS_TAXABLE_PCT;
+  // Household retirement income (SS + pension), extracted to
+  // src/model/retirement-income.js. ssAtRet / effectivePension carry the
+  // "active at retirement" gate (BUG-10 / rule 5b); householdSS / ssTaxableRet
+  // are the full amounts that the per-year drawdown loops gate themselves.
+  const {
+    ssWorkYears, ssAIME, ssPIA, ssMonthlyBenefit, ssAnnualBenefit, ss67Monthly,
+    effectiveSS, spouseSsBenefit, householdSS, ssAtRet, ssTaxableRet,
+    ss70Annual, household70SS, ss70DrawReduction, effectivePension,
+  } = calcRetirementIncome({
+    currentIncome, incomeGrowth, safeRetAge, currentAge,
+    ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
+    pensionMonthly, pensionStartAge,
+  });
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
@@ -283,19 +275,7 @@ export default function App() {
     return cards;
   }, [simData, currentAge, safeRetAge, retirementTarget]);
 
-  const ssBreakEven = ssClaimingAge === SS_FRA ? null : (() => {
-    let cumClaim = 0, cum67 = 0;
-    for (let m = 1; m <= 50 * ASSUMPTIONS.MONTHS_PER_YEAR; m++) {
-      const ageNow = ssClaimingAge + m / ASSUMPTIONS.MONTHS_PER_YEAR;
-      if (ageNow >= ssClaimingAge) cumClaim += ssMonthlyBenefit;
-      if (ageNow >= SS_FRA)        cum67    += ss67Monthly;
-      if (ssClaimingAge < SS_FRA && cum67 >= cumClaim && ageNow > SS_FRA)
-        return Math.floor(ageNow);
-      if (ssClaimingAge > SS_FRA && cumClaim >= cum67 && ageNow > ssClaimingAge)
-        return Math.floor(ageNow);
-    }
-    return null;
-  })();
+  const ssBreakEven = calcSSBreakEven({ ssClaimingAge, ssMonthlyBenefit, ss67Monthly });
 
   const useTable2 = isMarried && spouseIsSoleBenef && (currentAge - spouseCurrentAge > 10);
   const activeTableLabel = useTable2 ? "Table II (Joint Life)" : "Table III (Uniform Lifetime)";
@@ -563,9 +543,6 @@ export default function App() {
                          ?? retBrackets[retBrackets.length - 1];
   const projRetBracketPct = Math.round(projRetBracket.rate * 100);
 
-  const ss70Annual       = Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * ASSUMPTIONS.MONTHS_PER_YEAR;
-  const household70SS    = ss70Annual + spouseSsBenefit;
-  const ss70DrawReduction = Math.max(0, household70SS - householdSS);
   // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
   // SS plan vs. delaying SS to 70, both walked year-by-year from the same starting
   // portfolio. The per-year walk is essential — between retirement and 70 the
