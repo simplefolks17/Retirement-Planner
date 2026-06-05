@@ -96,11 +96,16 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
      `netPortfolioNeed` scalar, ignoring SS for users who retire before claiming it.
      Now a per-year loop gating SS/pension like the chart loop. Value-preserving in the
      default state (claims SS at retirement); fixes the early-retiree case.
-  - Deeper pass also filed two verified issues as **Open** (not changed, by owner
-    decision — both move/affect headline numbers and need review first):
+  - Deeper pass also filed three verified issues as **Open** (not changed, by owner
+    decision — all move/affect displayed or headline numbers and need review first):
     BUG-29 (conversion tax not bracket-accurate + omits state — understates
-    `netConversionBenefit`, default ~47k vs ~78k; incomplete rollout of feature #33)
-    and BUG-30 (MFJ cap-gains uses primary-only income; deferred to premium #30).
+    `netConversionBenefit`, default ~47k vs ~78k; incomplete rollout of feature #33),
+    BUG-30 (MFJ cap-gains uses primary-only income; deferred to premium #30), and
+    BUG-31 (Flow-Down "Growth" is a plug that absorbs cross-equation mismatches: the
+    drawdown chart subtracts spending only, so `distGrowth`/`convWindowGrowth` are
+    inflated by RMD/conversion tax the chart never removed — default distribution
+    growth overstated ~684k — plus a gross-vs-after-tax unit mismatch in the
+    accumulation bridge and an off-by-one in `distDraws`).
 
 ## Commands
 - `npm run dev` — start dev server
