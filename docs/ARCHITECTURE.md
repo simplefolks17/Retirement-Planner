@@ -8,6 +8,7 @@ src/
     irs-2026.js           All 2026 IRS constants + ASSUMPTIONS object           [CLIENT]
   model/                  Pure functions — no React. Used client-side AND server-side.
     taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, getTaxRate  [CLIENT]
+    tax-basis.js          calcTaxBasis (working-year agi / fed+state+FICA / Roth phase-out / grossAfterTax)  [CLIENT]
     social-security.js    calcAIME, calcPIA, calcBenefit, calcSpousal           [CLIENT]
     simulation.js         runSimulation (accumulation loop)                     [CLIENT]
     drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears  [CLIENT]
@@ -115,7 +116,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **213 tests across 18 files**, all passing.
+`npm test`. Current count: **220 tests across 19 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the

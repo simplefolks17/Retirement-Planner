@@ -6,10 +6,10 @@ import {
 } from "recharts";
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct } from "./formatters.js";
-import { calcTax, marginalRate } from "./model/taxes.js";
+import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
-import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
+import { calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcDrawdownYears } from "./model/drawdown.js";
 import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
@@ -22,10 +22,9 @@ import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import {
-  TAX_DATA_2026, ROTH_PHASEOUT_2026,
+  TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
   LIMIT_415C_2026, LIMIT_415C_CATCHUP_2026, CATCHUP_AGE,
-  FICA_RATE, FICA_WAGE_BASE,
   RMD_START_AGE,
   SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE,
   SS_FACTORS,
@@ -126,21 +125,21 @@ export default function App() {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
     });
 
-  // Tax basis must be computed BEFORE simData / currentSnapshot, which normalize
-  // "Trad 401k" to its after-tax value using fedMarginal. (Declared here to avoid
-  // a temporal-dead-zone reference — these consts are read by the simData memo below.)
-  const combinedIncome       = currentIncome + spouseIncome;
-  // For MFJ filers, both incomes are reported on the same return.
-  // Primary pre-tax deductions (401k, HSA) reduce primary income first;
-  // spouse deductions aren't tracked (no sliders), so spouse income enters
-  // as gross. For all other filing statuses, spouse income is separate.
-  const totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc;
-  const safeDeduc        = Math.min(totalPreTaxDeduc, currentIncome);
-  const agi              = filingStatus === "mfj"
-    ? currentIncome - safeDeduc + spouseIncome
-    : currentIncome - safeDeduc;
-  const { tax: fedTax, effectiveRate: fedEffRate } = calcTax(agi, filingStatus);
-  const fedMarginal      = marginalRate(agi, filingStatus);
+  // Working-year tax basis (agi, fed/state/FICA, Roth phase-out, grossAfterTax),
+  // extracted to src/model/tax-basis.js. Computed here as ONE call — before
+  // simData / currentSnapshot, which read fedMarginal — so there is no
+  // temporal-dead-zone split for a consumer to fall into (that split was the
+  // BUG-20 blank-page crash). MFJ income handling lives in the model (rules 3 & 9).
+  const {
+    combinedIncome, totalPreTaxDeduc, safeDeduc, agi, fedTax, fedEffRate, fedMarginal,
+    stateRateDefault, stateRate, stateTax, noStateTax, fica,
+    householdIncome, takeHome, combinedEffRate,
+    rothMAGI, rothPhaseout, rothPhaseoutWarning, rothFullyPhased, grossAfterTax,
+  } = calcTaxBasis({
+    currentIncome, spouseIncome, filingStatus,
+    contrib401k, contribHSA, otherPreTaxDeduc,
+    selectedState, stateRateOverride,
+  });
 
   const simData = useMemo(() => {
     const raw = runSimulation({
@@ -184,23 +183,6 @@ export default function App() {
     ? (simData[phase2End - 1] ?? currentSnapshot)
     : currentSnapshot;
 
-  const stateRateDefault = STATE_TAX[selectedState]?.rate ?? 0;
-  const stateRate        = stateRateOverride !== null ? stateRateOverride : stateRateDefault;
-  const stateTax         = agi * stateRate;
-  const fica             = (Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)) * FICA_RATE;
-  // takeHome: household total when spouse income is present, primary-only otherwise.
-  const householdIncome  = filingStatus === "mfj" ? combinedIncome : currentIncome;
-  const takeHome         = householdIncome - fedTax - stateTax - fica - safeDeduc;
-  const combinedEffRate  = (fedTax + stateTax + fica) / (householdIncome || 1);
-  const noStateTax       = stateRate === 0;
-  // Roth phase-out is tested against combined income only for MFJ filers; every
-  // other status uses the primary earner's income alone (CLAUDE.md rules 3 & 9).
-  const rothMAGI             = filingStatus === "mfj" ? combinedIncome : currentIncome;
-  const rothPhaseout         = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
-  const rothPhaseoutWarning  = rothMAGI >= rothPhaseout.start;
-  const rothFullyPhased      = rothMAGI >= rothPhaseout.end;
-
-  const grossAfterTax = calcGrossAfterTax(householdIncome, fedTax, stateTax, fica);
   const { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus } =
     calcSavingsCapacity({
       grossAfterTax, contrib401k, contribRoth, contribTaxable, contribHSA, livingExpenses,
