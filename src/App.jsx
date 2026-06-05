@@ -641,7 +641,22 @@ export default function App() {
     const actualSustainedYrs = yearsSustained === Infinity
       ? distYears
       : Math.min(Math.floor(yearsSustained), distYears);
-    const distDraws    = netPortfolioNeed * actualSustainedYrs;
+    // Per-year draws over the distribution phase, gating SS/pension on their start
+    // ages exactly like the chart loop and convWindowDraws above (CLAUDE.md rule 5b).
+    // The static netPortfolioNeed scalar only nets SS when it was already claimed AT
+    // retirement (ssClaimingAge <= safeRetAge); reusing it here overstated draws for
+    // anyone who retires before claiming SS, since the distribution phase (age 73+) is
+    // entirely in SS-active years — the draws were too high by ~SS × years (with an
+    // equal, offsetting overstatement in distGrowth). See BUG-28.
+    const distValAge = hasConvWindow ? RMD_START_AGE - 1 : safeRetAge;
+    let distDraws = 0;
+    for (let i = 0; i < actualSustainedYrs; i++) {
+      const age         = distValAge + 1 + i;
+      const yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0;
+      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
+        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
+      distDraws        += calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
+    }
     const distRMDTax   = rmdTaxBite;
     const distGrowth   = distEndVal - distStartVal + distDraws + distRMDTax;
     const peakPortfolio = Math.max(

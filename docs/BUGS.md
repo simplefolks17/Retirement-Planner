@@ -33,6 +33,41 @@ The fix requires a new `spouseClaimingAge` input + UI control, then applying `SS
 
 ---
 
+### ~~BUG-28~~ — Flow-Down distribution waterfall draws used the static `netPortfolioNeed` (ignored SS claimed after retirement)
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-05  
+**File:** `src/App.jsx` (`flowData` → `distDraws`, ~line 644)
+
+**Symptom:**  
+In the Flow-Down tab's Phase 3 (distribution) waterfall, the "Living Expenses" step — and the "Portfolio Growth" step derived from it — were overstated for any plan where the user **retires before claiming Social Security** (e.g. retire 65, claim 67 or 70). The waterfall's start and end totals were correct (they come from the per-year chart), so the error was hidden: the inflated draws were exactly offset by inflated growth.
+
+**Root cause:**  
+`distDraws = netPortfolioNeed * actualSustainedYrs` used the **static** at-retirement `netPortfolioNeed` scalar. That scalar only subtracts SS when `ssClaimingAge <= safeRetAge` (`ssAtRet` gate). But the distribution phase is age 73+ — by then SS is always active (claiming age ≤ 70). So for an early retiree the per-year need in this phase is `expenses − SS − pension`, while the scalar was `expenses − pension`. The draws were too high by ≈ `householdSS × years` (~$780k in a typical case). Same family as BUG-10 (static `netPortfolioNeed` mis-handling deferred SS); the chart loop and `convWindowDraws` already gate SS/pension per year (CLAUDE.md rule 5b), but this one site was missed.
+
+**Fix:**  
+Replaced the scalar multiply with a per-year loop that gates SS and pension on their start ages, mirroring `convWindowDraws` and the `totalChartData` drawdown loop exactly. First draw age is `(distStartVal's age) + 1` — `RMD_START_AGE` when a conversion window exists (start value is the age-72 `portPreRMD`), else `safeRetAge + 1`. **Value-preserving in the default state** (default claims SS at retirement, so every distribution year already has SS → per-year sum equals the old scalar × years), so the golden master is unchanged; the fix only corrects the early-retiree case the default state doesn't exercise. Display-layer (component) computation, not in `src/model/`, so no golden-master/model-test movement.
+
+---
+
+### ~~BUG-27~~ — Roth post-conversion RMDs double-counted a year of growth (understated conversion benefit)
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-05  
+**Files:** `src/model/rmd.js` (`calcRMDPostConversion`), `src/model/__tests__/rmd.test.js` (regression), `src/model/__tests__/golden-master.test.js` (locked value updated)
+
+**Symptom:**  
+The "net Roth-conversion benefit" was understated. At the default state the displayed figure was **$17,345** when the correct value is **$47,047** — the bug suppressed roughly $30k of benefit and would cause the conversion optimizer to recommend converting too little.
+
+**Root cause:**  
+`calcRMDPostConversion` starts from `tradBal73`, which `calcConversionSim` has **already grown to age 73** (it applies "one final year of growth on the trad balance to reach age 73"). But the RMD loop's first iteration (`age = RMD_START_AGE`) did `bal = bal * (1 + r)` *before* taking the age-73 RMD — growing the balance a second time. Every post-conversion RMD was therefore computed on a balance one year over-grown, and the whole post-conversion RMD schedule was shifted forward by a year. Because the baseline schedule (`calcRMDProjection`) has no such extra growth, the two sides of `rmdTaxSaved = rmdTaxBite − rmdTaxBitePost` were on different growth clocks, corrupting `netConversionBenefit` and the optimizer's `getNetBenefit`. The existing test only checked that post-conversion RMDs were *lower* than baseline (relative), so it never caught the absolute shift.
+
+**Proof:**  
+Ran the conversion engine with conversion amount = **0**. With no money actually moving, the post-conversion RMD schedule must equal the baseline exactly. It didn't — the post-conversion age-73 RMD equalled the baseline age-**74** RMD (one year of growth too high).
+
+**Fix:**  
+`calcRMDPostConversion` now skips the growth step in the first iteration (`if (age > RMD_START_AGE) bal = bal * (1 + r)`), because `tradBal73` is already the age-73 balance — matching `calcRMDProjection`'s convention. Added a regression test asserting the zero-conversion post-conversion schedule equals the baseline age-by-age. Golden master `netConversionBenefit` updated **17_345 → 47_047** as a deliberate, dated correctness change (CLAUDE.md rule 7).
+
+---
+
 ### ~~BUG-26~~ — SS-delay gain years overstated (used full retirement portfolio, ignoring pre-70 drawdowns)
 
 **Reported:** 2026-06-04 · **Fixed:** 2026-06-04  

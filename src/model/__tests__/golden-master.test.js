@@ -113,7 +113,9 @@ const E = {
   totalRMDs:            3_106_334,
   rmdTaxBite:           683_974,   // bracket-accurate (was 559_140 at flat 18%)
   conversionWindowYrs:  7,
-  netConversionBenefit: 17_345,    // flipped positive — flat rate was understating RMD burden
+  netConversionBenefit: 47_047,    // updated 2026-06-05 (BUG-27): post-conversion RMDs no
+                                   // longer double-count a year of growth before the first
+                                   // RMD; old 17_345 understated the conversion benefit.
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────
