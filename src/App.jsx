@@ -10,7 +10,9 @@ import { calcTax, marginalRate, ltcgRate } from "./model/taxes.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears } from "./model/drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcDrawdownYears } from "./model/drawdown.js";
+import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
+import { calcFlowDown } from "./model/flow-down.js";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
 import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
@@ -268,8 +270,10 @@ export default function App() {
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
-  const yearsSustained   = calcYearsSustained(netPortfolioNeed, totalAtRet, rReal);
-  const isSustainable    = yearsSustained === Infinity || yearsSustained >= (safeLifeExp - safeRetAge);
+  // yearsSustained / isSustainable are defined below (after the per-year RMD &
+  // conversion tax schedules), because the longevity walk now charges those
+  // taxes to the portfolio (BUG-31 Path A). They run through the SAME shared
+  // walk (buildRetirementDrawdown) as the chart and waterfall.
 
   const milestones = useMemo(() => {
     const getTotal = row =>
@@ -294,36 +298,6 @@ export default function App() {
     }
     return cards;
   }, [simData, currentAge, safeRetAge, retirementTarget]);
-
-  const totalChartData = useMemo(() => {
-    const result = [];
-    // Seed chart with current balances as the retirement starting point
-    // when the user is already retired (safeRetAge === currentAge, no accumulation years).
-    if (safeRetAge === currentAge) {
-      result.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
-    }
-    for (const d of simData) {
-      result.push({
-        age: d.age,
-        total: (d["Trad 401k"] ?? 0) + (d["Roth IRA"] ?? 0)
-             + (d["Taxable"]   ?? 0) + (d["HSA"]       ?? 0),
-      });
-      if (d.age >= safeRetAge) break;
-    }
-    let bal = result[result.length - 1]?.total ?? 0;
-    for (let age = safeRetAge + 1; age <= safeLifeExp; age++) {
-      const yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0;
-      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
-        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-      const yearNeed    = calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
-      bal = bal * (1 + rReal) - yearNeed;
-      result.push({ age, total: Math.max(0, Math.round(bal)) });
-      if (bal <= 0) break;
-    }
-    return result;
-  }, [simData, safeRetAge, safeLifeExp, currentAge, returnRate, inflationRate, effectiveExpenses,
-      includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
-      bal401k, balRoth, balTaxable, balHSA]);
 
   const ssBreakEven = ssClaimingAge === SS_FRA ? null : (() => {
     let cumClaim = 0, cum67 = 0;
@@ -462,6 +436,75 @@ export default function App() {
   const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion);
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
+
+  // ── Per-year retirement tax schedules (BUG-31 Path A) ─────────────────────
+  // The portfolio actually pays these taxes, so they must drain the SAME walk
+  // the chart and waterfall read. Built from the already-bracket-accurate
+  // rmdDataWithTax (ages 73+) and conversionSim.years (conversion window).
+  const rmdTaxByAge = useMemo(
+    () => Object.fromEntries(rmdDataWithTax.map(d => [d.age, d.tax])),
+    [rmdDataWithTax]);
+  const conversionTaxByAge = useMemo(
+    () => Object.fromEntries(conversionSim.years.map(y => [y.age, y.tax])),
+    [conversionSim]);
+
+  // Shared inputs for the ONE retirement-phase walk (buildRetirementDrawdown).
+  // The chart, the headline longevity, and the Flow-Down waterfall all consume
+  // this so they can never diverge (the BUG-31 root cause). SS/pension gate
+  // per-year inside the walk (rule 5b); the tax maps make it tax-honest.
+  const retDrawShared = {
+    rReal, effectiveExpenses,
+    ssAmount: householdSS,
+    ssClaimAge: includeSS ? ssClaimingAge : Infinity,
+    pensionAmount:   pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0,
+    pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
+    rmdTaxByAge, conversionTaxByAge,
+  };
+
+  // Headline longevity: walk to a far horizon so "years sustained" is meaningful
+  // even past life expectancy (matching the old closed-form semantics), but now
+  // tax-honest and with correct per-year SS/pension timing. Replaces the static
+  // closed-form calcYearsSustained, which netted SS for every year regardless of
+  // claiming age and ignored tax (overstated longevity — BUG-31 / BUG-26 family).
+  const yearsSustained = buildRetirementDrawdown({
+    ...retDrawShared, startBal: totalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130,
+  }).yearsSustained;
+  const isSustainable = yearsSustained === Infinity || yearsSustained >= (safeLifeExp - safeRetAge);
+
+  // Accumulation rows (current → retirement) + the starting balance for the walk.
+  const accumChart = useMemo(() => {
+    const rows = [];
+    // Seed with current balances as the retirement starting point when already
+    // retired (safeRetAge === currentAge, no accumulation years).
+    if (safeRetAge === currentAge) {
+      rows.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
+    }
+    for (const d of simData) {
+      rows.push({
+        age: d.age,
+        total: (d["Trad 401k"] ?? 0) + (d["Roth IRA"] ?? 0)
+             + (d["Taxable"]   ?? 0) + (d["HSA"]       ?? 0),
+      });
+      if (d.age >= safeRetAge) break;
+    }
+    return rows;
+  }, [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA]);
+
+  // The ONE retirement-phase walk to life expectancy. Both the chart and the
+  // Flow-Down waterfall read its rows (each carries draw / tax / growth), so the
+  // two can never use different equations again (BUG-31 root cause). Tax-honest
+  // via retDrawShared's per-year RMD/conversion tax maps.
+  const retirementWalk = useMemo(() => buildRetirementDrawdown({
+    ...retDrawShared,
+    startBal: accumChart[accumChart.length - 1]?.total ?? 0,
+    startAge: safeRetAge, endAge: safeLifeExp,
+  }), [accumChart, safeRetAge, safeLifeExp, rReal, effectiveExpenses,
+       includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
+       rmdTaxByAge, conversionTaxByAge]);
+
+  const totalChartData = useMemo(
+    () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
+    [accumChart, retirementWalk]);
 
   const healthcareExposure = useMemo(() => calcHealthcareExposure({
     conversionYears: conversionSim.years,
@@ -604,93 +647,35 @@ export default function App() {
     ? Math.max(0, effectiveExpenses - household70SS - effectivePension) / totalAtRet * 100
     : 0;
 
-  const flowData = useMemo(() => {
-    const startPortfolio = bal401k + balRoth + balTaxable + balHSA;
-    const accumRows   = simData.filter(d => d.age <= safeRetAge);
-    const totalContrib = accumRows.reduce((s, d) =>
-      s + (d.c401k || 0) + (d.cRoth || 0) + (d.cTaxable || 0) + (d.cHSA || 0), 0);
-    const totalGrowth  = Math.max(0, totalAtRet - startPortfolio - totalContrib);
-    const hasConvWindow  = conversionWindowYrs > 0;
-    // Use the chart value at age 72 (last year before RMDs), not 73 (which already includes
-    // the first RMD draw). This gives the true "entering RMDs" portfolio value and makes
-    // convWindowGrowth balance cleanly against the draws and taxes in the conversion window.
-    const portPreRMD     = totalChartData.find(d => d.age === RMD_START_AGE - 1)?.total
-                        ?? totalChartData.find(d => d.age === safeRetAge)?.total
-                        ?? totalAtRet;
-    // Per-year draws: start at safeRetAge+1 (no draw in the chart at the retirement year itself).
-    // SS and pension only deducted in years they've started.
-    let convWindowDraws = 0;
-    for (let i = 0; i < conversionWindowYrs; i++) {
-      const age         = safeRetAge + 1 + i;
-      const yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0;
-      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
-        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-      convWindowDraws  += calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
-    }
-    const convWindowTax    = hasConvWindow ? conversionSim.totalTax : 0;
-    const totalConverted   = hasConvWindow
-      ? conversionSim.years.reduce((s, y) => s + y.conversion, 0)
-      : 0;
-    const convWindowGrowth = portPreRMD - totalAtRet + convWindowDraws + convWindowTax;
-    const distStartAge = hasConvWindow ? RMD_START_AGE : safeRetAge;
-    const distStartVal = hasConvWindow ? portPreRMD : totalAtRet;
-    const lastChart    = totalChartData[totalChartData.length - 1];
-    const distEndVal   = lastChart?.total ?? 0;
-    const depletionAge = totalChartData.find(d => d.total <= 0)?.age ?? null;
-    const distYears    = Math.max(0, (depletionAge ?? safeLifeExp) - distStartAge);
-    const actualSustainedYrs = yearsSustained === Infinity
-      ? distYears
-      : Math.min(Math.floor(yearsSustained), distYears);
-    // Per-year draws over the distribution phase, gating SS/pension on their start
-    // ages exactly like the chart loop and convWindowDraws above (CLAUDE.md rule 5b).
-    // The static netPortfolioNeed scalar only nets SS when it was already claimed AT
-    // retirement (ssClaimingAge <= safeRetAge); reusing it here overstated draws for
-    // anyone who retires before claiming SS, since the distribution phase (age 73+) is
-    // entirely in SS-active years — the draws were too high by ~SS × years (with an
-    // equal, offsetting overstatement in distGrowth). See BUG-28.
-    const distValAge = hasConvWindow ? RMD_START_AGE - 1 : safeRetAge;
-    let distDraws = 0;
-    for (let i = 0; i < actualSustainedYrs; i++) {
-      const age         = distValAge + 1 + i;
-      const yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0;
-      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
-        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-      distDraws        += calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
-    }
-    const distRMDTax   = rmdTaxBite;
-    const distGrowth   = distEndVal - distStartVal + distDraws + distRMDTax;
-    const peakPortfolio = Math.max(
-      startPortfolio, totalAtRet,
-      ...totalChartData.map(d => d.total)
-    );
-    return {
-      startPortfolio, totalContrib, totalGrowth, totalAtRet,
-      hasConvWindow, conversionWindowYrs, portPreRMD,
-      convWindowDraws, convWindowTax, convWindowGrowth, totalConverted,
-      distStartAge, distStartVal, distEndVal, distYears,
-      distDraws, distRMDTax, distGrowth, depletionAge, actualSustainedYrs,
-      peakPortfolio,
-    };
-  }, [
-    bal401k, balRoth, balTaxable, balHSA, simData, safeRetAge, totalAtRet,
-    conversionWindowYrs, conversionSim, totalChartData, safeLifeExp,
-    netPortfolioNeed, rmdTaxBite, yearsSustained,
-    includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge, effectiveExpenses,
+  const flowData = useMemo(() => calcFlowDown({
+    bal401k, balRoth, balTaxable, balHSA, fedMarginal,
+    contribRows: simData.filter(d => d.age <= safeRetAge),
+    totalAtRet,
+    walkRows: retirementWalk.rows,
+    depletionAge: retirementWalk.depletionAge,
+    accumChart,
+    conversionWindowYrs,
+    totalConverted: conversionWindowYrs > 0
+      ? conversionSim.years.reduce((s, y) => s + y.conversion, 0) : 0,
+    safeRetAge, safeLifeExp, rmdStartAge: RMD_START_AGE,
+  }), [
+    bal401k, balRoth, balTaxable, balHSA, fedMarginal, simData, safeRetAge, totalAtRet,
+    conversionWindowYrs, conversionSim, retirementWalk, accumChart, safeLifeExp,
   ]);
 
   const optimized = useMemo(() => calcOptimizedScenario({
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
     withdrawalTaxRate: Math.round(effectiveRMDTaxRate * 100),
     contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
-    householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
+    householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
-    conversionSim, retTaxable,
+    conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
   }), [
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
     effectiveRMDTaxRate, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
-    householdSS, effectiveExpenses, effectivePension, rReal, safeLifeExp,
+    householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
-    conversionSim, retTaxable,
+    conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
   ]);
 
 

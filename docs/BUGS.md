@@ -9,40 +9,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
-### BUG-31 — Flow-Down "Growth" is a plug that hides cross-equation mismatches (apples-to-oranges)
-
-**Reported:** 2026-06-05  
-**Status:** Open — **verified by inspection, fix deferred pending owner review** (changes displayed Flow-Down numbers; one facet affects headline longevity). Filed Open, not fixed.  
-**File:** `src/App.jsx` — `flowData` (lines ~607–679) and the drawdown chart `totalChartData` (lines ~298–326). Rendering: `src/model/action-cards.js` (`generatePhaseSteps`); legacy mirror in `financial-scenarios.jsx` ~1148–1196 / ~3525–3560.
-
-**Core issue:**  
-Every "growth" figure in the Flow-Down waterfall is computed as a **plug** — the number that makes the column balance:
-```
-convWindowGrowth = portPreRMD − totalAtRet + convWindowDraws + convWindowTax
-distGrowth       = distEndVal − distStartVal + distDraws + distRMDTax
-totalGrowth      = max(0, totalAtRet − startPortfolio − totalContrib)
-```
-Because growth is the plug, the waterfall **always balances visually**, even when the draw/tax terms are computed with a *different equation (or different units)* than the start/end balances they sit between. The drawdown chart (`totalChartData`, line 319) advances the portfolio with **`bal = bal*(1+rReal) − yearNeed`** — spending only, no taxes, gross-vs-after-tax not reconciled — so any tax or unit difference lands silently in "growth." Three concrete mismatches:
-
-**Facet A — Accumulation units (gross vs after-tax).**  
-`startPortfolio = bal401k + balRoth + balTaxable + balHSA` and `totalContrib` use **gross** 401k dollars, but `totalAtRet` uses the **after-tax-normalized** 401k (`tradGross × (1 − fedMarginal)`, App.jsx line 156). So "Investment Growth" = after-tax-end − gross-start − gross-contribs, distorted by the trad tax haircut applied only to the endpoint. Default: bal401k $50k shown gross vs ~$39k after-tax; gross contribs $10k/yr vs ~$7.8k after-tax × 35 yrs — "Investment Growth" understated by roughly $80–90k, and `max(0, …)` can clamp it to $0 for trad-heavy plans. *Fix:* show the 401k start balance and contributions after-tax too (apply `(1 − fedMarginal)`), so all three nodes are in the same spendable-dollar units.
-
-**Facet B — Conversion-window tax not in the chart.**  
-`convWindowGrowth` adds `convWindowTax` (`conversionSim.totalTax`) as an outflow, but the chart that produced `portPreRMD` never subtracted conversion tax. So "Portfolio Growth" in that panel is inflated by exactly `convWindowTax`, and the "Roth Conversion Tax" row is an outflow the charted portfolio never lost.
-
-**Facet C — RMD tax not in the chart (largest), + off-by-one draws.**  
-`distGrowth` adds the full `rmdTaxBite` as an outflow — **$683,974 in the default** — but the chart never subtracts RMD tax. So distribution "Portfolio Growth" is inflated by ~$684k, the "RMD Tax Bite" row is phantom relative to the charted balance, and (more seriously) the chart's longevity (`depletionAge`) and `yearsSustained` **ignore RMD-tax drag entirely**, making projected portfolio life optimistic. Secondary: `distDraws` loops `actualSustainedYrs` years (ages 73…73+n−1 = 73–89 by default) while the chart applies draws through `safeLifeExp` inclusive (73–90) — one year of draws (~one `netPortfolioNeed`, ~$50k) is dropped into the `distGrowth` plug.
-
-**Two resolution paths (owner to choose):**  
-- **(A) Make the chart honest** — subtract RMD tax (and conversion tax) from the portfolio each year so `distEndVal`/`depletionAge`/`yearsSustained` reflect the tax drag. Most accurate, but lowers headline longevity and moves the golden master (the gross-up: to spend `netPortfolioNeed` net you must withdraw enough to also cover the tax).  
-- **(B) Make the display honest** — compute each "Growth" as the chart's *true* growth (`end − start + draws`, no tax term) and present the tax figures as separate informational annotations, not as part of the start→end bridge. Smaller change; leaves the longevity model as-is but stops mislabeling tax-inflated growth.
-
-Either way, fix Facet A's gross/after-tax unit mismatch and the Facet C off-by-one regardless of path.
-
-**Verification:** `rmdTaxBite` golden-master value = 683,974 (locked). Chart loop subtracts only `yearNeed` (App.jsx:319). `startPortfolio` uses raw `bal401k` (App.jsx:608) while `simData["Trad 401k"]` is `tradGross × (1−fedMarginal)` (App.jsx:156). `distDraws` index range vs chart `for (age = safeRetAge+1; age <= safeLifeExp)` confirms the one-year shortfall.
-
----
-
 ### BUG-29 — Roth conversion tax is not bracket-accurate (flat top-marginal rate, no state tax)
 
 **Reported:** 2026-06-05  
@@ -108,6 +74,25 @@ The fix requires a new `spouseClaimingAge` input + UI control, then applying `SS
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-31~~ — Flow-Down "Growth" was a plug hiding cross-equation mismatches; chart/longevity ignored retirement taxes
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-05 (Path A — make the model tax-honest)  
+**Files:** new `src/model/retirement-drawdown.js` (`buildRetirementDrawdown`), new `src/model/flow-down.js` (`calcFlowDown`), `src/App.jsx`, `src/model/drawdown.js`, `src/model/optimization.js`, `src/model/__tests__/golden-master.test.js`.
+
+**Root cause (as filed):**  
+The retirement portfolio was walked in ≥4 separate places (`totalChartData`, closed-form `calcYearsSustained`, `calcDrawdownYears`, `calcOptimizedScenario`), each with the tax-blind recurrence `bal = bal*(1+rReal) − yearNeed`. The Flow-Down waterfall then computed every "growth" figure as a **residual plug** (`distGrowth = distEndVal − distStartVal + distDraws + distRMDTax`), so it always balanced visually while silently absorbing: (A) a gross-vs-after-tax unit mismatch in the accumulation bridge; (B) the conversion-window tax the chart never subtracted; (C) the full `rmdTaxBite` (~$683,974 default) the chart never subtracted, plus an off-by-one in `distDraws`. Because the chart never charged the taxes, the headline longevity / depletion age were optimistic.
+
+**Fix (Path A — owner-approved 2026-06-05):**  
+- **One shared walk.** `buildRetirementDrawdown` is now the single source of truth; the chart, the headline longevity, the Flow-Down waterfall, `calcDrawdownYears`, and the optimizer all consume it, so they can never diverge again. Each row exposes `growth` (= `balStart·rReal`), `draw`, and `tax`.
+- **Tax-honest.** The per-year recurrence is `balEnd = balStart*(1+rReal) − draw − tax`, where `tax` = the bracket-accurate per-year RMD tax (ages 73+) plus Roth-conversion tax (conversion window), passed in as per-age maps built from the existing `rmdDataWithTax` / `conversionSim.years` schedules. Only the **tax** leaks from the single pool; the RMD/conversion *principal* is not double-charged (single-pool assumption documented in `docs/FINANCIAL-MODEL.md`).
+- **Growth is a true sum, not a plug.** `calcFlowDown` computes each "growth" as `Σ(row.growth)` independently; the bars reconcile by the walk's conservation law rather than by construction.
+- **Facet A** fixed: the accumulation bridge puts the 401k start balance and contributions in the same after-tax units as `totalAtRet`. **Facet C off-by-one** fixed: phase draw ranges come straight from the walk rows.
+- **Headline impact (default):** `yearsSustained` 88.60 → **61.99** (runs-out age 153 → 126). Still far beyond life expectancy, so the plan stays sustainable; the number is now honest. Golden master updated deliberately with a dated comment.
+
+**Tests added (169 → 187):** `retirement-drawdown.test.js` (conservation `start+Σgrowth=Σdraw+Σtax+end`, anti-plug `residual==Σgrowth`, monotonicity, closed-form-vs-walk reconciliation incl. the BUG-26 deferred-SS trap) and `flow-down.test.js` (growth-is-a-true-sum, waterfall reconciliation, displayed RMD-tax == tax actually charged, off-by-one guard, Facet A units). These would have caught the original bug.
 
 ---
 

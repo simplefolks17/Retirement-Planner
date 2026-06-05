@@ -27,7 +27,8 @@ import { calcTax, marginalRate } from "../taxes.js";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "../social-security.js";
 import { runSimulation } from "../simulation.js";
 import { calcEmployerMatch } from "../employer-match.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained } from "../drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate } from "../drawdown.js";
+import { buildRetirementDrawdown } from "../retirement-drawdown.js";
 import { calcRMDProjection, calcRMDPostConversion } from "../rmd.js";
 import { calcConversionSim } from "../roth-conversion.js";
 import { TAX_DATA_2026, RETIREMENT_STATE_TAX, RMD_START_AGE } from "../../config/irs-2026.js";
@@ -90,6 +91,19 @@ const rmdTaxBitePost = rmdPost.reduce((sum, { rmd: r }) => {
 const rmdTaxSaved = Math.max(0, rmdTaxBite - rmdTaxBitePost);
 const netConversionBenefit = rmdTaxSaved - conv.totalTax;
 
+// Headline longevity now comes from the tax-honest shared walk (BUG-31 Path A),
+// not the closed-form calcYearsSustained — mirrors App.jsx. The portfolio pays
+// its per-year RMD tax (ages 73+) and Roth-conversion tax (conversion window),
+// and SS is gated at the claiming age (67), so the number is lower and honest.
+const rmdTaxByAge = Object.fromEntries(rmd.map(({ age, rmd: r }) =>
+  [age, Math.round((calcTax(rmdIncomeFloor + r, filingStatus).tax - rmdBaseFedTax) + r * retStateRate)]));
+const conversionTaxByAge = Object.fromEntries(conv.years.map(y => [safeRetAge + y.age, y.tax]));
+const headlineYearsSustained = buildRetirementDrawdown({
+  startBal: totalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130, rReal,
+  effectiveExpenses, ssAmount: householdSS, ssClaimAge: 67,
+  rmdTaxByAge, conversionTaxByAge,
+}).yearsSustained;
+
 // ── Expected values (updated 2026-06-03: bracket-accurate RMD tax replaces flat rate3Combined) ───
 
 const E = {
@@ -108,7 +122,12 @@ const E = {
   totalAtRet:           3_484_197,
   netPortfolioNeed:     58_602,
   withdrawalRate:       1.6819370431694878,
-  yearsSustained:       88.60453585267652,
+  // updated 2026-06-05 (BUG-31 Path A): was 88.60 from the closed-form
+  // calcYearsSustained, which ignored the RMD/conversion tax drain and netted SS
+  // from retirement regardless of claiming age. The tax-honest shared walk now
+  // charges $683,974 RMD tax + $139,048 conversion tax and gates SS at 67 →
+  // ~62 yrs (still far beyond life expectancy, so the plan stays sustainable).
+  yearsSustained:       61.99935122020162,
   firstRMD:             118_198,
   totalRMDs:            3_106_334,
   rmdTaxBite:           683_974,   // bracket-accurate (was 559_140 at flat 18%)
@@ -147,7 +166,7 @@ describe("golden master — default state", () => {
   it("drawdown metrics", () => {
     expect(netPortfolioNeed).toBe(E.netPortfolioNeed);
     expect(calcWithdrawalRate(netPortfolioNeed, totalAtRet)).toBeCloseTo(E.withdrawalRate, 8);
-    expect(calcYearsSustained(netPortfolioNeed, totalAtRet, rReal)).toBeCloseTo(E.yearsSustained, 6);
+    expect(headlineYearsSustained).toBeCloseTo(E.yearsSustained, 6);
   });
 
   it("RMD projection", () => {
