@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { calcRMDProjection, calcRMDPostConversion } from "../rmd.js";
+import { calcConversionSim } from "../roth-conversion.js";
 
 const baseRMD = {
   tradGrossAtRetirement: 1_000_000,
@@ -67,6 +68,34 @@ describe("calcRMDPostConversion", () => {
       currentAge: 65,
     });
     expect(result).toBe(rmdData); // same reference
+  });
+
+  // BUG-27 regression: with ZERO conversions no money leaves the trad account, so the
+  // post-conversion RMD schedule must match the baseline exactly. tradBal73 from
+  // calcConversionSim is already the balance AT age 73; the old code grew it one more
+  // year before the first RMD, inflating every post-conversion RMD by ~a year of growth
+  // (the age-73 RMD equalled the baseline age-74 RMD). The pairing below would have
+  // failed at the first row prior to the fix.
+  it("zero-conversion post-conversion schedule equals the baseline RMD schedule", () => {
+    const safeRetAge = 60, safeLifeExp = 90, returnRate = 6, tradGross = 1_000_000;
+    const baseline = calcRMDProjection({
+      tradGrossAtRetirement: tradGross, safeRetAge, safeLifeExp, returnRate, useTable2: false,
+    });
+    const conversionWindowYrs = 72 - safeRetAge;
+    const sim = calcConversionSim({
+      conversionWindowYrs, annualConversion: 0, returnRate, retIncomeFloor: 0,
+      filingStatus: "single", conversionTaxSource: "taxable",
+      tradGrossAtRetirement: tradGross, rothBalAtRet: 0, taxableBalAtRet: 0,
+    });
+    const post = calcRMDPostConversion({
+      conversionWindowYrs, rmdData: baseline, tradBal73: sim.tradBal73,
+      safeLifeExp, returnRate, useTable2: false,
+    });
+    expect(post.map(r => r.age)).toEqual(baseline.map(r => r.age));
+    for (let i = 0; i < baseline.length; i++) {
+      // Allow $1 rounding slack from the separate Math.round chains.
+      expect(Math.abs(post[i].rmd - baseline[i].rmd)).toBeLessThanOrEqual(1);
+    }
   });
 
   it("produces lower RMDs when starting balance is lower (after conversion)", () => {

@@ -137,14 +137,43 @@ yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0
 yearPension = pensionMonthly > 0 && age >= pensionStartAge ? pensionMonthly × 12 : 0
 yearNeed    = max(0, effectiveExpenses − yearSS − yearPension)
 ```
-This applies to: `totalChartData` drawdown loop, `convWindowDraws` in `flowData`, and `retIncomeFloors[]` passed to `calcConversionSim`. The static scalar is still used for `withdrawalRate`, `yearsSustained`, and display — those use the steady-state (all sources active) value, which is the correct "at retirement" snapshot.
+This applies to: `totalChartData` drawdown loop, `convWindowDraws` in `flowData`, and `retIncomeFloors[]` passed to `calcConversionSim`. The static scalar is still used for `withdrawalRate` and at-retirement display snapshots — those use the steady-state (all sources active) value, which is the correct "at retirement" snapshot. `yearsSustained` uses the per-year walk (`buildRetirementDrawdown`), not this scalar.
 
 ### Real Return
 ```
 rReal = (1 + nominalReturn) / (1 + inflation) − 1
 ```
 
-### Years Sustained
+### Years Sustained — the one tax-honest walk (`buildRetirementDrawdown`)
+The retirement portfolio is walked in exactly **one** place, `buildRetirementDrawdown`
+(`src/model/retirement-drawdown.js`), consumed by the chart, the headline
+`yearsSustained`, the Flow-Down waterfall (`calcFlowDown`), `calcDrawdownYears`, and
+the optimizer. The per-year recurrence is:
+```
+draw    = max(0, effectiveExpenses − yearSS − yearPension)   // SS/pension gated per-year
+tax     = rmdTaxByAge[age] + conversionTaxByAge[age]         // 0 where absent
+balEnd  = balStart*(1 + rReal) − draw − tax
+```
+`yearsSustained` = years until `balEnd ≤ 0` (fractional in the depletion year), or
+Infinity if the portfolio survives the horizon.
+
+**Why tax is subtracted (the gross-up).** To *spend* `draw` net, the retiree must
+withdraw enough to also pay that year's income tax, so the tax is a real leak out of
+the pool. The closed-form `calcYearsSustained` (kept only as a tax-free reference)
+cannot represent a time-varying per-year tax and netted SS for every year regardless
+of claiming age, so it overstated longevity — see BUG-31.
+
+**Single-pool assumptions (documented):**
+- One combined pool grown at one real rate; no per-account tax-treatment split during
+  drawdown (Roth/taxable/trad growth all at `rReal`).
+- Only the **tax** leaks. The RMD/conversion *principal* is not a separate outflow —
+  whether spent or reinvested it stays in the pool and keeps compounding (so it is
+  never double-charged).
+- RMD tax is computed in nominal dollars (matching the displayed `rmdTaxBite` and the
+  waterfall's RMD-tax bar) so the chart, longevity, and waterfall reconcile to the
+  same tax figure.
+
+The old closed form (kept for reference / the tax-free estimate):
 ```
 if netPortfolioNeed ≤ 0 or portfolio × rReal ≥ netPortfolioNeed → Infinity
 else → log(1 − (portfolio × rReal / netPortfolioNeed)) / log(1 / (1 + rReal))

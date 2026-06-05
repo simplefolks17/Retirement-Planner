@@ -1,5 +1,5 @@
 import { TRAD_401K_LIMIT_2026, SS_MAX_CLAIM_AGE, ASSUMPTIONS } from "../config/irs-2026.js";
-import { calcYearsSustained } from "./drawdown.js";
+import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 
 // Returns the optimized "what-if" scenario projecting additional portfolio value
 // from deploying surplus + delaying SS to 70.
@@ -20,6 +20,7 @@ export function calcOptimizedScenario({
   householdSS,
   effectiveExpenses,
   effectivePension,
+  pensionStartAge = Infinity,
   rReal,
   safeLifeExp,
   yr1TaxSavings,
@@ -28,6 +29,8 @@ export function calcOptimizedScenario({
   yearsSustained,
   conversionSim,
   retTaxable,
+  rmdTaxByAge = {},
+  conversionTaxByAge = {},
 }) {
   const r = returnRate / 100;
   const g = incomeGrowth / 100;
@@ -63,15 +66,24 @@ export function calcOptimizedScenario({
                        + Math.round(extraRothFV) + Math.round(extraTaxableFV);
   const optTotalAtRet  = totalAtRet + extraPortfolio;
 
-  const optSS = includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE
-    ? ss70Annual + spouseSsBenefit
-    : householdSS;
+  const optDelaying = includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE;
+  const optSS = optDelaying ? ss70Annual + spouseSsBenefit : householdSS;
   const optNetNeed = Math.max(0, effectiveExpenses - optSS - effectivePension);
   const optWR = optTotalAtRet > 0 ? (optNetNeed / optTotalAtRet) * 100 : 0;
 
-  // Same longevity math as the headline metric — imported, not re-derived, so the
-  // two can't silently diverge if the formula changes.
-  const optYS = calcYearsSustained(optNetNeed, optTotalAtRet, rReal);
+  // Longevity via the SAME shared tax-honest walk as the headline metric, so the
+  // two can't diverge (BUG-31). SS gates at the (possibly delayed) optimized claim
+  // age; pension and the tax schedule are approximated with the baseline maps —
+  // the optimized portfolio's RMD tax would be modestly higher (larger balance),
+  // so optYS is a slight upper bound, acceptable for a what-if comparison.
+  const optYS = buildRetirementDrawdown({
+    startBal: optTotalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130, rReal,
+    effectiveExpenses,
+    ssAmount: optSS,
+    ssClaimAge: !includeSS ? Infinity : (optDelaying ? SS_MAX_CLAIM_AGE : ssClaimingAge),
+    pensionAmount: effectivePension, pensionStartAge,
+    rmdTaxByAge, conversionTaxByAge,
+  }).yearsSustained;
 
   const optSustainable  = optYS === Infinity || optYS >= (safeLifeExp - safeRetAge);
   const optDepletionAge = optYS === Infinity ? null : Math.floor(safeRetAge + optYS);

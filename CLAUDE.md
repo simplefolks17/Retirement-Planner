@@ -6,12 +6,13 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 ## Critical Rules (check every task)
 1. **IRS constants live in `src/config/irs-2026.js` only.** Never hardcode limits, brackets, or thresholds elsewhere.
 2. **Portfolio draws use `netPortfolioNeed`** (expenses − SS − pension), never `effectiveExpenses`. This applies to: yearsSustained, withdrawalRate, totalChartData drawdown, optimized scenario. `netPortfolioNeed` must be computed **per-year** in any loop that spans retirement — SS and pension only reduce draws in years they've actually started (see rule 5b).
+   - **2b. One retirement walk, tax-honest.** The retirement-phase portfolio is walked in exactly ONE place — `buildRetirementDrawdown` (`src/model/retirement-drawdown.js`). The chart (`totalChartData`), the headline `yearsSustained`, the Flow-Down waterfall (`calcFlowDown`), `calcDrawdownYears`, and the optimizer all consume it, so they can never diverge (BUG-31). The per-year recurrence is `balEnd = balStart*(1+rReal) − draw − tax`: the portfolio actually pays its per-year **RMD tax** (ages 73+) and **Roth-conversion tax** (conversion window), passed in as per-age maps. Only the tax leaks from the single pool — the RMD/conversion principal is never double-charged. **Never reintroduce a second retirement-phase walk, and never compute a Flow-Down "growth" as a residual plug** (`end − start + draws + tax`); growth must be the independent sum `Σ(row.growth)` so a forgotten tax can't hide in it.
 3. **No double-counting.** `grossAfterTax` (household income − all taxes) is the budget basis. Pre-tax deductions are auto-derived from contributions. For MFJ filers, `grossAfterTax` uses `householdIncome` (primary + spouse); for all other filing statuses it uses primary income only.
 4. **Sim-level IRS guards required.** Every contribution in the simulation loop must be independently capped at its IRS limit, regardless of UI constraints.
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (168 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (187 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 
@@ -39,7 +40,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Design system & tokens: `docs/DESIGN.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (48 items, 21 done, 27 planned)
+- Feature backlog: `feature-tracker.html` (49 items, 21 done, 28 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -85,12 +86,35 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   3. 95% combined-marginal-rate clamp (3 call sites) → `ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE`.
   4. Display month↔year conversions in App.jsx now use `ASSUMPTIONS.MONTHS_PER_YEAR`
      instead of raw `* 12` / `/ 12`.
-  5. `optimization.js` imports `calcYearsSustained` instead of re-implementing the
-     closed form, so the optimizer and headline longevity can't diverge.
+  5. `optimization.js` imports `buildRetirementDrawdown` (shared walk) instead of
+     re-implementing the closed form, so the optimizer and headline longevity can't
+     diverge. (`calcYearsSustained` kept for reference; no longer used for headline.)
+- Bug-hunt pass (Jun 5 2026) — two verified correctness bugs found and fixed:
+  1. BUG-27 — `calcRMDPostConversion` double-counted a year of growth before the first
+     RMD (`tradBal73` is already the age-73 balance). Understated `netConversionBenefit`;
+     default state moved 17_345 → 47_047 (golden master updated deliberately). Regression
+     test added: zero-conversion post-conversion schedule must equal the baseline.
+  2. BUG-28 — Flow-Down distribution waterfall `distDraws` used the static
+     `netPortfolioNeed` scalar, ignoring SS for users who retire before claiming it.
+     Now a per-year loop gating SS/pension like the chart loop. Value-preserving in the
+     default state (claims SS at retirement); fixes the early-retiree case.
+  - Deeper pass also filed three verified issues as **Open** (not changed, by owner
+    decision — all move/affect displayed or headline numbers and need review first):
+    BUG-29 (conversion tax not bracket-accurate + omits state — understates
+    `netConversionBenefit`, default ~47k vs ~78k; incomplete rollout of feature #33),
+    BUG-30 (MFJ cap-gains uses primary-only income; deferred to premium #30).
+- Tax-honest retirement walk (BUG-31 fixed, Jun 5 2026 — Path A): the retirement
+  portfolio is now walked in ONE place (`buildRetirementDrawdown`, consumed by the
+  chart, headline longevity, `calcFlowDown` waterfall, `calcDrawdownYears`, and the
+  optimizer), and it actually charges per-year RMD + conversion tax to the pool.
+  Flow-Down "growth" is now the independent sum `Σ(row.growth)`, not a residual plug.
+  Headline `yearsSustained` 88.60 → 61.99 at default (still sustainable). Logic
+  extracted from App.jsx into `retirement-drawdown.js` + `flow-down.js`; new
+  conservation / anti-plug / reconciliation tests (169 → 187) guard the bug class.
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (168 tests)
+- `npm test` — run model + formatter + render-smoke tests (187 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)

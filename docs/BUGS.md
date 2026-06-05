@@ -9,6 +9,50 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### BUG-29 — Roth conversion tax is not bracket-accurate (flat top-marginal rate, no state tax)
+
+**Reported:** 2026-06-05  
+**Status:** Open — **verified, fix deferred pending owner review** (decision 2026-06-05: document the math before moving a headline number). Filed Open, not fixed.  
+**File:** `src/model/roth-conversion.js` line ~70 (`taxOnConversion` in `calcConversionSim`)
+
+**Symptom:**  
+The displayed **net Roth-conversion benefit is understated.** At the default state it shows ~$47,047 when a bracket-accurate calculation gives ~$77,861 — the conversion *cost* is overstated by ≈ **$30,814** across the 7-year window (~$4,402/yr).
+
+**Root cause (two compounding issues):**  
+1. **Flat rate on a multi-bracket conversion.** Conversion tax is `conversion × marginalRate(floor + conversion)` — the *entire* conversion taxed at the single marginal rate at its top. In bracket-fill mode the conversion spans from the income floor (default: taxable income ≈ $22,935, in the **12%** bracket) up to the bracket ceiling, so dollars that are really taxed at 10%/12% get charged the top rate. The RMD tax, by contrast, is bracket-accurate (`calcTax(floor+rmd) − calcTax(floor)`), so the two sides of `netConversionBenefit = rmdTaxSaved − conv.totalTax` are computed on **different tax models.**
+2. **Rounding overshoot into the next bracket.** The bracket-fill target lands at taxable income **$105,700.40** — $0.40 *over* the 22% ceiling ($105,700) — so `marginalRate` returns **24%**, and the whole $82,765 conversion is taxed at 24% (not even 22%). In the actual app (bracket mode, per-year floors), early pre-SS years fill from a $0 floor, so the entire ~$121,800 conversion is taxed at 24% in those years — a larger overstatement than the scalar default case.
+3. **State tax omitted.** RMD tax includes a state component (`rmd × retStateRate`); conversion tax has none. Dormant in the default (retirement state TX = 0%), but for a user in a taxed state the conversion cost is *understated*, which makes conversions look better and partially offsets (1)–(2) for those users.
+
+**This contradicts the codebase's own design.** Feature #33 ("Bracket-accurate retirement tax") states the bracket-accurate rate replaces the flat proxy "for `rmdTaxBite`, `netConversionBenefit`, and withdrawal strategy." The RMD side was converted; the conversion-cost side was left on the flat-rate proxy — an incomplete rollout of #33, not a deliberate conservative choice.
+
+**Verification:**  
+`calcTax(floor+conversion) − calcTax(floor)` = $15,462/yr vs. the current `conversion × marginalRate` = $19,864/yr (the 24% overshoot). Scalar-default delta × 7 yrs = $30,814; `netConversionBenefit` would move $47,047 → ~$77,861.
+
+**Proposed fix (when approved):**  
+In `calcConversionSim`, replace `conversion * marginalRate(floor + conversion)` with `(calcTax(floor + conversion).tax − calcTax(floor).tax)` for the federal portion, and thread `retStateRate` through so the state component (`conversion × retStateRate`) is added — making conversion tax mirror the RMD-tax formula exactly. Model change → update the golden master `netConversionBenefit` deliberately and add a test asserting a single-bracket conversion still matches `conversion × rate` while a multi-bracket conversion is taxed less than the flat-rate proxy.
+
+---
+
+### BUG-30 — MFJ capital-gains rate uses primary-only income (taxable-account drag understated)
+
+**Reported:** 2026-06-05  
+**Status:** Open — **deferred to premium feature #30** (Spouse account modeling), where combined-income tax treatment belongs. Verified; minor.  
+**File:** `src/model/simulation.js` lines ~86–88 (`ordinaryIncome` → `ltcgRate`)
+
+**Symptom:**  
+For an MFJ household with two earners, the taxable brokerage account's annual tax drag can be too low, slightly **overstating** projected taxable-account growth.
+
+**Root cause:**  
+`ordinaryIncome = currentIncome × growFactor − employeeDeferral − cHSA` is **primary-only**, but it's passed to `ltcgRate(ordinaryIncome, "mfj")` — the MFJ brackets. Per CLAUDE.md rule 9, MFJ tax calcs (`agi`, `stateTax`, `grossAfterTax`) use **combined** household income; the LTCG bracket position should too, since a joint return stacks both incomes. Verified: a dual-$80k MFJ couple gets a **0%** LTCG rate from primary-only income vs. **15%** from combined ($160k) — so the taxable account grows with no tax drag when it should carry 15%.
+
+**Impact:**  
+Low. Only bites when combined income crosses a LTCG bracket boundary (0%/15% ≈ $96k MFJ, 15%/20% ≈ $600k MFJ) that primary-only income does not. Entangled with the spouse-modeling scope: spouse income detail is a premium-tier concern (#30), so the fix belongs there alongside the combined-income tax engine.
+
+**Proposed fix (within #30):**  
+Compute `yearOrdinaryIncome = filingStatus === "mfj" ? primary + spouse (each net of their deferrals) : primary` and pass that to `ltcgRate`, mirroring the `yearMAGI` pattern already used for the Roth phase-out a few lines above.
+
+---
+
 ### BUG-16 (Audit Finding C) — Spousal SS benefit not reduced for early spouse claiming
 
 **Reported:** 2026-06-02  
@@ -30,6 +74,60 @@ The fix requires a new `spouseClaimingAge` input + UI control, then applying `SS
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-31~~ — Flow-Down "Growth" was a plug hiding cross-equation mismatches; chart/longevity ignored retirement taxes
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-05 (Path A — make the model tax-honest)  
+**Files:** new `src/model/retirement-drawdown.js` (`buildRetirementDrawdown`), new `src/model/flow-down.js` (`calcFlowDown`), `src/App.jsx`, `src/model/drawdown.js`, `src/model/optimization.js`, `src/model/__tests__/golden-master.test.js`.
+
+**Root cause (as filed):**  
+The retirement portfolio was walked in ≥4 separate places (`totalChartData`, closed-form `calcYearsSustained`, `calcDrawdownYears`, `calcOptimizedScenario`), each with the tax-blind recurrence `bal = bal*(1+rReal) − yearNeed`. The Flow-Down waterfall then computed every "growth" figure as a **residual plug** (`distGrowth = distEndVal − distStartVal + distDraws + distRMDTax`), so it always balanced visually while silently absorbing: (A) a gross-vs-after-tax unit mismatch in the accumulation bridge; (B) the conversion-window tax the chart never subtracted; (C) the full `rmdTaxBite` (~$683,974 default) the chart never subtracted, plus an off-by-one in `distDraws`. Because the chart never charged the taxes, the headline longevity / depletion age were optimistic.
+
+**Fix (Path A — owner-approved 2026-06-05):**  
+- **One shared walk.** `buildRetirementDrawdown` is now the single source of truth; the chart, the headline longevity, the Flow-Down waterfall, `calcDrawdownYears`, and the optimizer all consume it, so they can never diverge again. Each row exposes `growth` (= `balStart·rReal`), `draw`, and `tax`.
+- **Tax-honest.** The per-year recurrence is `balEnd = balStart*(1+rReal) − draw − tax`, where `tax` = the bracket-accurate per-year RMD tax (ages 73+) plus Roth-conversion tax (conversion window), passed in as per-age maps built from the existing `rmdDataWithTax` / `conversionSim.years` schedules. Only the **tax** leaks from the single pool; the RMD/conversion *principal* is not double-charged (single-pool assumption documented in `docs/FINANCIAL-MODEL.md`).
+- **Growth is a true sum, not a plug.** `calcFlowDown` computes each "growth" as `Σ(row.growth)` independently; the bars reconcile by the walk's conservation law rather than by construction.
+- **Facet A** fixed: the accumulation bridge puts the 401k start balance and contributions in the same after-tax units as `totalAtRet`. **Facet C off-by-one** fixed: phase draw ranges come straight from the walk rows.
+- **Headline impact (default):** `yearsSustained` 88.60 → **61.99** (runs-out age 153 → 126). Still far beyond life expectancy, so the plan stays sustainable; the number is now honest. Golden master updated deliberately with a dated comment.
+
+**Tests added (169 → 187):** `retirement-drawdown.test.js` (conservation `start+Σgrowth=Σdraw+Σtax+end`, anti-plug `residual==Σgrowth`, monotonicity, closed-form-vs-walk reconciliation incl. the BUG-26 deferred-SS trap) and `flow-down.test.js` (growth-is-a-true-sum, waterfall reconciliation, displayed RMD-tax == tax actually charged, off-by-one guard, Facet A units). These would have caught the original bug.
+
+---
+
+### ~~BUG-28~~ — Flow-Down distribution waterfall draws used the static `netPortfolioNeed` (ignored SS claimed after retirement)
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-05  
+**File:** `src/App.jsx` (`flowData` → `distDraws`, ~line 644)
+
+**Symptom:**  
+In the Flow-Down tab's Phase 3 (distribution) waterfall, the "Living Expenses" step — and the "Portfolio Growth" step derived from it — were overstated for any plan where the user **retires before claiming Social Security** (e.g. retire 65, claim 67 or 70). The waterfall's start and end totals were correct (they come from the per-year chart), so the error was hidden: the inflated draws were exactly offset by inflated growth.
+
+**Root cause:**  
+`distDraws = netPortfolioNeed * actualSustainedYrs` used the **static** at-retirement `netPortfolioNeed` scalar. That scalar only subtracts SS when `ssClaimingAge <= safeRetAge` (`ssAtRet` gate). But the distribution phase is age 73+ — by then SS is always active (claiming age ≤ 70). So for an early retiree the per-year need in this phase is `expenses − SS − pension`, while the scalar was `expenses − pension`. The draws were too high by ≈ `householdSS × years` (~$780k in a typical case). Same family as BUG-10 (static `netPortfolioNeed` mis-handling deferred SS); the chart loop and `convWindowDraws` already gate SS/pension per year (CLAUDE.md rule 5b), but this one site was missed.
+
+**Fix:**  
+Replaced the scalar multiply with a per-year loop that gates SS and pension on their start ages, mirroring `convWindowDraws` and the `totalChartData` drawdown loop exactly. First draw age is `(distStartVal's age) + 1` — `RMD_START_AGE` when a conversion window exists (start value is the age-72 `portPreRMD`), else `safeRetAge + 1`. **Value-preserving in the default state** (default claims SS at retirement, so every distribution year already has SS → per-year sum equals the old scalar × years), so the golden master is unchanged; the fix only corrects the early-retiree case the default state doesn't exercise. Display-layer (component) computation, not in `src/model/`, so no golden-master/model-test movement.
+
+---
+
+### ~~BUG-27~~ — Roth post-conversion RMDs double-counted a year of growth (understated conversion benefit)
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-05  
+**Files:** `src/model/rmd.js` (`calcRMDPostConversion`), `src/model/__tests__/rmd.test.js` (regression), `src/model/__tests__/golden-master.test.js` (locked value updated)
+
+**Symptom:**  
+The "net Roth-conversion benefit" was understated. At the default state the displayed figure was **$17,345** when the correct value is **$47,047** — the bug suppressed roughly $30k of benefit and would cause the conversion optimizer to recommend converting too little.
+
+**Root cause:**  
+`calcRMDPostConversion` starts from `tradBal73`, which `calcConversionSim` has **already grown to age 73** (it applies "one final year of growth on the trad balance to reach age 73"). But the RMD loop's first iteration (`age = RMD_START_AGE`) did `bal = bal * (1 + r)` *before* taking the age-73 RMD — growing the balance a second time. Every post-conversion RMD was therefore computed on a balance one year over-grown, and the whole post-conversion RMD schedule was shifted forward by a year. Because the baseline schedule (`calcRMDProjection`) has no such extra growth, the two sides of `rmdTaxSaved = rmdTaxBite − rmdTaxBitePost` were on different growth clocks, corrupting `netConversionBenefit` and the optimizer's `getNetBenefit`. The existing test only checked that post-conversion RMDs were *lower* than baseline (relative), so it never caught the absolute shift.
+
+**Proof:**  
+Ran the conversion engine with conversion amount = **0**. With no money actually moving, the post-conversion RMD schedule must equal the baseline exactly. It didn't — the post-conversion age-73 RMD equalled the baseline age-**74** RMD (one year of growth too high).
+
+**Fix:**  
+`calcRMDPostConversion` now skips the growth step in the first iteration (`if (age > RMD_START_AGE) bal = bal * (1 + r)`), because `tradBal73` is already the age-73 balance — matching `calcRMDProjection`'s convention. Added a regression test asserting the zero-conversion post-conversion schedule equals the baseline age-by-age. Golden master `netConversionBenefit` updated **17_345 → 47_047** as a deliberate, dated correctness change (CLAUDE.md rule 7).
 
 ---
 

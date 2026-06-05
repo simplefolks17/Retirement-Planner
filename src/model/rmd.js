@@ -67,7 +67,12 @@ export function calcRMDPostConversion({
   let bal = tradBal73;
 
   for (let age = RMD_START_AGE; age <= safeLifeExp; age++) {
-    bal = bal * (1 + r);
+    // tradBal73 already represents the balance AT age 73 (calcConversionSim applies
+    // a final year of growth to reach 73), so the first RMD year must NOT grow again —
+    // only ages after RMD_START_AGE compound. Growing in the first iteration double-
+    // counted a year of return, inflating every post-conversion RMD by ~one year's
+    // growth and shifting the whole schedule forward by one year (see BUG-27).
+    if (age > RMD_START_AGE) bal = bal * (1 + r);
     const sAge = useTable2 ? Math.round(spouseCurrentAge + (age - currentAge)) : null;
     const divisor = getDivisor(age, useTable2, sAge);
     const rmd = divisor ? Math.round(bal / divisor) : 0;

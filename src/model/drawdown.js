@@ -1,3 +1,5 @@
+import { buildRetirementDrawdown } from "./retirement-drawdown.js";
+
 // Returns the amount the portfolio must fund each year.
 // SS and pension are external income sources and reduce the draw.
 export function calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePension) {
@@ -43,13 +45,15 @@ export function calcDrawdownYears({
   pensionStartAge = Infinity,
   maxAge = 200,
 }) {
-  let bal = startBal;
-  for (let age = startAge + 1; age <= maxAge; age++) {
-    const yearSS      = age >= ssClaimAge ? ssAmount : 0;
-    const yearPension = age >= pensionStartAge ? pensionAmount : 0;
-    const yearNeed    = calcNetPortfolioNeed(effectiveExpenses, yearSS, yearPension);
-    bal = bal * (1 + rReal) - yearNeed;
-    if (bal <= 0) return age - startAge;
-  }
-  return Infinity;
+  // Delegates to the single shared walk (buildRetirementDrawdown) so the
+  // SS-delay comparison, the drawdown chart, and the headline longevity all
+  // run the SAME recurrence and can't diverge (BUG-31 root cause). Returns the
+  // integer count of years until depletion (depletionAge − startAge), matching
+  // this function's original contract; pass no tax maps (SS-delay compares
+  // spending-only longevity).
+  const { depletionAge } = buildRetirementDrawdown({
+    startBal, startAge, endAge: maxAge, rReal, effectiveExpenses,
+    ssAmount, ssClaimAge, pensionAmount, pensionStartAge,
+  });
+  return depletionAge !== null ? depletionAge - startAge : Infinity;
 }
