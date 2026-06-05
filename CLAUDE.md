@@ -40,7 +40,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Design system & tokens: `docs/DESIGN.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (48 items, 21 done, 27 planned)
+- Feature backlog: `feature-tracker.html` (49 items, 21 done, 28 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -86,8 +86,9 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   3. 95% combined-marginal-rate clamp (3 call sites) → `ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE`.
   4. Display month↔year conversions in App.jsx now use `ASSUMPTIONS.MONTHS_PER_YEAR`
      instead of raw `* 12` / `/ 12`.
-  5. `optimization.js` imports `calcYearsSustained` instead of re-implementing the
-     closed form, so the optimizer and headline longevity can't diverge.
+  5. `optimization.js` imports `buildRetirementDrawdown` (shared walk) instead of
+     re-implementing the closed form, so the optimizer and headline longevity can't
+     diverge. (`calcYearsSustained` kept for reference; no longer used for headline.)
 - Bug-hunt pass (Jun 5 2026) — two verified correctness bugs found and fixed:
   1. BUG-27 — `calcRMDPostConversion` double-counted a year of growth before the first
      RMD (`tradBal73` is already the age-73 balance). Understated `netConversionBenefit`;

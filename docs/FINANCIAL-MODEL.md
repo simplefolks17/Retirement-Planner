@@ -137,7 +137,7 @@ yearSS      = includeSS && age >= ssClaimingAge ? householdSS : 0
 yearPension = pensionMonthly > 0 && age >= pensionStartAge ? pensionMonthly × 12 : 0
 yearNeed    = max(0, effectiveExpenses − yearSS − yearPension)
 ```
-This applies to: `totalChartData` drawdown loop, `convWindowDraws` in `flowData`, and `retIncomeFloors[]` passed to `calcConversionSim`. The static scalar is still used for `withdrawalRate`, `yearsSustained`, and display — those use the steady-state (all sources active) value, which is the correct "at retirement" snapshot.
+This applies to: `totalChartData` drawdown loop, `convWindowDraws` in `flowData`, and `retIncomeFloors[]` passed to `calcConversionSim`. The static scalar is still used for `withdrawalRate` and at-retirement display snapshots — those use the steady-state (all sources active) value, which is the correct "at retirement" snapshot. `yearsSustained` uses the per-year walk (`buildRetirementDrawdown`), not this scalar.
 
 ### Real Return
 ```
