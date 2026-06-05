@@ -96,6 +96,11 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
      `netPortfolioNeed` scalar, ignoring SS for users who retire before claiming it.
      Now a per-year loop gating SS/pension like the chart loop. Value-preserving in the
      default state (claims SS at retirement); fixes the early-retiree case.
+  - Deeper pass also filed two verified issues as **Open** (not changed, by owner
+    decision — both move/affect headline numbers and need review first):
+    BUG-29 (conversion tax not bracket-accurate + omits state — understates
+    `netConversionBenefit`, default ~47k vs ~78k; incomplete rollout of feature #33)
+    and BUG-30 (MFJ cap-gains uses primary-only income; deferred to premium #30).
 
 ## Commands
 - `npm run dev` — start dev server

@@ -9,6 +9,50 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### BUG-29 — Roth conversion tax is not bracket-accurate (flat top-marginal rate, no state tax)
+
+**Reported:** 2026-06-05  
+**Status:** Open — **verified, fix deferred pending owner review** (decision 2026-06-05: document the math before moving a headline number). Filed Open, not fixed.  
+**File:** `src/model/roth-conversion.js` line ~70 (`taxOnConversion` in `calcConversionSim`)
+
+**Symptom:**  
+The displayed **net Roth-conversion benefit is understated.** At the default state it shows ~$47,047 when a bracket-accurate calculation gives ~$77,861 — the conversion *cost* is overstated by ≈ **$30,814** across the 7-year window (~$4,402/yr).
+
+**Root cause (two compounding issues):**  
+1. **Flat rate on a multi-bracket conversion.** Conversion tax is `conversion × marginalRate(floor + conversion)` — the *entire* conversion taxed at the single marginal rate at its top. In bracket-fill mode the conversion spans from the income floor (default: taxable income ≈ $22,935, in the **12%** bracket) up to the bracket ceiling, so dollars that are really taxed at 10%/12% get charged the top rate. The RMD tax, by contrast, is bracket-accurate (`calcTax(floor+rmd) − calcTax(floor)`), so the two sides of `netConversionBenefit = rmdTaxSaved − conv.totalTax` are computed on **different tax models.**
+2. **Rounding overshoot into the next bracket.** The bracket-fill target lands at taxable income **$105,700.40** — $0.40 *over* the 22% ceiling ($105,700) — so `marginalRate` returns **24%**, and the whole $82,765 conversion is taxed at 24% (not even 22%). In the actual app (bracket mode, per-year floors), early pre-SS years fill from a $0 floor, so the entire ~$121,800 conversion is taxed at 24% in those years — a larger overstatement than the scalar default case.
+3. **State tax omitted.** RMD tax includes a state component (`rmd × retStateRate`); conversion tax has none. Dormant in the default (retirement state TX = 0%), but for a user in a taxed state the conversion cost is *understated*, which makes conversions look better and partially offsets (1)–(2) for those users.
+
+**This contradicts the codebase's own design.** Feature #33 ("Bracket-accurate retirement tax") states the bracket-accurate rate replaces the flat proxy "for `rmdTaxBite`, `netConversionBenefit`, and withdrawal strategy." The RMD side was converted; the conversion-cost side was left on the flat-rate proxy — an incomplete rollout of #33, not a deliberate conservative choice.
+
+**Verification:**  
+`calcTax(floor+conversion) − calcTax(floor)` = $15,462/yr vs. the current `conversion × marginalRate` = $19,864/yr (the 24% overshoot). Scalar-default delta × 7 yrs = $30,814; `netConversionBenefit` would move $47,047 → ~$77,861.
+
+**Proposed fix (when approved):**  
+In `calcConversionSim`, replace `conversion * marginalRate(floor + conversion)` with `(calcTax(floor + conversion).tax − calcTax(floor).tax)` for the federal portion, and thread `retStateRate` through so the state component (`conversion × retStateRate`) is added — making conversion tax mirror the RMD-tax formula exactly. Model change → update the golden master `netConversionBenefit` deliberately and add a test asserting a single-bracket conversion still matches `conversion × rate` while a multi-bracket conversion is taxed less than the flat-rate proxy.
+
+---
+
+### BUG-30 — MFJ capital-gains rate uses primary-only income (taxable-account drag understated)
+
+**Reported:** 2026-06-05  
+**Status:** Open — **deferred to premium feature #30** (Spouse account modeling), where combined-income tax treatment belongs. Verified; minor.  
+**File:** `src/model/simulation.js` lines ~86–88 (`ordinaryIncome` → `ltcgRate`)
+
+**Symptom:**  
+For an MFJ household with two earners, the taxable brokerage account's annual tax drag can be too low, slightly **overstating** projected taxable-account growth.
+
+**Root cause:**  
+`ordinaryIncome = currentIncome × growFactor − employeeDeferral − cHSA` is **primary-only**, but it's passed to `ltcgRate(ordinaryIncome, "mfj")` — the MFJ brackets. Per CLAUDE.md rule 9, MFJ tax calcs (`agi`, `stateTax`, `grossAfterTax`) use **combined** household income; the LTCG bracket position should too, since a joint return stacks both incomes. Verified: a dual-$80k MFJ couple gets a **0%** LTCG rate from primary-only income vs. **15%** from combined ($160k) — so the taxable account grows with no tax drag when it should carry 15%.
+
+**Impact:**  
+Low. Only bites when combined income crosses a LTCG bracket boundary (0%/15% ≈ $96k MFJ, 15%/20% ≈ $600k MFJ) that primary-only income does not. Entangled with the spouse-modeling scope: spouse income detail is a premium-tier concern (#30), so the fix belongs there alongside the combined-income tax engine.
+
+**Proposed fix (within #30):**  
+Compute `yearOrdinaryIncome = filingStatus === "mfj" ? primary + spouse (each net of their deferrals) : primary` and pass that to `ltcgRate`, mirroring the `yearMAGI` pattern already used for the Roth phase-out a few lines above.
+
+---
+
 ### BUG-16 (Audit Finding C) — Spousal SS benefit not reduced for early spouse claiming
 
 **Reported:** 2026-06-02  
