@@ -6,7 +6,7 @@ import {
 } from "recharts";
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct } from "./formatters.js";
-import { calcTax, marginalRate, ltcgRate } from "./model/taxes.js";
+import { calcTax, marginalRate } from "./model/taxes.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
@@ -15,6 +15,7 @@ import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
+import { calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
 import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
 import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
@@ -330,23 +331,18 @@ export default function App() {
   const firstRMD  = rmdData[0];
   const totalRMDs = rmdData.reduce((s, d) => s + d.rmd, 0);
 
-  // Bracket-accurate RMD tax: stack each year's RMD on top of the SS+pension floor.
-  // SS and pension are assumed active at RMD start (age 73) if claiming/start age ≤ 73.
-  const rmdIncomeSS      = includeSS && ssClaimingAge <= RMD_START_AGE ? ssTaxableRet : 0;
-  const rmdIncomePension = pensionMonthly > 0 && pensionStartAge <= RMD_START_AGE ? effectivePension : 0;
-  const rmdIncomeFloor   = rmdIncomeSS + rmdIncomePension;
-  const { tax: rmdBaseFedTax } = calcTax(rmdIncomeFloor, filingStatus);
-  const rmdDataWithTax = rmdData.map(({ age, rmd, bal, divisor }) => ({
-    age, rmd, bal, divisor,
-    tax: Math.round(
-      (calcTax(rmdIncomeFloor + rmd, filingStatus).tax - rmdBaseFedTax) + rmd * retStateRate
-    ),
-  }));
-  const rmdTaxBite = rmdDataWithTax.reduce((s, d) => s + d.tax, 0);
-  // Effective rate across all RMD years — used for display captions.
-  const effectiveRMDTaxRate = totalRMDs > 0
-    ? rmdTaxBite / totalRMDs
-    : Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, fedMarginal + retStateRate);
+  // Bracket-accurate RMD tax: each year's RMD stacked on the SS+pension floor.
+  // SS/pension count in the floor when claiming/start age ≤ RMD start (73).
+  // Extracted to src/model/retirement-tax.js so it is unit-tested and shared
+  // with the optimizer (one definition — no duplicated reduce; see BUG-25 #4).
+  const rmdIncomeFloor = calcRMDIncomeFloor({
+    includeSS, ssClaimingAge, ssTaxableRet,
+    pensionMonthly, pensionStartAge, effectivePension, rmdStartAge: RMD_START_AGE,
+  });
+  const { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate } = calcRMDTaxSchedule({
+    rmdData, rmdIncomeFloor, filingStatus, retStateRate,
+    fedMarginal, maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
+  });
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
@@ -426,14 +422,9 @@ export default function App() {
     safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
   }), [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
 
-  // Shared RMD tax reducer — used by both display path (rmdTaxBitePost) and optimizer
-  // (rmdTaxPost) so the formula stays in sync when the tax model changes.
-  const calcRMDTax = (rows) => rows.reduce((sum, { rmd }) => {
-    const { tax } = calcTax(rmdIncomeFloor + rmd, filingStatus);
-    return sum + Math.round((tax - rmdBaseFedTax) + rmd * retStateRate);
-  }, 0);
-
-  const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion);
+  // calcRMDTax (src/model/retirement-tax.js) is the single shared definition,
+  // used by both the display path here and the optimizer below.
+  const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion, { rmdIncomeFloor, filingStatus, retStateRate });
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
 
@@ -547,7 +538,7 @@ export default function App() {
         conversionWindowYrs, rmdData, tradBal73: sim.tradBal73,
         safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
       });
-      const rmdTaxPost     = calcRMDTax(rmdPost);
+      const rmdTaxPost     = calcRMDTax(rmdPost, { rmdIncomeFloor, filingStatus, retStateRate });
       const rmdTaxSavedOpt = Math.max(0, rmdTaxBite - rmdTaxPost);
 
       // Apply safeRetAge offset so calcHealthcareExposure receives the same ages
@@ -570,7 +561,7 @@ export default function App() {
     };
 
     return findOptimalConversion({ getNetBenefit });
-  }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, rmdBaseFedTax, retStateRate,
+  }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, retStateRate,
       retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
       addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
       hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot,
@@ -592,21 +583,16 @@ export default function App() {
   // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
   const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
-  const yr1FromTaxable = Math.min(netPortfolioNeed, retTaxable);
-  const yr1FromTrad    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable), retTrad);
-  const yr1FromRoth    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable - yr1FromTrad), retRoth);
-  // Marginal rate on trad withdrawals: stacked on top of SS+pension income floor.
-  const yr1TradRate    = Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, marginalRate(rmdIncomeFloor + yr1FromTrad, filingStatus) + retStateRate);
-  const yr1TaxOptimal  = Math.round(
-    yr1FromTaxable * ltcgRate(0, filingStatus) +
-    yr1FromTrad    * yr1TradRate              +
-    yr1FromRoth    * 0
-  );
-  // Worst case: draw all spending from pre-tax trad first; cap at actual gross balance.
-  const worstCaseDraw   = Math.min(netPortfolioNeed, tradGrossAtRet);
-  const yr1TradRateWC   = Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, marginalRate(rmdIncomeFloor + worstCaseDraw, filingStatus) + retStateRate);
-  const yr1TaxWorstCase = Math.round(worstCaseDraw * yr1TradRateWC);
-  const yr1TaxSavings   = Math.max(0, yr1TaxWorstCase - yr1TaxOptimal);
+  // Year-1 withdrawal-order tax (tax-optimal taxable→trad→Roth vs worst-case
+  // all-pre-tax) — extracted to src/model/retirement-tax.js. Drives the
+  // withdrawal-strategy card. Worst-case draw caps at the GROSS trad balance
+  // (tradGrossAtRet), the BUG-26 basis fix, preserved in the model.
+  const { yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate, yr1TaxOptimal, yr1TaxSavings } =
+    calcWithdrawalOrderTax({
+      netPortfolioNeed, retTaxable, retTrad, retRoth, tradGrossAtRet,
+      rmdIncomeFloor, filingStatus, retStateRate,
+      maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
+    });
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
 
