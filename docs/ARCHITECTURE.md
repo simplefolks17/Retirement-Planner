@@ -18,6 +18,7 @@ src/
     budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation  [CLIENT]
     healthcare.js         acaCliffThreshold, calcHealthcareExposure (ACA cliff + IRMAA)  [CLIENT]
     optimization.js       calcOptimizedScenario                                 [SERVER]
+    conversion-planning.js buildIncomeFloors, calcBracketFillTargets (conversion-window floors + bracket fill)  [CLIENT]
     roth-conversion.js    calcConversionSim, findOptimalConversion              [SERVER]
     flow-down.js          calcFlowDown (waterfall decomposition from the shared walk)  [SERVER]
     action-cards.js       generatePhaseActions, generatePhaseSteps              [SERVER]
@@ -114,7 +115,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **202 tests across 17 files**, all passing.
+`npm test`. Current count: **213 tests across 18 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the

@@ -16,6 +16,7 @@ import { calcFlowDown } from "./model/flow-down.js";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
 import { calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
+import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
 import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
 import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
@@ -347,58 +348,32 @@ export default function App() {
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
-  // Per-year income floors for the conversion window: SS and pension only count
-  // in years when they've actually started (ssClaimingAge / pensionStartAge).
-  // Per-year income floor for the conversion window. SS/pension only count in
-  // years they've actually started (ssClaimingAge / pensionStartAge). The only
-  // difference between the tax floor and the MAGI floor is the SS amount used:
-  //   convFloors      → ssTaxableRet (85% taxable fraction, for marginal-rate math)
+  // Per-year conversion-window income floors + bracket-fill targets, extracted to
+  // src/model/conversion-planning.js (unit-tested; the per-year SS/pension gate is
+  // the BUG-25 #3 off-by-one). Each floor counts SS/pension only in years they've
+  // started; the only difference between the two arrays is the SS amount used:
+  //   convFloors      → ssTaxableRet (85% taxable, for marginal-rate math)
   //   convMAGIFloors  → householdSS  (100% gross SS, for ACA/IRMAA MAGI)
-  // Memoized so the conversion sim and optimizer (which take these as deps) don't
-  // re-run on every render — only when an input that actually changes the floors does.
-  const buildIncomeFloors = (ssAmount) =>
-    Array.from({ length: conversionWindowYrs }, (_, i) => {
-      // age = safeRetAge + i + 1: year i is displayed at safeRetAge+i+1 (calcConversionSim
-      // returns yr+1 offsets, App adds safeRetAge). The floor must match that displayed age
-      // so the SS/pension gate fires in the right conversion year.
-      const age         = safeRetAge + i + 1;
-      const yearSS      = includeSS && age >= ssClaimingAge ? ssAmount : 0;
-      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
-        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-      return yearSS + yearPension;
-    });
-  const convFloors = useMemo(() => buildIncomeFloors(ssTaxableRet),
-    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
-  const convMAGIFloors = useMemo(() => buildIncomeFloors(householdSS),
-    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
+  // Both stay memoized so the conversion sim / optimizer (which take them as deps)
+  // re-run only when an input actually changes the floors (BUG-22).
+  const convFloors = useMemo(() => buildIncomeFloors({
+    conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
+    pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+  }), [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
+  const convMAGIFloors = useMemo(() => buildIncomeFloors({
+    conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssAmount: householdSS,
+    pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+  }), [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
-  const retIncomeFloor   = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
-  // Bracket tops read by rate from the ACTIVE filing status's brackets — never
-  // hardcoded, so they stay correct for every status (single/mfj/mfs/hoh) and
-  // self-update when the IRS brackets in irs-2026.js change.
-  const bracketTopForRate = (pct) => retTaxData.brackets.find(b => b.rate === pct / 100)?.max;
-  const bracketTops      = {
-    12: bracketTopForRate(12),
-    22: bracketTopForRate(22),
-    24: bracketTopForRate(24),
-  };
-  const bracketTarget = bracketTops[conversionBracketTarget] ?? bracketTops[22];
-  // Per-year bracket-fill targets: each year converts up to the bracket top, minus
-  // THAT year's income floor (convFloors gates SS/pension on claiming/start age).
-  // Early-retirement years before SS/pension start have a lower floor → more room.
-  const bracketFillConversions = useMemo(() => convFloors.map(floor =>
-    Math.max(0, Math.round(bracketTarget + retTaxData.deduction - floor))),
-    [convFloors, bracketTarget, retTaxData]);
-  // Steady-state scalar (all sources active) — the lowest target, used as the
-  // headline figure and as the fallback when there are no conversion-window years.
-  const bracketFillConversion = Math.max(0, Math.round(
-    bracketTarget + retTaxData.deduction - retIncomeFloor
-  ));
+  const retIncomeFloor = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
+
+  // Bracket-fill targets. Memoized for the stable bracketFillConversions array that
+  // conversionSim / optimizer depend on (BUG-22).
+  const { bracketFillConversions, bracketFillConversion, convPeakTarget, convSteadyTarget, targetsVary } =
+    useMemo(() => calcBracketFillTargets({ retTaxData, conversionBracketTarget, convFloors, retIncomeFloor }),
+      [retTaxData, conversionBracketTarget, convFloors, retIncomeFloor]);
   const annualConversion = conversionMode === "bracket" ? bracketFillConversion : annualConversionAmt;
-  // Display range for bracket mode: peak (earliest, lowest-income year) → steady.
-  const convPeakTarget  = bracketFillConversions.length ? Math.max(...bracketFillConversions) : bracketFillConversion;
-  const convSteadyTarget = bracketFillConversions.length ? Math.min(...bracketFillConversions) : bracketFillConversion;
-  const convTargetVaries = conversionMode === "bracket" && convPeakTarget !== convSteadyTarget;
+  const convTargetVaries = conversionMode === "bracket" && targetsVary;
 
   const conversionSim = useMemo(() => {
     const retRow = simData.find(d => d.age === safeRetAge)
