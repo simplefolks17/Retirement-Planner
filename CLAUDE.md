@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (187 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (230 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 
@@ -111,10 +111,44 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   Headline `yearsSustained` 88.60 → 61.99 at default (still sustainable). Logic
   extracted from App.jsx into `retirement-drawdown.js` + `flow-down.js`; new
   conservation / anti-plug / reconciliation tests (169 → 187) guard the bug class.
+- Calculation-extraction pass (Jun 5 2026) — value-preserving, golden master unchanged:
+  continuing PR #7's direction (pull model math out of App.jsx so it is testable and
+  reusable in various places). Extracted the retirement-phase **tax engine** into
+  `src/model/retirement-tax.js`: `calcRMDIncomeFloor`; `calcRMDTax` (now ONE shared
+  definition — App's display path and the conversion optimizer no longer keep duplicate
+  copies of the same reduce, which was the shape of BUG-25 finding 4); `calcRMDTaxSchedule`
+  (`rmdDataWithTax` / `rmdTaxBite` / `effectiveRMDTaxRate`); and `calcWithdrawalOrderTax`
+  (year-1 tax-optimal taxable→trad→Roth vs worst-case all-pre-tax — the worst-case GROSS-
+  balance cap is the BUG-26 basis fix, now locked by a test). 15 new invariant/anti-plug
+  tests (187 → 202): source-conservation for the withdrawal order, the
+  schedule-vs-`calcRMDTax` anti-divergence guard, and a value-lock reproducing the
+  golden-master default `rmdTaxBite` ($683,974). App.jsx imports it directly (no behavior
+  change). Then extracted **conversion planning** into `src/model/conversion-planning.js`:
+  `buildIncomeFloors` (per-year conversion-window income floor — the per-year SS/pension gate
+  that is the BUG-25 #3 off-by-one) and `calcBracketFillTargets` (per-year + steady bracket-fill
+  amounts and the peak/steady range); App keeps both behind `useMemo` for referential stability
+  (BUG-22). 11 more invariant tests (202 → 213): the first-SS-year off-by-one regression, a
+  "fills exactly to the bracket top" invariant, and a value-lock reproducing the golden-master
+  default conversion ($82,765 steady / $121,800 peak). Then extracted the **working-year tax
+  basis** into `src/model/tax-basis.js` (`calcTaxBasis` → agi, fed/state/FICA, take-home, Roth
+  phase-out, grossAfterTax) — computed as ONE early call, which structurally removes the
+  temporal-dead-zone split that caused the BUG-20 blank-page crash. 7 more tests (213 → 220):
+  golden-master value-lock (agi / fedTax / fedMarginal / grossAfterTax), MFJ combined-income
+  (rules 3 & 9), per-earner FICA wage-base cap, and the BUG-12 filing-status-aware Roth
+  phase-out. Then extracted the **SS-income chain** into `src/model/retirement-income.js`:
+  `calcRetirementIncome` (SS + pension composition → householdSS, the ssAtRet / effectivePension
+  "active-at-retirement" gates [BUG-10 / rule 5b], ssTaxableRet, and the delay-to-70 figures) and
+  `calcSSBreakEven`. 10 more tests (220 → 230): SS value-lock (ssAIME / ssPIA / ssAnnualBenefit /
+  householdSS), the ssAtRet deferred-SS gate, includeSS / ssOverride / pension gates, and the SS
+  break-even. **Writing those tests surfaced BUG-32** — the SS break-even age is wrong for delayed
+  claims (collapses to ≈ the claim age because the FRA baseline loses its 67→claim head start).
+  Filed Open in `docs/BUGS.md` and locked by a test; not fixed here (it would move a displayed
+  value — value-preserving extraction only). App.jsx's calculation body is now almost entirely
+  delegated to the model layer (only small display-derived glue remains inline).
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (187 tests)
+- `npm test` — run model + formatter + render-smoke tests (230 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)

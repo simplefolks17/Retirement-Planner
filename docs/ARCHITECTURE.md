@@ -8,14 +8,21 @@ src/
     irs-2026.js           All 2026 IRS constants + ASSUMPTIONS object           [CLIENT]
   model/                  Pure functions — no React. Used client-side AND server-side.
     taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, getTaxRate  [CLIENT]
+    tax-basis.js          calcTaxBasis (working-year agi / fed+state+FICA / Roth phase-out / grossAfterTax)  [CLIENT]
     social-security.js    calcAIME, calcPIA, calcBenefit, calcSpousal           [CLIENT]
+    retirement-income.js  calcRetirementIncome (SS + pension composition), calcSSBreakEven  [CLIENT]
     simulation.js         runSimulation (accumulation loop)                     [CLIENT]
-    drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained  [CLIENT]
+    drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears  [CLIENT]
+    retirement-drawdown.js buildRetirementDrawdown (ONE shared retirement-phase walk)  [CLIENT]
     employer-match.js     calcEmployerMatch (flat + formula modes)              [CLIENT]
     rmd.js                calcRMDProjection, calcRMDPostConversion              [CLIENT]
+    retirement-tax.js     calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax  [CLIENT]
     budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation  [CLIENT]
+    healthcare.js         acaCliffThreshold, calcHealthcareExposure (ACA cliff + IRMAA)  [CLIENT]
     optimization.js       calcOptimizedScenario                                 [SERVER]
-    roth-conversion.js    calcConversionSim (dual tax-source scenarios)         [SERVER]
+    conversion-planning.js buildIncomeFloors, calcBracketFillTargets (conversion-window floors + bracket fill)  [CLIENT]
+    roth-conversion.js    calcConversionSim, findOptimalConversion              [SERVER]
+    flow-down.js          calcFlowDown (waterfall decomposition from the shared walk)  [SERVER]
     action-cards.js       generatePhaseActions, generatePhaseSteps              [SERVER]
     __tests__/            Vitest suites — one per model file + golden-master.test.js
   components/             React UI — all client-side
@@ -110,7 +117,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **134 tests across 12 files**, all passing.
+`npm test`. Current count: **230 tests across 20 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the

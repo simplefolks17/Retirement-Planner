@@ -6,27 +6,27 @@ import {
 } from "recharts";
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct } from "./formatters.js";
-import { calcTax, marginalRate, ltcgRate } from "./model/taxes.js";
+import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
-import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
+import { calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcDrawdownYears } from "./model/drawdown.js";
 import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
-import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./model/social-security.js";
+import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
 import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
+import { calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
+import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
 import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
 import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import {
-  TAX_DATA_2026, ROTH_PHASEOUT_2026,
+  TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
   LIMIT_415C_2026, LIMIT_415C_CATCHUP_2026, CATCHUP_AGE,
-  FICA_RATE, FICA_WAGE_BASE,
   RMD_START_AGE,
   SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE,
-  SS_FACTORS,
   STATE_TAX, RETIREMENT_STATE_TAX,
   ASSUMPTIONS,
   MEDICARE_AGE,
@@ -124,21 +124,21 @@ export default function App() {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
     });
 
-  // Tax basis must be computed BEFORE simData / currentSnapshot, which normalize
-  // "Trad 401k" to its after-tax value using fedMarginal. (Declared here to avoid
-  // a temporal-dead-zone reference — these consts are read by the simData memo below.)
-  const combinedIncome       = currentIncome + spouseIncome;
-  // For MFJ filers, both incomes are reported on the same return.
-  // Primary pre-tax deductions (401k, HSA) reduce primary income first;
-  // spouse deductions aren't tracked (no sliders), so spouse income enters
-  // as gross. For all other filing statuses, spouse income is separate.
-  const totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc;
-  const safeDeduc        = Math.min(totalPreTaxDeduc, currentIncome);
-  const agi              = filingStatus === "mfj"
-    ? currentIncome - safeDeduc + spouseIncome
-    : currentIncome - safeDeduc;
-  const { tax: fedTax, effectiveRate: fedEffRate } = calcTax(agi, filingStatus);
-  const fedMarginal      = marginalRate(agi, filingStatus);
+  // Working-year tax basis (agi, fed/state/FICA, Roth phase-out, grossAfterTax),
+  // extracted to src/model/tax-basis.js. Computed here as ONE call — before
+  // simData / currentSnapshot, which read fedMarginal — so there is no
+  // temporal-dead-zone split for a consumer to fall into (that split was the
+  // BUG-20 blank-page crash). MFJ income handling lives in the model (rules 3 & 9).
+  const {
+    combinedIncome, totalPreTaxDeduc, safeDeduc, agi, fedTax, fedEffRate, fedMarginal,
+    stateRateDefault, stateRate, stateTax, noStateTax, fica,
+    householdIncome, takeHome, combinedEffRate,
+    rothMAGI, rothPhaseout, rothPhaseoutWarning, rothFullyPhased, grossAfterTax,
+  } = calcTaxBasis({
+    currentIncome, spouseIncome, filingStatus,
+    contrib401k, contribHSA, otherPreTaxDeduc,
+    selectedState, stateRateOverride,
+  });
 
   const simData = useMemo(() => {
     const raw = runSimulation({
@@ -182,23 +182,6 @@ export default function App() {
     ? (simData[phase2End - 1] ?? currentSnapshot)
     : currentSnapshot;
 
-  const stateRateDefault = STATE_TAX[selectedState]?.rate ?? 0;
-  const stateRate        = stateRateOverride !== null ? stateRateOverride : stateRateDefault;
-  const stateTax         = agi * stateRate;
-  const fica             = (Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)) * FICA_RATE;
-  // takeHome: household total when spouse income is present, primary-only otherwise.
-  const householdIncome  = filingStatus === "mfj" ? combinedIncome : currentIncome;
-  const takeHome         = householdIncome - fedTax - stateTax - fica - safeDeduc;
-  const combinedEffRate  = (fedTax + stateTax + fica) / (householdIncome || 1);
-  const noStateTax       = stateRate === 0;
-  // Roth phase-out is tested against combined income only for MFJ filers; every
-  // other status uses the primary earner's income alone (CLAUDE.md rules 3 & 9).
-  const rothMAGI             = filingStatus === "mfj" ? combinedIncome : currentIncome;
-  const rothPhaseout         = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
-  const rothPhaseoutWarning  = rothMAGI >= rothPhaseout.start;
-  const rothFullyPhased      = rothMAGI >= rothPhaseout.end;
-
-  const grossAfterTax = calcGrossAfterTax(householdIncome, fedTax, stateTax, fica);
   const { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus } =
     calcSavingsCapacity({
       grossAfterTax, contrib401k, contribRoth, contribTaxable, contribHSA, livingExpenses,
@@ -247,26 +230,19 @@ export default function App() {
   const effectiveExpenses = annualExpenses ?? Math.round(totalAtRet * ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE);
   const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
 
-  const ssWorkYears = Math.max(1, safeRetAge - currentAge);
-  const ssAIME = calcAIME(currentIncome, incomeGrowth, ssWorkYears);
-  const ssPIA  = calcPIA(ssAIME);
-  const ssMonthlyBenefit = calcBenefit(ssPIA, ssClaimingAge);
-  const ssAnnualBenefit  = ssMonthlyBenefit * ASSUMPTIONS.MONTHS_PER_YEAR;
-  const ss67Monthly      = calcBenefit(ssPIA, SS_FRA);
-  const effectiveSS = includeSS
-    ? (ssOverride !== null ? ssOverride : ssAnnualBenefit)
-    : 0;
-
-  const spouseSsBenefit = calcSpousal(ssPIA, spouseSsEstimate);
-  const householdSS = includeSS ? effectiveSS + spouseSsBenefit : 0;
-  // SS only reduces the headline portfolio need if it's already active at retirement.
-  // Mirrors effectivePension which uses the same gate (pensionStartAge <= safeRetAge).
-  const ssAtRet = includeSS && ssClaimingAge <= safeRetAge ? householdSS : 0;
-
-  const effectivePension = pensionStartAge <= safeRetAge && pensionMonthly > 0
-    ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR
-    : 0;
-  const ssTaxableRet = householdSS * ASSUMPTIONS.SS_TAXABLE_PCT;
+  // Household retirement income (SS + pension), extracted to
+  // src/model/retirement-income.js. ssAtRet / effectivePension carry the
+  // "active at retirement" gate (BUG-10 / rule 5b); householdSS / ssTaxableRet
+  // are the full amounts that the per-year drawdown loops gate themselves.
+  const {
+    ssWorkYears, ssAIME, ssPIA, ssMonthlyBenefit, ssAnnualBenefit, ss67Monthly,
+    effectiveSS, spouseSsBenefit, householdSS, ssAtRet, ssTaxableRet,
+    ss70Annual, household70SS, ss70DrawReduction, effectivePension,
+  } = calcRetirementIncome({
+    currentIncome, incomeGrowth, safeRetAge, currentAge,
+    ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
+    pensionMonthly, pensionStartAge,
+  });
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
@@ -299,19 +275,7 @@ export default function App() {
     return cards;
   }, [simData, currentAge, safeRetAge, retirementTarget]);
 
-  const ssBreakEven = ssClaimingAge === SS_FRA ? null : (() => {
-    let cumClaim = 0, cum67 = 0;
-    for (let m = 1; m <= 50 * ASSUMPTIONS.MONTHS_PER_YEAR; m++) {
-      const ageNow = ssClaimingAge + m / ASSUMPTIONS.MONTHS_PER_YEAR;
-      if (ageNow >= ssClaimingAge) cumClaim += ssMonthlyBenefit;
-      if (ageNow >= SS_FRA)        cum67    += ss67Monthly;
-      if (ssClaimingAge < SS_FRA && cum67 >= cumClaim && ageNow > SS_FRA)
-        return Math.floor(ageNow);
-      if (ssClaimingAge > SS_FRA && cumClaim >= cum67 && ageNow > ssClaimingAge)
-        return Math.floor(ageNow);
-    }
-    return null;
-  })();
+  const ssBreakEven = calcSSBreakEven({ ssClaimingAge, ssMonthlyBenefit, ss67Monthly });
 
   const useTable2 = isMarried && spouseIsSoleBenef && (currentAge - spouseCurrentAge > 10);
   const activeTableLabel = useTable2 ? "Table II (Joint Life)" : "Table III (Uniform Lifetime)";
@@ -330,79 +294,48 @@ export default function App() {
   const firstRMD  = rmdData[0];
   const totalRMDs = rmdData.reduce((s, d) => s + d.rmd, 0);
 
-  // Bracket-accurate RMD tax: stack each year's RMD on top of the SS+pension floor.
-  // SS and pension are assumed active at RMD start (age 73) if claiming/start age ≤ 73.
-  const rmdIncomeSS      = includeSS && ssClaimingAge <= RMD_START_AGE ? ssTaxableRet : 0;
-  const rmdIncomePension = pensionMonthly > 0 && pensionStartAge <= RMD_START_AGE ? effectivePension : 0;
-  const rmdIncomeFloor   = rmdIncomeSS + rmdIncomePension;
-  const { tax: rmdBaseFedTax } = calcTax(rmdIncomeFloor, filingStatus);
-  const rmdDataWithTax = rmdData.map(({ age, rmd, bal, divisor }) => ({
-    age, rmd, bal, divisor,
-    tax: Math.round(
-      (calcTax(rmdIncomeFloor + rmd, filingStatus).tax - rmdBaseFedTax) + rmd * retStateRate
-    ),
-  }));
-  const rmdTaxBite = rmdDataWithTax.reduce((s, d) => s + d.tax, 0);
-  // Effective rate across all RMD years — used for display captions.
-  const effectiveRMDTaxRate = totalRMDs > 0
-    ? rmdTaxBite / totalRMDs
-    : Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, fedMarginal + retStateRate);
+  // Bracket-accurate RMD tax: each year's RMD stacked on the SS+pension floor.
+  // SS/pension count in the floor when claiming/start age ≤ RMD start (73).
+  // Extracted to src/model/retirement-tax.js so it is unit-tested and shared
+  // with the optimizer (one definition — no duplicated reduce; see BUG-25 #4).
+  const rmdIncomeFloor = calcRMDIncomeFloor({
+    includeSS, ssClaimingAge, ssTaxableRet,
+    pensionMonthly, pensionStartAge, effectivePension, rmdStartAge: RMD_START_AGE,
+  });
+  const { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate } = calcRMDTaxSchedule({
+    rmdData, rmdIncomeFloor, filingStatus, retStateRate,
+    fedMarginal, maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
+  });
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
-  // Per-year income floors for the conversion window: SS and pension only count
-  // in years when they've actually started (ssClaimingAge / pensionStartAge).
-  // Per-year income floor for the conversion window. SS/pension only count in
-  // years they've actually started (ssClaimingAge / pensionStartAge). The only
-  // difference between the tax floor and the MAGI floor is the SS amount used:
-  //   convFloors      → ssTaxableRet (85% taxable fraction, for marginal-rate math)
+  // Per-year conversion-window income floors + bracket-fill targets, extracted to
+  // src/model/conversion-planning.js (unit-tested; the per-year SS/pension gate is
+  // the BUG-25 #3 off-by-one). Each floor counts SS/pension only in years they've
+  // started; the only difference between the two arrays is the SS amount used:
+  //   convFloors      → ssTaxableRet (85% taxable, for marginal-rate math)
   //   convMAGIFloors  → householdSS  (100% gross SS, for ACA/IRMAA MAGI)
-  // Memoized so the conversion sim and optimizer (which take these as deps) don't
-  // re-run on every render — only when an input that actually changes the floors does.
-  const buildIncomeFloors = (ssAmount) =>
-    Array.from({ length: conversionWindowYrs }, (_, i) => {
-      // age = safeRetAge + i + 1: year i is displayed at safeRetAge+i+1 (calcConversionSim
-      // returns yr+1 offsets, App adds safeRetAge). The floor must match that displayed age
-      // so the SS/pension gate fires in the right conversion year.
-      const age         = safeRetAge + i + 1;
-      const yearSS      = includeSS && age >= ssClaimingAge ? ssAmount : 0;
-      const yearPension = pensionMonthly > 0 && age >= pensionStartAge
-        ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-      return yearSS + yearPension;
-    });
-  const convFloors = useMemo(() => buildIncomeFloors(ssTaxableRet),
-    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
-  const convMAGIFloors = useMemo(() => buildIncomeFloors(householdSS),
-    [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
+  // Both stay memoized so the conversion sim / optimizer (which take them as deps)
+  // re-run only when an input actually changes the floors (BUG-22).
+  const convFloors = useMemo(() => buildIncomeFloors({
+    conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
+    pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+  }), [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
+  const convMAGIFloors = useMemo(() => buildIncomeFloors({
+    conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssAmount: householdSS,
+    pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+  }), [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
-  const retIncomeFloor   = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
-  // Bracket tops read by rate from the ACTIVE filing status's brackets — never
-  // hardcoded, so they stay correct for every status (single/mfj/mfs/hoh) and
-  // self-update when the IRS brackets in irs-2026.js change.
-  const bracketTopForRate = (pct) => retTaxData.brackets.find(b => b.rate === pct / 100)?.max;
-  const bracketTops      = {
-    12: bracketTopForRate(12),
-    22: bracketTopForRate(22),
-    24: bracketTopForRate(24),
-  };
-  const bracketTarget = bracketTops[conversionBracketTarget] ?? bracketTops[22];
-  // Per-year bracket-fill targets: each year converts up to the bracket top, minus
-  // THAT year's income floor (convFloors gates SS/pension on claiming/start age).
-  // Early-retirement years before SS/pension start have a lower floor → more room.
-  const bracketFillConversions = useMemo(() => convFloors.map(floor =>
-    Math.max(0, Math.round(bracketTarget + retTaxData.deduction - floor))),
-    [convFloors, bracketTarget, retTaxData]);
-  // Steady-state scalar (all sources active) — the lowest target, used as the
-  // headline figure and as the fallback when there are no conversion-window years.
-  const bracketFillConversion = Math.max(0, Math.round(
-    bracketTarget + retTaxData.deduction - retIncomeFloor
-  ));
+  const retIncomeFloor = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
+
+  // Bracket-fill targets. Memoized for the stable bracketFillConversions array that
+  // conversionSim / optimizer depend on (BUG-22).
+  const { bracketFillConversions, bracketFillConversion, convPeakTarget, convSteadyTarget, targetsVary } =
+    useMemo(() => calcBracketFillTargets({ retTaxData, conversionBracketTarget, convFloors, retIncomeFloor }),
+      [retTaxData, conversionBracketTarget, convFloors, retIncomeFloor]);
   const annualConversion = conversionMode === "bracket" ? bracketFillConversion : annualConversionAmt;
-  // Display range for bracket mode: peak (earliest, lowest-income year) → steady.
-  const convPeakTarget  = bracketFillConversions.length ? Math.max(...bracketFillConversions) : bracketFillConversion;
-  const convSteadyTarget = bracketFillConversions.length ? Math.min(...bracketFillConversions) : bracketFillConversion;
-  const convTargetVaries = conversionMode === "bracket" && convPeakTarget !== convSteadyTarget;
+  const convTargetVaries = conversionMode === "bracket" && targetsVary;
 
   const conversionSim = useMemo(() => {
     const retRow = simData.find(d => d.age === safeRetAge)
@@ -426,14 +359,9 @@ export default function App() {
     safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
   }), [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
 
-  // Shared RMD tax reducer — used by both display path (rmdTaxBitePost) and optimizer
-  // (rmdTaxPost) so the formula stays in sync when the tax model changes.
-  const calcRMDTax = (rows) => rows.reduce((sum, { rmd }) => {
-    const { tax } = calcTax(rmdIncomeFloor + rmd, filingStatus);
-    return sum + Math.round((tax - rmdBaseFedTax) + rmd * retStateRate);
-  }, 0);
-
-  const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion);
+  // calcRMDTax (src/model/retirement-tax.js) is the single shared definition,
+  // used by both the display path here and the optimizer below.
+  const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion, { rmdIncomeFloor, filingStatus, retStateRate });
   const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
   const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
 
@@ -547,7 +475,7 @@ export default function App() {
         conversionWindowYrs, rmdData, tradBal73: sim.tradBal73,
         safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
       });
-      const rmdTaxPost     = calcRMDTax(rmdPost);
+      const rmdTaxPost     = calcRMDTax(rmdPost, { rmdIncomeFloor, filingStatus, retStateRate });
       const rmdTaxSavedOpt = Math.max(0, rmdTaxBite - rmdTaxPost);
 
       // Apply safeRetAge offset so calcHealthcareExposure receives the same ages
@@ -570,7 +498,7 @@ export default function App() {
     };
 
     return findOptimalConversion({ getNetBenefit });
-  }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, rmdBaseFedTax, retStateRate,
+  }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, retStateRate,
       retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
       addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
       hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot,
@@ -592,21 +520,16 @@ export default function App() {
   // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
   const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
-  const yr1FromTaxable = Math.min(netPortfolioNeed, retTaxable);
-  const yr1FromTrad    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable), retTrad);
-  const yr1FromRoth    = Math.min(Math.max(0, netPortfolioNeed - yr1FromTaxable - yr1FromTrad), retRoth);
-  // Marginal rate on trad withdrawals: stacked on top of SS+pension income floor.
-  const yr1TradRate    = Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, marginalRate(rmdIncomeFloor + yr1FromTrad, filingStatus) + retStateRate);
-  const yr1TaxOptimal  = Math.round(
-    yr1FromTaxable * ltcgRate(0, filingStatus) +
-    yr1FromTrad    * yr1TradRate              +
-    yr1FromRoth    * 0
-  );
-  // Worst case: draw all spending from pre-tax trad first; cap at actual gross balance.
-  const worstCaseDraw   = Math.min(netPortfolioNeed, tradGrossAtRet);
-  const yr1TradRateWC   = Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, marginalRate(rmdIncomeFloor + worstCaseDraw, filingStatus) + retStateRate);
-  const yr1TaxWorstCase = Math.round(worstCaseDraw * yr1TradRateWC);
-  const yr1TaxSavings   = Math.max(0, yr1TaxWorstCase - yr1TaxOptimal);
+  // Year-1 withdrawal-order tax (tax-optimal taxable→trad→Roth vs worst-case
+  // all-pre-tax) — extracted to src/model/retirement-tax.js. Drives the
+  // withdrawal-strategy card. Worst-case draw caps at the GROSS trad balance
+  // (tradGrossAtRet), the BUG-26 basis fix, preserved in the model.
+  const { yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate, yr1TaxOptimal, yr1TaxSavings } =
+    calcWithdrawalOrderTax({
+      netPortfolioNeed, retTaxable, retTrad, retRoth, tradGrossAtRet,
+      rmdIncomeFloor, filingStatus, retStateRate,
+      maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
+    });
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
 
@@ -620,9 +543,6 @@ export default function App() {
                          ?? retBrackets[retBrackets.length - 1];
   const projRetBracketPct = Math.round(projRetBracket.rate * 100);
 
-  const ss70Annual       = Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * ASSUMPTIONS.MONTHS_PER_YEAR;
-  const household70SS    = ss70Annual + spouseSsBenefit;
-  const ss70DrawReduction = Math.max(0, household70SS - householdSS);
   // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
   // SS plan vs. delaying SS to 70, both walked year-by-year from the same starting
   // portfolio. The per-year walk is essential — between retirement and 70 the
