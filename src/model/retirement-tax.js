@@ -15,7 +15,7 @@
 // All functions are faithful ports of the prior App.jsx expressions — same
 // formulas, same rounding — so the golden master is unchanged (value-preserving).
 
-import { calcTax, marginalRate, ltcgRate } from "./taxes.js";
+import { calcTax, marginalRate, ltcgRate, stackedIncomeTax } from "./taxes.js";
 
 // The income floor that retirement RMDs / withdrawals stack on top of: the
 // taxable fraction of Social Security plus pension, each counted only if it has
@@ -31,22 +31,19 @@ export function calcRMDIncomeFloor({
 
 // Bracket-accurate tax on ONE year's RMD: the federal marginal cost of stacking
 // `rmd` on top of `rmdIncomeFloor`, plus the flat state rate on the full RMD.
-// `baseFedTax` = calcTax(rmdIncomeFloor) is passed in so callers that tax many
-// rows compute the base only once.
-function rmdRowTax(rmd, rmdIncomeFloor, baseFedTax, filingStatus, retStateRate) {
-  const { tax } = calcTax(rmdIncomeFloor + rmd, filingStatus);
-  return Math.round((tax - baseFedTax) + rmd * retStateRate);
+// Delegates to stackedIncomeTax (shared with Roth-conversion tax, BUG-29).
+function rmdRowTax(rmd, rmdIncomeFloor, filingStatus, retStateRate) {
+  return stackedIncomeTax(rmd, rmdIncomeFloor, filingStatus, retStateRate);
 }
 
 // Lifetime RMD tax for a set of RMD rows (e.g. the post-conversion schedule).
-// Self-contained: recomputes the base federal tax from the floor so it can be
+// Self-contained: each row calls stackedIncomeTax independently so it can be
 // called anywhere without threading `baseFedTax` through. This is the single
 // definition that App.jsx's display path AND the conversion optimizer now share
 // (previously two copies of this reduce — BUG-25 finding 4).
 export function calcRMDTax(rows, { rmdIncomeFloor, filingStatus, retStateRate }) {
-  const { tax: baseFedTax } = calcTax(rmdIncomeFloor, filingStatus);
   return rows.reduce(
-    (sum, { rmd }) => sum + rmdRowTax(rmd, rmdIncomeFloor, baseFedTax, filingStatus, retStateRate),
+    (sum, { rmd }) => sum + rmdRowTax(rmd, rmdIncomeFloor, filingStatus, retStateRate),
     0,
   );
 }
@@ -61,7 +58,7 @@ export function calcRMDTaxSchedule({
   const { tax: rmdBaseFedTax } = calcTax(rmdIncomeFloor, filingStatus);
   const rmdDataWithTax = rmdData.map(({ age, rmd, bal, divisor }) => ({
     age, rmd, bal, divisor,
-    tax: rmdRowTax(rmd, rmdIncomeFloor, rmdBaseFedTax, filingStatus, retStateRate),
+    tax: rmdRowTax(rmd, rmdIncomeFloor, filingStatus, retStateRate),
   }));
   const rmdTaxBite = rmdDataWithTax.reduce((s, d) => s + d.tax, 0);
   const totalRMDs  = rmdData.reduce((s, d) => s + d.rmd, 0);

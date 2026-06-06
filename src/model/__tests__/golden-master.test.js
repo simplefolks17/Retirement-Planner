@@ -82,7 +82,7 @@ const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 const retIncomeFloor = ssTaxableRet;
 const retTaxData = TAX_DATA_2026[filingStatus];
 const annualConversion = Math.max(0, Math.round(retTaxData.brackets[2].max + retTaxData.deduction - ssTaxableRet));
-const conv = calcConversionSim({ conversionWindowYrs, annualConversion, returnRate, retIncomeFloor, filingStatus, conversionTaxSource: "converted", tradGrossAtRetirement: at.tradGross, rothBalAtRet: at["Roth IRA"], taxableBalAtRet: at["Taxable"] });
+const conv = calcConversionSim({ conversionWindowYrs, annualConversion, returnRate, retIncomeFloor, filingStatus, conversionTaxSource: "converted", tradGrossAtRetirement: at.tradGross, rothBalAtRet: at["Roth IRA"], taxableBalAtRet: at["Taxable"], retStateRate });
 const rmdPost = calcRMDPostConversion({ conversionWindowYrs, rmdData: rmd, tradBal73: conv.tradBal73, safeLifeExp, returnRate, useTable2: false, spouseCurrentAge: 18, currentAge });
 const rmdTaxBitePost = rmdPost.reduce((sum, { rmd: r }) => {
   const { tax } = calcTax(rmdIncomeFloor + r, filingStatus);
@@ -122,19 +122,18 @@ const E = {
   totalAtRet:           3_484_197,
   netPortfolioNeed:     58_602,
   withdrawalRate:       1.6819370431694878,
-  // updated 2026-06-05 (BUG-31 Path A): was 88.60 from the closed-form
-  // calcYearsSustained, which ignored the RMD/conversion tax drain and netted SS
-  // from retirement regardless of claiming age. The tax-honest shared walk now
-  // charges $683,974 RMD tax + $139,048 conversion tax and gates SS at 67 →
-  // ~62 yrs (still far beyond life expectancy, so the plan stays sustainable).
-  yearsSustained:       61.99935122020162,
+  // updated 2026-06-06 (BUG-29): conversion tax now bracket-accurate (was flat top-marginal);
+  // conversion cost drops so net benefit rises and the tax-honest walk pays less conversion tax →
+  // longevity ticks up. (Prior: 61.99935122020162 from BUG-31 Path A.)
+  yearsSustained:       62.92429188816821,
   firstRMD:             118_198,
   totalRMDs:            3_106_334,
   rmdTaxBite:           683_974,   // bracket-accurate (was 559_140 at flat 18%)
   conversionWindowYrs:  7,
-  netConversionBenefit: 47_047,    // updated 2026-06-05 (BUG-27): post-conversion RMDs no
-                                   // longer double-count a year of growth before the first
-                                   // RMD; old 17_345 understated the conversion benefit.
+  // updated 2026-06-06 (BUG-29): conversion tax now bracket-accurate (was flat top-marginal);
+  // bracket-accurate cost is lower than flat marginal, so net benefit rises.
+  // (Prior: 47_047 from BUG-27.)
+  netConversionBenefit: 77_861,
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────

@@ -36,6 +36,16 @@ export function ltcgRate(ordinaryIncome, filingStatus = "single") {
   return brackets[brackets.length - 1].rate;
 }
 
+// Bracket-accurate tax on `amount` of ordinary income stacked on top of `floor`
+// of other ordinary income, plus a flat state rate on the full amount. Shared by
+// RMD tax and Roth-conversion tax so the two sides of netConversionBenefit use ONE
+// tax model (BUG-29).
+export function stackedIncomeTax(amount, floor, filingStatus, stateRate = 0) {
+  const base    = calcTax(floor, filingStatus).tax;
+  const stacked = calcTax(floor + amount, filingStatus).tax;
+  return Math.round((stacked - base) + amount * stateRate);
+}
+
 // Returns annual state tax amount.
 // tableKey: "working" (uses STATE_TAX) or "retirement" (uses RETIREMENT_STATE_TAX).
 // rateOverride: if non-null, bypasses the table and uses this rate directly.
