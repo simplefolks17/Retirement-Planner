@@ -74,15 +74,13 @@ describe("calcSSBreakEven", () => {
     expect(calcSSBreakEven({ ssClaimingAge: SS_FRA, ssMonthlyBenefit: m67, ss67Monthly: m67 })).toBeNull();
   });
 
-  // KNOWN LIMITATION (BUG-32): for a DELAYED claim the loop starts counting at the
-  // claim age, so the FRA baseline loses the 67→claim months it was already
-  // collecting and the break-even collapses to ≈ the claim age (should be early
-  // 80s). Locked here to preserve current behavior — this extraction is a faithful
-  // port, not a fix. See docs/BUGS.md BUG-32.
-  it("delayed claim reproduces the current (under-reported) metric — BUG-32", () => {
+  // BUG-32 is fixed: the timeline now starts at min(claim, FRA) so the FRA
+  // baseline gets its 67→claim head start even for delayed claims.
+  it("delayed claim reproduces the corrected break-even — BUG-32 fixed", () => {
     const { ssMonthlyBenefit: m70 } = calcRetirementIncome({ ...defaults, ssClaimingAge: 70 });
     const age = calcSSBreakEven({ ssClaimingAge: 70, ssMonthlyBenefit: m70, ss67Monthly: m67 });
-    expect(age).toBe(70);
+    expect(age).toBe(82);
+    expect(age).toBeGreaterThan(70);
   });
 
   it("returns a sensible integer crossing age for an early claim", () => {
