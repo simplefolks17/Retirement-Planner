@@ -145,6 +145,12 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   Filed Open in `docs/BUGS.md` and locked by a test; not fixed here (it would move a displayed
   value — value-preserving extraction only). App.jsx's calculation body is now almost entirely
   delegated to the model layer (only small display-derived glue remains inline).
+- Bug close-out — Batch 1 (Jun 6 2026): **BUG-32 fixed.** `calcSSBreakEven` now walks the
+  timeline from `min(ssClaimingAge, SS_FRA)` so a delayed claimer's FRA baseline gets its
+  67→claim head start; delayed break-even at default-derived inputs lands at age 82 (was ≈ the
+  claim age). Symmetric — the early-claim path is provably unchanged. Display-only, golden master
+  unaffected (default claims at FRA → `ssBreakEven` is `null`); test count unchanged (230, one
+  locked test updated `toBe(70)` → `toBe(82)`).
 
 ## Commands
 - `npm run dev` — start dev server

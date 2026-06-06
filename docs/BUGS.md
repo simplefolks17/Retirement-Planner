@@ -9,26 +9,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
-### BUG-32 — SS break-even age wrong for delayed claims (collapses to ≈ the claim age)
-
-**Reported:** 2026-06-05  
-**Status:** Open — **verified**, surfaced while extracting `calcSSBreakEven` into a testable pure function. Filed Open, not fixed (the fix changes a displayed value; left as-is by the value-preserving extraction).  
-**File:** `src/model/retirement-income.js` (`calcSSBreakEven`), rendered at `src/App.jsx` ~line 1687 ("Age {ssBreakEven}").
-
-**Symptom:**  
-For a user who claims Social Security **after** Full Retirement Age (e.g. claim at 68–70), the displayed "break-even age" collapses to ≈ the claiming age (claim at 70 → shows ~70). It should land in the early 80s — the age at which the larger delayed monthly benefit overtakes the cumulative payments an FRA claimer had been collecting since 67.
-
-**Root cause:**  
-The month loop starts its counter at `ssClaimingAge` and accumulates the FRA baseline (`cum67`) only while `ageNow >= SS_FRA`. For a **delayed** claim, `ageNow` already starts above FRA, so `cum67` begins accumulating at the claim age too — the FRA claimer is never credited for the `SS_FRA → claimAge` months it had already collected. With no head start to overcome, the higher delayed monthly makes `cumClaim >= cum67` true on the first iteration, returning `floor(claimAge + 1/12) = claimAge`. The **early-claim** path is unaffected (there `cum67` legitimately starts later than `cumClaim`, so the head start is real) and returns a correct crossing (~78).
-
-**Impact:**  
-Display-only, and only for delayed claimers (claim age 68–70). Affects no portfolio/headline number — `ssBreakEven` feeds only the SS card's "break-even" line. Default state claims at FRA, so the metric is `null` (golden master unaffected).
-
-**Proposed fix (when approved):**  
-Seed `cum67` with the FRA benefit accrued from `SS_FRA` to `ssClaimingAge` before the loop (or walk a single timeline from `SS_FRA`, gating each side on its own start age). Add a test asserting the delayed break-even lands in the low 80s. The locked test in `retirement-income.test.js` (`...reproduces the current (under-reported) metric — BUG-32`) documents today's behavior and must be updated when the fix lands.
-
----
-
 ### BUG-29 — Roth conversion tax is not bracket-accurate (flat top-marginal rate, no state tax)
 
 **Reported:** 2026-06-05  
@@ -94,6 +74,26 @@ The fix requires a new `spouseClaimingAge` input + UI control, then applying `SS
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-32~~ — SS break-even age wrong for delayed claims (collapsed to ≈ the claim age)
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-06  
+**File:** `src/model/retirement-income.js` (`calcSSBreakEven`), test in `src/model/__tests__/retirement-income.test.js`.
+
+**Symptom:**  
+For a user claiming Social Security **after** Full Retirement Age (claim 68–70), the displayed "break-even age" collapsed to ≈ the claiming age (claim at 70 → showed ~70). It should land in the low 80s — where the larger delayed monthly benefit overtakes the cumulative payments an FRA claimer had been collecting since 67.
+
+**Root cause:**  
+The month loop started its timeline at `ssClaimingAge`. For a delayed claim, `ageNow` already starts above FRA, so the FRA baseline (`cum67`) began accumulating at the claim age too — the FRA claimer was never credited for the `SS_FRA → claimAge` months it had already collected. With no head start to overcome, the higher delayed monthly made `cumClaim >= cum67` true on the first iteration, returning ≈ the claim age.
+
+**Fix:**  
+Start the timeline at the **earlier** of the two ages: `const tStart = Math.min(ssClaimingAge, SS_FRA)` and walk `ageNow = tStart + m/MPY`. The two gated accumulators and both crossing checks are unchanged. This is symmetric:
+- **Early claim (62):** `tStart = 62` = the old start → behavior identical (the early-claim test passes unchanged, proving no regression).
+- **Delayed claim (70):** `tStart = 67` → `cum67` now gets its rightful 67→70 head start → the crossing lands at **age 82**.
+
+Display-only; affects no portfolio/headline number. Default state claims at FRA (`ssBreakEven` is `null`), so the golden master is unaffected and test count is unchanged (230 — one existing locked test updated from `toBe(70)` to `toBe(82)`).
 
 ---
 

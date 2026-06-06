@@ -60,9 +60,10 @@ export function calcRetirementIncome({
 export function calcSSBreakEven({ ssClaimingAge, ssMonthlyBenefit, ss67Monthly }) {
   if (ssClaimingAge === SS_FRA) return null;
   const MPY = ASSUMPTIONS.MONTHS_PER_YEAR;
+  const tStart = Math.min(ssClaimingAge, SS_FRA);
   let cumClaim = 0, cum67 = 0;
   for (let m = 1; m <= 50 * MPY; m++) {
-    const ageNow = ssClaimingAge + m / MPY;
+    const ageNow = tStart + m / MPY;
     if (ageNow >= ssClaimingAge) cumClaim += ssMonthlyBenefit;
     if (ageNow >= SS_FRA)        cum67    += ss67Monthly;
     if (ssClaimingAge < SS_FRA && cum67 >= cumClaim && ageNow > SS_FRA)
