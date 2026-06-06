@@ -278,3 +278,41 @@ describe("runSimulation — MFS Roth phase-out", () => {
     expect(rows[0].cRoth).toBe(0);
   });
 });
+
+describe("runSimulation — MFJ LTCG combined income", () => {
+  it("MFJ household with dual ~$50k earners experiences 15% LTCG drag that single filer escapes", () => {
+    // For LTCG bracket lookup, ordinaryIncome = income - deferral - HSA (no standard deduction subtracted).
+    // MFJ combined $100k (two $50k earners) crosses into 15% LTCG bracket (MFJ 0% threshold: $94,050).
+    // Single filer at $50k - deferral stays well under single 0% threshold ($47,025), staying at 0% LTCG.
+    // Over 10 years at 7% return, the difference in taxable growth is measurable.
+    const sharedArgs = {
+      totalYears: 10, currentAge: 30, incomeGrowth: 0,
+      returnRate: 7,
+      bal401k: 0, balRoth: 0, balTaxable: 50_000, balHSA: 0,
+      contrib401k: 3_000, contribRoth: 0, contribTaxable: 5_000, contribHSA: 0,
+      contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+      calcEmployerMatchFn: () => 0,
+    };
+
+    const mfj = runSimulation({
+      ...sharedArgs,
+      currentIncome: 50_000,
+      filingStatus: "mfj",
+      spouseIncome: 50_000,
+      spouseIncomeGrowth: 0,
+    });
+
+    const single = runSimulation({
+      ...sharedArgs,
+      currentIncome: 50_000,
+      filingStatus: "single",
+      spouseIncome: 0,
+      spouseIncomeGrowth: 0,
+    });
+
+    // MFJ case: ordinaryIncome = (50k + 50k) - 3k = 97k → exceeds 94,050 threshold → 15% LTCG rate.
+    // Single case: ordinaryIncome = 50k - 3k = 47k → under 47,025 threshold → 0% LTCG rate.
+    // Therefore, MFJ taxable account grows slower and should be strictly smaller at end.
+    expect(mfj[9]["Taxable"]).toBeLessThan(single[9]["Taxable"]);
+  });
+});

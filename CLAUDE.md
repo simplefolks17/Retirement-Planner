@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (233 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (241 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 
@@ -144,22 +144,34 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   claims (collapses to ≈ the claim age because the FRA baseline loses its 67→claim head start).
   Filed Open in `docs/BUGS.md` and locked by a test; not fixed here (it would move a displayed
   value — value-preserving extraction only). App.jsx's calculation body is now almost entirely
-  delegated to the model layer (only small display-derived glue remains inline).- Bug close-out — Batch 1 (Jun 6 2026): **BUG-32 fixed.** `calcSSBreakEven` now walks the
+  delegated to the model layer (only small display-derived glue remains inline).
+- Bug close-out — Batch 1 (Jun 6 2026): **BUG-32 fixed.** `calcSSBreakEven` now walks the
   timeline from `min(ssClaimingAge, SS_FRA)` so a delayed claimer's FRA baseline gets its
   67→claim head start; delayed break-even at default-derived inputs lands at age 82 (was ≈ the
   claim age). Symmetric — the early-claim path is provably unchanged. Display-only, golden master
-  unaffected (default claims at FRA → `ssBreakEven` is `null`); test count unchanged (230, one
-  locked test updated `toBe(70)` → `toBe(82)`).
+  unaffected (default claims at FRA → `ssBreakEven` is `null`); no new tests.
 - Bug close-out — Batch 2 (Jun 6 2026): **BUG-29 fixed** (owner-approved headline move). Roth-
   conversion tax is now bracket-accurate via a single shared primitive `stackedIncomeTax`
   (`taxes.js`), used by BOTH the conversion side (`calcConversionSim`, new `retStateRate` param)
   and the RMD side (`retirement-tax.js:rmdRowTax` de-duplicated to delegate to it — value-
   preserving, `rmdTaxBite` held at 683,974). Default `netConversionBenefit` 47,047 → 77,861 and
   `yearsSustained` 61.99935 → 62.92429 (the tax-honest walk pays less conversion tax). Golden
-  master updated deliberately; 3 new bracket-accuracy tests (230 → 233).
+  master updated deliberately; 3 new bracket-accuracy tests.
+- Bug close-out — Batch 3 (Jun 6 2026): **BUG-30 + BUG-16 fixed** (shipped standalone ahead of
+  the full #30 engine, per the tracker's "quick win" note; both value-preserving at default).
+  BUG-30: MFJ LTCG drag now uses combined household income (`simulation.js`, mirrors the existing
+  `yearMAGI` pattern) — inert for single filers. BUG-16: spousal SS now reduces for early claims —
+  new `spouseClaimingAge` slider + `spouseBenefitBasis` toggle ("own record" vs "spousal / 50% of
+  primary"); `calcSpousal` is now `(pia, spouseClaimingAge)` with the factor **capped at 1.0**
+  (spousal earns no delayed credits) while the own-benefit path gets the full factor; selection +
+  `isMarried` gating + the advisory note live in `calcRetirementIncome`. Default is single/unmarried
+  → spouse benefit 0 → golden master unchanged. BUG-30 +1 test, BUG-16 +7 tests. Closes the
+  "calcSpousal (BUG-16)" and "ltcgRate combined-income (BUG-30)" deliverables on feature #30.
+- Cumulative across the three batches: test suite 230 → **241** (BUG-29 +3, BUG-30 +1, BUG-16 +7).
+
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (233 tests)
+- `npm test` — run model + formatter + render-smoke tests (241 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)

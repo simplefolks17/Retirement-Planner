@@ -39,10 +39,10 @@ export function calcBenefit(pia, claimingAge) {
   return Math.round(pia * (SS_FACTORS[claimingAge] ?? SS_FACTORS[SS_FRA]));
 }
 
-// Returns the annual spousal benefit given the primary's PIA and spouse's own estimate.
-// The spouse receives the higher of their own benefit or 50% of the primary's PIA.
-export function calcSpousal(pia, spouseEstimate) {
-  if (spouseEstimate <= 0) return 0;
-  const spousalFloor = Math.round(pia * ASSUMPTIONS.MONTHS_PER_YEAR * ASSUMPTIONS.SPOUSAL_BENEFIT_PCT);
-  return Math.max(spouseEstimate, spousalFloor);
+// Returns the annual spousal floor benefit: 50% of the primary's PIA at FRA, reduced
+// for early claims. Spousal benefits earn NO delayed credits — the factor is capped at 1
+// so claiming after 67 does not inflate it above the FRA amount.
+export function calcSpousal(pia, spouseClaimingAge = SS_FRA) {
+  const factor = Math.min(1, SS_FACTORS[spouseClaimingAge] ?? 1);
+  return Math.round(pia * ASSUMPTIONS.MONTHS_PER_YEAR * ASSUMPTIONS.SPOUSAL_BENEFIT_PCT * factor);
 }

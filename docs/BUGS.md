@@ -11,46 +11,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
-### BUG-30 — MFJ capital-gains rate uses primary-only income (taxable-account drag understated)
-
-**Reported:** 2026-06-05  
-**Status:** Open — **deferred to premium feature #30** (Spouse account modeling), where combined-income tax treatment belongs. Verified; minor.  
-**File:** `src/model/simulation.js` lines ~86–88 (`ordinaryIncome` → `ltcgRate`)
-
-**Symptom:**  
-For an MFJ household with two earners, the taxable brokerage account's annual tax drag can be too low, slightly **overstating** projected taxable-account growth.
-
-**Root cause:**  
-`ordinaryIncome = currentIncome × growFactor − employeeDeferral − cHSA` is **primary-only**, but it's passed to `ltcgRate(ordinaryIncome, "mfj")` — the MFJ brackets. Per CLAUDE.md rule 9, MFJ tax calcs (`agi`, `stateTax`, `grossAfterTax`) use **combined** household income; the LTCG bracket position should too, since a joint return stacks both incomes. Verified: a dual-$80k MFJ couple gets a **0%** LTCG rate from primary-only income vs. **15%** from combined ($160k) — so the taxable account grows with no tax drag when it should carry 15%.
-
-**Impact:**  
-Low. Only bites when combined income crosses a LTCG bracket boundary (0%/15% ≈ $96k MFJ, 15%/20% ≈ $600k MFJ) that primary-only income does not. Entangled with the spouse-modeling scope: spouse income detail is a premium-tier concern (#30), so the fix belongs there alongside the combined-income tax engine.
-
-**Proposed fix (within #30):**  
-Compute `yearOrdinaryIncome = filingStatus === "mfj" ? primary + spouse (each net of their deferrals) : primary` and pass that to `ltcgRate`, mirroring the `yearMAGI` pattern already used for the Roth phase-out a few lines above.
-
----
-
-### BUG-16 (Audit Finding C) — Spousal SS benefit not reduced for early spouse claiming
-
-**Reported:** 2026-06-02  
-**Status:** Open — **deferred to premium feature #30** (Spouse account modeling engine). Closing this bug is a deliverable of that feature, not a standalone fix. See `feature-tracker.html` #30 (priority raised P2 → P1).  
-**File:** `src/model/social-security.js` line 44 (`calcSpousal`)
-
-**Symptom:**  
-The spousal Social Security benefit is always computed as if the spouse claims at Full Retirement Age. A spouse who claims early should receive a permanently reduced benefit, but the model has no way to express that.
-
-**Root cause:**  
-There is no spouse-claiming-age input in the UI at all — the model consistently assumes FRA for the spousal benefit. This is a modeling *gap*, not a wrong calculation given the available inputs.
-
-**Impact:**  
-Low. Only affects households relying on a spousal benefit where the spouse plans to claim early. Overstates that benefit (and therefore slightly understates portfolio need).
-
-**Why deferred (decision 2026-06-04, owner):**  
-The fix requires a new `spouseClaimingAge` input + UI control, then applying `SS_FACTORS[spouseClaimingAge]` to both the spouse's own benefit and the 50% spousal floor inside `calcSpousal`. A spouse-claiming-age control only makes sense alongside the broader spouse profile, so this work belongs to the premium household-modeling scope rather than a one-off change. Feature #30's tracker entry now lists **"calcSpousal (BUG-16 fix)"** as an explicit deliverable and flags it as the quick-win to ship first within that feature. Feature #30 priority was bumped **P2 → P1** specifically so this bug is not stranded waiting on the full engine. When #30 ships, move this entry to Resolved.
-
----
-
 ## Resolved Issues
 
 ---
@@ -92,6 +52,38 @@ Start the timeline at the **earlier** of the two ages: `const tStart = Math.min(
 - **Delayed claim (70):** `tStart = 67` → `cum67` now gets its rightful 67→70 head start → the crossing lands at **age 82**.
 
 Display-only; affects no portfolio/headline number. Default state claims at FRA (`ssBreakEven` is `null`), so the golden master is unaffected and test count is unchanged (230 — one existing locked test updated from `toBe(70)` to `toBe(82)`).
+---
+
+### ~~BUG-16~~ (Audit Finding C) — Spousal SS benefit not reduced for early spouse claiming
+
+**Reported:** 2026-06-02 · **Fixed:** 2026-06-06 (shipped standalone ahead of the full #30 engine, per the tracker's "quick win" note)  
+**Files:** `src/model/social-security.js` (`calcSpousal`), `src/model/retirement-income.js` (`calcRetirementIncome`), `src/App.jsx` (Spouse SS UI/state), tests in `social-security.test.js` + `retirement-income.test.js`.
+
+**Symptom:**  
+The spousal Social Security benefit was always computed as if the spouse claimed at Full Retirement Age — there was no spouse-claiming-age input at all, so an early claim was never reduced.
+
+**Fix (owner-approved design):**  
+- New state `spouseClaimingAge` (slider, 62–70) and `spouseBenefitBasis` ("own" record vs "spousal / 50% of primary"). The early-claim factor is applied to the chosen basis.
+- `calcSpousal` is now a single-purpose helper `(pia, spouseClaimingAge)` returning the spousal floor, with the factor **capped at 1.0** — spousal benefits earn **no delayed credits**, so claiming after 67 does not inflate it (the key correctness nuance). The own-benefit path uses the **full** `SS_FACTORS[spouseClaimingAge]` (own benefit does earn delayed credits).
+- The spouse's own-benefit input is now treated and labeled as an **at-FRA (67)** figure so the factor is meaningful.
+- An **advisory note** appears when the unchosen basis would pay more (mirrors how SSA pays the greater of the two).
+- Spouse benefit is now gated by **`isMarried`** (selection logic moved up from `calcSpousal` into `calcRetirementIncome`).
+
+**Value-preserving:** default state is single/unmarried → spouse benefit 0 → `householdSS` and every golden-master value unchanged. The golden-master `householdSS` line was simplified to drop the spousal term (`calcBenefit(ssPIA, 67) * 12`) so the changed `calcSpousal` signature isn't mis-called. 7 new tests (231 → 238 on the batch branch): the no-delayed-credits cap, the `isMarried` gate, the own-record early reduction, and the advisory flip. Feature `#30`'s "calcSpousal (BUG-16 fix)" deliverable is now shipped.
+
+---
+
+### ~~BUG-30~~ — MFJ capital-gains rate used primary-only income (taxable-account drag understated)
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-06 (shipped standalone, per the #30 tracker "quick win" note)  
+**File:** `src/model/simulation.js` (per-year loop), test in `simulation.test.js`.
+
+**Symptom:**  
+For an MFJ household with two earners, the taxable brokerage account's LTCG drag was computed from primary-only income — a dual-$80k couple got a 0% LTCG rate when combined $160k should carry 15%, overstating taxable-account growth.
+
+**Fix:**  
+Hoisted the per-year spouse-grown income (`spouseGrown`, already computed for the Roth phase-out) and added it to the LTCG ordinary-income basis for MFJ only: `yearOrdinaryIncome = primaryMAGI − employeeDeferral − cHSA + (mfj ? spouseGrown : 0)`. Mirrors the existing `yearMAGI` combined-income pattern (CLAUDE.md rule 9). Spouse pre-tax deferrals aren't modeled yet (#30), so spouse income enters gross — consistent with how `agi` treats MFJ spouse income. **Inert at the default state** (single) → golden master unchanged. New test: an MFJ dual-earner household's taxable balance now grows slower than the single-filer equivalent (it correctly carries the 15% drag). Feature `#30`'s "ltcgRate combined-income (BUG-30 fix)" deliverable is now shipped.
+
 ---
 
 ### ~~BUG-31~~ — Flow-Down "Growth" was a plug hiding cross-equation mismatches; chart/longevity ignored retirement taxes

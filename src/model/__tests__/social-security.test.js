@@ -71,17 +71,23 @@ describe("calcBenefit", () => {
 });
 
 describe("calcSpousal", () => {
-  it("returns 0 when spouseEstimate is 0", () => {
-    expect(calcSpousal(2_500, 0)).toBe(0);
+  // PIA = $2,500 → spousal floor at FRA = $2,500 * 12 * 0.5 = $15,000/yr
+
+  it("returns 50% of PIA × 12 at FRA (age 67)", () => {
+    expect(calcSpousal(2_500, 67)).toBe(Math.round(2_500 * 12 * 0.5));  // $15,000
   });
 
-  it("returns the spousal floor when it exceeds spouse estimate", () => {
-    // PIA = $2,500, spousal floor = $2,500 * 12 * 0.5 = $15,000/yr
-    expect(calcSpousal(2_500, 5_000)).toBe(15_000);
+  it("reduces the spousal floor for an early claim (age 62, factor 0.70)", () => {
+    const expected = Math.round(2_500 * 12 * 0.5 * 0.70);
+    expect(calcSpousal(2_500, 62)).toBe(expected);
   });
 
-  it("returns spouse's own estimate when it exceeds the spousal floor", () => {
-    // Spouse estimate $20K > spousal floor $15K
-    expect(calcSpousal(2_500, 20_000)).toBe(20_000);
+  it("does NOT inflate the spousal floor for a delayed claim (age 70 === FRA value — key correctness guard)", () => {
+    // Spousal benefit earns NO delayed credits; factor is capped at 1.
+    expect(calcSpousal(2_500, 70)).toBe(calcSpousal(2_500, 67));
+  });
+
+  it("uses FRA factor (1) when spouseClaimingAge is omitted", () => {
+    expect(calcSpousal(2_500)).toBe(calcSpousal(2_500, 67));
   });
 });
