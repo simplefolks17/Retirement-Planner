@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { calcRetirementIncome, calcSSBreakEven } from "../retirement-income.js";
-import { SS_FRA, ASSUMPTIONS } from "../../config/irs-2026.js";
+import { SS_FRA, SS_FACTORS, ASSUMPTIONS } from "../../config/irs-2026.js";
 
 // Default UI state (mirrors the golden master).
 const defaults = {
@@ -45,10 +45,14 @@ describe("calcRetirementIncome — toggles and gates", () => {
     expect(r.householdSS).toBe(30_000 + r.spouseSsBenefit);
   });
 
-  it("includes a spousal benefit when the spouse estimate is set", () => {
-    const r = calcRetirementIncome({ ...defaults, spouseSsEstimate: 15_000 });
-    expect(r.spouseSsBenefit).toBeGreaterThan(0);
-    expect(r.householdSS).toBe(r.effectiveSS + r.spouseSsBenefit);
+  it("includes a spousal benefit only when isMarried=true", () => {
+    // Without isMarried, spouseSsEstimate is ignored — gating is by isMarried.
+    const notMarried = calcRetirementIncome({ ...defaults, spouseSsEstimate: 15_000 });
+    expect(notMarried.spouseSsBenefit).toBe(0);
+
+    const married = calcRetirementIncome({ ...defaults, isMarried: true, spouseSsEstimate: 15_000 });
+    expect(married.spouseSsBenefit).toBeGreaterThan(0);
+    expect(married.householdSS).toBe(married.effectiveSS + married.spouseSsBenefit);
   });
 
   it("counts pension only once started by retirement (rule 5b)", () => {
@@ -64,6 +68,50 @@ describe("calcRetirementIncome — toggles and gates", () => {
     expect(r.household70SS).toBe(r.ss70Annual + r.spouseSsBenefit);
     expect(r.ss70DrawReduction).toBe(r.household70SS - r.householdSS);
     expect(r.ss70DrawReduction).toBeGreaterThan(0);
+  });
+});
+
+describe("calcRetirementIncome — spouse claiming age and basis", () => {
+  const sBase = { ...defaults, isMarried: true, spouseSsEstimate: 18_000 };
+
+  it("isMarried=false → spouse benefit is 0 regardless of spouseSsEstimate", () => {
+    const r = calcRetirementIncome({ ...defaults, spouseSsEstimate: 18_000 });
+    expect(r.spouseSsBenefit).toBe(0);
+  });
+
+  it("basis 'own' + early claim (62) reduces own benefit by SS_FACTORS[62]=0.70", () => {
+    const r = calcRetirementIncome({ ...sBase, spouseClaimingAge: 62, spouseBenefitBasis: "own" });
+    const expected = Math.round(18_000 * SS_FACTORS[62]);
+    expect(r.spouseSsBenefit).toBe(expected);
+  });
+
+  it("basis 'spousal' at FRA returns 50% of primary PIA × 12", () => {
+    const r = calcRetirementIncome({ ...sBase, spouseClaimingAge: SS_FRA, spouseBenefitBasis: "spousal" });
+    // spousal floor at FRA = round(ssPIA * 12 * 0.5)
+    const expectedFloor = Math.round(r.ssPIA * 12 * 0.5);
+    expect(r.spouseSsBenefit).toBe(expectedFloor);
+  });
+
+  it("basis 'spousal' at age 70 is NOT inflated above FRA value (no delayed credits for spousal)", () => {
+    const at70     = calcRetirementIncome({ ...sBase, spouseClaimingAge: 70,    spouseBenefitBasis: "spousal" });
+    const atFRA    = calcRetirementIncome({ ...sBase, spouseClaimingAge: SS_FRA, spouseBenefitBasis: "spousal" });
+    expect(at70.spouseSsBenefit).toBe(atFRA.spouseSsBenefit);
+  });
+
+  it("spouseAltHigher is true when the unchosen basis pays more", () => {
+    // Low own estimate ($5,000) → spousal floor will be higher → should flag altHigher
+    const r = calcRetirementIncome({ ...defaults, isMarried: true, spouseSsEstimate: 5_000,
+      spouseClaimingAge: SS_FRA, spouseBenefitBasis: "own" });
+    // spouseAlt is the spousal floor; if floor > ownReduced then altHigher = true
+    expect(r.spouseAlt).toBeGreaterThan(r.spouseSsBenefit);
+    expect(r.spouseAltHigher).toBe(true);
+  });
+
+  it("spouseAltHigher is false when the chosen basis is already optimal", () => {
+    // Choose 'spousal' explicitly when it's higher → alt (own) is lower
+    const r = calcRetirementIncome({ ...defaults, isMarried: true, spouseSsEstimate: 5_000,
+      spouseClaimingAge: SS_FRA, spouseBenefitBasis: "spousal" });
+    expect(r.spouseAltHigher).toBe(false);
   });
 });
 

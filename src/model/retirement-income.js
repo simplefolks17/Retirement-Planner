@@ -18,6 +18,7 @@ export function calcRetirementIncome({
   currentIncome, incomeGrowth, safeRetAge, currentAge,
   ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
   pensionMonthly, pensionStartAge,
+  isMarried = false, spouseClaimingAge = SS_FRA, spouseBenefitBasis = "own",
 }) {
   const MPY = ASSUMPTIONS.MONTHS_PER_YEAR;
 
@@ -29,8 +30,19 @@ export function calcRetirementIncome({
   const ss67Monthly      = calcBenefit(ssPIA, SS_FRA);
 
   // ssOverride lets the user pin their own annual SS figure; includeSS zeroes it.
-  const effectiveSS     = includeSS ? (ssOverride !== null ? ssOverride : ssAnnualBenefit) : 0;
-  const spouseSsBenefit = calcSpousal(ssPIA, spouseSsEstimate);
+  const effectiveSS  = includeSS ? (ssOverride !== null ? ssOverride : ssAnnualBenefit) : 0;
+
+  // Spouse SS: choose between own record (earns delayed credits) or spousal floor
+  // (capped at 50% of PIA — no delayed credits). The unchosen basis is reported as
+  // spouseAlt for the advisory note. Gated by isMarried; default state is single → 0.
+  const factor       = SS_FACTORS[spouseClaimingAge] ?? 1;          // own benefit earns delayed credits
+  const ownReduced   = Math.round(spouseSsEstimate * factor);        // estimate is an at-FRA figure
+  const spousalFloor = calcSpousal(ssPIA, spouseClaimingAge);        // capped at 50% (no delayed credits)
+  const spouseChosen = isMarried ? (spouseBenefitBasis === "spousal" ? spousalFloor : ownReduced) : 0;
+  const spouseAlt    = isMarried ? (spouseBenefitBasis === "spousal" ? ownReduced : spousalFloor) : 0;
+  const spouseAltHigher = isMarried && spouseAlt > spouseChosen;
+
+  const spouseSsBenefit = spouseChosen;
   const householdSS     = includeSS ? effectiveSS + spouseSsBenefit : 0;
   // SS reduces the headline at-retirement need only if it is already claimed by
   // retirement; otherwise it is deferred (mirrors the effectivePension gate). BUG-10.
@@ -50,6 +62,7 @@ export function calcRetirementIncome({
     ssWorkYears, ssAIME, ssPIA, ssMonthlyBenefit, ssAnnualBenefit, ss67Monthly,
     effectiveSS, spouseSsBenefit, householdSS, ssAtRet, ssTaxableRet,
     ss70Annual, household70SS, ss70DrawReduction, effectivePension,
+    spouseAlt, spouseAltHigher, spouseBenefitBasis,
   };
 }
 

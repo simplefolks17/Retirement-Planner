@@ -57,18 +57,19 @@ export function runSimulation({
       : 0;
     const c401k = Math.min(employeeDeferral + matchAmt, limit415cYr);
 
+    const primaryMAGI = currentIncome * growFactor;
+    const spouseGrown = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, y - 1);
+
     const cRoth = (() => {
       if (age > contribEndRoth || contribRoth <= 0) return 0;
       const rothCap = isEligibleForCatchup
         ? ROTH_IRA_LIMIT_2026 + CATCHUP_ROTH_2026
         : ROTH_IRA_LIMIT_2026;
       const baseContrib = Math.min(contribRoth, rothCap);
-      const primaryMAGI = currentIncome * growFactor;
-      const spouseMAGI  = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, y - 1);
       // Only MFJ filers report combined income on one return; for every other
       // status the Roth phase-out is tested against the primary earner's MAGI
       // alone (spouse income/contributions are tracked separately). See CLAUDE.md rules 3 & 9.
-      const yearMAGI    = filingStatus === "mfj" ? primaryMAGI + spouseMAGI : primaryMAGI;
+      const yearMAGI    = filingStatus === "mfj" ? primaryMAGI + spouseGrown : primaryMAGI;
       const po = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
       if (yearMAGI >= po.end) return 0;
       if (yearMAGI <= po.start) return baseContrib;
@@ -83,8 +84,9 @@ export function runSimulation({
     roth = (roth + cRoth) * (1 + r);
     hsa  = (hsa  + cHSA)  * (1 + r);
 
-    const ordinaryIncome = currentIncome * growFactor - employeeDeferral - cHSA;
-    const capGainsRate   = ltcgRate(ordinaryIncome, filingStatus);
+    const yearOrdinaryIncome = primaryMAGI - employeeDeferral - cHSA
+                             + (filingStatus === "mfj" ? spouseGrown : 0);
+    const capGainsRate       = ltcgRate(yearOrdinaryIncome, filingStatus);
     taxable = (taxable + cTaxable) * (1 + r * (1 - capGainsRate));
 
     arr.push({

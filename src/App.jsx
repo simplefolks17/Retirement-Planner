@@ -93,7 +93,9 @@ export default function App() {
   const [spouseIncome,       setSpouseIncome]       = useState(0);
   const [spouseIncomeGrowth, setSpouseIncomeGrowth] = useState(3);
 
-  const [spouseSsEstimate, setSpouseSsEstimate] = useState(0);
+  const [spouseSsEstimate,    setSpouseSsEstimate]    = useState(0);
+  const [spouseClaimingAge,   setSpouseClaimingAge]   = useState(SS_FRA);
+  const [spouseBenefitBasis,  setSpouseBenefitBasis]  = useState("own");
 
   const [conversionMode,          setConversionMode]          = useState("bracket");
   const [conversionBracketTarget, setConversionBracketTarget] = useState(22);
@@ -238,10 +240,12 @@ export default function App() {
     ssWorkYears, ssAIME, ssPIA, ssMonthlyBenefit, ssAnnualBenefit, ss67Monthly,
     effectiveSS, spouseSsBenefit, householdSS, ssAtRet, ssTaxableRet,
     ss70Annual, household70SS, ss70DrawReduction, effectivePension,
+    spouseAlt, spouseAltHigher,
   } = calcRetirementIncome({
     currentIncome, incomeGrowth, safeRetAge, currentAge,
     ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
     pensionMonthly, pensionStartAge,
+    isMarried, spouseClaimingAge, spouseBenefitBasis,
   });
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
@@ -1671,7 +1675,7 @@ export default function App() {
             </div>
           </div>
 
-          {(isMarried || spouseSsEstimate > 0) && (
+          {isMarried && (
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
               borderBottom: `1px solid ${C.border}`, paddingBottom: 8, marginBottom: 14 }}>
@@ -1684,28 +1688,66 @@ export default function App() {
                   padding: "10px 14px", marginBottom: 14 }}>
                   <p style={{ margin: "0 0 6px", fontSize: 12, color: C.text, fontWeight: 600 }}>Spousal Benefit Rules</p>
                   <p style={{ margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.7 }}>
-                    A spouse can receive up to <span style={{ color: C.green }}>50% of the higher earner's PIA at FRA</span>,
-                    or their own earned benefit — whichever is larger. Enter your spouse's estimated annual benefit below.
-                    If their own benefit is less than 50% of yours, the calculator will use the spousal benefit instead.
-                    Survivor benefit (the higher of the two) is not yet modeled.
+                    SSA pays whichever is larger: the spouse's <span style={{ color: C.green }}>own earned benefit</span> or{" "}
+                    <span style={{ color: C.green }}>50% of the primary's PIA</span> (spousal floor).
+                    Spousal benefits earn <em>no</em> delayed credits — claiming after 67 does not inflate them.
+                    Own-record benefits do earn delayed credits (up to 70).
                   </p>
                 </div>
-                <Slider label="Spouse's Own SS Benefit (annual)" value={spouseSsEstimate}
+
+                {/* Benefit basis toggle */}
+                <div style={{ marginBottom: 14 }}>
+                  <p style={{ margin: "0 0 5px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Benefit Basis</p>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[["own", "Own Record"], ["spousal", "Spousal (50% of primary)"]].map(([val, label]) => (
+                      <button key={val} onClick={() => setSpouseBenefitBasis(val)}
+                        style={{ flex: 1, padding: "6px 0", fontSize: 11, fontWeight: 600, border: "none",
+                          borderRadius: 5, cursor: "pointer",
+                          background: spouseBenefitBasis === val ? C.gold : C.border,
+                          color: spouseBenefitBasis === val ? "#0d1117" : C.muted,
+                          fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <Slider label="Spouse's Own SS Benefit at FRA (age 67, annual)" value={spouseSsEstimate}
                   min={0} max={60_000} step={500}
                   format={v => v === 0 ? "None" : `$${v.toLocaleString()}`}
                   onChange={setSpouseSsEstimate} valueColor={C.green} />
-                <p style={{ margin: "-6px 0 0", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
-                  Enter from spouse's my Social Security statement. Set to 0 if spouse has no work history.
+                <p style={{ margin: "-6px 0 10px", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                  Enter the benefit shown on the spouse's my Social Security statement (their estimated benefit <strong>at age 67</strong>).
+                  The early/late claiming factor will be applied based on the claiming age below.
                 </p>
+
+                <Slider label="Spouse Claiming Age" value={spouseClaimingAge}
+                  min={SS_MIN_CLAIM_AGE} max={SS_MAX_CLAIM_AGE}
+                  format={v => v === SS_FRA ? `${v} (FRA)` : v < SS_FRA ? `${v} (early)` : `${v} (delayed)`}
+                  onChange={setSpouseClaimingAge}
+                  valueColor={spouseClaimingAge < SS_FRA ? C.orange : spouseClaimingAge > SS_FRA ? C.green : C.gold} />
+                <p style={{ margin: "-6px 0 0", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
+                  {spouseBenefitBasis === "spousal"
+                    ? "Spousal benefit: early claims are reduced; delaying past 67 has no effect."
+                    : "Own-record benefit: early claims are reduced; delayed claims earn credits up to age 70."}
+                </p>
+
+                {/* Advisory note when the unchosen basis would pay more */}
+                {spouseAltHigher && (
+                  <p style={{ margin: "10px 0 0", fontSize: 10, color: C.orange, lineHeight: 1.6,
+                    background: "#1a1200", borderLeft: `3px solid ${C.orange}`, borderRadius: 4, padding: "6px 10px" }}>
+                    Note: their {spouseBenefitBasis === "spousal" ? "own-record" : "spousal"} benefit would be higher
+                    (~{fmt(spouseAlt)}/yr) — consider switching to that basis.
+                  </p>
+                )}
               </div>
               <div className="det-stat-3" style={{ gap: 10 }}>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", opacity: includeSS ? 1 : 0.4 }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Spouse Benefit</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>{fmt(spouseSsBenefit)}/yr</p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>
-                    {spouseSsEstimate > 0 && spouseSsBenefit > spouseSsEstimate
-                      ? "using 50% spousal (higher)"
-                      : spouseSsEstimate > 0 ? "using own benefit" : "no spouse SS"}
+                    {spouseBenefitBasis === "own" ? "own record" : "spousal (50% of primary)"}
+                    {spouseClaimingAge !== SS_FRA ? `, age ${spouseClaimingAge}` : ", at FRA"}
                   </p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", opacity: includeSS ? 1 : 0.4 }}>
