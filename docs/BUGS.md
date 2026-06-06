@@ -7,13 +7,14 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
----
+*None — all tracked bugs are currently resolved (see below). Add new entries here, at the top, when found.*
 
 ---
 
 ## Resolved Issues
 
 ---
+
 ### ~~BUG-29~~ — Roth conversion tax was not bracket-accurate (flat top-marginal rate, no state tax)
 
 **Reported:** 2026-06-05 · **Fixed:** 2026-06-06 (owner-approved golden-master move)  
