@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { calcConversionSim, findOptimalConversion } from "../roth-conversion.js";
+import { marginalRate } from "../taxes.js";
 
 const base = {
   conversionWindowYrs: 5,
@@ -117,6 +118,55 @@ describe("calcConversionSim — per-year income floors (retIncomeFloors)", () =>
     const scalarResult = calcConversionSim({ ...base, retIncomeFloor: 0 });
     const arrayResult  = calcConversionSim({ ...base, retIncomeFloors: [0, 0, 0, 0, 0] });
     expect(arrayResult.totalTax).toBe(scalarResult.totalTax);
+  });
+});
+
+describe("calcConversionSim — bracket-accurate tax (BUG-29)", () => {
+  // Single filer 2026: standard deduction 16,100; brackets: 10% 0-12,400 / 12% 12,400-50,400 /
+  // 22% 50,400-105,700 / 24% 105,700-201,775 (taxable income = AGI - deduction).
+
+  it("single-bracket conversion: new tax is within ±1 of the flat marginal proxy", () => {
+    // floor=20,000 + conversion=5,000 → taxable = 9,000 → stays in 10% bracket.
+    // Both methods should agree within ±1 (exact here: both 500).
+    const result = calcConversionSim({
+      ...base,
+      conversionWindowYrs: 1,
+      annualConversion: 5_000,
+      retIncomeFloor: 20_000,
+    });
+    const year0 = result.years[0];
+    const flatProxy = Math.round(year0.conversion * marginalRate(20_000 + year0.conversion, "single"));
+    expect(Math.abs(year0.tax - flatProxy)).toBeLessThanOrEqual(1);
+  });
+
+  it("multi-bracket conversion: bracket-accurate totalTax is strictly less than flat-marginal proxy", () => {
+    // floor=0, conversion=120,000 → taxable = 103,900 → spans 10/12/22% brackets.
+    // Flat proxy (22% on the full amount) overstates the true bracket-stacked cost.
+    const result = calcConversionSim({
+      ...base,
+      conversionWindowYrs: 3,
+      annualConversion: 120_000,
+      retIncomeFloor: 0,
+      tradGrossAtRetirement: 800_000,
+    });
+    const flatProxySum = result.years.reduce(
+      (sum, y) => sum + Math.round(y.conversion * marginalRate(0 + y.conversion, "single")),
+      0,
+    );
+    expect(result.totalTax).toBeLessThan(flatProxySum);
+  });
+
+  it("state component: totalTax difference between retStateRate=0.05 and 0 equals round(Σ conversion × 0.05)", () => {
+    const sharedArgs = {
+      ...base,
+      conversionWindowYrs: 3,
+      annualConversion: 30_000,
+      retIncomeFloor: 0,
+    };
+    const noState   = calcConversionSim({ ...sharedArgs, retStateRate: 0 });
+    const withState = calcConversionSim({ ...sharedArgs, retStateRate: 0.05 });
+    const convSum = noState.years.reduce((s, y) => s + y.conversion, 0);
+    expect(withState.totalTax - noState.totalTax).toBe(Math.round(convSum * 0.05));
   });
 });
 

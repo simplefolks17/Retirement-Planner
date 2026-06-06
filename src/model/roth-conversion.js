@@ -1,4 +1,4 @@
-import { marginalRate } from "./taxes.js";
+import { stackedIncomeTax } from "./taxes.js";
 
 // Optimizer: finds the scalar annual conversion that maximizes net benefit
 // accounting for IRMAA and ACA subsidy costs. Coarse $5k search up to $300k.
@@ -40,6 +40,7 @@ export function calcConversionSim({
   // Scalar balances at retirement — replaces retVals["Roth IRA"] / retVals["Taxable"]
   rothBalAtRet,
   taxableBalAtRet,
+  retStateRate = 0,
 }) {
   if (conversionWindowYrs === 0) {
     return {
@@ -67,9 +68,7 @@ export function calcConversionSim({
     const yearTarget = annualConversions ? (annualConversions[yr] ?? annualConversion) : annualConversion;
     const conversion = Math.min(yearTarget, Math.min(tradA, tradB));
     const floor = retIncomeFloors ? (retIncomeFloors[yr] ?? retIncomeFloor) : retIncomeFloor;
-    const taxOnConversion = Math.round(
-      conversion * marginalRate(floor + conversion, filingStatus)
-    );
+    const taxOnConversion = stackedIncomeTax(conversion, floor, filingStatus, retStateRate);
 
     // Scenario A: deduct tax from the converted amount itself
     tradA -= conversion;

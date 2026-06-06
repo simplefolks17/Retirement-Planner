@@ -9,28 +9,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
-### BUG-29 — Roth conversion tax is not bracket-accurate (flat top-marginal rate, no state tax)
-
-**Reported:** 2026-06-05  
-**Status:** Open — **verified, fix deferred pending owner review** (decision 2026-06-05: document the math before moving a headline number). Filed Open, not fixed.  
-**File:** `src/model/roth-conversion.js` line ~70 (`taxOnConversion` in `calcConversionSim`)
-
-**Symptom:**  
-The displayed **net Roth-conversion benefit is understated.** At the default state it shows ~$47,047 when a bracket-accurate calculation gives ~$77,861 — the conversion *cost* is overstated by ≈ **$30,814** across the 7-year window (~$4,402/yr).
-
-**Root cause (two compounding issues):**  
-1. **Flat rate on a multi-bracket conversion.** Conversion tax is `conversion × marginalRate(floor + conversion)` — the *entire* conversion taxed at the single marginal rate at its top. In bracket-fill mode the conversion spans from the income floor (default: taxable income ≈ $22,935, in the **12%** bracket) up to the bracket ceiling, so dollars that are really taxed at 10%/12% get charged the top rate. The RMD tax, by contrast, is bracket-accurate (`calcTax(floor+rmd) − calcTax(floor)`), so the two sides of `netConversionBenefit = rmdTaxSaved − conv.totalTax` are computed on **different tax models.**
-2. **Rounding overshoot into the next bracket.** The bracket-fill target lands at taxable income **$105,700.40** — $0.40 *over* the 22% ceiling ($105,700) — so `marginalRate` returns **24%**, and the whole $82,765 conversion is taxed at 24% (not even 22%). In the actual app (bracket mode, per-year floors), early pre-SS years fill from a $0 floor, so the entire ~$121,800 conversion is taxed at 24% in those years — a larger overstatement than the scalar default case.
-3. **State tax omitted.** RMD tax includes a state component (`rmd × retStateRate`); conversion tax has none. Dormant in the default (retirement state TX = 0%), but for a user in a taxed state the conversion cost is *understated*, which makes conversions look better and partially offsets (1)–(2) for those users.
-
-**This contradicts the codebase's own design.** Feature #33 ("Bracket-accurate retirement tax") states the bracket-accurate rate replaces the flat proxy "for `rmdTaxBite`, `netConversionBenefit`, and withdrawal strategy." The RMD side was converted; the conversion-cost side was left on the flat-rate proxy — an incomplete rollout of #33, not a deliberate conservative choice.
-
-**Verification:**  
-`calcTax(floor+conversion) − calcTax(floor)` = $15,462/yr vs. the current `conversion × marginalRate` = $19,864/yr (the 24% overshoot). Scalar-default delta × 7 yrs = $30,814; `netConversionBenefit` would move $47,047 → ~$77,861.
-
-**Proposed fix (when approved):**  
-In `calcConversionSim`, replace `conversion * marginalRate(floor + conversion)` with `(calcTax(floor + conversion).tax − calcTax(floor).tax)` for the federal portion, and thread `retStateRate` through so the state component (`conversion × retStateRate`) is added — making conversion tax mirror the RMD-tax formula exactly. Model change → update the golden master `netConversionBenefit` deliberately and add a test asserting a single-bracket conversion still matches `conversion × rate` while a multi-bracket conversion is taxed less than the flat-rate proxy.
-
 ---
 
 ### BUG-30 — MFJ capital-gains rate uses primary-only income (taxable-account drag understated)
@@ -76,6 +54,26 @@ The fix requires a new `spouseClaimingAge` input + UI control, then applying `SS
 ## Resolved Issues
 
 ---
+### ~~BUG-29~~ — Roth conversion tax was not bracket-accurate (flat top-marginal rate, no state tax)
+
+**Reported:** 2026-06-05 · **Fixed:** 2026-06-06 (owner-approved golden-master move)  
+**Files:** `src/model/taxes.js` (new `stackedIncomeTax`), `src/model/roth-conversion.js` (`calcConversionSim`), `src/model/retirement-tax.js` (`rmdRowTax` de-duplicated), `src/App.jsx` (2 `calcConversionSim` call sites), `src/model/__tests__/golden-master.test.js`, `src/model/__tests__/roth-conversion.test.js`.
+
+**Symptom:**  
+The displayed net Roth-conversion benefit was understated — ~$47,047 at default when a bracket-accurate calculation gives ~$77,861. The conversion *cost* was overstated by taxing the whole conversion at a single marginal rate, overshooting a bracket on rounding, and omitting state tax.
+
+**Root cause:**  
+`calcConversionSim` taxed each conversion as `conversion × marginalRate(floor + conversion)` — every dollar at the top rate, even dollars that really fall in lower brackets — and a rounding overshoot pushed the whole amount into the next bracket. The RMD side was already bracket-accurate (`calcTax(floor+rmd) − calcTax(floor)`), so the two sides of `netConversionBenefit = rmdTaxSaved − conv.totalTax` ran on different tax models. State tax was applied to RMDs but not conversions. An incomplete rollout of feature #33.
+
+**Fix:**  
+- Added one shared primitive, **`stackedIncomeTax(amount, floor, filingStatus, stateRate)`** in `taxes.js` = `round((calcTax(floor+amount) − calcTax(floor)) + amount × stateRate)`.
+- `calcConversionSim` now uses it (new `retStateRate` param, threaded from App.jsx at both call sites — display and optimizer). The `calcTax`-difference form also fixes the bracket overshoot (no single-rate lookup).
+- De-duplicated: `retirement-tax.js:rmdRowTax` now delegates to the same primitive (dropped its `baseFedTax` param). **Value-preserving — `rmdTaxBite` stayed exactly 683,974.**
+- **Headline moves (default, deliberate):** `netConversionBenefit` 47,047 → **77,861**; `yearsSustained` 61.99935 → **62.92429** (the tax-honest walk now pays less conversion tax, so longevity ticks up). Golden master updated with dated BUG-29 comments.
+
+**Tests (230 → 233):** new "bracket-accurate tax (BUG-29)" block in `roth-conversion.test.js` — single-bracket conversion matches the flat proxy within ±1; a multi-bracket conversion is strictly cheaper than the flat proxy (the core fix); the state-rate component adds exactly `round(Σ conversion × rate)`. Conversion *amounts* (82,765 / 121,800 in `conversion-planning.test.js`) are unchanged — they come from `calcBracketFillTargets`, independent of the tax calc.
+
+---
 
 ### ~~BUG-32~~ — SS break-even age wrong for delayed claims (collapsed to ≈ the claim age)
 
@@ -94,7 +92,6 @@ Start the timeline at the **earlier** of the two ages: `const tStart = Math.min(
 - **Delayed claim (70):** `tStart = 67` → `cum67` now gets its rightful 67→70 head start → the crossing lands at **age 82**.
 
 Display-only; affects no portfolio/headline number. Default state claims at FRA (`ssBreakEven` is `null`), so the golden master is unaffected and test count is unchanged (230 — one existing locked test updated from `toBe(70)` to `toBe(82)`).
-
 ---
 
 ### ~~BUG-31~~ — Flow-Down "Growth" was a plug hiding cross-equation mismatches; chart/longevity ignored retirement taxes

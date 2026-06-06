@@ -345,7 +345,7 @@ export default function App() {
       annualConversion,
       annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
       returnRate, retIncomeFloor, retIncomeFloors: convFloors,
-      filingStatus, conversionTaxSource,
+      filingStatus, conversionTaxSource, retStateRate,
       tradGrossAtRetirement: (retRow?.tradGross ?? 0) + addlPreTaxBal,
       rothBalAtRet: retVals["Roth IRA"] ?? 0,
       taxableBalAtRet: retVals["Taxable"] ?? 0,
@@ -468,7 +468,7 @@ export default function App() {
       const sim = calcConversionSim({
         conversionWindowYrs, annualConversion: amount, returnRate,
         retIncomeFloor, retIncomeFloors: _convFloors,
-        filingStatus, conversionTaxSource,
+        filingStatus, conversionTaxSource, retStateRate,
         tradGrossAtRetirement: tradGross, rothBalAtRet: rothBal, taxableBalAtRet: taxableBal,
       });
       const rmdPost = calcRMDPostConversion({
