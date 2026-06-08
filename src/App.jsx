@@ -9,7 +9,8 @@ import { fmt, fmtPct } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
-import { calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
+import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth } from "./model/budget.js";
+import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
 import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
@@ -460,12 +461,7 @@ export default function App() {
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
   const megaCapacity     = Math.max(0, limit415c - contrib401k - employerMatchAmt);
-  const megaGrowth       = [5, 10, 20].map(yrs => ({
-    yrs,
-    val: returnRate > 0
-      ? Math.round(megaCapacity * ((Math.pow(1 + returnRate / 100, yrs) - 1) / (returnRate / 100)))
-      : megaCapacity * yrs,
-  }));
+  const megaGrowth       = calcMegaBackdoorGrowth({ megaCapacity, returnRate });
 
   const retTaxable     = retVals["Taxable"]   ?? 0;
   const retTrad        = retVals["Trad 401k"] ?? 0;
@@ -490,11 +486,9 @@ export default function App() {
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);
 
   const avgAnnualRMD      = rmdData.length > 0 ? Math.round(totalRMDs / rmdData.length) : 0;
-  const projRetIncome     = avgAnnualRMD + Math.round(householdSS * ASSUMPTIONS.SS_TAXABLE_PCT) + effectivePension;
-  const retBrackets       = (TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single).brackets;
-  const projRetBracket    = retBrackets.find(b => projRetIncome >= b.min && projRetIncome < b.max)
-                         ?? retBrackets[retBrackets.length - 1];
-  const projRetBracketPct = Math.round(projRetBracket.rate * 100);
+  const { bracketPct: projRetBracketPct } = projectRetirementBracket({
+    avgAnnualRMD, householdSS, effectivePension, filingStatus,
+  });
 
   // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
   // SS plan vs. delaying SS to 70, both walked year-by-year from the same starting

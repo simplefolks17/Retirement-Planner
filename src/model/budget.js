@@ -11,6 +11,18 @@ export function calcGrossAfterTax(currentIncome, fedTax, stateTax, fica) {
   return currentIncome - fedTax - stateTax - fica;
 }
 
+// Projects future value of maxing the mega-backdoor Roth each year, for a few
+// horizons. Standard annuity FV: capacity × ((1+r)^n − 1) / r; when r = 0 it's
+// just capacity × n. Returns [{yrs, val}] for the requested horizons.
+export function calcMegaBackdoorGrowth({ megaCapacity, returnRate, years = [5, 10, 20] }) {
+  return years.map(yrs => ({
+    yrs,
+    val: returnRate > 0
+      ? Math.round(megaCapacity * ((Math.pow(1 + returnRate / 100, yrs) - 1) / (returnRate / 100)))
+      : megaCapacity * yrs,
+  }));
+}
+
 // Returns the annual savings capacity and related budget metrics.
 // grossAfterTax: from calcGrossAfterTax (income minus all taxes)
 // livingExpenses: null → auto-derived as grossAfterTax - currentContribTotal

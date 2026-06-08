@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcTax, marginalRate, ltcgRate, calcStateTax } from "../taxes.js";
+import { calcTax, marginalRate, ltcgRate, calcStateTax, projectRetirementBracket } from "../taxes.js";
 
 describe("calcTax", () => {
   it("returns zero tax on zero income", () => {
@@ -108,5 +108,23 @@ describe("calcStateTax", () => {
 
   it("returns 0 for unknown state code", () => {
     expect(calcStateTax(100_000, "working", "ZZ")).toBe(0);
+  });
+});
+
+describe("projectRetirementBracket", () => {
+  it("maps low retirement income to the 10% bracket", () => {
+    const r = projectRetirementBracket({ avgAnnualRMD: 0, householdSS: 0, effectivePension: 10_000, filingStatus: "single" });
+    expect(r.bracketPct).toBe(10);
+  });
+
+  it("applies the 85% SS taxable fraction in the income total, lands in 22% bracket", () => {
+    const r = projectRetirementBracket({ avgAnnualRMD: 20_000, householdSS: 40_000, effectivePension: 10_000, filingStatus: "single" });
+    expect(r.projRetIncome).toBe(64_000); // 20k + round(40k*0.85=34k) + 10k
+    expect(r.bracketPct).toBe(22);        // 50_400 <= 64_000 < 105_700
+  });
+
+  it("falls back to the top bracket for very high income", () => {
+    const r = projectRetirementBracket({ avgAnnualRMD: 900_000, householdSS: 0, effectivePension: 0, filingStatus: "single" });
+    expect(r.bracketPct).toBe(37);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation } from "../budget.js";
+import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth } from "../budget.js";
 
 describe("calcGrossAfterTax", () => {
   it("subtracts all taxes from income", () => {
@@ -104,5 +104,19 @@ describe("calcOptimizedAllocation — priority order", () => {
   it("totalExtra = 0 when availableSurplus = 0", () => {
     const alloc = calcOptimizedAllocation({ ...base, availableSurplus: 0 });
     expect(alloc.totalExtra).toBe(0);
+  });
+});
+
+describe("calcMegaBackdoorGrowth", () => {
+  it("compounds with the annuity FV formula at a positive return", () => {
+    const g = calcMegaBackdoorGrowth({ megaCapacity: 10_000, returnRate: 5 });
+    // 5yr: 10000 * ((1.05^5 - 1)/0.05) = 55_256
+    expect(g.map(x => x.yrs)).toEqual([5, 10, 20]);
+    expect(g[0].val).toBe(55_256);
+  });
+
+  it("falls back to linear (capacity × years) when return is 0", () => {
+    const g = calcMegaBackdoorGrowth({ megaCapacity: 10_000, returnRate: 0 });
+    expect(g.map(x => x.val)).toEqual([50_000, 100_000, 200_000]);
   });
 });

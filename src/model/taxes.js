@@ -3,6 +3,7 @@ import {
   LTCG_BRACKETS_2026,
   STATE_TAX,
   RETIREMENT_STATE_TAX,
+  ASSUMPTIONS,
 } from "../config/irs-2026.js";
 
 // Returns { tax, effectiveRate } where effectiveRate = tax / agi
@@ -44,6 +45,18 @@ export function stackedIncomeTax(amount, floor, filingStatus, stateRate = 0) {
   const base    = calcTax(floor, filingStatus).tax;
   const stacked = calcTax(floor + amount, filingStatus).tax;
   return Math.round((stacked - base) + amount * stateRate);
+}
+
+// Projects the marginal tax bracket in retirement from typical retirement income:
+// average annual RMD + the taxable fraction of SS + pension. Used for the
+// "projected X% marginal bracket" display. Returns the bracket object and its
+// rate as a whole-number percent.
+export function projectRetirementBracket({ avgAnnualRMD, householdSS, effectivePension, filingStatus }) {
+  const projRetIncome = avgAnnualRMD + Math.round(householdSS * ASSUMPTIONS.SS_TAXABLE_PCT) + effectivePension;
+  const brackets = (TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single).brackets;
+  const bracket = brackets.find(b => projRetIncome >= b.min && projRetIncome < b.max)
+               ?? brackets[brackets.length - 1];
+  return { projRetIncome, bracket, bracketPct: Math.round(bracket.rate * 100) };
 }
 
 // Returns annual state tax amount.
