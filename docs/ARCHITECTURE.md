@@ -19,6 +19,7 @@ src/
     rmd.js                calcRMDProjection, calcRMDPostConversion              [CLIENT]
     retirement-tax.js     calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax  [CLIENT]
     budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth  [CLIENT]
+    finance-math.js       fvAnnuity (shared future-value-of-annuity primitive; used by optimization + budget)  [CLIENT]
     healthcare.js         acaCliffThreshold, calcHealthcareExposure, calcConversionCosts (ACA cliff + IRMAA + cost rollup)  [CLIENT]
     optimization.js       calcOptimizedScenario                                 [SERVER]
     conversion-planning.js buildIncomeFloors, calcBracketFillTargets (conversion-window floors + bracket fill)  [CLIENT]
@@ -119,7 +120,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **267 tests across 22 files**, all passing.
+`npm test`. Current count: **272 tests across 23 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the
@@ -155,6 +156,35 @@ regexes must match `\$[\d.]+[MK]?`, never `\$[\d,]+`).
 
 A running record of design decisions made during feature planning. These persist
 across sessions so decisions don't have to be re-litigated.
+
+---
+
+### `evaluateConversionPlan` returns a full bundle — the optimizer's "unused" fields are NOT waste
+
+**Decision (2026-06-06):** Leave `evaluateConversionPlan` (`src/model/conversion-evaluation.js`)
+returning all 10 fields, called as-is by both the display path and the optimizer.
+
+**Context:** A code review flagged that the conversion optimizer's `getNetBenefit`
+calls `evaluateConversionPlan` ~60 times (a $5k-step search) but reads only 4 of the
+10 returned fields (`rmdTaxSaved`, `conversionSim.totalTax`, `irmaaCost`, `acaLoss`),
+"discarding" the other 6 — suggesting wasted work.
+
+**Analysis & conclusion (investigated, not a bug):**
+- The 4 fields the optimizer uses are the **expensive** ones: producing them requires
+  `calcRMDPostConversion` (a year-by-year RMD projection to life expectancy) and
+  `calcHealthcareExposure` — both genuinely needed to score a conversion amount.
+- The 6 "discarded" fields (`rmdDataPostConversion`, `rmdTaxBitePost`, `healthcareExposure`,
+  `cliffYears`, `netConversionBenefit`, `adjustedNetConversionBenefit`) are **free
+  byproducts** already computed on the way to those 4 — a couple of array filters and
+  subtractions, no extra heavy calls. The old (pre-extraction) optimizer computed the
+  exact same heavy calls per iteration; nothing got slower.
+- The only way to "trim" the byproducts is to split this into lean/full variants —
+  which **re-introduces the two-implementations divergence** the single shared function
+  exists to prevent (BUG-31 class). Not worth it.
+
+**Therefore:** this is intentional and correct. Do not "optimize" it away, and do not
+re-file it as a bug or efficiency problem. (Also noted at the `return` in
+`conversion-evaluation.js`.)
 
 ---
 

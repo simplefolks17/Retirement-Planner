@@ -75,6 +75,15 @@ export function evaluateConversionPlan({
   });
   const adjustedNetConversionBenefit = netConversionBenefit - irmaaCost - acaLoss;
 
+  // Returns the FULL bundle on purpose. The display path uses ~9 of these fields;
+  // the optimizer's getNetBenefit reads only 4 (rmdTaxSaved, conversionSim.totalTax,
+  // irmaaCost, acaLoss). That is NOT wasted work — the fields the optimizer "ignores"
+  // (cliffYears, adjustedNetConversionBenefit, etc.) are free byproducts already
+  // computed while producing the 4 it needs; the genuinely expensive calls
+  // (calcRMDPostConversion, calcHealthcareExposure) are required by those 4. Do NOT
+  // split this into lean/full variants to "save" the byproducts — that re-introduces
+  // the two-implementations divergence this function exists to prevent. See the
+  // "evaluateConversionPlan returns a full bundle" design note in docs/ARCHITECTURE.md.
   return {
     conversionSim, rmdDataPostConversion, rmdTaxBitePost, rmdTaxSaved, netConversionBenefit,
     healthcareExposure, irmaaCost, acaLoss, cliffYears, adjustedNetConversionBenefit,
