@@ -57,3 +57,27 @@ export function calcDrawdownYears({
   });
   return depletionAge !== null ? depletionAge - startAge : Infinity;
 }
+
+// How many extra years the portfolio lasts if SS is delayed to the max claim age
+// (70) instead of the user's chosen claiming age. Both scenarios walk year-by-year
+// from the same starting portfolio (calcDrawdownYears), so the higher pre-claim
+// draws of the delayed plan are charged correctly (BUG-26 — a closed form that
+// solved at the post-70 draw overstated the benefit by 3–6 yrs for early retirees).
+// Returns null when the comparison is moot: SS off, already claiming at/after the
+// max age, or the portfolio never depletes in either scenario.
+export function calcSSDelayGain({
+  includeSS, ssClaimingAge, ssMaxClaimAge, yearsSustained,
+  totalAtRet, safeRetAge, effectiveExpenses, rReal,
+  householdSS, household70SS, pensionMonthly, pensionStartAge, monthsPerYear,
+}) {
+  if (!includeSS || ssClaimingAge >= ssMaxClaimAge || yearsSustained === Infinity) return null;
+  const pensionAnnual = pensionMonthly > 0 ? pensionMonthly * monthsPerYear : 0;
+  const common = {
+    startBal: totalAtRet, startAge: safeRetAge, effectiveExpenses, rReal,
+    pensionAmount: pensionAnnual, pensionStartAge,
+  };
+  const baseYrs  = calcDrawdownYears({ ...common, ssAmount: householdSS,   ssClaimAge: ssClaimingAge });
+  const delayYrs = calcDrawdownYears({ ...common, ssAmount: household70SS, ssClaimAge: ssMaxClaimAge });
+  if (baseYrs === Infinity || delayYrs === Infinity) return null;
+  return Math.max(0, Math.round(delayYrs - baseYrs));
+}

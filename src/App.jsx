@@ -10,7 +10,7 @@ import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcDrawdownYears } from "./model/drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
 import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -532,18 +532,12 @@ export default function App() {
   // longevity at the post-70 (lower) draw rate from the full retirement balance,
   // which ignored those higher pre-70 draws and overstated the delay benefit
   // (3–6 yrs for users who retire well before 70).
-  const ssDelayGainYrs = (() => {
-    if (!includeSS || ssClaimingAge >= SS_MAX_CLAIM_AGE || yearsSustained === Infinity) return null;
-    const pensionAnnual = pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-    const common = {
-      startBal: totalAtRet, startAge: safeRetAge, effectiveExpenses, rReal,
-      pensionAmount: pensionAnnual, pensionStartAge,
-    };
-    const baseYrs  = calcDrawdownYears({ ...common, ssAmount: householdSS,   ssClaimAge: ssClaimingAge });
-    const delayYrs = calcDrawdownYears({ ...common, ssAmount: household70SS, ssClaimAge: SS_MAX_CLAIM_AGE });
-    if (baseYrs === Infinity || delayYrs === Infinity) return null;
-    return Math.max(0, Math.round(delayYrs - baseYrs));
-  })();
+  const ssDelayGainYrs = calcSSDelayGain({
+    includeSS, ssClaimingAge, ssMaxClaimAge: SS_MAX_CLAIM_AGE, yearsSustained,
+    totalAtRet, safeRetAge, effectiveExpenses, rReal,
+    householdSS, household70SS, pensionMonthly, pensionStartAge,
+    monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+  });
   const wr70 = totalAtRet > 0
     ? Math.max(0, effectiveExpenses - household70SS - effectivePension) / totalAtRet * 100
     : 0;

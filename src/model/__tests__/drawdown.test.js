@@ -4,6 +4,7 @@ import {
   calcWithdrawalRate,
   calcYearsSustained,
   calcDrawdownYears,
+  calcSSDelayGain,
 } from "../drawdown.js";
 
 describe("calcNetPortfolioNeed", () => {
@@ -126,5 +127,33 @@ describe("calcDrawdownYears (BUG-26)", () => {
       ssAmount: effectiveExpenses - need70, ssClaimAge: 70,
     });
     expect(newDelayYrs).toBeLessThan(oldYsSS70);
+  });
+});
+
+describe("calcSSDelayGain", () => {
+  const base = {
+    includeSS: true, ssClaimingAge: 65, ssMaxClaimAge: 70, yearsSustained: 30,
+    totalAtRet: 1_000_000, safeRetAge: 60, effectiveExpenses: 80_000, rReal: 0.01,
+    householdSS: 30_000, household70SS: 42_000, pensionMonthly: 0, pensionStartAge: 70,
+    monthsPerYear: 12,
+  };
+
+  it("returns null when SS is excluded", () => {
+    expect(calcSSDelayGain({ ...base, includeSS: false })).toBeNull();
+  });
+
+  it("returns null when already claiming at/after the max age", () => {
+    expect(calcSSDelayGain({ ...base, ssClaimingAge: 70 })).toBeNull();
+  });
+
+  it("returns null when the portfolio never depletes (yearsSustained Infinity)", () => {
+    expect(calcSSDelayGain({ ...base, yearsSustained: Infinity })).toBeNull();
+  });
+
+  it("returns a non-negative integer year gain for a depleting portfolio", () => {
+    const gain = calcSSDelayGain(base);
+    expect(gain).not.toBeNull();
+    expect(Number.isInteger(gain)).toBe(true);
+    expect(gain).toBeGreaterThanOrEqual(0);
   });
 });
