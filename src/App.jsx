@@ -9,18 +9,21 @@ import { fmt, fmtPct } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
-import { calcSavingsCapacity, calcOptimizedAllocation } from "./model/budget.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcDrawdownYears } from "./model/drawdown.js";
+import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth } from "./model/budget.js";
+import { projectRetirementBracket } from "./model/taxes.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
 import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
-import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
-import { calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
+import { calcRMDProjection } from "./model/rmd.js";
+import { calcRMDIncomeFloor, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
 import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
-import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
-import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
+import { findOptimalConversion } from "./model/roth-conversion.js";
+import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
+import { calcMilestones, buildAccumChart } from "./model/accumulation.js";
+import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
@@ -255,29 +258,9 @@ export default function App() {
   // taxes to the portfolio (BUG-31 Path A). They run through the SAME shared
   // walk (buildRetirementDrawdown) as the chart and waterfall.
 
-  const milestones = useMemo(() => {
-    const getTotal = row =>
-      (row["Trad 401k"] ?? 0) + (row["Roth IRA"] ?? 0)
-    + (row["Taxable"]   ?? 0) + (row["HSA"]       ?? 0);
-    const ages = [];
-    let a = Math.ceil((currentAge + 1) / 5) * 5;
-    while (a <= safeRetAge) { ages.push(a); a += 5; }
-    if (!ages.includes(safeRetAge)) ages.push(safeRetAge);
-    ages.sort((x, y) => x - y);
-    const cards = ages.map(age => {
-      const row = simData.find(d => d.age === age);
-      if (!row) return null;
-      return { age, total: getTotal(row), isRetirement: age === safeRetAge };
-    }).filter(Boolean);
-    const crossIdx = cards.findIndex(c => c.total >= retirementTarget);
-    if (crossIdx !== -1) return cards.slice(0, crossIdx + 1);
-    const crossRow = simData.find(d => getTotal(d) >= retirementTarget);
-    if (crossRow) {
-      const extra = { age: crossRow.age, total: getTotal(crossRow), isRetirement: false };
-      return [...cards, extra];
-    }
-    return cards;
-  }, [simData, currentAge, safeRetAge, retirementTarget]);
+  const milestones = useMemo(
+    () => calcMilestones({ simData, currentAge, safeRetAge, retirementTarget }),
+    [simData, currentAge, safeRetAge, retirementTarget]);
 
   const ssBreakEven = calcSSBreakEven({ ssClaimingAge, ssMonthlyBenefit, ss67Monthly });
 
@@ -341,10 +324,19 @@ export default function App() {
   const annualConversion = conversionMode === "bracket" ? bracketFillConversion : annualConversionAmt;
   const convTargetVaries = conversionMode === "bracket" && targetsVary;
 
-  const conversionSim = useMemo(() => {
+  // The whole conversion-evaluation pipeline (sim → post-conversion RMD tax → net
+  // benefit → ACA/IRMAA costs) is ONE model function, evaluateConversionPlan, shared
+  // with the optimizer below so the two can never diverge. Collapsed into a single
+  // memo for referential stability: the destructured sub-objects (conversionSim, etc.)
+  // stay stable until an input changes, so downstream memos don't thrash (BUG-22).
+  // Trade-off: a healthcare-only input change (hasMedicare, householdSize, etc.)
+  // now gives conversionSim a fresh reference, which cascades through conversionTaxByAge
+  // into the retirement walk + chart (identical values, just extra recompute) —
+  // accepted vs. re-duplicating the pipeline across display and optimizer.
+  const conversionPlan = useMemo(() => {
     const retRow = simData.find(d => d.age === safeRetAge)
       ?? (safeRetAge === currentAge ? currentSnapshot : null);
-    const raw = calcConversionSim({
+    return evaluateConversionPlan({
       conversionWindowYrs: retRow ? conversionWindowYrs : 0,
       annualConversion,
       annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
@@ -353,21 +345,23 @@ export default function App() {
       tradGrossAtRetirement: (retRow?.tradGross ?? 0) + addlPreTaxBal,
       rothBalAtRet: retVals["Roth IRA"] ?? 0,
       taxableBalAtRet: retVals["Taxable"] ?? 0,
+      safeRetAge,
+      rmdData, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
+      rmdTaxBite, rmdIncomeFloor,
+      convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
+      personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
     });
-    // Model returns year ages as 1-indexed (yr+1); offset by safeRetAge for display.
-    return { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + safeRetAge })) };
-  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion, conversionMode, bracketFillConversions, retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource, addlPreTaxBal]);
-
-  const rmdDataPostConversion = useMemo(() => calcRMDPostConversion({
-    conversionWindowYrs, rmdData, tradBal73: conversionSim.tradBal73,
-    safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
-  }), [conversionSim, safeLifeExp, returnRate, rmdData, conversionWindowYrs, useTable2, spouseCurrentAge, currentAge]);
-
-  // calcRMDTax (src/model/retirement-tax.js) is the single shared definition,
-  // used by both the display path here and the optimizer below.
-  const rmdTaxBitePost = calcRMDTax(rmdDataPostConversion, { rmdIncomeFloor, filingStatus, retStateRate });
-  const rmdTaxSaved          = Math.max(0, rmdTaxBite - rmdTaxBitePost);
-  const netConversionBenefit = rmdTaxSaved - conversionSim.totalTax;
+  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion,
+      conversionMode, bracketFillConversions, retVals["Roth IRA"], retVals["Taxable"], returnRate,
+      retIncomeFloor, convFloors, filingStatus, conversionTaxSource, retStateRate, addlPreTaxBal,
+      rmdData, safeLifeExp, useTable2, spouseCurrentAge, rmdTaxBite, rmdIncomeFloor,
+      convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, personOnMedicare,
+      marketplaceMonthlyPremium]);
+  const {
+    conversionSim, rmdDataPostConversion, rmdTaxSaved, netConversionBenefit,
+    healthcareExposure, cliffYears: acaCliffYears, irmaaCost: totalIRMAACost,
+    acaLoss: acaAnnualLoss, adjustedNetConversionBenefit,
+  } = conversionPlan;
 
   // ── Per-year retirement tax schedules (BUG-31 Path A) ─────────────────────
   // The portfolio actually pays these taxes, so they must drain the SAME walk
@@ -404,23 +398,9 @@ export default function App() {
   const isSustainable = yearsSustained === Infinity || yearsSustained >= (safeLifeExp - safeRetAge);
 
   // Accumulation rows (current → retirement) + the starting balance for the walk.
-  const accumChart = useMemo(() => {
-    const rows = [];
-    // Seed with current balances as the retirement starting point when already
-    // retired (safeRetAge === currentAge, no accumulation years).
-    if (safeRetAge === currentAge) {
-      rows.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
-    }
-    for (const d of simData) {
-      rows.push({
-        age: d.age,
-        total: (d["Trad 401k"] ?? 0) + (d["Roth IRA"] ?? 0)
-             + (d["Taxable"]   ?? 0) + (d["HSA"]       ?? 0),
-      });
-      if (d.age >= safeRetAge) break;
-    }
-    return rows;
-  }, [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA]);
+  const accumChart = useMemo(
+    () => buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }),
+    [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA]);
 
   // The ONE retirement-phase walk to life expectancy. Both the chart and the
   // Flow-Down waterfall read its rows (each carries draw / tax / growth), so the
@@ -438,21 +418,6 @@ export default function App() {
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
     [accumChart, retirementWalk]);
 
-  const healthcareExposure = useMemo(() => calcHealthcareExposure({
-    conversionYears: conversionSim.years,
-    convMAGIFloors,
-    hasMarketplaceInsurance,
-    householdSize,
-    hasMedicare,
-    filingStatus,
-  }), [conversionSim, convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, filingStatus]);
-  const acaCliffYears = healthcareExposure.filter(e => e.aca?.crossesCliff);
-  const totalIRMAACost = healthcareExposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
-  const acaAnnualLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
-    ? acaCliffYears.length * marketplaceMonthlyPremium * ASSUMPTIONS.MONTHS_PER_YEAR
-    : 0;
-  const adjustedNetConversionBenefit = netConversionBenefit - totalIRMAACost - acaAnnualLoss;
-
   // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA + ACA.
   // Only runs in custom mode — bracket mode uses per-year targets derived from the bracket
   // choice, not a searchable flat scalar; optimizing a flat amount there produces a different
@@ -468,37 +433,24 @@ export default function App() {
     const _convFloors = convFloors;
     const _convMAGIFloors = convMAGIFloors;
 
+    // Same evaluateConversionPlan as the display path — the optimizer can never
+    // search a different model than what the screen shows.
     const getNetBenefit = (amount) => {
-      const sim = calcConversionSim({
-        conversionWindowYrs, annualConversion: amount, returnRate,
-        retIncomeFloor, retIncomeFloors: _convFloors,
+      const plan = evaluateConversionPlan({
+        conversionWindowYrs, annualConversion: amount, annualConversions: null,
+        returnRate, retIncomeFloor, retIncomeFloors: _convFloors,
         filingStatus, conversionTaxSource, retStateRate,
         tradGrossAtRetirement: tradGross, rothBalAtRet: rothBal, taxableBalAtRet: taxableBal,
+        safeRetAge,
+        rmdData, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
+        rmdTaxBite, rmdIncomeFloor,
+        convMAGIFloors: _convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
+        personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
       });
-      const rmdPost = calcRMDPostConversion({
-        conversionWindowYrs, rmdData, tradBal73: sim.tradBal73,
-        safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
-      });
-      const rmdTaxPost     = calcRMDTax(rmdPost, { rmdIncomeFloor, filingStatus, retStateRate });
-      const rmdTaxSavedOpt = Math.max(0, rmdTaxBite - rmdTaxPost);
-
-      // Apply safeRetAge offset so calcHealthcareExposure receives the same ages
-      // as the display path (conversionSim.years already has this offset applied).
-      const offsetYears = sim.years.map(y => ({ ...y, age: y.age + safeRetAge }));
-      const exposure = calcHealthcareExposure({
-        conversionYears: offsetYears,
-        convMAGIFloors: _convMAGIFloors,
-        hasMarketplaceInsurance,
-        householdSize,
-        hasMedicare,
-        filingStatus,
-      });
-      const irmaaCost = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
-      const acaLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
-        ? exposure.filter(e => e.aca?.crossesCliff).length * marketplaceMonthlyPremium * ASSUMPTIONS.MONTHS_PER_YEAR
-        : 0;
-
-      return { rmdTaxSaved: rmdTaxSavedOpt, totalTax: sim.totalTax, irmaaCost, acaLoss };
+      return {
+        rmdTaxSaved: plan.rmdTaxSaved, totalTax: plan.conversionSim.totalTax,
+        irmaaCost: plan.irmaaCost, acaLoss: plan.acaLoss,
+      };
     };
 
     return findOptimalConversion({ getNetBenefit });
@@ -511,12 +463,7 @@ export default function App() {
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
   const megaCapacity     = Math.max(0, limit415c - contrib401k - employerMatchAmt);
-  const megaGrowth       = [5, 10, 20].map(yrs => ({
-    yrs,
-    val: returnRate > 0
-      ? Math.round(megaCapacity * ((Math.pow(1 + returnRate / 100, yrs) - 1) / (returnRate / 100)))
-      : megaCapacity * yrs,
-  }));
+  const megaGrowth       = calcMegaBackdoorGrowth({ megaCapacity, returnRate });
 
   const retTaxable     = retVals["Taxable"]   ?? 0;
   const retTrad        = retVals["Trad 401k"] ?? 0;
@@ -541,11 +488,9 @@ export default function App() {
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);
 
   const avgAnnualRMD      = rmdData.length > 0 ? Math.round(totalRMDs / rmdData.length) : 0;
-  const projRetIncome     = avgAnnualRMD + Math.round(householdSS * ASSUMPTIONS.SS_TAXABLE_PCT) + effectivePension;
-  const retBrackets       = (TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single).brackets;
-  const projRetBracket    = retBrackets.find(b => projRetIncome >= b.min && projRetIncome < b.max)
-                         ?? retBrackets[retBrackets.length - 1];
-  const projRetBracketPct = Math.round(projRetBracket.rate * 100);
+  const { bracketPct: projRetBracketPct } = projectRetirementBracket({
+    avgAnnualRMD, householdSS, effectivePension, filingStatus,
+  });
 
   // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
   // SS plan vs. delaying SS to 70, both walked year-by-year from the same starting
@@ -555,18 +500,12 @@ export default function App() {
   // longevity at the post-70 (lower) draw rate from the full retirement balance,
   // which ignored those higher pre-70 draws and overstated the delay benefit
   // (3–6 yrs for users who retire well before 70).
-  const ssDelayGainYrs = (() => {
-    if (!includeSS || ssClaimingAge >= SS_MAX_CLAIM_AGE || yearsSustained === Infinity) return null;
-    const pensionAnnual = pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0;
-    const common = {
-      startBal: totalAtRet, startAge: safeRetAge, effectiveExpenses, rReal,
-      pensionAmount: pensionAnnual, pensionStartAge,
-    };
-    const baseYrs  = calcDrawdownYears({ ...common, ssAmount: householdSS,   ssClaimAge: ssClaimingAge });
-    const delayYrs = calcDrawdownYears({ ...common, ssAmount: household70SS, ssClaimAge: SS_MAX_CLAIM_AGE });
-    if (baseYrs === Infinity || delayYrs === Infinity) return null;
-    return Math.max(0, Math.round(delayYrs - baseYrs));
-  })();
+  const ssDelayGainYrs = calcSSDelayGain({
+    includeSS, ssClaimingAge, ssMaxClaimAge: SS_MAX_CLAIM_AGE, yearsSustained,
+    totalAtRet, safeRetAge, effectiveExpenses, rReal,
+    householdSS, household70SS, pensionMonthly, pensionStartAge,
+    monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+  });
   const wr70 = totalAtRet > 0
     ? Math.max(0, effectiveExpenses - household70SS - effectivePension) / totalAtRet * 100
     : 0;

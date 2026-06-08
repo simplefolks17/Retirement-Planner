@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (241 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (272 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 
@@ -168,10 +168,44 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   → spouse benefit 0 → golden master unchanged. BUG-30 +1 test, BUG-16 +7 tests. Closes the
   "calcSpousal (BUG-16)" and "ltcgRate combined-income (BUG-30)" deliverables on feature #30.
 - Cumulative across the three batches: test suite 230 → **241** (BUG-29 +3, BUG-30 +1, BUG-16 +7).
+- Calculation-extraction pass 2 (Jun 6 2026) — value-preserving, golden master unchanged:
+  finished pulling the remaining inline math out of App.jsx (red + yellow + green). Two active
+  DUPLICATIONS eliminated structurally — the class behind the worst past bugs:
+  - `calcConversionCosts` (`healthcare.js`) — the IRMAA/ACA cost rollup the display path and the
+    optimizer each computed separately now has ONE definition (BUG-25 #4 shape).
+  - `evaluateConversionPlan` (new `conversion-evaluation.js`) — the whole conversion pipeline
+    (sim → post-conversion RMD tax → net benefit → ACA/IRMAA costs) was implemented twice
+    (display path + optimizer `getNetBenefit`); both now call one function, so the optimizer can
+    never search a different model than the screen shows (BUG-31 "two implementations of one calc").
+    The display path collapses ~5 memos into one for referential stability (BUG-22). Locked by a
+    value-lock (`netConversionBenefit` = 77,861) + an anti-divergence test (optimizer objective ==
+    display's adjusted net benefit).
+  Smaller blocks extracted too: `sumAccountRow` / `calcMilestones` / `buildAccumChart` (new
+  `accumulation.js`), `calcSSDelayGain` (`drawdown.js`), `projectRetirementBracket` (`taxes.js`),
+  `calcMegaBackdoorGrowth` (`budget.js`). 241 → **267** tests (26 new). App.jsx 2,774 → 2,711 lines;
+  its JSX body now holds no calculation logic. New files: `accumulation.js`, `conversion-evaluation.js`.
+- Post-extraction cleanup (Jun 6 2026) — from the extraction-pass-2 code review:
+  1. **FV-annuity dedup** — the future-value-of-an-annuity formula was written twice
+     (`optimization.js`'s local closure + `calcMegaBackdoorGrowth`). Extracted to a shared
+     `fvAnnuity(annual, rate, years)` in new `src/model/finance-math.js`; both import it.
+     Value-preserving (identical formula + guard). +4 tests.
+  2. **BUG-33 fixed** — `projectRetirementBracket` matched the bracket on *gross* retirement
+     income against *taxable*-income thresholds (skipped the standard deduction that
+     `marginalRate`/`calcTax` apply), so the "projected marginal bracket" label read one bracket
+     high — **32% → 24%** at default. Now subtracts the deduction once (no double-count;
+     apples-to-apples with working bracket + actual retirement tax). Display-only — golden
+     master unmoved. +1 test; logged in `docs/BUGS.md`.
+  3. **Optimizer "discarded fields" — investigated, not a bug.** The review flagged that the
+     conversion optimizer reads only 4 of `evaluateConversionPlan`'s 10 returned fields. The
+     other 6 are free byproducts of computing those 4; the heavy calls are required; splitting
+     into lean/full variants would re-introduce the divergence the single function prevents.
+     Documented at the `return` in `conversion-evaluation.js` and in `ARCHITECTURE.md` →
+     Feature Design Notes so it isn't re-flagged. No code change.
+  267 → **272** tests (23 files). New file: `finance-math.js`.
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (241 tests)
+- `npm test` — run model + formatter + render-smoke tests (272 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)

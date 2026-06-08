@@ -7,20 +7,23 @@ src/
   config/
     irs-2026.js           All 2026 IRS constants + ASSUMPTIONS object           [CLIENT]
   model/                  Pure functions — no React. Used client-side AND server-side.
-    taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, getTaxRate  [CLIENT]
+    taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, stackedIncomeTax, projectRetirementBracket  [CLIENT]
     tax-basis.js          calcTaxBasis (working-year agi / fed+state+FICA / Roth phase-out / grossAfterTax)  [CLIENT]
     social-security.js    calcAIME, calcPIA, calcBenefit, calcSpousal           [CLIENT]
     retirement-income.js  calcRetirementIncome (SS + pension composition), calcSSBreakEven  [CLIENT]
     simulation.js         runSimulation (accumulation loop)                     [CLIENT]
-    drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears  [CLIENT]
+    accumulation.js       sumAccountRow, calcMilestones, buildAccumChart (accumulation-phase projections from simData)  [CLIENT]
+    drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears, calcSSDelayGain  [CLIENT]
     retirement-drawdown.js buildRetirementDrawdown (ONE shared retirement-phase walk)  [CLIENT]
     employer-match.js     calcEmployerMatch (flat + formula modes)              [CLIENT]
     rmd.js                calcRMDProjection, calcRMDPostConversion              [CLIENT]
     retirement-tax.js     calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax  [CLIENT]
-    budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation  [CLIENT]
-    healthcare.js         acaCliffThreshold, calcHealthcareExposure (ACA cliff + IRMAA)  [CLIENT]
+    budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth  [CLIENT]
+    finance-math.js       fvAnnuity (shared future-value-of-annuity primitive; used by optimization + budget)  [CLIENT]
+    healthcare.js         acaCliffThreshold, calcHealthcareExposure, calcConversionCosts (ACA cliff + IRMAA + cost rollup)  [CLIENT]
     optimization.js       calcOptimizedScenario                                 [SERVER]
     conversion-planning.js buildIncomeFloors, calcBracketFillTargets (conversion-window floors + bracket fill)  [CLIENT]
+    conversion-evaluation.js evaluateConversionPlan (ONE shared sim→RMD-tax→net-benefit→ACA/IRMAA pipeline; display + optimizer)  [SERVER]
     roth-conversion.js    calcConversionSim, findOptimalConversion              [SERVER]
     flow-down.js          calcFlowDown (waterfall decomposition from the shared walk)  [SERVER]
     action-cards.js       generatePhaseActions, generatePhaseSteps              [SERVER]
@@ -117,7 +120,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **230 tests across 20 files**, all passing.
+`npm test`. Current count: **272 tests across 23 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the
@@ -153,6 +156,35 @@ regexes must match `\$[\d.]+[MK]?`, never `\$[\d,]+`).
 
 A running record of design decisions made during feature planning. These persist
 across sessions so decisions don't have to be re-litigated.
+
+---
+
+### `evaluateConversionPlan` returns a full bundle — the optimizer's "unused" fields are NOT waste
+
+**Decision (2026-06-06):** Leave `evaluateConversionPlan` (`src/model/conversion-evaluation.js`)
+returning all 10 fields, called as-is by both the display path and the optimizer.
+
+**Context:** A code review flagged that the conversion optimizer's `getNetBenefit`
+calls `evaluateConversionPlan` ~60 times (a $5k-step search) but reads only 4 of the
+10 returned fields (`rmdTaxSaved`, `conversionSim.totalTax`, `irmaaCost`, `acaLoss`),
+"discarding" the other 6 — suggesting wasted work.
+
+**Analysis & conclusion (investigated, not a bug):**
+- The 4 fields the optimizer uses are the **expensive** ones: producing them requires
+  `calcRMDPostConversion` (a year-by-year RMD projection to life expectancy) and
+  `calcHealthcareExposure` — both genuinely needed to score a conversion amount.
+- The 6 "discarded" fields (`rmdDataPostConversion`, `rmdTaxBitePost`, `healthcareExposure`,
+  `cliffYears`, `netConversionBenefit`, `adjustedNetConversionBenefit`) are **free
+  byproducts** already computed on the way to those 4 — a couple of array filters and
+  subtractions, no extra heavy calls. The old (pre-extraction) optimizer computed the
+  exact same heavy calls per iteration; nothing got slower.
+- The only way to "trim" the byproducts is to split this into lean/full variants —
+  which **re-introduces the two-implementations divergence** the single shared function
+  exists to prevent (BUG-31 class). Not worth it.
+
+**Therefore:** this is intentional and correct. Do not "optimize" it away, and do not
+re-file it as a bug or efficiency problem. (Also noted at the `return` in
+`conversion-evaluation.js`.)
 
 ---
 

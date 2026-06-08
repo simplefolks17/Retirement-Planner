@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcTax, marginalRate, ltcgRate, calcStateTax } from "../taxes.js";
+import { calcTax, marginalRate, ltcgRate, calcStateTax, projectRetirementBracket } from "../taxes.js";
 
 describe("calcTax", () => {
   it("returns zero tax on zero income", () => {
@@ -108,5 +108,34 @@ describe("calcStateTax", () => {
 
   it("returns 0 for unknown state code", () => {
     expect(calcStateTax(100_000, "working", "ZZ")).toBe(0);
+  });
+});
+
+describe("projectRetirementBracket", () => {
+  it("maps low retirement income to the 10% bracket", () => {
+    const r = projectRetirementBracket({ avgAnnualRMD: 0, householdSS: 0, effectivePension: 10_000, filingStatus: "single" });
+    expect(r.taxableIncome).toBe(0); // 10k gross − 16.1k deduction, floored at 0
+    expect(r.bracketPct).toBe(10);
+  });
+
+  it("matches the bracket on TAXABLE income (gross − standard deduction), not gross (BUG-33)", () => {
+    // 20k + round(40k*0.85=34k) + 10k = 64k gross; minus 16.1k deduction = 47.9k taxable
+    const r = projectRetirementBracket({ avgAnnualRMD: 20_000, householdSS: 40_000, effectivePension: 10_000, filingStatus: "single" });
+    expect(r.projRetIncome).toBe(64_000);
+    expect(r.taxableIncome).toBe(47_900);
+    expect(r.bracketPct).toBe(12); // 12_400 <= 47_900 < 50_400 (a gross scan wrongly showed 22%)
+  });
+
+  it("default-state income lands in 24%, not 32% — the BUG-33 boundary case", () => {
+    // gross 211_609 sits just over the 32% line (201_775); taxable 195_509 is 24%
+    const r = projectRetirementBracket({ avgAnnualRMD: 172_574, householdSS: 45_924, effectivePension: 0, filingStatus: "single" });
+    expect(r.projRetIncome).toBe(211_609);
+    expect(r.taxableIncome).toBe(195_509);
+    expect(r.bracketPct).toBe(24);
+  });
+
+  it("falls back to the top bracket for very high income", () => {
+    const r = projectRetirementBracket({ avgAnnualRMD: 900_000, householdSS: 0, effectivePension: 0, filingStatus: "single" });
+    expect(r.bracketPct).toBe(37);
   });
 });

@@ -3,6 +3,7 @@ import {
   LTCG_BRACKETS_2026,
   STATE_TAX,
   RETIREMENT_STATE_TAX,
+  ASSUMPTIONS,
 } from "../config/irs-2026.js";
 
 // Returns { tax, effectiveRate } where effectiveRate = tax / agi
@@ -44,6 +45,28 @@ export function stackedIncomeTax(amount, floor, filingStatus, stateRate = 0) {
   const base    = calcTax(floor, filingStatus).tax;
   const stacked = calcTax(floor + amount, filingStatus).tax;
   return Math.round((stacked - base) + amount * stateRate);
+}
+
+// Projects the marginal tax bracket in retirement from typical retirement income:
+// average annual RMD + the taxable fraction of SS + pension. Used for the
+// "projected X% marginal bracket" display.
+//
+// The bracket is matched on TAXABLE income — gross retirement income minus the
+// standard deduction — exactly as marginalRate()/calcTax() do for working income
+// and as the actual retirement tax (rmdTaxBite, conversion tax) already do via
+// calcTax. Scanning gross income against the (taxable-income) bracket thresholds
+// read one bracket too high near a boundary — at the default state it showed 32%
+// where taxable income is really 24% (BUG-33). The deduction is subtracted exactly
+// once here (nothing else in this label's path applies it), so there is no
+// double-counting. Returns the bracket object, its rate as a whole-number percent,
+// and both the gross and taxable income figures.
+export function projectRetirementBracket({ avgAnnualRMD, householdSS, effectivePension, filingStatus }) {
+  const { deduction, brackets } = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
+  const projRetIncome = avgAnnualRMD + Math.round(householdSS * ASSUMPTIONS.SS_TAXABLE_PCT) + effectivePension;
+  const taxableIncome = Math.max(0, projRetIncome - deduction);
+  const bracket = brackets.find(b => taxableIncome >= b.min && taxableIncome < b.max)
+               ?? brackets[brackets.length - 1];
+  return { projRetIncome, taxableIncome, bracket, bracketPct: Math.round(bracket.rate * 100) };
 }
 
 // Returns annual state tax amount.
