@@ -21,7 +21,7 @@ import { findOptimalConversion } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { sumAccountRow } from "./model/accumulation.js";
+import { sumAccountRow, calcMilestones } from "./model/accumulation.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
@@ -257,27 +257,9 @@ export default function App() {
   // taxes to the portfolio (BUG-31 Path A). They run through the SAME shared
   // walk (buildRetirementDrawdown) as the chart and waterfall.
 
-  const milestones = useMemo(() => {
-    const getTotal = sumAccountRow;
-    const ages = [];
-    let a = Math.ceil((currentAge + 1) / 5) * 5;
-    while (a <= safeRetAge) { ages.push(a); a += 5; }
-    if (!ages.includes(safeRetAge)) ages.push(safeRetAge);
-    ages.sort((x, y) => x - y);
-    const cards = ages.map(age => {
-      const row = simData.find(d => d.age === age);
-      if (!row) return null;
-      return { age, total: getTotal(row), isRetirement: age === safeRetAge };
-    }).filter(Boolean);
-    const crossIdx = cards.findIndex(c => c.total >= retirementTarget);
-    if (crossIdx !== -1) return cards.slice(0, crossIdx + 1);
-    const crossRow = simData.find(d => getTotal(d) >= retirementTarget);
-    if (crossRow) {
-      const extra = { age: crossRow.age, total: getTotal(crossRow), isRetirement: false };
-      return [...cards, extra];
-    }
-    return cards;
-  }, [simData, currentAge, safeRetAge, retirementTarget]);
+  const milestones = useMemo(
+    () => calcMilestones({ simData, currentAge, safeRetAge, retirementTarget }),
+    [simData, currentAge, safeRetAge, retirementTarget]);
 
   const ssBreakEven = calcSSBreakEven({ ssClaimingAge, ssMonthlyBenefit, ss67Monthly });
 
