@@ -1,5 +1,6 @@
 import { TRAD_401K_LIMIT_2026, SS_MAX_CLAIM_AGE, ASSUMPTIONS } from "../config/irs-2026.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
+import { fvAnnuity } from "./finance-math.js";
 
 // Returns the optimized "what-if" scenario projecting additional portfolio value
 // from deploying surplus + delaying SS to 70.
@@ -36,13 +37,6 @@ export function calcOptimizedScenario({
   const g = incomeGrowth / 100;
   const yearsToRet = Math.max(1, safeRetAge - currentAge);
   const oa = optimizedAllocation;
-
-  const fvAnnuity = (annual, rate, years) => {
-    if (annual <= 0 || years <= 0) return 0;
-    return rate > 0
-      ? annual * ((Math.pow(1 + rate, years) - 1) / rate)
-      : annual * years;
-  };
 
   // Extra 401k: year-by-year (room shrinks as income-scaled contributions grow)
   let extra401kFV = 0;

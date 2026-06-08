@@ -4,6 +4,7 @@ import {
   TRAD_401K_LIMIT_2026,
   ROTH_PHASEOUT_2026,
 } from "../config/irs-2026.js";
+import { fvAnnuity } from "./finance-math.js";
 
 // Returns income after all taxes — the correct budget basis.
 // Pre-tax contributions are NOT subtracted here; they reduce fedTax via AGI instead.
@@ -12,14 +13,12 @@ export function calcGrossAfterTax(currentIncome, fedTax, stateTax, fica) {
 }
 
 // Projects future value of maxing the mega-backdoor Roth each year, for a few
-// horizons. Standard annuity FV: capacity × ((1+r)^n − 1) / r; when r = 0 it's
-// just capacity × n. Returns [{yrs, val}] for the requested horizons.
+// horizons. Uses the shared annuity-FV primitive (returnRate is a percent here,
+// so pass it as a decimal). Returns [{yrs, val}] for the requested horizons.
 export function calcMegaBackdoorGrowth({ megaCapacity, returnRate, years = [5, 10, 20] }) {
   return years.map(yrs => ({
     yrs,
-    val: returnRate > 0
-      ? Math.round(megaCapacity * ((Math.pow(1 + returnRate / 100, yrs) - 1) / (returnRate / 100)))
-      : megaCapacity * yrs,
+    val: Math.round(fvAnnuity(megaCapacity, returnRate / 100, yrs)),
   }));
 }
 
