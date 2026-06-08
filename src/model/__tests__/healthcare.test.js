@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { acaCliffThreshold, irmaaAnnualSurcharge, calcHealthcareExposure } from "../healthcare.js";
+import { acaCliffThreshold, irmaaAnnualSurcharge, calcHealthcareExposure, calcConversionCosts } from "../healthcare.js";
 
 describe("acaCliffThreshold", () => {
   it("1-person household: 400% × $15,060 = $60,240", () => {
@@ -88,5 +88,44 @@ describe("calcHealthcareExposure", () => {
       hasMedicare: true, filingStatus: "single",
     });
     expect(result[0].irmaa).toBeNull();
+  });
+});
+
+describe("calcConversionCosts", () => {
+  // exposure shaped like calcHealthcareExposure output
+  const exposure = [
+    { age: 67, aca: { crossesCliff: true },  irmaa: { surcharge: 1_000 } },
+    { age: 68, aca: { crossesCliff: false }, irmaa: { surcharge: 2_000 } },
+    { age: 69, aca: null,                    irmaa: { surcharge: 0 } },
+  ];
+
+  it("sums IRMAA surcharge across the window and multiplies by enrollee count", () => {
+    const r = calcConversionCosts({
+      exposure, personOnMedicare: 2,
+      hasMarketplaceInsurance: false, marketplaceMonthlyPremium: null,
+      monthsPerYear: 12,
+    });
+    expect(r.irmaaCost).toBe(6_000); // (1000 + 2000 + 0) * 2
+  });
+
+  it("charges full annual premium per cliff-crossing year when on a marketplace plan", () => {
+    const r = calcConversionCosts({
+      exposure, personOnMedicare: 1,
+      hasMarketplaceInsurance: true, marketplaceMonthlyPremium: 500,
+      monthsPerYear: 12,
+    });
+    expect(r.cliffYears).toHaveLength(1);
+    expect(r.acaLoss).toBe(6_000); // 1 cliff year * 500 * 12
+  });
+
+  it("acaLoss is 0 without a marketplace plan or premium", () => {
+    expect(calcConversionCosts({
+      exposure, personOnMedicare: 1,
+      hasMarketplaceInsurance: false, marketplaceMonthlyPremium: 500, monthsPerYear: 12,
+    }).acaLoss).toBe(0);
+    expect(calcConversionCosts({
+      exposure, personOnMedicare: 1,
+      hasMarketplaceInsurance: true, marketplaceMonthlyPremium: null, monthsPerYear: 12,
+    }).acaLoss).toBe(0);
   });
 });

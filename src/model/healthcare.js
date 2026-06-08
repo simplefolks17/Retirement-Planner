@@ -47,3 +47,26 @@ export function calcHealthcareExposure({
     return { age, aca, irmaa };
   });
 }
+
+// Rolls a healthcare-exposure array (from calcHealthcareExposure) into the real
+// dollar costs charged against a Roth conversion's net benefit. ONE definition
+// shared by the display path and the optimizer so the two can never compute the
+// cost differently (the BUG-25 #4 duplicated-reduce class).
+//   irmaaCost — total Part B+D surcharge across the window × number of enrollees.
+//   acaLoss   — full marketplace premium for each year the conversion crosses the
+//               subsidy cliff (subsidies are all-or-nothing past the cliff).
+//   cliffYears— the exposure entries that cross the cliff (for display).
+export function calcConversionCosts({
+  exposure,
+  personOnMedicare,
+  hasMarketplaceInsurance,
+  marketplaceMonthlyPremium,
+  monthsPerYear,
+}) {
+  const cliffYears = exposure.filter(e => e.aca?.crossesCliff);
+  const irmaaCost  = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
+  const acaLoss    = hasMarketplaceInsurance && marketplaceMonthlyPremium
+    ? cliffYears.length * marketplaceMonthlyPremium * monthsPerYear
+    : 0;
+  return { irmaaCost, acaLoss, cliffYears };
+}

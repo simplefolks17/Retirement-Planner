@@ -18,7 +18,7 @@ import { calcRMDProjection, calcRMDPostConversion } from "./model/rmd.js";
 import { calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
 import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
 import { calcConversionSim, findOptimalConversion } from "./model/roth-conversion.js";
-import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
+import { calcHealthcareExposure, acaCliffThreshold, calcConversionCosts } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import { sumAccountRow } from "./model/accumulation.js";
@@ -441,11 +441,12 @@ export default function App() {
     hasMedicare,
     filingStatus,
   }), [conversionSim, convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, filingStatus]);
-  const acaCliffYears = healthcareExposure.filter(e => e.aca?.crossesCliff);
-  const totalIRMAACost = healthcareExposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
-  const acaAnnualLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
-    ? acaCliffYears.length * marketplaceMonthlyPremium * ASSUMPTIONS.MONTHS_PER_YEAR
-    : 0;
+  const { cliffYears: acaCliffYears, irmaaCost: totalIRMAACost, acaLoss: acaAnnualLoss } =
+    calcConversionCosts({
+      exposure: healthcareExposure, personOnMedicare,
+      hasMarketplaceInsurance, marketplaceMonthlyPremium,
+      monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+    });
   const adjustedNetConversionBenefit = netConversionBenefit - totalIRMAACost - acaAnnualLoss;
 
   // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA + ACA.
@@ -488,10 +489,11 @@ export default function App() {
         hasMedicare,
         filingStatus,
       });
-      const irmaaCost = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
-      const acaLoss = hasMarketplaceInsurance && marketplaceMonthlyPremium
-        ? exposure.filter(e => e.aca?.crossesCliff).length * marketplaceMonthlyPremium * ASSUMPTIONS.MONTHS_PER_YEAR
-        : 0;
+      const { irmaaCost, acaLoss } = calcConversionCosts({
+        exposure, personOnMedicare,
+        hasMarketplaceInsurance, marketplaceMonthlyPremium,
+        monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+      });
 
       return { rmdTaxSaved: rmdTaxSavedOpt, totalTax: sim.totalTax, irmaaCost, acaLoss };
     };
