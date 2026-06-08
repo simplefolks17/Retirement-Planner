@@ -7,20 +7,22 @@ src/
   config/
     irs-2026.js           All 2026 IRS constants + ASSUMPTIONS object           [CLIENT]
   model/                  Pure functions — no React. Used client-side AND server-side.
-    taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, getTaxRate  [CLIENT]
+    taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, stackedIncomeTax, projectRetirementBracket  [CLIENT]
     tax-basis.js          calcTaxBasis (working-year agi / fed+state+FICA / Roth phase-out / grossAfterTax)  [CLIENT]
     social-security.js    calcAIME, calcPIA, calcBenefit, calcSpousal           [CLIENT]
     retirement-income.js  calcRetirementIncome (SS + pension composition), calcSSBreakEven  [CLIENT]
     simulation.js         runSimulation (accumulation loop)                     [CLIENT]
-    drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears  [CLIENT]
+    accumulation.js       sumAccountRow, calcMilestones, buildAccumChart (accumulation-phase projections from simData)  [CLIENT]
+    drawdown.js           calcNetPortfolioNeed, calcWithdrawalRate, calcYearsSustained, calcDrawdownYears, calcSSDelayGain  [CLIENT]
     retirement-drawdown.js buildRetirementDrawdown (ONE shared retirement-phase walk)  [CLIENT]
     employer-match.js     calcEmployerMatch (flat + formula modes)              [CLIENT]
     rmd.js                calcRMDProjection, calcRMDPostConversion              [CLIENT]
     retirement-tax.js     calcRMDIncomeFloor, calcRMDTax, calcRMDTaxSchedule, calcWithdrawalOrderTax  [CLIENT]
-    budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation  [CLIENT]
-    healthcare.js         acaCliffThreshold, calcHealthcareExposure (ACA cliff + IRMAA)  [CLIENT]
+    budget.js             calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth  [CLIENT]
+    healthcare.js         acaCliffThreshold, calcHealthcareExposure, calcConversionCosts (ACA cliff + IRMAA + cost rollup)  [CLIENT]
     optimization.js       calcOptimizedScenario                                 [SERVER]
     conversion-planning.js buildIncomeFloors, calcBracketFillTargets (conversion-window floors + bracket fill)  [CLIENT]
+    conversion-evaluation.js evaluateConversionPlan (ONE shared sim→RMD-tax→net-benefit→ACA/IRMAA pipeline; display + optimizer)  [SERVER]
     roth-conversion.js    calcConversionSim, findOptimalConversion              [SERVER]
     flow-down.js          calcFlowDown (waterfall decomposition from the shared walk)  [SERVER]
     action-cards.js       generatePhaseActions, generatePhaseSteps              [SERVER]
@@ -117,7 +119,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **230 tests across 20 files**, all passing.
+`npm test`. Current count: **267 tests across 22 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the
