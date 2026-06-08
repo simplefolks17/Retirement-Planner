@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sumAccountRow, calcMilestones } from "../accumulation.js";
+import { sumAccountRow, calcMilestones, buildAccumChart } from "../accumulation.js";
 
 describe("sumAccountRow", () => {
   it("sums the four account keys on a full row", () => {
@@ -44,5 +44,22 @@ describe("calcMilestones", () => {
     // milestones 35/40/45 top out at 750k < 1M; target hit at age 50 (1M)
     expect(m.map(c => c.age)).toEqual([35, 40, 45, 50]);
     expect(m.at(-1).isRetirement).toBe(false);
+  });
+});
+
+describe("buildAccumChart", () => {
+  const mkRow = (age, total) => ({ age, "Trad 401k": total, "Roth IRA": 0, "Taxable": 0, "HSA": 0 });
+
+  it("emits {age,total} rows through retirement and stops at safeRetAge", () => {
+    const simData = [mkRow(31, 100), mkRow(32, 200), mkRow(33, 300), mkRow(34, 400)];
+    const rows = buildAccumChart({ simData, safeRetAge: 33, currentAge: 30,
+      bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0 });
+    expect(rows).toEqual([{ age: 31, total: 100 }, { age: 32, total: 200 }, { age: 33, total: 300 }]);
+  });
+
+  it("seeds a current-balance row when already retired (safeRetAge === currentAge)", () => {
+    const rows = buildAccumChart({ simData: [], safeRetAge: 60, currentAge: 60,
+      bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000 });
+    expect(rows).toEqual([{ age: 60, total: 165_000 }]);
   });
 });

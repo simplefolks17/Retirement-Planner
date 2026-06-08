@@ -21,7 +21,7 @@ import { findOptimalConversion } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { sumAccountRow, calcMilestones } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart } from "./model/accumulation.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
@@ -395,19 +395,9 @@ export default function App() {
   const isSustainable = yearsSustained === Infinity || yearsSustained >= (safeLifeExp - safeRetAge);
 
   // Accumulation rows (current → retirement) + the starting balance for the walk.
-  const accumChart = useMemo(() => {
-    const rows = [];
-    // Seed with current balances as the retirement starting point when already
-    // retired (safeRetAge === currentAge, no accumulation years).
-    if (safeRetAge === currentAge) {
-      rows.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
-    }
-    for (const d of simData) {
-      rows.push({ age: d.age, total: sumAccountRow(d) });
-      if (d.age >= safeRetAge) break;
-    }
-    return rows;
-  }, [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA]);
+  const accumChart = useMemo(
+    () => buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }),
+    [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA]);
 
   // The ONE retirement-phase walk to life expectancy. Both the chart and the
   // Flow-Down waterfall read its rows (each carries draw / tax / growth), so the

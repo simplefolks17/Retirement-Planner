@@ -34,3 +34,19 @@ export function calcMilestones({ simData, currentAge, safeRetAge, retirementTarg
   }
   return cards;
 }
+
+// Accumulation chart rows ({age, total}) from current age through retirement — the
+// portfolio's growth phase, and the starting balance for the retirement walk.
+// When already retired (safeRetAge === currentAge there are no accumulation years),
+// seeds a single row from the current balances so the walk has a starting point.
+export function buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }) {
+  const rows = [];
+  if (safeRetAge === currentAge) {
+    rows.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
+  }
+  for (const d of simData) {
+    rows.push({ age: d.age, total: sumAccountRow(d) });
+    if (d.age >= safeRetAge) break;
+  }
+  return rows;
+}
