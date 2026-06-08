@@ -21,6 +21,7 @@ import { calcConversionSim, findOptimalConversion } from "./model/roth-conversio
 import { calcHealthcareExposure, acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
+import { sumAccountRow } from "./model/accumulation.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
@@ -256,9 +257,7 @@ export default function App() {
   // walk (buildRetirementDrawdown) as the chart and waterfall.
 
   const milestones = useMemo(() => {
-    const getTotal = row =>
-      (row["Trad 401k"] ?? 0) + (row["Roth IRA"] ?? 0)
-    + (row["Taxable"]   ?? 0) + (row["HSA"]       ?? 0);
+    const getTotal = sumAccountRow;
     const ages = [];
     let a = Math.ceil((currentAge + 1) / 5) * 5;
     while (a <= safeRetAge) { ages.push(a); a += 5; }
@@ -412,11 +411,7 @@ export default function App() {
       rows.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
     }
     for (const d of simData) {
-      rows.push({
-        age: d.age,
-        total: (d["Trad 401k"] ?? 0) + (d["Roth IRA"] ?? 0)
-             + (d["Taxable"]   ?? 0) + (d["HSA"]       ?? 0),
-      });
+      rows.push({ age: d.age, total: sumAccountRow(d) });
       if (d.age >= safeRetAge) break;
     }
     return rows;
