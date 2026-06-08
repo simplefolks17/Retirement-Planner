@@ -329,8 +329,10 @@ export default function App() {
   // with the optimizer below so the two can never diverge. Collapsed into a single
   // memo for referential stability: the destructured sub-objects (conversionSim, etc.)
   // stay stable until an input changes, so downstream memos don't thrash (BUG-22).
-  // Trade-off: conversionSim now also recomputes when a healthcare input changes
-  // (identical value) — acceptable vs. re-duplicating the pipeline.
+  // Trade-off: a healthcare-only input change (hasMedicare, householdSize, etc.)
+  // now gives conversionSim a fresh reference, which cascades through conversionTaxByAge
+  // into the retirement walk + chart (identical values, just extra recompute) —
+  // accepted vs. re-duplicating the pipeline across display and optimizer.
   const conversionPlan = useMemo(() => {
     const retRow = simData.find(d => d.age === safeRetAge)
       ?? (safeRetAge === currentAge ? currentSnapshot : null);
