@@ -15,6 +15,24 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### ~~BUG-33~~ — Projected retirement bracket label read one bracket too high (skipped the standard deduction)
+
+**Reported:** 2026-06-06 · **Fixed:** 2026-06-06  
+**Files:** `src/model/taxes.js` (`projectRetirementBracket`), `src/model/__tests__/taxes.test.js`.
+
+**Symptom:**  
+The Detailed tab's "projected X% marginal bracket" label (for RMD years) read one bracket too high near a boundary. At the **default** state it showed **32%** where the correct taxable-income bracket is **24%**.
+
+**Root cause:**  
+`projectRetirementBracket` matched the bracket on **gross** retirement income (avg RMD + 85% SS + pension) against the bracket thresholds — but those thresholds are **taxable**-income thresholds. The standard deduction was never subtracted, unlike `marginalRate()` / `calcTax()`, which compute the working-year bracket **and** the actual RMD/conversion tax on `agi − deduction`. It's a display-only label that feeds no tax calc and isn't in the golden master, so no check caught it. At default, gross $211,609 sat just over the 32% line ($201,775); real taxable income $195,509 is 24%. Introduced when the inline block was extracted value-preservingly (the inline original had the same gap — pre-existing, not a regression).
+
+**Fix:**  
+Subtract the standard deduction once before the scan: `taxableIncome = max(0, projRetIncome − deduction)`, match the bracket on that. Applied exactly once (nothing else in this label's path applied it — no double-count), so it's now apples-to-apples with the working-year bracket and the actual retirement tax. Return now also exposes `taxableIncome`. Display-only change; **no headline/golden-master value moved.**
+
+**Tests (271 → 272):** the existing `projectRetirementBracket` cases updated to taxable-income expectations (64k gross → 12% on 47.9k taxable, was 22%); added the default-boundary lock (211,609 gross → 24% on 195,509 taxable — the 32%→24% case).
+
+---
+
 ### ~~BUG-29~~ — Roth conversion tax was not bracket-accurate (flat top-marginal rate, no state tax)
 
 **Reported:** 2026-06-05 · **Fixed:** 2026-06-06 (owner-approved golden-master move)  
