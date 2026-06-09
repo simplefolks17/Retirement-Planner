@@ -75,7 +75,7 @@
 <body>
 
 <h1>Retirement Calculator — Feature Tracker</h1>
-<p class="subtitle">Planned improvements, organized by section and priority</p>
+<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-09</p>
 
 <div class="summary" id="summary"></div>
 <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
@@ -150,7 +150,7 @@ var DATA = [
     cx: "Medium", im: "High", af: ["conversionSim", "netConversionBenefit", "taxable balance projection"], sv: "conversionTaxSource"
   },
   {
-    id: 7, pr: 2, sec: "Roth Strategy", st: "planned",
+    id: 7, pr: 2, sec: "Roth Strategy", st: "done",
     ti: "ACA subsidy cliff modeling (pre-Medicare gap)",
     ds: "For users retiring before 65 on marketplace insurance, Roth conversions raise MAGI and can eliminate ACA subsidies — a hard cliff that can cost $8–12k+/yr, often more than the conversion tax itself. Modeled as a real dollar cost subtracted from the conversion benefit, not just a warning.",
     dt: "Design decision (2026-06-03): ACA impact is a real cost (subtracted from netConversionBenefit) when the user is on marketplace insurance — not a warning. Add a hasMarketplaceInsurance toggle and householdSize input. Compute per-year subsidy loss using ACA_FPL_2026 table + household size + per-year MAGI (retIncomeFloor + conversion). CRITICAL: ACA MAGI uses 100% of SS (not the 85% taxable fraction in convFloors). Requires a separate convMAGIFloors[] array — do NOT reuse convFloors for this. Only fires when hasMarketplaceInsurance is true and age < 65 during conversion window years. Sequence with #34 (IRMAA) — both share the convMAGIFloors[] infrastructure. See ARCHITECTURE.md Feature Design Notes for full spec.",
@@ -346,7 +346,7 @@ var DATA = [
     cx: "Medium", im: "High", af: ["rate3Combined", "rmdTaxBite", "netConversionBenefit", "retStateRate", "retirement tax display", "calcTax (now used in retirement)"], sv: "none (config + logic replacement)"
   },
   {
-    id: 34, pr: 1, sec: "Tax / Retirement", st: "planned",
+    id: 34, pr: 1, sec: "Tax / Retirement", st: "done",
     ti: "IRMAA Medicare surcharge modeling",
     ds: "Medicare Part B/D premiums increase sharply above MAGI thresholds (IRMAA). A large Roth conversion can trigger $3,000–$10,000+ in extra annual Medicare premiums — changing the true cost of conversion. Modeled as a real dollar cost, not a warning.",
     dt: "Design decision (2026-06-03): IRMAA is a real cost subtracted from netConversionBenefit when the user is on Medicare. Add a hasMedicare toggle (default true for age >= 65; can disable if user has qualifying employer coverage past 65). UI note: 'We assume Medicare enrollment at 65 — toggle off if you have qualifying employer coverage past 65.' Add IRMAA_BRACKETS_2026 to irs-2026.js (6 tiers, single/MFJ). CRITICAL: Apply the 2-year lookback — IRMAA premiums in year Y are based on MAGI from year Y-2. A conversion at 67 triggers higher premiums at 69. Do NOT apply the surcharge in the same year as the income. IRMAA MAGI uses 100% of SS (not 85%) — use convMAGIFloors[] (shared with #7), not convFloors[]. See ARCHITECTURE.md Feature Design Notes for full spec. Build together with #7 since both need convMAGIFloors[].",
@@ -430,7 +430,7 @@ var DATA = [
     cx: "Low", im: "Low", af: ["conversion display", "MAGI tracking"], sv: "none (warning display only)"
   },
   {
-    id: 46, pr: 2, sec: "Roth Strategy", st: "planned",
+    id: 46, pr: 2, sec: "Roth Strategy", st: "done",
     ti: "Roth conversion amount optimizer",
     ds: "Rather than just pricing the conversion amount you picked, find the amount that maximizes your lifetime tax benefit — accounting for conversion tax now, RMD taxes saved later, and (once ACA/IRMAA are live) subsidy and premium costs. Turns the conversion calculator into an advisor.",
     dt: "calcConversionSim is pure and already parameterized — the optimizer loops over candidate amounts (search in $5k increments from $0 to the bracket ceiling, then binary-search around the optimum) calling the existing function and picking the max netConversionBenefit. Add calcConversionOptimizer to roth-conversion.js (already a [SERVER] file — keeps optimization logic protected). Score function: netConversionBenefit = rmdTaxSaved - totalTax - ACA subsidy loss (if #7 active) - IRMAA cost (if #34 active). Display: recommended amount card alongside the current bracket-fill suggestion, with 'This beats the 22% bracket fill by $X' explanation. Sequence after #7 and #34 so the optimizer's objective includes all real costs. New golden master values needed for the recommended amount output.",
@@ -449,6 +449,154 @@ var DATA = [
     ds: "One reusable 'money that starts and stops at certain ages' component — bridge income, rental income, variable spending, long-term care costs, and pension timing granularity all become the same thing with different settings. Eliminates the class of off-by-one income-timing bugs the audit campaign repeatedly found.",
     dt: "Add an incomeSources[] array to app state. Each source: { label, amount, growth, startAge, endAge, isTaxable, isPassive, isExpense }. Derive per-year impact in a single reducer feeding netPortfolioNeed (same >= age gate as SS/pension per CLAUDE.md rule 5b — never use the static scalar). isExpense=true adds to need (LTC, spending spike); false reduces it (bridge income, rental). isTaxable routes to AGI for pre-retirement years; isPassive skips FICA. UI: collapsible 'Additional income/expenses' section with Add button and a row per source. Supersedes #35 (bridge income), #36 (rental), #43 (LTC), #17 (pension timing granularity), and #10 (variable spending) — those ship as pre-configured source types within this primitive. Build the primitive once; each source type is a thin wrapper.",
     cx: "Medium", im: "High", af: ["netPortfolioNeed (per year)", "totalChartData", "yearsSustained", "flowData waterfall", "drawdown callout"], sv: "incomeSources[]"
+  },
+  // ─── Healthcare Batch ─────────────────────────────────────────────────────
+  {
+    id: 49, pr: 2, sec: "Healthcare", st: "planned",
+    ti: "HSA funding method (payroll vs direct) + coverage type (self / family)",
+    ds: "One question ('Does your HSA come out of your paycheck?') unlocks FICA savings of 7.65% — worth $329–$654/year at typical limits — silently missed when the HSA is funded post-paycheck. Coverage type (self-only $4,300 vs family $8,550) nearly doubles the limit and is currently hardcoded to self-only.",
+    dt: "Add hsaFundingMethod ('payroll'/'direct'/'unsure') state. When 'payroll', HSA contributions reduce the FICA base before the 7.65% is applied — mirroring how Box 3/5 on a W-2 works under a Section 125 cafeteria plan. Net FICA savings = contribHSA × 0.0765, flowing into grossAfterTax and savingsCapacity. Show 'FICA saved via payroll: $X' as a new line in the tax breakdown. Add hsaCoverageType ('self'/'family') state; the HSA slider max becomes HSA_LIMIT_2026 ($4,300) or HSA_FAMILY_LIMIT_2026 ($8,550). Add HSA_FAMILY_LIMIT_2026 to irs-2026.js. UX: default 'payroll' with a note 'Most employer HSAs are payroll-deducted — change if you fund it yourself.' Add 'I'm not sure' option that defaults to payroll with a friendly explainer. Golden master: audit whether the current default already treats HSA as payroll; if not, values will move — update deliberately.",
+    cx: "Low", im: "High", af: ["fica", "grossAfterTax", "savingsCapacity", "tax breakdown display", "HSA slider max"], sv: "hsaFundingMethod, hsaCoverageType, HSA_FAMILY_LIMIT_2026 (new config)"
+  },
+  {
+    id: 50, pr: 2, sec: "Healthcare", st: "planned",
+    ti: "Health insurance source wizard (employer / ACA marketplace / Medicare / retiree plan)",
+    ds: "A single onboarding question replaces two scattered manual toggles (hasMarketplaceInsurance, hasMedicare) with one unified field. Currently those toggles require the user to know they exist. The wizard auto-transitions: employer coverage while working → ACA marketplace from retirement to 65 → Medicare at 65, with user override at each stage.",
+    dt: "Add healthInsuranceSource enum state: 'employer', 'aca_marketplace', 'medicare', 'retiree_plan', 'none'. Default: 'employer'. ACA cliff cost (shipped in #7) fires only when a conversion window year's age is in the marketplace range. IRMAA surcharge (shipped in #34) fires only when source = 'medicare'. Auto-transition logic: if source = 'employer' and a conversion year's age is between safeRetAge and 65, display 'We've assumed ACA marketplace coverage from age X to 65 — toggle off if you'll have employer or retiree coverage.' Replace hasMarketplaceInsurance and hasMedicare state variables with this single field. This is primarily a UX consolidation that makes #7 and #34 fire correctly for every user without requiring them to hunt for toggles.",
+    cx: "Medium", im: "High", af: ["calcHealthcareExposure (per-year coverage routing)", "netConversionBenefit (ACA + IRMAA costs)", "hasMarketplaceInsurance (replaced)", "hasMedicare (replaced)", "conversion display"], sv: "healthInsuranceSource (replaces hasMarketplaceInsurance + hasMedicare)"
+  },
+  // ─── Retirement Location Batch ────────────────────────────────────────────
+  {
+    id: 51, pr: 2, sec: "Retirement Location", st: "planned",
+    ti: "Planned retirement state (if relocating) + tax arbitrage display",
+    ds: "Many people plan to retire to a lower-tax or no-income-tax state. The app uses the working-year state for all retirement projections. A user planning to move from California to Florida sees retirement taxes overstated by $15–40k+/year, which also understates their Roth conversion benefit and overstates their RMD tax bite.",
+    dt: "retirementState already exists as a state variable — verify it actually flows through to the retirement tax engine. In calcRMDTaxSchedule and calcConversionSim, confirm retStateRate is derived from retirementState (not selectedState). Add UI: a 'Retiring in a different state?' toggle in the Retirement section that reveals a retirementState dropdown when enabled. Default retirementState = selectedState (no behavior change). When they differ, show a stat card: 'Moving to [state] saves approximately $X in lifetime retirement state taxes vs staying in [current state]' — computed as (currentStateRetirementRate − retirementStateRate) × effective retirement income × years. Ship together with #52 (state exemptions) for full accuracy.",
+    cx: "Low", im: "High", af: ["retStateRate (wiring check)", "calcRMDTaxSchedule", "calcConversionSim (retStateRate param)", "rmdTaxBite", "netConversionBenefit", "retirement tax display"], sv: "retirementState (already exists — confirm wiring)"
+  },
+  {
+    id: 52, pr: 2, sec: "Retirement Location", st: "planned",
+    ti: "Per-state retirement income exemptions (SS, 401k, pension)",
+    ds: "13 states exempt Social Security entirely from state income tax; many more exempt pension and 401k withdrawals. The app applies a flat state rate to all retirement income. A Pennsylvania retiree — where all retirement income is exempt — may see their retirement state taxes overstated by $10k+/year. This is the unshipped half of feature #33.",
+    dt: "Extend RETIREMENT_STATE_TAX in irs-2026.js: each state entry gains { rate, ssExempt, pensionExempt, traditionalExempt } boolean flags. The exemption data was noted as already written as comments in the config — this is mostly a structured data-entry pass plus a one-line application per exempt component. In calcRMDTaxSchedule and calcConversionSim, before applying the state rate: taxableRetIncome = rmd*(1 - (traditionalExempt?1:0)) + ssTaxableRet*(1 - (ssExempt?1:0)) + pension*(1 - (pensionExempt?1:0)). Ship together with #51 (retirement state input). Golden master: if the default state has any exemption flags set to true, values will move — check and update deliberately.",
+    cx: "Low", im: "High", af: ["RETIREMENT_STATE_TAX (config extension)", "calcRMDTaxSchedule (state exemption gating)", "calcConversionSim (retStateRate)", "rmdTaxBite", "netConversionBenefit"], sv: "RETIREMENT_STATE_TAX exemption flags (irs-2026.js config extension)"
+  },
+  // ─── Debt & Major Expenses Batch ──────────────────────────────────────────
+  {
+    id: 53, pr: 2, sec: "Debt & Major Expenses", st: "planned",
+    ti: "Mortgage payoff date + post-payoff expense step-down",
+    ds: "The biggest expense most people have ends at a known date. A retiree whose mortgage pays off at 63 effectively gets a $2,000+/month raise. The model uses flat lifetime expenses, overstating portfolio draws and understating longevity after payoff. This is the single most common 'I know my expenses will drop' scenario users face.",
+    dt: "Add mortgageMonthly ($0 default) and mortgagePayoffAge inputs. In the per-year drawdown loop (buildRetirementDrawdown and totalChartData), subtract mortgageMonthly × 12 from effectiveExpenses for years where age > mortgagePayoffAge — same >= gate as SS/pension (CLAUDE.md rule 5b). This reduces netPortfolioNeed per year after payoff, improving yearsSustained. Show in the retirement snapshot: 'After your mortgage pays off at X, your annual portfolio draw drops by $Y/yr.' Also reduces convWindowDraws in the correct years. Can ship standalone before #48 (generic primitive) since this is by far the most common use case. When #48 ships, mortgage becomes a named preset expense source type. No golden master impact when mortgageMonthly = 0.",
+    cx: "Low", im: "High", af: ["buildRetirementDrawdown (per-year draw reduction)", "totalChartData", "yearsSustained", "netPortfolioNeed (per-year)", "convWindowDraws"], sv: "mortgageMonthly, mortgagePayoffAge"
+  },
+  // ─── Estate & Windfall Batch ──────────────────────────────────────────────
+  {
+    id: 54, pr: 3, sec: "Estate & Windfall", st: "planned",
+    ti: "Expected inheritance or one-time windfall (taxable or tax-free)",
+    ds: "A known large future event — inheritance, business sale, property sale — changes Roth conversion strategy: if the user expects a $500k taxable inheritance at 68, converting before that event (while brackets are low) saves far more than after (when the windfall spikes their bracket). Currently invisible to the model.",
+    dt: "Add a simplified windfall input or wire through #48: { amount, age, isTaxable }. In buildRetirementDrawdown, add windfall amount to the pool balance at the specified age. If isTaxable=true: in the conversion window display, flag if the windfall age falls inside the window and surface 'A taxable windfall at age X will push you into the X% bracket — consider front-loading conversions before then.' If isTaxable=false (inherited Roth, life insurance): adds to portfolio with no tax impact. Show on the lifecycle chart as a visible upward jump at the windfall age. Pairs with #9 (legacy goal) for the full estate picture. Default: amount=0 → no model or golden master impact.",
+    cx: "Medium", im: "Medium", af: ["buildRetirementDrawdown (portfolio jump)", "totalChartData (chart annotation)", "conversion window display (front-load warning)", "yearsSustained"], sv: "windfallAmount, windfallAge, windfallIsTaxable (or via #48 incomeSources)"
+  },
+  // ─── Analytics: Insights from Existing Data ───────────────────────────────
+  {
+    id: 55, pr: 2, sec: "Analytics", st: "planned",
+    ti: "Working-longer break-even: quantify the retirement-age tradeoff",
+    ds: "The most common retirement question is 'Is it worth working 3 more years?' The model already computes longevity at any retirement age — but users must manually slide and note numbers. Surface a calculated comparison: 'Working until 65 vs 62 adds $340k to your portfolio and extends your runway by 8 years — those 3 years buy you 8.'",
+    dt: "Compute two companion scenarios at retirementAge + 3 and retirementAge + 5 using the existing runSimulation and buildRetirementDrawdown with shifted retirement ages (simData already runs through all working years — just read the rows at later ages). Display as a stat card: 'Work 3 more years: +$X portfolio, +Y years of runway.' Also show the SS benefit difference (more working years improve AIME) and conversion window change (shorter remaining window). Pure display — no new model functions, just additional calls to existing pure functions with different inputs. No golden master impact.",
+    cx: "Low", im: "High", af: ["runSimulation (called with shifted ages)", "buildRetirementDrawdown (shifted)", "yearsSustained (comparison)", "totalAtRet (comparison)", "calcAIME (more years)"], sv: "none (derived display)"
+  },
+  {
+    id: 56, pr: 2, sec: "Analytics", st: "planned",
+    ti: "Tax diversification score + pre-tax concentration warning",
+    ds: "Most savers arrive at retirement with 80–90%+ in pre-tax accounts and a hidden risk: if tax rates rise, the government owns a larger share of their retirement than they realize. Show the tax diversification breakdown (% pre-tax vs Roth vs taxable) and quantify what a 5-point rate increase would cost them.",
+    dt: "At retirement, compute: preTaxPct = retRow.tradGross / totalAtRet; rothPct = retRow.roth / totalAtRet; taxablePct = retRow.taxable / totalAtRet (all values already exist). Display as a color-coded bar in the retirement snapshot: < 60% pre-tax = green, 60–80% = yellow, > 80% = red. Companion stat: 'If tax rates rise 5%, your lifetime retirement tax bill increases by approximately $X' — computed as rmdTaxBite × 0.05 / effectiveRMDTaxRate. Action link to the Roth Strategy tab. Entirely display-driven — all values already exist, zero model changes needed.",
+    cx: "Low", im: "High", af: ["retRow.tradGross", "retRow.roth", "retRow.taxable", "totalAtRet", "rmdTaxBite", "effectiveRMDTaxRate"], sv: "none (derived display)"
+  },
+  {
+    id: 57, pr: 3, sec: "Analytics", st: "planned",
+    ti: "Conversion window year-by-year tax calendar",
+    ds: "Some conversion window years are dramatically cheaper than others — years before SS starts have far more bracket room. Users see an average recommendation but don't understand which years are the golden opportunities. A tax calendar shows each year's available room, marginal rate, and what is consuming the bracket.",
+    dt: "Surface the existing bracketFillConversions[] array (already computed in App.jsx) as a visual bar chart in the Roth Strategy tab: one bar per conversion window year, height = available bracket room, color = marginal rate at that fill level (green = 12%, yellow = 22%, orange = 24%+). Mark the SS-start and pension-start years with vertical dividers. Add a callout: 'Your cheapest conversion years are ages X–Y (before SS starts at Z) — front-loading conversions in these years saves approximately $A vs spreading evenly.' The data is 100% already computed — this is pure display. No model changes, no golden master impact.",
+    cx: "Low", im: "Medium", af: ["bracketFillConversions[] (already computed)", "conversionSim.years (already computed)", "Roth Strategy tab display"], sv: "none (display only)"
+  },
+  // ─── Advanced Income: Real Estate & Passive ───────────────────────────────
+  {
+    id: 58, pr: 1, sec: "Advanced Income", st: "planned",
+    ti: "Rental property: net cash flow, depreciation, and taxable income split",
+    ds: "A paid-off rental is often a retiree's largest non-portfolio income source — but its taxable income is far lower than its cash income because depreciation (building basis ÷ 27.5 years) creates a phantom deduction. The two must not be confused: cash flow reduces netPortfolioNeed; taxable income hits AGI/MAGI and the conversion window.",
+    dt: "Add a rentalProperties[] array. Each property: { grossRent, operatingExpenses, mortgagePayment, propertyBasis, landPct, placedInServiceYear, plannedSaleAge }. Annual depreciation = propertyBasis × (1 − landPct) / 27.5. Net taxable rental income = grossRent − operatingExpenses − mortgageInterest − depreciation. Net cash flow = grossRent − operatingExpenses − mortgagePayment. Wire taxable rental income into AGI/MAGI (working years and retirement). Wire cash flow into netPortfolioNeed reduction per-year (same >= startAge gate as SS/pension per CLAUDE.md rule 5b). Passive activity rules: rental losses offset passive income only, with a $25k special allowance (phases out $100k–$150k MAGI); suspended losses tracked. Build as its own model file (rental.js) — too complex for the #48 generic primitive. Ship #58 + #59 (recapture) together.",
+    cx: "High", im: "High", af: ["AGI (taxable rental income)", "MAGI (conversion window)", "netPortfolioNeed (per-year cash flow)", "yearsSustained", "totalChartData"], sv: "rentalProperties[] (new array)"
+  },
+  {
+    id: 59, pr: 1, sec: "Advanced Income", st: "planned",
+    ti: "Rental depreciation recapture at sale (Section 1250 unrecaptured gain)",
+    ds: "The #1 unmodeled surprise for rental owners — sellers expect LTCG rates on the full gain but owe 25% on all accumulated depreciation (unrecaptured §1250 gain), regardless of holding period. This often produces a five-figure tax shock and also spikes MAGI in the sale year, triggering IRMAA and potentially closing the conversion window.",
+    dt: "Derived from #58 inputs: accumulatedDepreciation = annualDepr × yearsHeld. At sale: gain = salePrice − (basis − accumulatedDepreciation). Bifurcate: the recapture portion (up to accumulatedDepreciation) taxed at 25% max; appreciation above original basis taxed at LTCG rates. Plus 3.8% NIIT on the taxable gain for earners above the NIIT threshold. In the sale year: add recapture + LTCG gain to that year's income, apply the 2-yr IRMAA lookback. Option: 'Hold to death' toggle — step-up at death eliminates recapture and LTCG entirely; model both paths and show side-by-side comparison. Suspended passive losses from #58 release in the sale year and offset the gain. Ship with #58.",
+    cx: "Medium", im: "High", af: ["sale-year taxes", "MAGI (IRMAA lookback)", "conversion window (sale-year income)", "yearsSustained (net sale proceeds added to portfolio)", "ACA cliff (#7)"], sv: "rentalSalePrice, holdToDeath (per property in rentalProperties[])"
+  },
+  {
+    id: 60, pr: 2, sec: "Advanced Income", st: "planned",
+    ti: "REIT dividends: ordinary income + §199A deduction + MAGI impact",
+    ds: "REIT dividends are taxed as ordinary income (not qualified dividends) and count fully toward MAGI — silently compressing the Roth conversion window for users who hold REITs in taxable accounts. The §199A 20% deduction softens the tax hit but is the only relief available.",
+    dt: "Add reitAnnualDividend and reitHeldInTaxable (toggle) state. When held in taxable: add REIT dividends to AGI/MAGI each year (fully ordinary income). Apply §199A deduction: 20% of REIT ordinary dividends, no W-2-wage or phase-out limitation (unlike rental/business QBI) — reduces taxable income but NOT MAGI. Show in the tax breakdown and conversion window display. When held in a tax-deferred account: no current-year tax impact (already handled by the existing account model). Note: private/non-traded REIT dividends arrive on K-1 rather than 1099-DIV; flag these separately. No golden master impact at default reitAnnualDividend = 0.",
+    cx: "Medium", im: "High", af: ["AGI/MAGI (REIT dividends)", "taxable income (199A deduction)", "conversion window headroom", "IRMAA/ACA gates"], sv: "reitAnnualDividend, reitHeldInTaxable"
+  },
+  {
+    id: 61, pr: 2, sec: "Advanced Income", st: "planned",
+    ti: "K-1 partnership income (real estate syndications, private equity, LLCs)",
+    ds: "High-income earners increasingly invest through partnerships issuing K-1 forms. K-1 income includes ordinary income, capital gains, depreciation pass-throughs, and §199A deductions each taxed differently. A $50k K-1 distribution could be partially tax-free due to bonus-depreciation pass-throughs — entirely invisible to the current model.",
+    dt: "PENDING DEEP RESEARCH PASS. Add k1Incomes[] array. K-1 income types: Box 1 ordinary business income (ordinary rates), Box 2 rental income (passive), Box 8/9 short/long-term capital gains, §199A QBI deduction (20% reduction for qualifying pass-through income — effectively reduces 37% → 29.6%), §179/bonus depreciation pass-throughs. Passive activity loss rules — losses offset only passive income unless user qualifies as a real estate professional. NIIT (3.8%) applies to passive K-1 income above NIIT thresholds. SE tax applies to active general-partner income. Wire into AGI/MAGI (working and retirement years). Build as partnership-income.js.",
+    cx: "High", im: "High", af: ["AGI (K-1 ordinary + QBI deduction)", "taxable income (QBI)", "LTCG calc (K-1 cap gains pass-through)", "NIIT flag (#45)", "netPortfolioNeed (K-1 passive income post-retirement)"], sv: "k1Incomes[] (new array)"
+  },
+  // ─── Advanced Income: Business Owners ────────────────────────────────────
+  {
+    id: 62, pr: 1, sec: "Advanced Income", st: "planned",
+    ti: "S-corp salary/distribution split + SE tax savings quantification",
+    ds: "S-corp owners split compensation between a W-2 salary (FICA-taxable) and distributions (FICA-free), saving $20–30k+/year in payroll tax for high earners. This is the single highest-leverage tax move for an S-corp owner and is completely invisible to the current model.",
+    dt: "PENDING DEEP RESEARCH PASS. Add isSCorp toggle, sCorporationSalary, businessNetProfit. FICA applies ONLY to sCorporationSalary: fica = min(sCorporationSalary, FICA_WAGE_BASE) × 0.0765 (vs sole-prop: min(businessNetProfit × 0.9235, FICA_WAGE_BASE) × 0.0765). SE savings = difference. Salary also caps the 401k employee-deferral base and determines the employer-side Solo 401k contribution. Important trade-off: lower salary → lower future SS PIA (AIME is wages-only) — quantify the SS cost. Show breakeven: 'At salary $X, annual FICA savings = $Y, but your estimated SS benefit drops by $Z/year; breakeven at age A.' Wire salary into existing FICA calc in tax-basis.js.",
+    cx: "Medium", im: "High", af: ["fica", "AGI", "SS PIA (calcAIME — salary is the wage base)", "totalPreTaxDeduc (401k base)", "grossAfterTax", "netPortfolioNeed"], sv: "isSCorp, sCorporationSalary, businessNetProfit"
+  },
+  {
+    id: 63, pr: 1, sec: "Advanced Income", st: "planned",
+    ti: "Defined benefit / cash balance plan (high-earner, 50+ years old)",
+    ds: "For a 50+ year-old high-income owner, a defined benefit or cash balance plan allows contributions of $150k–$265k+/year — dramatically more than a 401k — collapsing taxable income and supercharging retirement assets. The most powerful pre-tax shelter available and totally invisible to the current model.",
+    dt: "PENDING DEEP RESEARCH PASS. Add definedBenefitAnnualContrib input (actuarially approximated or user-entered). Contribution is fully deductible: add to totalPreTaxDeduc → reduces AGI (large drop opens conversion room and QBI room). DB plan accumulates as a separate account alongside 401k (not subject to the $70k DC limit). At retirement: lump-sum rollover to IRA → then follows IRA RMD rules; or annuity. RMDs on the DB lump sum begin at 73 same as IRA. Important: can stack with a 401k (up to DC deductibility limits; coordinate the two — the 25%-of-compensation limit applies to the combined deductible DC amount). Model the DB balance as a separate accumulation line in simData. Build in business-owner.js.",
+    cx: "High", im: "High", af: ["totalPreTaxDeduc (large deduction)", "AGI (large drop)", "accumulation chart (new DB balance)", "RMD basis (DB lump sum rolls to IRA)", "yearsSustained", "netConversionBenefit (retirement bracket shift)"], sv: "definedBenefitAnnualContrib, dbPlanBalance (new accumulation line)"
+  },
+  {
+    id: 64, pr: 1, sec: "Advanced Income", st: "planned",
+    ti: "Non-qualified deferred compensation (NQDC / 409A) — retirement income flood",
+    ds: "A large NQDC balance becomes ordinary income on a fixed distribution schedule in retirement — flooding the early-retirement years with income that can completely close the low-bracket Roth conversion window the app's strategy depends on. An executive with $1M in NQDC distributing over 5 years faces a very different plan than the model currently shows.",
+    dt: "PENDING DEEP RESEARCH PASS. Add nqdcBalance and nqdcDistributionSchedule (lump sum or annual installments over N years starting at retirementAge). NQDC distributions are ordinary income (not IRA — cannot be converted). In buildIncomeFloors (conversion-planning.js), add NQDC distribution to retIncomeFloors[] for the distribution years — this directly compresses or eliminates bracket-fill room. In the retirement tax engine, stack NQDC income on top of RMD + SS + pension in the affected years. Key display: 'Your NQDC distributions from age X–Y raise your taxable income to $Z/yr — converting during this window costs X% more in taxes.' Also reduces netPortfolioNeed in distribution years (it is income, not a portfolio draw).",
+    cx: "Medium", im: "High", af: ["retIncomeFloors[] (conversion window shrinks)", "buildIncomeFloors", "conversion window display", "netPortfolioNeed (NQDC is income not a draw)", "MAGI (IRMAA/ACA during distribution years)"], sv: "nqdcBalance, nqdcDistributionYears, nqdcStartAge"
+  },
+  // ─── Advanced Income: Active Trading / Taxable Accounts ──────────────────
+  {
+    id: 65, pr: 1, sec: "Advanced Income", st: "planned",
+    ti: "Tax-loss harvesting: annual alpha and carryforward tracking",
+    ds: "Tax-loss harvesting is the single highest-value active-taxable-account strategy for broad users — credible studies put the after-tax return improvement at 0.5–1.5%/yr, which compounds into a materially larger portfolio. The app currently applies a fixed LTCG drag; replacing it with a harvest-adjusted effective drag and tracking the carryforward creates a real planning edge.",
+    dt: "PENDING DEEP RESEARCH PASS. Add taxLossHarvestingEnabled (toggle) and annualHarvestableAmount ($ or % of balance) and lossCarryforward (current balance). When enabled, replace the flat LTCG_DRAG_PROXY in simulation.js with a net-effective-drag: harvestableAlpha = annualHarvestableAmount × (marginalRate − ltcgRate). The $3k/year ordinary income offset: Math.min(lossCarryforward, 3000) reduces AGI each year — wire into totalPreTaxDeduc or as a direct AGI reduction. Carryforward balance decrements by $3k/yr (ordinary offset) + cap-gains used; increments by new annual harvest. Wash-sale advisory: flag if the user holds substantially identical funds in both taxable and IRA accounts (a common silent trap that permanently loses the deduction). Build in taxable-account.js.",
+    cx: "Medium", im: "High", af: ["taxable account growth (net effective drag)", "AGI (loss carryforward offset)", "grossAfterTax", "yearsSustained", "totalAtRet"], sv: "taxLossHarvestingEnabled, annualHarvestableAmount, lossCarryforward"
+  },
+  {
+    id: 66, pr: 2, sec: "Advanced Income", st: "planned",
+    ti: "Inherited IRA (non-spouse): 10-year distribution rule and bracket impact",
+    ds: "Post-SECURE Act, non-spouse beneficiaries must drain an inherited IRA within 10 years — and if the decedent had started RMDs, annual distributions are ALSO required in years 1–9. This forces ordinary income into the user's peak-earning or conversion-window years, which can completely reshape the optimal conversion plan.",
+    dt: "PENDING DEEP RESEARCH PASS. Add inheritedIraBalance, inheritedIraYear (year inherited), inheritedIraRothFlag, decedentHadStartedRMDs. Compute annual required distribution: if decedent had started RMDs, use IRS single life expectancy factor for the beneficiary's age; in any case, full balance must be out by year 10. Add these distributions to retIncomeFloors[] (they are ordinary income stacked on the user's own income) — same wiring as NQDC above. Show in the conversion window display: 'Inherited IRA distributions of $X/yr from age Y–Z crowd out bracket-fill room — optimal strategy is to drain in low-income years first.' Inherited Roth: no annual RMDs but 10-year full drain still required; distributions are tax-free so they don't affect income floors.",
+    cx: "High", im: "High", af: ["retIncomeFloors[] (inherited IRA stacks on income)", "conversion window (bracket space reduced)", "MAGI (IRMAA/ACA)", "netPortfolioNeed (distributions reduce portfolio draw need)", "yearsSustained"], sv: "inheritedIraBalance, inheritedIraYear, inheritedIraIsRoth, decedentHadStartedRMDs"
+  },
+  {
+    id: 67, pr: 2, sec: "Advanced Income", st: "planned",
+    ti: "Concentrated single-stock position: diversification vs tax tradeoff",
+    ds: "Common for tech employees and founders — one stock at 40–80% of net worth with near-zero cost basis. The diversification-vs-tax tradeoff is the central planning question: selling triggers a large LTCG event that spikes MAGI, but holding creates idiosyncratic risk. The app can quantify this tradeoff across several paths (sell, hold, gift/DAF, hold to death for step-up).",
+    dt: "PENDING DEEP RESEARCH PASS. Add concentratedStockValue and concentratedStockBasis state. Paths to model: (a) Sell outright — LTCG + NIIT on (value − basis), sale-year MAGI spike closes conversion window and triggers IRMAA; (b) Sell gradually over N years — spread the LTCG across low-income years; (c) Hold to death — step-up eliminates all gain; (d) Gift to DAF — no LTCG, FMV deduction. Show side-by-side: net proceeds after tax for each path, impact on MAGI and IRMAA in the sale year, and how the concentrated position changes yearsSustained vs diversifying into the portfolio. Key insight: the app already knows which conversion-window years are cheapest — this is where gradual selling belongs.",
+    cx: "High", im: "High", af: ["LTCG calc (large gain)", "MAGI (IRMAA/ACA in sale year)", "conversion window (sale-year income)", "totalAtRet (net proceeds after tax)", "yearsSustained (diversification value)"], sv: "concentratedStockValue, concentratedStockBasis"
+  },
+  {
+    id: 68, pr: 2, sec: "Advanced Income", st: "planned",
+    ti: "Donor-Advised Fund (DAF): charitable giving with LTCG elimination",
+    ds: "For charitably inclined users with appreciated taxable-account assets, contributing to a DAF avoids capital gains entirely, takes an immediate FMV deduction, and lowers MAGI in the contribution year — improving both the gift's value and the conversion window. This is one of the only moves that simultaneously reduces taxes and increases the retirement plan's efficiency.",
+    dt: "PENDING DEEP RESEARCH PASS. Add annualCharitableGiving and dafFundingMethod ('cash'/'appreciated securities'). When funded with appreciated securities: skip LTCG on donated shares (no gain recognized), deduction = FMV (limited to 30% of AGI for property; carry forward 5 years). When funded with cash: deduction limited to 60% of AGI. Bunching: model the option to give 3–5 years of donations in one high-income year to clear the standard deduction. Lowers AGI/MAGI in contribution years — feeds into IRMAA/ACA/conversion-window floor. Synergizes with concentrated-position diversification (#67): donating the low-basis shares to a DAF is one of the best-value diversification paths.",
+    cx: "Medium", im: "Medium", af: ["AGI/MAGI (deduction in contribution years)", "avoided LTCG (donated shares)", "grossAfterTax", "IRMAA/ACA gates", "conversion window (lower MAGI floor)"], sv: "annualCharitableGiving, dafFundingMethod, dafCarryforward"
   }
 ];
 
