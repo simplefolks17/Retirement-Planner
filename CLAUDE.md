@@ -40,7 +40,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Design system & tokens: `docs/DESIGN.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (67 items, 24 done, 43 planned)
+- Feature backlog: `feature-tracker.html` (73 items, 25 done, 48 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function

@@ -75,7 +75,7 @@
 <body>
 
 <h1>Retirement Calculator — Feature Tracker</h1>
-<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-10</p>
+<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-11</p>
 
 <div class="summary" id="summary"></div>
 <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
@@ -593,6 +593,54 @@ var DATA = [
     ds: "For charitably inclined users with appreciated taxable-account assets, contributing to a DAF avoids capital gains entirely, takes an immediate FMV deduction, and lowers MAGI in the contribution year — improving both the gift's value and the conversion window. This is one of the only moves that simultaneously reduces taxes and increases the retirement plan's efficiency.",
     dt: "PENDING DEEP RESEARCH PASS. Add annualCharitableGiving and dafFundingMethod ('cash'/'appreciated securities'). When funded with appreciated securities: skip LTCG on donated shares (no gain recognized), deduction = FMV (limited to 30% of AGI for property; carry forward 5 years). When funded with cash: deduction limited to 60% of AGI. Bunching: model the option to give 3–5 years of donations in one high-income year to clear the standard deduction. Lowers AGI/MAGI in contribution years — feeds into IRMAA/ACA/conversion-window floor. Synergizes with concentrated-position diversification (#67): donating the low-basis shares to a DAF is one of the best-value diversification paths.",
     cx: "Medium", im: "Medium", af: ["AGI/MAGI (deduction in contribution years)", "avoided LTCG (donated shares)", "grossAfterTax", "IRMAA/ACA gates", "conversion window (lower MAGI floor)"], sv: "annualCharitableGiving, dafFundingMethod, dafCarryforward"
+  },
+  // ─── What-If Scenarios ───────────────────────────────────────────────────────
+  // This section owns all "what if..." scenario features. File new scenario types
+  // here so the full what-if surface stays reviewable in one place as it grows.
+  // Core engine: calcWhatIfDelta / calcAffordabilityMax (what-if.js),
+  // applyMoneyEvents (money-events.js). Every new scenario type should extend
+  // the shared engine rather than implement a parallel retirement walk.
+  {
+    id: 69, pr: 1, sec: "What-If Scenarios", st: "done",
+    ti: "Live what-if overlay + money events timeline",
+    ds: "Always-on collapsible overlay (WhatIfPanel) answering 'what if I...' questions without touching saved inputs. Two modes: Scenario Delta (retirement-age shift, one-time event, annual spending change) and Max Affordable (binary search for largest one-time spend that still sustains to a target age). Persistent money events panel (MoneyEventsPanel, up to 6 events) threads into both accumulation and retirement walks. PDF export via window.print(). Fully isolated from main state.",
+    dt: "Shipped Jun 10 2026. New files: src/model/what-if.js (calcWhatIfDelta, calcAffordabilityMax), src/model/money-events.js (applyMoneyEvents, totalEventImpact), src/components/WhatIfPanel.jsx, src/components/MoneyEventsPanel.jsx. moneyEvents[] state threaded into runSimulation and buildRetirementDrawdown via retDrawShared. whatIfSimInputs object passed as props — WhatIfPanel never reads or writes main app state. calcWhatIfDelta re-runs runSimulation when accumulation-phase events or retirementAgeOverride are present; otherwise inherits baseline balance. Baseline rmdTaxByAge + conversionTaxByAge maps reused as-is (documented approximation — acceptable for modest scenario changes; see #74 for large-delta improvement). 272 → 299 tests.",
+    cx: "High", im: "High", af: ["buildRetirementDrawdown (moneyEvents param)", "runSimulation (moneyEvents param)", "yearsSustained (scenario comparison)", "totalAtRet (scenario comparison)"], sv: "moneyEvents[] (App state), whatIfSimInputs (derived object)"
+  },
+  {
+    id: 70, pr: 1, sec: "What-If Scenarios", st: "planned",
+    ti: "Recurring annual spending solver ('Can I spend $X more per year?')",
+    ds: "The overlay shows the impact of an annual spending change but offers no solver. 'What is the maximum I can add to my annual lifestyle and still reach age X?' requires a binary search over annualExpensesOverride — the recurring-spend analog of calcAffordabilityMax.",
+    dt: "Add calcMaxAnnualSpendIncrease({ targetAge, step = 500, maxSearch = 200_000, ...deltaArgs }) to what-if.js. Binary search: isSustainable(delta) = calcWhatIfDelta({ ...baseArgs, annualExpensesOverride: baseExpenses + delta }).scenarioYears >= targetAge - safeRetAge. Return { maxDelta, scenarioYears }. In WhatIfPanel extend Affordability mode (or add 'Lifestyle' mode): 'You can sustainably increase annual spending by up to $X/yr while lasting to age Y.' Pairs with the one-time affordability answer: show both side-by-side so a user can compare '$80k car once' vs '$5k/yr lifestyle bump forever.'",
+    cx: "Low", im: "High", af: ["calcWhatIfDelta (search loop)", "annualExpensesOverride", "WhatIfPanel (Lifestyle mode)", "yearsSustained (scenario)"], sv: "none (new model function + WhatIfPanel mode)"
+  },
+  {
+    id: 71, pr: 1, sec: "What-If Scenarios", st: "planned",
+    ti: "Required-contribution solver ('How much more must I save to reach my goal?')",
+    ds: "Completely absent today. A user 10 years from retirement asking 'I want $2M — how much more per year must I save?' has no answer. Requires a binary search over contribution amounts re-running the accumulation simulation — the inverse of calcSavingsCapacity.",
+    dt: "Add findRequiredContribution({ targetPortfolio OR targetAge, step = 1000, maxSearch = 100_000, ...simInputs, ...retDrawArgs }) to what-if.js. Two goal types: (a) portfolio target — search until totalAtRet >= targetPortfolio; (b) longevity target — search until yearsSustained >= targetAge. Each iteration: re-run runSimulation with boosted contributions (IRS limits still enforced per-year by the sim), optionally run buildRetirementDrawdown for longevity check. Allocate extra contribution in IRS priority order (match gap → HSA → Roth → 401k → taxable) using calcOptimizedAllocation so the suggestion is actionable. In WhatIfPanel add 'Save More' mode: 'To reach [goal] you need to save $X/mo more — ideally $A to 401k, $B to Roth.'",
+    cx: "Medium", im: "High", af: ["runSimulation (search loop)", "buildRetirementDrawdown (longevity check)", "calcOptimizedAllocation (IRS-priority split)", "WhatIfPanel (Save More mode)", "yearsSustained / totalAtRet (goal check)"], sv: "none (new model function + WhatIfPanel mode)"
+  },
+  {
+    id: 72, pr: 2, sec: "What-If Scenarios", st: "planned",
+    ti: "Free retirement-age slider in overlay (replaces fixed ±2-year presets)",
+    ds: "The overlay's 'Work 2 more years / Retire 2 years early' presets are the only way to shift retirement age in a what-if. A FIRE user targeting 45 can't express that. The presets should snap a free slider (currentAge → 75) so any retirement age is explorable without touching the main planner.",
+    dt: "In WhatIfPanel, replace the preset buttons with a retirement-age slider (min = currentAge, max = 75, step 1). The three presets become label shortcuts that snap the slider. retirementAgeOverride passed to calcWhatIfDelta is already an absolute age — no model change. Display the resulting conversion window length ('X years to convert before RMDs') alongside longevity delta so users see the full tradeoff of retiring early. Also surfaces the 'what happens if I stop working today?' question directly.",
+    cx: "Low", im: "Medium", af: ["WhatIfPanel (UI only)", "retirementAgeOverride (absolute age, already supported)"], sv: "none (UI change only)"
+  },
+  {
+    id: 73, pr: 2, sec: "What-If Scenarios", st: "planned",
+    ti: "Prominent verdict badge: ON TRACK vs SHORTFALL with gap quantification",
+    ds: "Scenario results show small delta chips ('−2.3 yrs') that the user must interpret. For 'quick question, quick answer, move on', every result needs one prominent verdict so a non-programmer never has to decide whether −2.3 years is a problem.",
+    dt: "In WhatIfPanel result display, add a large badge above detail chips. Logic: scenarioYears >= (safeLifeExp - safeRetAge) → 'ON TRACK ✓' (green) + 'Lasts to age X — Y years beyond goal.' Otherwise → 'SHORTFALL ✗' (red) + 'Runs out at age X — Y years short.' In Max Affordable mode: replace raw dollar amount with 'YES — up to $X' (green) or 'NO — plan already short' (red). Delta chips stay as secondary detail. When #71 (contribution solver) ships, add a one-line shortcut under SHORTFALL: 'Save ~$X/mo more to close the gap →'.",
+    cx: "Low", im: "High", af: ["WhatIfPanel (display only)", "scenarioYears vs safeLifeExp (already computed)", "deltaYears (already returned by calcWhatIfDelta)"], sv: "none (display change only)"
+  },
+  {
+    id: 74, pr: 3, sec: "What-If Scenarios", st: "planned",
+    ti: "Scenario-aware Roth conversion recompute for large portfolio changes",
+    ds: "The what-if engine reuses baseline RMD and conversion tax maps for all scenarios — a documented approximation. For small changes (±10%) the error is negligible. For large scenarios (retire 10 years early, $500k inheritance, big savings boost) the maps diverge materially and longevity estimates skew.",
+    dt: "In calcWhatIfDelta, after computing scenarioTotalAtRet, check if abs(scenarioTotalAtRet - baseTotalAtRet) / baseTotalAtRet > LARGE_CHANGE_THRESHOLD (suggested 0.15). If so, recompute rmdTaxByAge via calcRMDTaxSchedule with the scaled trad balance. If the scenario also shifts the conversion window (retirementAgeOverride), run a full evaluateConversionPlan re-run to get a new conversionTaxByAge. Gate behind the threshold so small scenarios stay fast (~1 extra evaluateConversionPlan call per large-delta what-if). Update the documented approximation note in CLAUDE.md and what-if.js when shipped. Add LARGE_CHANGE_THRESHOLD to ASSUMPTIONS in irs-2026.js.",
+    cx: "Medium", im: "Medium", af: ["calcWhatIfDelta (conditional recompute path)", "calcRMDTaxSchedule (new call with scaled balance)", "evaluateConversionPlan (new call when window shifts)", "buildRetirementDrawdown (updated maps)", "yearsSustained accuracy"], sv: "LARGE_CHANGE_THRESHOLD (new ASSUMPTIONS constant)"
   }
 ];
 
