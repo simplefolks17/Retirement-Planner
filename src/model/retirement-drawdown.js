@@ -35,6 +35,7 @@ export function buildRetirementDrawdown({
   pensionStartAge = Infinity,
   rmdTaxByAge = {},         // { [age]: tax }  — 0 where absent
   conversionTaxByAge = {},  // { [age]: tax }  — 0 where absent
+  moneyEvents = [],         // { amount, age, isInflow } — applied at matching age after draw
 }) {
   const rows = [];
   let bal = startBal;
@@ -49,7 +50,10 @@ export function buildRetirementDrawdown({
     const tax         = (rmdTaxByAge[age] ?? 0) + (conversionTaxByAge[age] ?? 0);
     const growth      = balStart * rReal;
     const afterGrowth = balStart + growth;          // balStart*(1+rReal)
-    const balEnd      = afterGrowth - draw - tax;
+    // One-time events (windfalls, large purchases) applied after normal recurrence.
+    const eventAdj    = moneyEvents.reduce((s, ev) =>
+      ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
+    const balEnd      = afterGrowth - draw - tax + eventAdj;
 
     rows.push({
       age,

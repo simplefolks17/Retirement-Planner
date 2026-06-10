@@ -27,11 +27,13 @@ src/
     roth-conversion.js    calcConversionSim, findOptimalConversion              [SERVER]
     flow-down.js          calcFlowDown (waterfall decomposition from the shared walk)  [SERVER]
     action-cards.js       generatePhaseActions, generatePhaseSteps              [SERVER]
+    money-events.js       applyMoneyEvents, totalEventImpact (per-year event application — accumulation + retirement)  [CLIENT]
+    what-if.js            calcWhatIfDelta (parallel scenario vs baseline), calcAffordabilityMax (binary-search max one-time spend)  [CLIENT]
     __tests__/            Vitest suites — one per model file + golden-master.test.js
   components/             React UI — all client-side
     ActionCard.jsx        ChartTooltip.jsx   DeferredInput.jsx   FlowConn.jsx
-    PhaseCard.jsx         Slider.jsx         TaxPhaseCard.jsx    TaxTimeline.jsx
-    WaterfallStep.jsx
+    MoneyEventsPanel.jsx  PhaseCard.jsx      Slider.jsx          TaxPhaseCard.jsx
+    TaxTimeline.jsx       WaterfallStep.jsx  WhatIfPanel.jsx
   __tests__/
     formatters.test.js    Boundary tests for fmt() / fmtPct()
   App.jsx                 State management, tab routing, layout shell, AND the three
@@ -120,7 +122,7 @@ INPUTS (state variables)
 
 Tests live alongside model files: `src/model/__tests__/` (one suite per model
 file). Formatter tests live in `src/__tests__/formatters.test.js`. Run with
-`npm test`. Current count: **272 tests across 23 files**, all passing.
+`npm test`. Current count: **299 tests across 25 files**, all passing.
 
 ### Golden master
 `src/model/__tests__/golden-master.test.js` locks the end-to-end output of the

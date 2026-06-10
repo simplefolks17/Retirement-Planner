@@ -101,7 +101,8 @@ Most users won't know the term "Section 125" or the difference between payroll d
 
 ### Spousal Benefit
 - 50% of the higher earner's PIA (annual = ssPIA × 12 × 0.5)
-- Always based on FRA — does NOT change with primary's claiming age
+- Always based on primary's FRA — does NOT increase if the primary delays past FRA
+- **Spouse's own claiming age matters (BUG-16 fix, Jun 2026):** if the spouse claims before their own FRA (62–66), the spousal benefit is reduced by the same early-claim factors that apply to any SS claim. Claiming after FRA does NOT increase the spousal benefit (no delayed credits on the spousal component). The spouse receives the higher of their own benefit (adjusted for their claiming age) or the spousal benefit (also adjusted for their claiming age).
 - Spouse receives the higher of their own benefit or the spousal amount
 
 ### Taxability
@@ -210,7 +211,7 @@ These are intentional modeling choices, not bugs. Document them so users and rev
 | Taxable brokerage assumes annual realization | Understates taxable growth by 15–25% over 30 years | Buy-and-hold investors compound unrealized gains tax-free. The model applies LTCG drag every year. |
 | 401k after-tax display uses phase rate, not effective rate | Makes 401k look worse vs Roth | Someone withdrawing $80K pays ~13% effective, not the 22% phase rate. |
 | State tax uses flat effective rate during accumulation | Inaccurate at income extremes | A $50K CA earner pays ~4%, not the table's 9.3%. User can override with the slider. |
-| State retirement income exemptions not modeled | Overstates retirement state tax for most states | 13 states exempt SS; many exempt pension/401k. Planned fix: feature #33. |
+| State retirement income exemptions not modeled | Overstates retirement state tax for most states | 13 states exempt SS; many exempt pension/401k. Feature #33 (bracket-accurate retirement tax) is done; structured per-source exemption flags are the remaining gap — planned as feature #52. |
 | Inflation applied to returns but not to brackets/limits | Subtle asymmetry | IRS adjusts limits annually. Sim uses 2026 limits with inflation-adjusted returns. |
 | SS benefit assumes continuous work to retirement | Overstates SS for anyone with career gaps | Retiring at 45 leaves fewer high-earning years in the 35-year average. Work-gap input planned: feature #11. |
 | Spouse 401k/Roth/HSA accounts not modeled | Understates household contribution capacity for dual-income MFJ | Spouse accounts tracked as planned premium feature #30. Current sliders are primary earner only. |
