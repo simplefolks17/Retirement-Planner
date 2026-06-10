@@ -34,11 +34,14 @@ import {
   ASSUMPTIONS,
   MEDICARE_AGE,
 } from "./config/irs-2026.js";
-import { Slider }        from "./components/Slider.jsx";
-import { DeferredInput } from "./components/DeferredInput.jsx";
-import { TaxTimeline }   from "./components/TaxTimeline.jsx";
-import { ChartTooltip }  from "./components/ChartTooltip.jsx";
-import { FlowConn }      from "./components/FlowConn.jsx";
+import { Slider }            from "./components/Slider.jsx";
+import { DeferredInput }     from "./components/DeferredInput.jsx";
+import { TaxTimeline }       from "./components/TaxTimeline.jsx";
+import { ChartTooltip }      from "./components/ChartTooltip.jsx";
+import { FlowConn }          from "./components/FlowConn.jsx";
+import { WhatIfPanel }       from "./components/WhatIfPanel.jsx";
+import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
+import { calcWhatIfDelta }   from "./model/what-if.js";
 import { PhaseCard }     from "./components/PhaseCard.jsx";
 
 export default function App() {
@@ -117,6 +120,11 @@ export default function App() {
   const [hasMedicare, setHasMedicare] = useState(false);
   const [personOnMedicare, setPersonOnMedicare] = useState(1); // 1 or 2 (persons)
 
+  // One-time money events: windfalls, large purchases, inheritances.
+  // { id, label, amount, age, isInflow, isTaxable }
+  // Empty default → zero golden master impact.
+  const [moneyEvents, setMoneyEvents] = useState([]);
+
   const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
 
   const safeRetAge = retirementAge;
@@ -153,6 +161,7 @@ export default function App() {
       contrib401k, contribRoth, contribTaxable, contribHSA,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       calcEmployerMatchFn: employerMatch,
+      moneyEvents,
     });
     // "Trad 401k" display: normalize to after-tax equivalent using current marginal rate.
     // fedMarginal is the bracket-accurate working-year rate; effectiveRMDTaxRate (retirement
@@ -169,6 +178,7 @@ export default function App() {
     contrib401k, contribRoth, contribTaxable, contribHSA,
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
     employerMatchPct, matchMode, matchFormulaRate, matchFormulaCap,
+    moneyEvents,
   ]);
 
   // Year-0 fallback: when retirementAge === currentAge the user is already retired
@@ -385,6 +395,7 @@ export default function App() {
     pensionAmount:   pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0,
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     rmdTaxByAge, conversionTaxByAge,
+    moneyEvents: moneyEvents.filter(ev => ev.age >= safeRetAge),
   };
 
   // Headline longevity: walk to a far horizon so "years sustained" is meaningful
@@ -541,6 +552,18 @@ export default function App() {
     conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
   ]);
 
+
+  // Inputs needed for what-if re-simulation. Collected once here so WhatIfPanel
+  // receives a stable reference and its useMemo only fires on genuine input changes.
+  const whatIfSimInputs = {
+    totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+    spouseIncome, spouseIncomeGrowth, returnRate,
+    bal401k, balRoth, balTaxable, balHSA,
+    contrib401k, contribRoth, contribTaxable, contribHSA,
+    contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+    calcEmployerMatchFn: employerMatch,
+    moneyEvents,
+  };
 
   return (
     <div className="page-wrap" style={{ background: C.bg, minHeight: "100vh", color: C.text,
@@ -992,6 +1015,20 @@ export default function App() {
             )}
           </div>
         </div>
+      </div>
+
+      <div style={{ ...panel, marginBottom: 20 }}>
+        <h3 style={{ ...sectionTitle, marginBottom: 8 }}>One-Time Money Events</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 11, color: C.muted, lineHeight: 1.5 }}>
+          Model windfalls, inheritances, or large purchases (car, home down payment, etc.).
+          Each event adjusts the portfolio balance at that age — outflows reduce it, inflows add to it.
+          Up to 6 events.
+        </p>
+        <MoneyEventsPanel
+          events={moneyEvents}
+          onChange={setMoneyEvents}
+          currentAge={currentAge}
+        />
       </div>
 
       <div style={{ ...panel, marginBottom: 20 }}>
@@ -1447,6 +1484,17 @@ export default function App() {
           </div>
         )}
       </div>
+
+      <WhatIfPanel
+        simInputs={whatIfSimInputs}
+        fedMarginal={fedMarginal}
+        retDrawShared={retDrawShared}
+        safeRetAge={safeRetAge}
+        safeLifeExp={safeLifeExp}
+        baseTotalAtRet={totalAtRet}
+        baseYearsSustained={yearsSustained}
+        currentAge={currentAge}
+      />
 
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Portfolio Growth Over Time</h3>

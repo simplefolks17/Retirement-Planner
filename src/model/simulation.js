@@ -29,6 +29,7 @@ export function runSimulation({
   contrib401k, contribRoth, contribTaxable, contribHSA,
   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
   calcEmployerMatchFn,
+  moneyEvents = [],   // { amount, age, isInflow } — applied to taxable account at matching age
 }) {
   let trad    = bal401k;
   let roth    = balRoth;
@@ -84,10 +85,16 @@ export function runSimulation({
     roth = (roth + cRoth) * (1 + r);
     hsa  = (hsa  + cHSA)  * (1 + r);
 
+    // One-time money events applied to the taxable account before growth compounds.
+    // Outflows (purchases) reduce the base; inflows (windfalls) increase it.
+    // Clamped at 0 so a large purchase can't produce a negative balance.
+    const eventAdj = moneyEvents.reduce((s, ev) =>
+      ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
+
     const yearOrdinaryIncome = primaryMAGI - employeeDeferral - cHSA
                              + (filingStatus === "mfj" ? spouseGrown : 0);
     const capGainsRate       = ltcgRate(yearOrdinaryIncome, filingStatus);
-    taxable = (taxable + cTaxable) * (1 + r * (1 - capGainsRate));
+    taxable = (Math.max(0, taxable + cTaxable + eventAdj)) * (1 + r * (1 - capGainsRate));
 
     arr.push({
       age,

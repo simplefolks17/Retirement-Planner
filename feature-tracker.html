@@ -75,7 +75,7 @@
 <body>
 
 <h1>Retirement Calculator — Feature Tracker</h1>
-<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-09</p>
+<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-10</p>
 
 <div class="summary" id="summary"></div>
 <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
@@ -466,19 +466,15 @@ var DATA = [
     cx: "Medium", im: "High", af: ["calcHealthcareExposure (per-year coverage routing)", "netConversionBenefit (ACA + IRMAA costs)", "hasMarketplaceInsurance (replaced)", "hasMedicare (replaced)", "conversion display"], sv: "healthInsuranceSource (replaces hasMarketplaceInsurance + hasMedicare)"
   },
   // ─── Retirement Location Batch ────────────────────────────────────────────
+  // NOTE: Feature #51 ("planned retirement state input") was removed — retirementState
+  // is fully implemented: state var (App.jsx:59), 51-state dropdown UI (App.jsx:1096–1104),
+  // retStateRate derived (App.jsx:120), wired into all retirement tax functions.
   {
-    id: 51, pr: 2, sec: "Retirement Location", st: "planned",
-    ti: "Planned retirement state (if relocating) + tax arbitrage display",
-    ds: "Many people plan to retire to a lower-tax or no-income-tax state. The app uses the working-year state for all retirement projections. A user planning to move from California to Florida sees retirement taxes overstated by $15–40k+/year, which also understates their Roth conversion benefit and overstates their RMD tax bite.",
-    dt: "retirementState already exists as a state variable — verify it actually flows through to the retirement tax engine. In calcRMDTaxSchedule and calcConversionSim, confirm retStateRate is derived from retirementState (not selectedState). Add UI: a 'Retiring in a different state?' toggle in the Retirement section that reveals a retirementState dropdown when enabled. Default retirementState = selectedState (no behavior change). When they differ, show a stat card: 'Moving to [state] saves approximately $X in lifetime retirement state taxes vs staying in [current state]' — computed as (currentStateRetirementRate − retirementStateRate) × effective retirement income × years. Ship together with #52 (state exemptions) for full accuracy.",
-    cx: "Low", im: "High", af: ["retStateRate (wiring check)", "calcRMDTaxSchedule", "calcConversionSim (retStateRate param)", "rmdTaxBite", "netConversionBenefit", "retirement tax display"], sv: "retirementState (already exists — confirm wiring)"
-  },
-  {
-    id: 52, pr: 2, sec: "Retirement Location", st: "planned",
+    id: 52, pr: 3, sec: "Retirement Location", st: "planned",
     ti: "Per-state retirement income exemptions (SS, 401k, pension)",
-    ds: "13 states exempt Social Security entirely from state income tax; many more exempt pension and 401k withdrawals. The app applies a flat state rate to all retirement income. A Pennsylvania retiree — where all retirement income is exempt — may see their retirement state taxes overstated by $10k+/year. This is the unshipped half of feature #33.",
-    dt: "Extend RETIREMENT_STATE_TAX in irs-2026.js: each state entry gains { rate, ssExempt, pensionExempt, traditionalExempt } boolean flags. The exemption data was noted as already written as comments in the config — this is mostly a structured data-entry pass plus a one-line application per exempt component. In calcRMDTaxSchedule and calcConversionSim, before applying the state rate: taxableRetIncome = rmd*(1 - (traditionalExempt?1:0)) + ssTaxableRet*(1 - (ssExempt?1:0)) + pension*(1 - (pensionExempt?1:0)). Ship together with #51 (retirement state input). Golden master: if the default state has any exemption flags set to true, values will move — check and update deliberately.",
-    cx: "Low", im: "High", af: ["RETIREMENT_STATE_TAX (config extension)", "calcRMDTaxSchedule (state exemption gating)", "calcConversionSim (retStateRate)", "rmdTaxBite", "netConversionBenefit"], sv: "RETIREMENT_STATE_TAX exemption flags (irs-2026.js config extension)"
+    ds: "13 states exempt Social Security entirely from state income tax; many more exempt pension and 401k withdrawals. The app applies a flat state rate to all retirement income. A Pennsylvania retiree — where all retirement income is exempt — may see their retirement state taxes overstated by $10k+/year. This is the unshipped half of feature #33. The retirement state dropdown already exists and is fully wired (retirementState/retStateRate) — this feature adds structured per-source exemption flags to that existing foundation.",
+    dt: "Extend RETIREMENT_STATE_TAX in irs-2026.js: each state entry gains { rate, ssExempt, pensionExempt, traditionalExempt } boolean flags. The exemption data was noted as already written as comments in the config — this is mostly a structured data-entry pass plus a one-line application per exempt component. In calcRMDTaxSchedule and calcConversionSim, before applying the state rate: taxableRetIncome = rmd*(1 - (traditionalExempt?1:0)) + ssTaxableRet*(1 - (ssExempt?1:0)) + pension*(1 - (pensionExempt?1:0)). Golden master: if the default state (TX) has any exemption flags set, values will move — check and update deliberately.",
+    cx: "Low", im: "Medium", af: ["RETIREMENT_STATE_TAX (config extension)", "calcRMDTaxSchedule (state exemption gating)", "calcConversionSim (retStateRate)", "rmdTaxBite", "netConversionBenefit"], sv: "RETIREMENT_STATE_TAX exemption flags (irs-2026.js config extension)"
   },
   // ─── Debt & Major Expenses Batch ──────────────────────────────────────────
   {

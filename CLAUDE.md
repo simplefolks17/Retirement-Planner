@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (272 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (299 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 
@@ -40,7 +40,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Design system & tokens: `docs/DESIGN.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (68 items, 24 done, 44 planned)
+- Feature backlog: `feature-tracker.html` (67 items, 24 done, 43 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -202,10 +202,20 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
      Documented at the `return` in `conversion-evaluation.js` and in `ARCHITECTURE.md` →
      Feature Design Notes so it isn't re-flagged. No code change.
   267 → **272** tests (23 files). New file: `finance-math.js`.
+- What-if overlay + money events system (Jun 10 2026):
+  1. **Feature tracker corrected** — removed #51 (retirementState already fully wired); downgraded #52 to P3. Count: 68 → 67 items, 44 → 43 planned.
+  2. **`src/model/money-events.js`** (new) — `applyMoneyEvents(events, age)` / `totalEventImpact`. Pure helper called per-year in both the accumulation and retirement walks.
+  3. **`src/model/simulation.js`** — added `moneyEvents = []` param; outflows reduce taxable account balance at matching age (before growth); inflows add to it. No-op at `[]`.
+  4. **`src/model/retirement-drawdown.js`** — added `moneyEvents = []` param; events applied to `balEnd` at matching age after normal recurrence. No golden master impact (default `[]`).
+  5. **`src/model/what-if.js`** (new) — `calcWhatIfDelta` (parallel scenario: re-runs sim for accum events, threads ret-phase events into `buildRetirementDrawdown`; never reimplements the walk) and `calcAffordabilityMax` (binary search for max one-time expense while sustaining to a target age).
+  6. **`src/components/WhatIfPanel.jsx`** (new) — always-on collapsible overlay: Scenario Delta mode (presets: work longer / retire early / custom; amount + age + direction; retirement age shift; expense delta) and Max Affordable mode (binary search, purchase age + target age). PDF export via `window.print()`. Completely isolated from main state.
+  7. **`src/components/MoneyEventsPanel.jsx`** (new) — up to 6 one-time events (label, amount, age, inflow/outflow, taxable flag); renders in main planner; events flow through `simData` and `retDrawShared` so all downstream calculations (RMD, conversion, longevity) see them.
+  8. **`App.jsx`** — added `moneyEvents` state, `whatIfSimInputs` object; threaded `moneyEvents` into `simData` (accum) and `retDrawShared` (retirement); rendered `WhatIfPanel` after retirement snapshot, `MoneyEventsPanel` before Tax Rate Phases.
+  272 → **299** tests (25 files). New: `money-events.test.js`, `what-if.test.js`.
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (272 tests)
+- `npm test` — run model + formatter + render-smoke tests (299 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)
