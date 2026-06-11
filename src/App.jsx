@@ -599,10 +599,12 @@ export default function App() {
 
   // Single entry point for Horizon-initiated mutations to App state.
   // Always called after user confirms in a modal — never fired directly by screens.
-  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae } = {}) => {
+  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, currentAge: ca, currentIncome: ci } = {}) => {
+    if (ca !== undefined) setCurrentAge(ca);
+    if (ci !== undefined) setCurrentIncome(ci);
     if (ra !== undefined) setRetirementAge(ra);
     if (ae !== undefined) setAnnualExpenses(ae);
-  }, [setRetirementAge, setAnnualExpenses]);
+  }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart needs so
   // IdeasScreen can call calcWhatIfChart(whatIfSimInputs, { retireAdj }) directly.
