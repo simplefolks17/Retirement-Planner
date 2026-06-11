@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -2867,7 +2868,9 @@ export default function App() {
 
       <p style={{ marginTop: 16, fontSize: 11, color: "#4d5561", textAlign: "center" }}>
         For illustrative purposes only. Not financial or tax advice. Consult a qualified advisor.
+
       </p>
+      <Analytics />
     </div>
   );
 }
