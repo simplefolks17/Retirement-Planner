@@ -14,9 +14,15 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 
 | File | Purpose |
 |---|---|
-| `src/horizon/ThemeContext.jsx` | Design token system, palette context, `useTheme()` hook |
+| `src/horizon/ThemeContext.jsx` | Design token system, palette context, `useTheme()` hook; exports `safeGet`/`safeSet` |
+| `src/horizon/ConfirmModal.jsx` | Shared confirm dialog + toast pattern (used by PlanScreen and IdeasScreen) |
 | `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views and optional scenario overlay |
-| `src/components/HorizonShell.jsx` | All 5 screens + onboarding wizard + nav shell |
+| `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard; imports per-screen files |
+| `src/horizon/screens/PlanScreen.jsx` | Plan screen (arc graph, stats, "Make this my plan") |
+| `src/horizon/screens/IdeasScreen.jsx` | Ideas screen (dials, scenario cards, life events) |
+| `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen (Statement, Year by year, Money flow) |
+| `src/horizon/screens/SomedayScreen.jsx` | Someday screen (activity selector, photo placeholder) |
+| `src/horizon/screens/SettingsScreen.jsx` | Settings screen (palette, theme, arc style) |
 | `src/App.jsx` | `showHorizon` state, `horizonProps` bundle, Classic↔Horizon toggle |
 
 ---
@@ -124,7 +130,7 @@ The signature visual — a full-life portfolio balance curve from today to `life
 
 ### Scenario overlay
 
-Pass `scenarioData` (same shape as `chartData`) to render a dotted accent-colored path over the arc view. Used by the Ideas screen for what-if visualization. **Note:** this is a visual approximation — the scenario data passed from the Ideas screen is a scaled copy of the real data (e.g. `total × 0.92`), not an actual model run. See open item #70.
+Pass `scenarioData` (same shape as `chartData`) to render a dotted accent-colored path over the arc view. Used by the Ideas screen for what-if visualization. The scenario data is produced by `calcWhatIfChart` from `src/model/what-if.js` — a real model run through `buildRetirementDrawdown`, not a scaled approximation.
 
 ### Exports
 
@@ -150,22 +156,27 @@ Right side of nav: "On track" / "Needs attention" status pill + "Classic view" b
 - Progress bar toward sustainable retirement
 - ArcGraph (height 280, with 4-view toggle, glow from `arcStyle`)
 - Stats row: You keep / mo · Retire at · Income for life · Left at 90
+- **"Make this my plan"** button → ConfirmModal → calls `commitPlan({ retirementAge, annualExpenses })` → 2-second "✓ Plan saved" toast
 
 ### Ideas screen
 
 Scenario exploration — the arc is always the hero.
 
 **4 mode panels** (one active at a time):
-- **Drop life onto timeline** — 5 life-event chips (buy a home, kid's college, etc.) that activate an indicative scenario
-- **Dial your future** — steppers for Retire at / Extra savings / Monthly spend (currently display-only; see open item #69)
-- **Horizon suggestions** — 4 clickable scenario cards that activate a dotted arc overlay
+- **Drop life onto timeline** — 5 life-event chips (buy a home, kid's college, etc.) that add an event to `moneyEvents` via `setMoneyEvents` after a ConfirmModal
+- **Dial your future** — steppers for Retire at / Extra savings / Monthly spend; +/− buttons update local offset state and re-run `calcWhatIfChart` for a live dotted arc overlay
+- **Horizon suggestions** — 4 clickable scenario cards that run `calcWhatIfChart` and pass the result as `scenarioData` to ArcGraph
 - **What if…** — question prompt that activates the "retire 2 years earlier" scenario
 
 **Scenario system:**
 - 4 presets: `retire63`, `retire60`, `saveMore`, `bigTrip`
-- Each has a `scale` factor applied to `chartData` totals to produce `scenarioData`
+- Each runs `calcWhatIfChart(whatIfBundle, { retireAdj, scenarioEvents })` — a real model run, not a scaled approximation
 - Stats row shows base values with strikethrough + scenario values when a scenario is active
-- "Make this my plan" button appears when scenario is active (currently a no-op placeholder; see open item #75)
+- **"Make this my plan"** → ConfirmModal → `commitPlan({ retirementAge: scenRetire })` → 2-second toast
+
+**Life event write-back:**
+- Chip "Add to plan" → ConfirmModal → `setMoneyEvents(prev => [...prev, { id: String(Date.now()), label, amount, age, isInflow, isTaxable: false }])`
+- Events immediately flow through `simData` + `retDrawShared` so the arc updates with real model output
 
 ### The Numbers screen
 
@@ -191,9 +202,15 @@ Full-bleed aspirational screen. Activity selector (Golf course / First class / T
 
 ### Onboarding wizard
 
-5-step wizard: Age → Income → Saved so far → Retire at → Monthly spend. Ghost arc materializes progressively as steps are completed. Completion state shows 3 summary stats + "See my plan →" CTA.
+5-step wizard: Age → Income → Saved so far → Retire at → Monthly spend. Ghost arc materializes progressively as steps are completed. Completion state shows 3 summary stats + two CTAs.
 
-**Currently display-only** — inputs show the real computed values from App.jsx but the stepper buttons don't modify anything. The wizard is a motivational demo, not a real first-run setup path. See open item #79.
+**First-run detection (#78):** On first load, `showOnboarding` is initialized from `safeGet("hz-onboarded") !== "1"`. After the wizard completes or is skipped, `safeSet("hz-onboarded", "1")` is called so returning users land directly on Plan.
+
+**Write-back (#79):** The +/− stepper buttons update local `vals` state (with per-field step sizes and clamps) inside the wizard — they never touch App.jsx state until the final step. The Done screen offers:
+- **"Save as my plan →"** → ConfirmModal → `commitPlan({ currentAge, currentIncome, retirementAge, annualExpenses })` → wizard dismisses
+- **"Skip for now"** → wizard dismisses, no App.jsx state changes
+
+The `totalSaved` field is displayed for context in the stepper but is not written back (it maps to 4 separate account balances — deferred to feature #30).
 
 ---
 
@@ -233,8 +250,20 @@ const horizonProps = {
   currentContribTotal,
   retVals, simData,
   netConversionBenefit, yr1TaxSavings,
+  // Added in Batch A:
+  moneyEvents,                      // current one-time event array
+  setMoneyEvents,                   // direct setter (for life-event write-back in Ideas)
+  whatIfSimInputs,                  // { simInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp, baseTotalAtRet }
+  commitPlan,                       // useCallback wrapper — single entry point for Horizon→App.jsx mutations
+  retirementWalk,                   // full retirement walk object
 };
 ```
+
+**`commitPlan` signature:**
+```js
+commitPlan({ retirementAge?, annualExpenses?, currentAge?, currentIncome? })
+```
+All keys optional; only the provided keys are applied. Never called without a prior user confirmation step in the UI layer.
 
 ### Render pattern
 
@@ -255,20 +284,17 @@ if (showHorizon) {
 
 These are deferred features with enough implementation detail to pick up in a future PR. All are tracked in `feature-tracker.html` (section "Horizon UI") with their IDs.
 
-### #69 — Functional "Dial your future" steppers
-**What:** The stepper inputs in Ideas → "Dial your future" currently show your actual values (retire age, monthly spend, savings) but the +/− buttons are inert.
-**What's needed:** Wire button clicks to update a local `dialValues` state object in `IdeasScreen`, then re-compute `scenarioData` from those dial values rather than the fixed scale presets. The dials shouldn't change the main App.jsx state — they're a sandbox inside Ideas.
-**Files:** `HorizonShell.jsx` → `IdeasScreen`
+### ✓ #69 — Functional "Dial your future" steppers *(shipped Batch B, PR #16)*
+Steppers in Ideas → "Dial your future" now maintain local `dialRetireOffset` / `dialSpendOffset` state. Each +/− press re-runs `calcWhatIfChart` and passes the result as `scenarioData` to ArcGraph.
 
-### #70 — Real model runs for Ideas scenario overlay
-**What:** The dotted arc on the Ideas screen is computed by scaling `chartData.total` by a constant (e.g. `× 0.92` for retiring 2 years earlier). It's directionally correct but not an actual model run.
-**What's needed:** Connect the scenario to `calcWhatIfDelta` from `src/model/what-if.js` (already implemented). That function already accepts a retirement-age shift and returns a real alternate chart series. Pass the result as `scenarioData` instead of the scaled approximation.
-**Files:** `HorizonShell.jsx` → `IdeasScreen`, `App.jsx` (may need to expose `whatIfSimInputs` to the shell)
+### ✓ #70 — Real model runs for Ideas scenario overlay *(shipped Batch B, PR #16)*
+Scenario cards now call `calcWhatIfChart(whatIfBundle, { retireAdj, scenarioEvents })` — a real `buildRetirementDrawdown` run — replacing the old `chartData.total × scale` approximation.
 
-### #71 — Connect Ideas "Drop life onto timeline" to MoneyEventsPanel
-**What:** Life event chips ("Buy a home," "Big trip," etc.) currently activate hardcoded scale scenarios. They should instead add events to the real `moneyEvents` array (already in App.jsx state) so the arc updates with real model output.
-**What's needed:** Expose `moneyEvents` and `setMoneyEvents` in `horizonProps`. Life event chips call `setMoneyEvents` to add/remove entries. The arc then reflects real model impact automatically since `chartData` already flows through `moneyEvents`.
-**Files:** `App.jsx` (add to `horizonProps`), `HorizonShell.jsx` → `IdeasScreen`
+### ✓ #71 — Connect Ideas "Drop life onto timeline" to moneyEvents *(shipped Batch B, PR #16)*
+Life event chips trigger a ConfirmModal; on confirm, `setMoneyEvents` appends the event. The arc updates automatically since `chartData` flows through `moneyEvents`.
+
+### ✓ #75 — "Make this my plan" confirm modal *(shipped Batch B, PR #16)*
+Both PlanScreen and IdeasScreen now have a ConfirmModal → `commitPlan` → 2-second toast flow. Shared `ConfirmModal` component in `src/horizon/ConfirmModal.jsx`.
 
 ### #72 — Money flow Sankey diagram
 **What:** The "Money flow" tab in The Numbers screen is a placeholder.
@@ -285,10 +311,7 @@ These are deferred features with enough implementation detail to pick up in a fu
 **What's needed:** A breakpoint at ~640px: stack the nav tabs into a bottom tab bar (or hamburger), collapse stat cards to 2-up, reduce arc height to ~180px, and simplify the Settings layout to single-column.
 **Files:** `HorizonShell.jsx` (add responsive styles), `ArcGraph.jsx` (test at small heights)
 
-### #75 — "Make this my plan" applies scenario to the real model
-**What:** The "Make this my plan" button in the Ideas stats row is a visible placeholder — clicking it does nothing.
-**What's needed:** Map each scenario's `retireAdj` to an actual state change in App.jsx (e.g. move the `retirementAge` slider). This requires either exposing App.jsx setters in `horizonProps` or showing a modal with "Your retirement age has been updated to X — see the full plan in Classic view."
-**Files:** `App.jsx` (expose setters or add modal), `HorizonShell.jsx`
+### #75 — *(shipped, see above)*
 
 ### #76 — Activity preference in Settings
 **What:** The user's activity ("golf course," "first class," etc.) can only be changed on the Someday screen. Settings is the natural home for persistent preferences.
@@ -300,15 +323,11 @@ These are deferred features with enough implementation detail to pick up in a fu
 **What's needed:** A set of 6 curated photos (one per activity: golf, travel, hiking, cooking, garden, grandkids) bundled with the app or fetched from a CDN. Each should be warm-toned, lifestyle-oriented, and work under the dark gradient overlay. The `background-image` CSS property replaces the gradient placeholder.
 **Files:** `HorizonShell.jsx` → `SomedayScreen`, `public/` (photo assets)
 
-### #78 — Horizon onboarding first-run detection
-**What:** The onboarding wizard exists but is never shown by default (the `showOnboarding` state in `HorizonShell` defaults to `false`). There's no first-run detection.
-**What's needed:** On first load (check `localStorage` for a `hz-onboarded` flag), set `showOnboarding = true`. After wizard completion, set the flag so returning users land directly on Plan.
-**Files:** `HorizonShell.jsx` (add `isBrowser` guard, localStorage check)
+### ✓ #78 — Horizon onboarding first-run detection *(shipped Batch C, PR #17)*
+`showOnboarding` now initializes to `safeGet("hz-onboarded") !== "1"`. Completing or skipping the wizard calls `safeSet("hz-onboarded", "1")` so returning users skip it.
 
-### #79 — Onboarding wizard writes back to App.jsx state
-**What:** The onboarding wizard shows real values from the app but the +/− steppers don't change them. A true first-run flow would initialize App.jsx's sliders from the wizard answers.
-**What's needed:** Expose App.jsx setters (`setCurrentAge`, `setRetirementAge`, `setCurrentIncome`, etc.) in `horizonProps`. Wizard completion calls these setters with the collected answers. Requires care around the golden-master test suite — only App.jsx UI state changes, not model logic.
-**Files:** `App.jsx` (expose setters), `HorizonShell.jsx` → `OnboardingScreen`
+### ✓ #79 — Onboarding wizard writes back to App.jsx state *(shipped Batch C, PR #17)*
+The +/− stepper buttons update local `vals` state during the wizard. The Done screen's "Save as my plan" button shows a ConfirmModal; on confirm, `commitPlan({ currentAge, currentIncome, retirementAge, annualExpenses })` is called. "Skip for now" dismisses without touching App.jsx state.
 
 ### #80 — Year by year: full age-by-age table option
 **What:** The "Year by year" tab currently shows 6 key milestone rows. The Classic view has a full table. Power users want every year.
@@ -339,4 +358,4 @@ The SVG coordinate space is fixed: VW=1200, PAD `{l:62, r:92, t:38, b:46}`. Age 
 
 ---
 
-*Last updated: 2026-06-11. PR: Horizon shell initial implementation.*
+*Last updated: 2026-06-11. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding). Open items remaining: #72, #73, #74, #76, #77, #80 (Batches D & E).*

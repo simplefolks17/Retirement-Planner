@@ -41,7 +41,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Classic UI design system & tokens: `docs/DESIGN.md` *(dark dashboard — the original UI)*
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (90 items, 28 done, 62 planned)
+- Feature backlog: `feature-tracker.html` (90 items, 34 done, 56 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -227,10 +227,31 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   10 follow-up items tracked in `feature-tracker.html` (section "Horizon UI", IDs 69–80) and
   documented in `docs/HORIZON.md`. **`docs/DESIGN.md` describes the Classic (dark) UI only —
   do not merge the two; they are separate design systems.**
+- Horizon Batch A shipped (Jun 11 2026, PRs #16): foundation work for iterative Horizon delivery.
+  HorizonShell.jsx split into per-screen files (`src/horizon/screens/`). New pure model export
+  `calcWhatIfChart` in `what-if.js` returns `[{age,total}]` series for a scenario override.
+  `safeGet`/`safeSet` exported from ThemeContext for onboarding detection. `horizonProps` extended
+  with `moneyEvents`, `setMoneyEvents`, `whatIfSimInputs` bundle, `commitPlan` (confirm-commit
+  wrapper), and `retirementWalk`. Two bugs fixed: `commitPlan` missing deps; `calcWhatIfChart`
+  silently dropping permanent `moneyEvents` from the retirement walk. 303 → **307** tests.
+- Horizon Batch B shipped (Jun 11 2026, PR #16): Ideas screen fully functional.
+  #70 — Scenario cards use `calcWhatIfChart` for real model arc overlays; `bigTrip` passes a
+  `scenarioEvents` override ($40k outflow at 70). #69 — Dial your future ± buttons live-update
+  offsets and "Show on arc →" calls `calcWhatIfChart`. #71 — Life event pills show a
+  ConfirmModal before writing to `moneyEvents` (arc + longevity update immediately). #75 —
+  "Make this my plan" in both IdeasScreen (saves scenario's retire age) and PlanScreen (saves
+  current values) uses confirm modal → `commitPlan` → 2-second toast. New shared component:
+  `src/horizon/ConfirmModal.jsx`.
+- Horizon Batch C shipped (Jun 11 2026, PR #17): onboarding wired end-to-end.
+  #78 — First-run detection via `safeGet("hz-onboarded")` initializer (was defaulting to false).
+  #79 — Onboarding stepper now holds live numeric state; ± buttons clamp per field; done screen
+  offers "Save as my plan" (ConfirmModal → `commitPlan` → dismiss) vs "Skip for now" (dismiss
+  only). `commitPlan` expanded to accept `currentAge` + `currentIncome` alongside the existing
+  `retirementAge` + `annualExpenses`. No model changes; 307 tests unchanged.
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (303 tests)
+- `npm test` — run model + formatter + render-smoke tests (307 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)

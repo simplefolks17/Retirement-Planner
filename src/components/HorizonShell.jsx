@@ -6,6 +6,7 @@
 import React, { useState } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
+import ConfirmModal from "../horizon/ConfirmModal.jsx";
 import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
 import IdeasScreen   from "../horizon/screens/IdeasScreen.jsx";
 import NumbersScreen from "../horizon/screens/NumbersScreen.jsx";
@@ -65,6 +66,7 @@ function TabBar({ t, tabs, active, onChange }) {
 }
 
 // ── ONBOARDING (first-run wizard) ─────────────────────────────────────────────
+
 const OB_STEPS = [
   { q: "How old are you?",                             hint: "we'll map from today to 90",        field: "currentAge" },
   { q: "What do you earn a year?",                     hint: "before tax — rough is fine",        field: "currentIncome" },
@@ -73,60 +75,108 @@ const OB_STEPS = [
   { q: "How much to spend each month\nin retirement?", hint: "today's dollars",                   field: "monthlySpend" },
 ];
 
-function fmtMo(annual) {
-  if (annual == null || isNaN(annual)) return "—";
-  return `$${Math.round(annual / 12).toLocaleString()}`;
+// Per-field increment size and [min, max] clamp
+const OB_STEP_SIZES = {
+  currentAge:    1,
+  currentIncome: 5_000,
+  totalSaved:    10_000,
+  retirementAge: 1,
+  monthlySpend:  100,
+};
+const OB_CLAMPS = {
+  currentAge:    [18, 80],
+  currentIncome: [10_000, 2_000_000],
+  totalSaved:    [0, 10_000_000],
+  retirementAge: [40, 90],
+  monthlySpend:  [500, 50_000],
+};
+
+function fmtField(field, val) {
+  switch (field) {
+    case "currentAge":
+    case "retirementAge": return String(val);
+    case "currentIncome": return `$${(val / 1_000).toFixed(0)}k`;
+    case "totalSaved":    return `$${(val / 1_000).toFixed(0)}k`;
+    case "monthlySpend":  return `$${val.toLocaleString()}`;
+    default: return String(val);
+  }
 }
 
-function OnboardingScreen({ t, initialValues, onComplete }) {
-  const [step, setStep] = useState(0);
-  const done = step >= OB_STEPS.length;
-  const arcOp  = [0.08, 0.20, 0.36, 0.54, 0.72, 0.90][Math.min(step, 5)];
-  const arcBlur = [8,    5,    3,    1,    0,    0  ][Math.min(step, 5)];
-  const showHeadline = step >= 3;
-  const showTagline  = step >= 4;
-  const cur = OB_STEPS[Math.min(step, OB_STEPS.length - 1)];
-  const displayVals = {
-    currentAge:    initialValues?.currentAge ?? 34,
-    currentIncome: `$${((initialValues?.currentIncome ?? 100_000) / 1000).toFixed(0)}k`,
-    totalSaved:    `$${((initialValues?.totalSaved ?? 165_000) / 1000).toFixed(0)}k`,
+function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
+  const [step, setStep]           = useState(0);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // Local numeric state for each question — updated by ± buttons
+  const [vals, setVals] = useState({
+    currentAge:    initialValues?.currentAge    ?? 34,
+    currentIncome: initialValues?.currentIncome ?? 100_000,
+    totalSaved:    initialValues?.totalSaved    ?? 165_000,
     retirementAge: initialValues?.retirementAge ?? 65,
-    monthlySpend:  `$${((initialValues?.monthlySpend ?? 6_000)).toLocaleString()}`,
+    monthlySpend:  initialValues?.monthlySpend  ?? 6_000,
+  });
+
+  const done     = step >= OB_STEPS.length;
+  const arcOp    = [0.08, 0.20, 0.36, 0.54, 0.72, 0.90][Math.min(step, 5)];
+  const arcBlur  = [8,    5,    3,    1,    0,    0  ][Math.min(step, 5)];
+  const cur      = OB_STEPS[Math.min(step, OB_STEPS.length - 1)];
+
+  const adjust = (field, dir) => {
+    const inc = OB_STEP_SIZES[field];
+    const [lo, hi] = OB_CLAMPS[field];
+    setVals(v => ({ ...v, [field]: Math.max(lo, Math.min(hi, v[field] + dir * inc)) }));
+  };
+
+  // Write the key retirement parameters back to App.jsx state
+  const handleSave = () => {
+    commitPlan({
+      currentAge:    vals.currentAge,
+      currentIncome: vals.currentIncome,
+      retirementAge: vals.retirementAge,
+      annualExpenses: vals.monthlySpend * 12,
+    });
+    onComplete();
   };
 
   const summaryStats = [
-    ["Income for life", fmtMo(initialValues?.monthlySpend * 12 ?? 72000), t.warm],
-    ["Retire at", String(initialValues?.retirementAge ?? 65), t.ink],
-    ["Left at 90", "—", t.ink],
+    ["Retire at",       String(vals.retirementAge),                        t.ink],
+    ["Monthly income",  `$${vals.monthlySpend.toLocaleString()}/mo`,       t.warm],
+    ["Savings today",   `$${(vals.totalSaved / 1_000).toFixed(0)}k`,       t.ink],
   ];
+
+  const stepBtnStyle = {
+    width: 36, height: 36, flexShrink: 0, borderRadius: 9,
+    border: `1.5px solid ${t.line2}`, background: t.surf,
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+    font: `600 18px ${HF}`, color: t.accent, cursor: "pointer", userSelect: "none",
+  };
 
   return (
     <div style={{
       width: "100%", height: "100%", background: t.bg, fontFamily: HF,
       display: "flex", position: "relative", overflow: "hidden"
     }}>
-      {/* ghost arc */}
+      {/* ghost arc that reveals as user progresses */}
       <div style={{ position: "absolute", inset: "24px 360px 60px 32px", pointerEvents: "none" }}>
         <GhostArc t={t} opacity={arcOp} blur={arcBlur} H={560} />
       </div>
-      {/* emerging copy */}
+
+      {/* emerging headline copies the App's real retirement age as they fill it in */}
       <div style={{
         position: "absolute", left: 44, bottom: 80,
-        opacity: showHeadline ? 1 : 0, transition: "opacity .5s", pointerEvents: "none"
+        opacity: step >= 3 ? 1 : 0, transition: "opacity .5s", pointerEvents: "none"
       }}>
-        {showHeadline && (
-          <div style={{ font: `600 28px ${HF}`, color: t.ink, letterSpacing: "-0.02em" }}>
-            On track to retire at{" "}
-            <span style={{ color: t.accent }}>{displayVals.retirementAge}</span>.
-          </div>
-        )}
-        {showTagline && (
+        <div style={{ font: `600 28px ${HF}`, color: t.ink, letterSpacing: "-0.02em" }}>
+          On track to retire at{" "}
+          <span style={{ color: t.accent }}>{vals.retirementAge}</span>.
+        </div>
+        {step >= 4 && (
           <div style={{ font: `400 16px ${HF}`, color: t.mut, marginTop: 6 }}>
             Work optional,{" "}
-            <span style={{ color: t.accent, fontWeight: 600 }}>golf course</span> mandatory.
+            <span style={{ color: t.accent, fontWeight: 600 }}>your thing</span> mandatory.
           </div>
         )}
       </div>
+
       {/* right panel */}
       <div style={{
         width: 360, marginLeft: "auto", flexShrink: 0, height: "100%",
@@ -134,6 +184,7 @@ function OnboardingScreen({ t, initialValues, onComplete }) {
         display: "flex", flexDirection: "column", padding: "36px 28px", gap: 20, zIndex: 2
       }}>
         <Logo t={t} />
+
         {/* progress pips */}
         <div style={{ display: "flex", gap: 5 }}>
           {OB_STEPS.map((_, i) => (
@@ -149,12 +200,13 @@ function OnboardingScreen({ t, initialValues, onComplete }) {
         </div>
 
         {done ? (
+          /* ── Summary + action buttons ── */
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ font: `600 26px ${HF}`, color: t.ink, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
               Your plan is ready.
             </div>
             <div style={{ font: `600 17px ${HF}`, color: t.accent, lineHeight: 1.2 }}>
-              Work optional.<br />Golf course mandatory.
+              Work optional.<br />Your thing mandatory.
             </div>
             {summaryStats.map(([l, v, c]) => (
               <div key={l} style={{
@@ -166,41 +218,45 @@ function OnboardingScreen({ t, initialValues, onComplete }) {
               </div>
             ))}
             <span style={{ flex: 1 }} />
-            <div onClick={onComplete} style={{
+            {/* primary CTA: save answers to the model */}
+            <div onClick={() => setShowConfirm(true)} style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               padding: "13px 20px", borderRadius: 12, background: t.accent, cursor: "pointer"
             }}>
-              <span style={{ font: `600 15px ${HF}`, color: "#fff" }}>See my plan →</span>
+              <span style={{ font: `600 15px ${HF}`, color: "#fff" }}>Save as my plan →</span>
+            </div>
+            {/* secondary: just enter the app without changing anything */}
+            <div onClick={onComplete} style={{
+              textAlign: "center", font: `400 13px ${HF}`, color: t.faint,
+              cursor: "pointer", textDecoration: "underline"
+            }}>
+              Skip for now
             </div>
           </div>
         ) : (
+          /* ── Per-step question + stepper ── */
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 18 }}>
             <div style={{
               font: `600 26px ${HF}`, color: t.ink, letterSpacing: "-0.02em",
               lineHeight: 1.15, whiteSpace: "pre-line"
             }}>{cur.q}</div>
             <div style={{ font: `400 13px ${HF}`, color: t.mut }}>{cur.hint}</div>
-            {/* stepper */}
+
+            {/* stepper with live numeric state */}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{
-                width: 36, height: 36, flexShrink: 0, borderRadius: 9,
-                border: `1.5px solid ${t.line2}`, background: t.surf,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                font: `600 18px ${HF}`, color: t.accent, cursor: "pointer"
-              }}>−</span>
+              <span style={stepBtnStyle} onClick={() => adjust(cur.field, -1)}>−</span>
               <div style={{
                 flex: 1, height: 40, borderRadius: 10, border: `1.5px solid ${t.line2}`,
-                background: t.surf, display: "flex", alignItems: "center", justifyContent: "center",
+                background: t.bg, display: "flex", alignItems: "center", justifyContent: "center",
                 font: `600 18px ${HM}`, color: t.ink
-              }}>{displayVals[cur.field]}</div>
-              <span style={{
-                width: 36, height: 36, flexShrink: 0, borderRadius: 9,
-                border: `1.5px solid ${t.line2}`, background: t.surf,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                font: `600 18px ${HF}`, color: t.accent, cursor: "pointer"
-              }}>+</span>
+              }}>
+                {fmtField(cur.field, vals[cur.field])}
+              </div>
+              <span style={stepBtnStyle} onClick={() => adjust(cur.field, +1)}>+</span>
             </div>
+
             <span style={{ flex: 1 }} />
+
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               {step > 0 && (
                 <div onClick={() => setStep(s => s - 1)} style={{
@@ -218,13 +274,29 @@ function OnboardingScreen({ t, initialValues, onComplete }) {
                 </span>
               </div>
             </div>
-            {step > 0 && (
-              <div style={{ font: `400 12px ${HF}`, color: t.faint, textAlign: "center",
-                cursor: "pointer", textDecoration: "underline" }}>skip</div>
-            )}
+
+            {/* skip at any point — just enters app with existing defaults */}
+            <div onClick={onComplete} style={{
+              font: `400 12px ${HF}`, color: t.faint, textAlign: "center",
+              cursor: "pointer", textDecoration: "underline"
+            }}>
+              skip
+            </div>
           </div>
         )}
       </div>
+
+      {/* Confirm before writing back to App.jsx state */}
+      {showConfirm && (
+        <ConfirmModal
+          t={t}
+          title="Save your answers as your starting plan?"
+          body={`Age ${vals.currentAge} · Retire at ${vals.retirementAge} · $${vals.monthlySpend.toLocaleString()}/mo`}
+          confirmLabel="Yes, save my plan"
+          onConfirm={handleSave}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
     </div>
   );
 }
@@ -276,6 +348,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               monthlySpend:  Math.round((props.effectiveExpenses ?? 0) / 12),
             }}
             onComplete={handleOnboardingComplete}
+            commitPlan={props.commitPlan}
           />
         </div>
       ) : (

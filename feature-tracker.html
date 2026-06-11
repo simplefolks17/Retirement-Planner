@@ -582,21 +582,21 @@ var DATA = [
   },
   // ─── Horizon UI ──────────────────────────────────────────────────────────────
   {
-    id: 69, pr: 2, sec: "Horizon UI", st: "planned",
+    id: 69, pr: 2, sec: "Horizon UI", st: "done",
     ti: "Functional 'Dial your future' steppers in Ideas",
     ds: "The stepper inputs in Ideas → Dial your future show your real values (retire age, monthly spend, extra savings) but the +/− buttons are inert. Clicking them should update a local dial state and re-compute the scenario overlay — a sandbox that doesn't touch main App state.",
     dt: "Add dialValues state to IdeasScreen: { retireAdj: 0, extraSavings: 0, spendAdj: 0 }. +/− buttons increment/decrement these. Compute scenarioData from dialValues using the existing SCENARIOS scale logic OR call calcWhatIfDelta (see #70) for a real model result. Show on arc immediately. No App.jsx state changes — this is purely a local sandbox.",
     cx: "Low", im: "Medium", af: ["IdeasScreen (HorizonShell.jsx)", "scenarioData computation"], sv: "dialValues (local IdeasScreen state)"
   },
   {
-    id: 70, pr: 1, sec: "Horizon UI", st: "planned",
+    id: 70, pr: 1, sec: "Horizon UI", st: "done",
     ti: "Real model runs for Ideas scenario overlay",
     ds: "The dotted arc on the Ideas screen is a visual scale approximation (chartData.total × 0.92, etc.). It's directionally correct but not an actual model output. Connect it to calcWhatIfDelta from src/model/what-if.js, which already accepts a retirement-age shift and returns a real alternate balance series.",
     dt: "In App.jsx, expose whatIfSimInputs (already computed) in horizonProps. In IdeasScreen, when a scenario is activated, call calcWhatIfDelta(whatIfSimInputs, { retirementAgeDelta: scen.retireAdj, ... }) and use its returned delta series as scenarioData. The Ideas screen already accepts scenarioData as a prop to ArcGraph — only the data source changes. The scale-approximation fallback can stay for the speed-demo path (life event chips).",
     cx: "Low", im: "High", af: ["App.jsx (expose whatIfSimInputs)", "HorizonShell.jsx → IdeasScreen", "what-if.js (already implemented)"], sv: "whatIfSimInputs (add to horizonProps)"
   },
   {
-    id: 71, pr: 2, sec: "Horizon UI", st: "planned",
+    id: 71, pr: 2, sec: "Horizon UI", st: "done",
     ti: "Connect Ideas 'Drop life onto timeline' to real MoneyEventsPanel",
     ds: "Life event chips (Buy a home, Big trip, etc.) currently activate hardcoded scale scenarios. They should add events to the real moneyEvents array in App.jsx state so the arc updates with genuine model output — the same events that flow through the accumulation and retirement walks.",
     dt: "Add moneyEvents and setMoneyEvents to horizonProps in App.jsx. In IdeasScreen, life event chips call setMoneyEvents to add/remove entries (matching the MoneyEventsPanel schema: { label, amount, age, isInflow, isTaxable }). Since chartData already flows through moneyEvents, the arc updates automatically. Presets: Buy a home → outflow $50k at age 40; Big trip → outflow $40k at age 70; etc. Show event markers on the arc as vertical pins (age ticks with label).",
@@ -624,7 +624,7 @@ var DATA = [
     cx: "Medium", im: "High", af: ["HorizonShell.jsx (all screens)", "ArcGraph.jsx (small-height test)"], sv: "none (layout only)"
   },
   {
-    id: 75, pr: 2, sec: "Horizon UI", st: "planned",
+    id: 75, pr: 2, sec: "Horizon UI", st: "done",
     ti: "'Make this my plan' applies scenario to the real model",
     ds: "The 'Make this my plan' button appears in the Ideas stats row when a scenario is active but currently does nothing. It should commit the scenario's changes — retirement age shift, spending change — to the real App.jsx state so the full Classic view reflects the user's decision.",
     dt: "Add setRetirementAge (and optionally setEffectiveExpenses) to horizonProps. When 'Make this my plan' is clicked: (1) apply retirementAge + scen.retireAdj; (2) show a brief confirmation toast ('Retirement age updated to X'); (3) clear the scenario. Consider also navigating to the Plan screen so the updated arc is immediately visible. Alternatively, show a modal: 'This will update your retirement age to X. Confirm?' to make the action reversible. Do NOT apply changes silently.",
@@ -645,14 +645,14 @@ var DATA = [
     cx: "Low", im: "High", af: ["HorizonShell.jsx → SomedayScreen", "public/someday/ (new assets)"], sv: "none (assets only)"
   },
   {
-    id: 78, pr: 2, sec: "Horizon UI", st: "planned",
+    id: 78, pr: 2, sec: "Horizon UI", st: "done",
     ti: "First-run onboarding detection",
     ds: "The onboarding wizard exists and works but is never shown automatically — showOnboarding defaults to false. New users land directly on the Plan screen with no introduction. A first-run detection should trigger the wizard for new visitors and skip it for returning ones.",
     dt: "On HorizonShell mount, check localStorage for hz-onboarded flag (using the existing safeGet helper from ThemeContext, or re-implement inline). If absent, set showOnboarding = true. On wizard completion (onComplete callback), call safeSet('hz-onboarded', '1'). Add a 'Start over' link in Settings → About that clears this flag and reloads (for testing / re-running the wizard). SSR-safe: the check must be inside useEffect or the useState initializer with isBrowser guard (same pattern as ThemeContext).",
     cx: "Low", im: "Medium", af: ["HorizonShell.jsx (showOnboarding default)", "ThemeContext.jsx (export safeGet or re-implement)"], sv: "hz-onboarded (localStorage key)"
   },
   {
-    id: 79, pr: 3, sec: "Horizon UI", st: "planned",
+    id: 79, pr: 2, sec: "Horizon UI", st: "done",
     ti: "Onboarding wizard writes back to App.jsx state",
     ds: "The wizard shows the user's real values but the +/− steppers don't modify them. A true first-run flow would initialize the planner from wizard answers — setting age, income, savings, and retirement age so the user sees a personalized plan the moment they click 'See my plan →'.",
     dt: "Expose setters in horizonProps: setCurrentAge, setRetirementAge, setCurrentIncome (and possibly setBalPreTax for initial savings). Wizard accumulates answers into a local answers object. onComplete calls each setter with the wizard answers, then dismisses the wizard. Constraints: (1) test suite uses the default App.jsx state — adding setters to horizonProps doesn't affect it; (2) if the wizard changes values that flow into the golden master, update it deliberately. This is lower priority than #78 (detection) because the payoff requires detection to work first.",
