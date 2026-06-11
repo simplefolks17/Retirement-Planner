@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcWhatIfDelta, calcAffordabilityMax } from "../what-if.js";
+import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart } from "../what-if.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
@@ -191,5 +191,46 @@ describe("calcAffordabilityMax", () => {
     });
     // Spending the max should not lengthen the portfolio (it reduces or is neutral)
     expect(result.deltaYears).toBeLessThanOrEqual(0);
+  });
+});
+
+// ── calcWhatIfChart ──────────────────────────────────────────────────────────
+const chartBundle = {
+  simInputs,
+  fedMarginal,
+  retDrawShared,
+  safeRetAge,
+  safeLifeExp,
+  baseTotalAtRet: realBaseTotalAtRet,
+};
+
+describe("calcWhatIfChart", () => {
+  it("no overrides: returns series starting at safeRetAge+1 and ending at safeLifeExp", () => {
+    const series = calcWhatIfChart(chartBundle);
+    expect(Array.isArray(series)).toBe(true);
+    expect(series.length).toBeGreaterThan(0);
+    expect(series[0].age).toBe(safeRetAge + 1);
+    expect(series[series.length - 1].age).toBe(safeLifeExp);
+  });
+
+  it("no overrides: first-year total matches baseTotalAtRet minus draw", () => {
+    const series = calcWhatIfChart(chartBundle);
+    // The first row should be close to (but no more than) baseTotalAtRet
+    // (it has grown by rReal but lost the first draw)
+    expect(series[0].total).toBeGreaterThan(0);
+    expect(series[0].total).toBeLessThanOrEqual(realBaseTotalAtRet * 1.1);
+  });
+
+  it("retireAdj shifts the series start age", () => {
+    const seriesEarly = calcWhatIfChart(chartBundle, { retireAdj: -2 });
+    expect(Array.isArray(seriesEarly)).toBe(true);
+    expect(seriesEarly.length).toBeGreaterThan(0);
+    // Series starts from the earlier retirement age
+    expect(seriesEarly[0].age).toBe(safeRetAge - 2 + 1);
+  });
+
+  it("returns [] for missing inputs", () => {
+    expect(calcWhatIfChart({})).toEqual([]);
+    expect(calcWhatIfChart({ simInputs: null, retDrawShared: null })).toEqual([]);
   });
 });

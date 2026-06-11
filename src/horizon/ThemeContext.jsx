@@ -57,10 +57,10 @@ const ThemeCtx = createContext(null);
 
 const isBrowser = typeof window !== "undefined";
 
-function safeGet(key) {
+export function safeGet(key) {
   try { return isBrowser ? (localStorage.getItem(key) ?? null) : null; } catch { return null; }
 }
-function safeSet(key, val) {
+export function safeSet(key, val) {
   try { if (isBrowser) localStorage.setItem(key, val); } catch { /* noop */ }
 }
 

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -597,7 +597,25 @@ export default function App() {
     moneyEvents,
   };
 
-  // Props bundle for HorizonShell — display values only, no calc logic here
+  // Single entry point for Horizon-initiated mutations to App state.
+  // Always called after user confirms in a modal — never fired directly by screens.
+  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae } = {}) => {
+    if (ra !== undefined) setRetirementAge(ra);
+    if (ae !== undefined) setAnnualExpenses(ae);
+  }, []);
+
+  // Extended what-if bundle: includes everything calcWhatIfChart needs so
+  // IdeasScreen can call calcWhatIfChart(whatIfSimInputs, { retireAdj }) directly.
+  const whatIfBundle = {
+    simInputs: whatIfSimInputs,
+    fedMarginal,
+    retDrawShared,
+    safeRetAge,
+    safeLifeExp,
+    baseTotalAtRet: totalAtRet,
+  };
+
+  // Props bundle for HorizonShell — display values only (plus the two write-back hooks)
   const horizonProps = {
     chartData: totalChartData,
     currentAge, retirementAge, lifeExpect,
@@ -610,6 +628,11 @@ export default function App() {
     currentContribTotal,
     retVals, simData,
     netConversionBenefit, yr1TaxSavings,
+    // Batch A additions:
+    moneyEvents, setMoneyEvents,
+    whatIfSimInputs: whatIfBundle,
+    commitPlan,
+    retirementWalk,
   };
 
   if (showHorizon) {
