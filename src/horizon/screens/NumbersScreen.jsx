@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { HF, HM, HD } from "../ThemeContext.jsx";
+import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
@@ -47,6 +47,77 @@ function StmtCol({ t, title, items, bar }) {
   );
 }
 
+// ── Income Sankey ─────────────────────────────────────────────────────────────
+// Pure SVG flow diagram: Gross income → Tax | Savings | Take-home
+function IncomeSankey({ t, income, tax, save, keep }) {
+  const total = Math.max(tax + save + keep, 1);
+  const H = 170;
+  const NW = 60;     // node width
+  const SVG_W = 540;
+  const RX = SVG_W - NW;
+  const MX = SVG_W / 2;
+
+  const hTax  = (tax  / total) * H;
+  const hSave = (save / total) * H;
+  const hKeep = H - hTax - hSave; // absorbs rounding drift
+
+  const segs = [
+    { key: "tax",  label: "Tax",       y: 0,            h: hTax,  color: t.line2, amount: tax  },
+    { key: "save", label: "Savings",   y: hTax,         h: hSave, color: t.warm,  amount: save },
+    { key: "keep", label: "Take-home", y: hTax + hSave, h: hKeep, color: t.good,  amount: keep },
+  ];
+
+  // Filled bezier band — control points at MX keep same-y edges straight
+  const flowPath = (y1, y2) =>
+    `M ${NW} ${y1} C ${MX} ${y1} ${MX} ${y1} ${RX} ${y1}` +
+    ` L ${RX} ${y2} C ${MX} ${y2} ${MX} ${y2} ${NW} ${y2} Z`;
+
+  const fmtK = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
+
+  return (
+    <div style={{ display: "flex", gap: 14, alignItems: "stretch", width: "100%", flex: 1, minWidth: 0 }}>
+      {/* left label */}
+      <div style={{
+        display: "flex", flexDirection: "column", justifyContent: "center",
+        alignItems: "center", width: 86, gap: 4, flexShrink: 0,
+      }}>
+        <span style={{ font: `600 11px ${HF}`, color: t.mut, textAlign: "center" }}>Gross income</span>
+        <span style={{ font: `600 17px ${HM}`, color: t.accent }}>{fmtK(income)}</span>
+      </div>
+
+      {/* SVG */}
+      <svg viewBox={`0 0 ${SVG_W} ${H}`} style={{ flex: 1, height: H, minWidth: 0 }} preserveAspectRatio="none">
+        {/* left node */}
+        <rect x={0} y={0} width={NW} height={H} rx={7} fill={t.ink} fillOpacity={0.10} />
+        {/* flow paths */}
+        {segs.map(s => (
+          <path key={s.key} d={flowPath(s.y, s.y + s.h)} fill={s.color} fillOpacity={0.20} />
+        ))}
+        {/* right nodes */}
+        {segs.map(s => (
+          <rect key={s.key + "r"} x={RX} y={s.y + 1} width={NW}
+            height={Math.max(s.h - 2, 2)} rx={5}
+            fill={s.color} fillOpacity={0.58} />
+        ))}
+      </svg>
+
+      {/* right labels */}
+      <div style={{ width: 88, flexShrink: 0, position: "relative", height: H }}>
+        {segs.map(s => (
+          <div key={s.key} style={{
+            position: "absolute", top: s.y, height: s.h,
+            display: "flex", flexDirection: "column", justifyContent: "center",
+            gap: 1, paddingLeft: 4,
+          }}>
+            {s.h > 22 && <span style={{ font: `600 11px ${HF}`, color: t.ink }}>{s.label}</span>}
+            {s.h > 36 && <span style={{ font: `400 11px ${HM}`, color: t.mut }}>{fmtK(s.amount)}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function NumbersScreen({ t, props }) {
   const {
     currentIncome, fedTax, ficaTotal, stateTaxAmt, takeHome, currentContribTotal,
@@ -54,9 +125,11 @@ export default function NumbersScreen({ t, props }) {
     householdSS, yearsSustained, isSustainable, withdrawalRate,
     retirementAge, currentAge, lifeExpect, simData, chartData,
     netConversionBenefit, yr1TaxSavings,
+    retirementWalk,
   } = props;
 
   const [tab, setTab] = useState("statement");
+  const [showAllYears, setShowAllYears] = useState(false);
 
   // Keep / year totals
   const taxTotal = (fedTax ?? 0) + (ficaTotal ?? 0) + (stateTaxAmt ?? 0);
@@ -134,6 +207,12 @@ export default function NumbersScreen({ t, props }) {
   }, [chartData, currentAge, retirementAge, lifeExpect]);
 
   const peakTotal = milestoneRows.reduce((m, r) => Math.max(m, r.total), 1);
+
+  // Full age-by-age retirement rows for #80 yearly table
+  const allRetirementRows = retirementWalk?.rows ?? [];
+  const YEAR_CAP = 50;
+  const displayedRows = showAllYears ? allRetirementRows : allRetirementRows.slice(0, YEAR_CAP);
+  const currentYear = new Date().getFullYear();
 
   return (
     <div style={{
@@ -283,82 +362,101 @@ export default function NumbersScreen({ t, props }) {
         {/* ── Year by year ── */}
         {tab === "yearly" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+            {/* column headers */}
             <div style={{
-              display: "grid", gridTemplateColumns: "56px 2.8fr 1.2fr",
-              padding: "10px 14px", borderBottom: `1.5px solid ${t.ink}`,
-              background: t.surf2, flexShrink: 0
+              display: "grid",
+              gridTemplateColumns: "44px 52px 1fr 1fr 1fr 1fr",
+              gap: 4, padding: "8px 14px",
+              borderBottom: `1.5px solid ${t.ink}`,
+              background: t.surf2, flexShrink: 0,
             }}>
-              {["Age", "Balance", ""].map((c, i) => (
-                <span key={i} style={{ font: `600 12px ${HF}`, color: t.ink }}>{c}</span>
+              {["Age", "Year", "Portfolio", "Draw", "Growth", "Tax"].map(c => (
+                <span key={c} style={{ font: `600 11px ${HF}`, color: t.ink }}>{c}</span>
               ))}
             </div>
+
+            {/* scrollable rows */}
             <div style={{ flex: 1, overflow: "auto" }}>
-              {milestoneRows.map(({ age, total, tag, tc }) => {
-                const isRetire = age === retirementAge;
-                return (
-                  <div key={`${age}-${tag}`} style={{
-                    display: "grid", gridTemplateColumns: "56px 2.8fr 1.2fr",
-                    alignItems: "center", padding: "11px 14px",
-                    borderBottom: `1px solid ${t.line}`,
-                    background: isRetire ? `${t.accent}0e` : "transparent"
-                  }}>
-                    <span style={{ font: `600 15px ${HM}`, color: t[tc] }}>{age}</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 10, paddingRight: 16 }}>
-                      <span style={{ flex: 1, height: 12, borderRadius: 3, background: t.line, overflow: "hidden" }}>
-                        <span style={{
-                          display: "block", height: "100%",
-                          width: `${Math.min(100, (total / peakTotal) * 100)}%`,
-                          background: age >= retirementAge ? t.warm : t.good, opacity: 0.75
-                        }} />
-                      </span>
-                      <span style={{ font: `600 13px ${HM}`, color: t.ink, width: 56, textAlign: "right" }}>
-                        {fmt(total)}
-                      </span>
-                    </span>
-                    <span style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      padding: "3px 10px", borderRadius: 999,
-                      border: `1px solid ${t[tc]}55`, background: `${t[tc]}14`,
-                      font: `600 11px ${HF}`, color: t[tc], whiteSpace: "nowrap"
-                    }}>{tag}</span>
-                  </div>
-                );
-              })}
+              {displayedRows.length === 0 && (
+                <div style={{ padding: "32px 14px", font: `400 13px ${HF}`, color: t.faint }}>
+                  Retirement data will appear here once you set a retirement age.
+                </div>
+              )}
+              {displayedRows.map((row, i) => (
+                <div key={row.age} style={{
+                  display: "grid",
+                  gridTemplateColumns: "44px 52px 1fr 1fr 1fr 1fr",
+                  gap: 4, alignItems: "center",
+                  padding: "7px 14px",
+                  borderBottom: `1px solid ${t.line}`,
+                  background: i % 2 === 0 ? "transparent" : `${t.ink}05`,
+                }}>
+                  <span style={{ font: `600 13px ${HM}`, color: t.warm }}>{row.age}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{currentYear + (row.age - currentAge)}</span>
+                  <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
+                    {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
+                  </span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.good }}>
+                    {row.growth > 0 ? `+${fmt(row.growth)}` : "—"}
+                  </span>
+                  <span style={{ font: `400 12px ${HM}`, color: row.tax > 0 ? t.mut : t.faint }}>
+                    {row.tax > 0 ? `−${fmt(row.tax)}` : "—"}
+                  </span>
+                </div>
+              ))}
             </div>
+
+            {/* footer / show-all toggle */}
             <div style={{
               padding: "9px 14px", borderTop: `1px solid ${t.line}`,
-              background: t.surf2, font: `400 12px ${HF}`, color: t.faint, flexShrink: 0
+              background: t.surf2, flexShrink: 0,
+              display: "flex", justifyContent: "space-between", alignItems: "center",
             }}>
-              key milestones · full detail in Detailed Planner
+              <span style={{ font: `400 11px ${HF}`, color: t.faint }}>
+                retirement phase · {allRetirementRows.length} years total
+              </span>
+              {allRetirementRows.length > YEAR_CAP && (
+                <button onClick={() => setShowAllYears(v => !v)} style={{
+                  font: `500 12px ${HF}`, color: t.accent,
+                  background: "transparent", border: `1px solid ${t.accent}55`,
+                  borderRadius: 7, padding: "4px 12px", cursor: "pointer",
+                }}>
+                  {showAllYears ? "Show first 50" : `Show all ${allRetirementRows.length} years`}
+                </button>
+              )}
             </div>
           </div>
         )}
 
         {/* ── Money flow ── */}
         {tab === "flow" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 16 }}>
-            <div style={{
-              flex: 1, minHeight: 80, display: "flex", alignItems: "center", justifyContent: "center",
-              background: t.surf2, borderRadius: 10, border: `1px dashed ${t.line2}`
-            }}>
-              <span style={{ font: `400 14px ${HF}`, color: t.faint }}>
-                Sankey diagram — paycheck → accounts → {fmt(totalAtRet)}
-              </span>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase" }}>
+              Where your paycheck goes
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <IncomeSankey
+              t={t}
+              income={currentIncome ?? 0}
+              tax={(fedTax ?? 0) + (ficaTotal ?? 0) + (stateTaxAmt ?? 0)}
+              save={currentContribTotal ?? 0}
+              keep={takeHome ?? 0}
+            />
+            {/* legend chips */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
               {[
-                [`${keepPct}% take-home`, t.good],
-                [`${taxPct}% tax`, t.line2],
-                [`${savePct}% invested`, t.warm],
-              ].map(([l, c]) => (
-                <span key={l} style={{
+                ["Tax",       t.line2, `${taxPct}%`],
+                ["Savings",   t.warm,  `${savePct}%`],
+                ["Take-home", t.good,  `${keepPct}%`],
+              ].map(([label, c, pct]) => (
+                <span key={label} style={{
                   display: "flex", alignItems: "center", gap: 6,
-                  padding: "6px 12px", borderRadius: 999,
+                  padding: "5px 12px", borderRadius: 999,
                   border: `1px solid ${c}55`, background: `${c}14`,
-                  font: `500 12px ${HF}`, color: t.ink
+                  font: `500 12px ${HF}`, color: t.ink,
                 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 999, background: c }} />
-                  {l}
+                  {label} · {pct}
                 </span>
               ))}
             </div>
