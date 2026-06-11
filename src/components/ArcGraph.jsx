@@ -94,7 +94,7 @@ function GridLines({ t, s, vals }) {
 }
 
 // ── Arc + Milestone Stops view ───────────────────────────────────────────────
-function ArcView({ t, gid, H, glow, chartData, currentAge, retirementAge, lifeExpect, vmax, s }) {
+function ArcView({ t, gid, H, glow, strokeWidth = 3, chartData, currentAge, retirementAge, lifeExpect, vmax, s }) {
   const pts = useMemo(() =>
     chartData.map(d => [s.xOf(d.age), +s.yOf(d.total).toFixed(1)]),
     [chartData, s]);
@@ -148,7 +148,7 @@ function ArcView({ t, gid, H, glow, chartData, currentAge, retirementAge, lifeEx
       <GridLines t={t} s={s} vals={[1e6, 2e6, 3e6].filter(v => v <= vmax * 0.95)} />
       <path d={area} fill={`url(#${gid}-f)`} />
       <path d={line} fill="none" stroke={`url(#${gid}-l)`}
-        strokeWidth="3" strokeLinecap="round"
+        strokeWidth={strokeWidth} strokeLinecap="round"
         filter={glow ? `url(#${gid}-gf)` : undefined} />
       {/* retirement dashed line */}
       <line x1={s.xOf(retirementAge)} x2={s.xOf(retirementAge)}
@@ -568,6 +568,7 @@ export default function ArcGraph({
   contribSeries = null,
   height = 300,
   glow = true,
+  strokeWidth = 3,
   activeView = "arc",
   onViewChange,
   showToggle = true,
@@ -627,7 +628,7 @@ export default function ArcGraph({
           style={{ display: "block", height }}>
 
           {activeView === "arc" && (
-            <ArcView t={t} gid={gid} H={height} glow={glow}
+            <ArcView t={t} gid={gid} H={height} glow={glow} strokeWidth={strokeWidth}
               chartData={validData} currentAge={currentAge}
               retirementAge={retirementAge} lifeExpect={lifeExpect}
               vmax={vmax} s={s} />

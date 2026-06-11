@@ -4,7 +4,7 @@ import { HF, HM } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
 
-export default function PlanScreen({ t, props, glow }) {
+export default function PlanScreen({ t, props, glow, strokeWidth = 3 }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, yearsSustained, isSustainable,
@@ -86,6 +86,7 @@ export default function PlanScreen({ t, props, glow }) {
           contribSeries={contribSeries}
           height={280}
           glow={glow}
+          strokeWidth={strokeWidth}
           activeView={arcView}
           onViewChange={setArcView}
           showToggle

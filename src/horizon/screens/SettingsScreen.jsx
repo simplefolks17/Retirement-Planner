@@ -76,7 +76,7 @@ export default function SettingsScreen({ t }) {
             })}
           </div>
           <div style={{ font: `400 12px ${HF}`, color: t.faint, marginTop: 8 }}>
-            Glow adds a light bloom to the arc line.
+            Vivid thickens the arc stroke. Glow adds a light bloom effect.
           </div>
         </div>
 

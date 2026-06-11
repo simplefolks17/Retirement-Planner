@@ -55,7 +55,7 @@ function ScenStatCard({ t, label, baseVal, scenVal, warm }) {
   );
 }
 
-export default function IdeasScreen({ t, props }) {
+export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3 }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, effectiveExpenses, balAt90,
@@ -178,7 +178,8 @@ export default function IdeasScreen({ t, props }) {
           lifeExpect={lifeExpect}
           contribSeries={contribSeries}
           height={240}
-          glow={false}
+          glow={glow}
+          strokeWidth={strokeWidth}
           activeView="arc"
           showToggle={false}
           scenarioData={activeOverlay}

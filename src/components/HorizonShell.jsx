@@ -319,6 +319,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
 
   const { isSustainable, retirementAge } = props;
   const glow = arcStyle === "glow";
+  const strokeWidth = arcStyle === "vivid" ? 5 : 3;
 
   const handleOnboardingComplete = () => {
     safeSet("hz-onboarded", "1");
@@ -373,8 +374,8 @@ export default function HorizonShell({ onShowClassic, ...props }) {
 
           {/* screen body */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-            {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} />}
-            {screen === "ideas"    && <IdeasScreen   t={t} props={props} />}
+            {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} />}
+            {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} />}
             {screen === "settings" && <SettingsScreen t={t} />}
