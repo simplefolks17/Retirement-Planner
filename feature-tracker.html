@@ -603,18 +603,18 @@ var DATA = [
     cx: "Medium", im: "Medium", af: ["App.jsx (horizonProps)", "HorizonShell.jsx → IdeasScreen", "money-events.js (already implemented)"], sv: "moneyEvents (add to horizonProps)"
   },
   {
-    id: 72, pr: 3, sec: "Horizon UI", st: "planned",
+    id: 72, pr: 3, sec: "Horizon UI", st: "done",
     ti: "Money flow Sankey diagram in The Numbers screen",
     ds: "The 'Money flow' tab in The Numbers screen is a labeled placeholder. A Sankey diagram (paycheck → tax / take-home / savings → four account buckets) would make the wealth-building story visually compelling and concrete.",
-    dt: "All source numbers exist: fedTax, ficaTotal, stateTaxAmt, currentContribTotal, takeHome, retVals (account breakdown at retirement). Build a simple SVG Sankey (no external library needed) with 3 columns: source (gross income), split (tax / take-home / contrib), destination (trad / roth / taxable / hsa / spending). Use t.good for take-home/savings flows, t.line2 for tax flow, t.warm for spending. Min node height: 6px. All pure display — no model changes.",
+    dt: "Shipped Batch D (Jun 11 2026, PR #18). Inline IncomeSankey SVG component added to NumbersScreen.jsx. Left column: Gross income node (colored by accent). Bezier-filled bands fan out to three right-column nodes: Tax (t.line2), Savings (t.warm), Take-home (t.good). Heights proportional to dollar amounts. HTML labels beside the SVG with dollar amounts using HM monospace. Legend row below. All pure display — no model changes. No external charting library.",
     cx: "Medium", im: "Medium", af: ["HorizonShell.jsx → NumbersScreen (Money flow tab)"], sv: "none (display only)"
   },
   {
-    id: 73, pr: 3, sec: "Horizon UI", st: "planned",
+    id: 73, pr: 3, sec: "Horizon UI", st: "done",
     ti: "Vivid arc style distinct from Soft",
     ds: "The Settings screen has a Soft / Vivid / Glow toggle. Glow adds a bloom filter. Soft and Vivid currently behave identically — Vivid needs its own distinct visual treatment.",
-    dt: "Design options: (a) Vivid increases fill opacity from 0.20-0.32 to 0.35-0.50 and stroke width from 3px to 4px; (b) Vivid uses solid single-color accent line instead of gradient; (c) Vivid shows the fill as a solid band below the line with sharper color. Recommend (a) — it's a natural 'more saturated' version of Soft. Add vivid={arcStyle === 'vivid'} prop to ArcGraph and apply opacity/weight changes inside ArcView.",
-    cx: "Low", im: "Low", af: ["ArcGraph.jsx → ArcView", "HorizonShell.jsx (pass vivid prop)"], sv: "arcStyle='vivid' (already in ThemeContext)"
+    dt: "Shipped Batch D (Jun 11 2026, PR #18). Added numeric strokeWidth prop to ArcGraph (default 3). HorizonShell derives: strokeWidth = arcStyle === 'vivid' ? 5 : 3. Passed through PlanScreen and IdeasScreen. ArcView renders <path strokeWidth={strokeWidth}> instead of hardcoded 3. Vivid now renders a noticeably heavier arc line (5px vs 3px). Glow adds bloom filter independently of stroke width. No new state — arcStyle already in ThemeContext.",
+    cx: "Low", im: "Low", af: ["ArcGraph.jsx → ArcView", "HorizonShell.jsx (pass strokeWidth)", "PlanScreen.jsx", "IdeasScreen.jsx"], sv: "arcStyle='vivid' (already in ThemeContext)"
   },
   {
     id: 74, pr: 2, sec: "Horizon UI", st: "planned",
@@ -659,10 +659,10 @@ var DATA = [
     cx: "Medium", im: "Medium", af: ["App.jsx (expose setters in horizonProps)", "HorizonShell.jsx → OnboardingScreen"], sv: "setCurrentAge, setRetirementAge, setCurrentIncome (add to horizonProps)"
   },
   {
-    id: 80, pr: 3, sec: "Horizon UI", st: "planned",
+    id: 80, pr: 3, sec: "Horizon UI", st: "done",
     ti: "Year by year: full age-by-age table option",
     ds: "The Year by year tab shows 6 curated milestone rows (Today, First $1M, Retire, Peak, RMDs, For life). Power users want every year — the full projection table that already exists in the Classic view's detailed planner.",
-    dt: "Add a 'Show all years' toggle button at the bottom of the milestone table. When on, replace milestoneRows with all rows from chartData (covers both accumulation via simData and retirement via the retirementWalk, since totalChartData merges both). For working years, try to show income from simData[age].income. For retirement years show '—'. Performance note: chartData has ~56 rows max (age 34–90) — no virtualization needed.",
+    dt: "Shipped Batch D (Jun 11 2026, PR #18). Year by year tab replaced with a full scrollable grid table sourced from horizonProps.retirementWalk.rows (retirement phase). Columns: Age | Year | Portfolio | Draw | Growth | Tax. Year column derived as currentYear + (row.age - currentAge). Zebra rows using t.surf / t.line. HM monospace for all numbers. First 50 rows shown by default; 'Show all N years' toggle renders the rest. No model changes — retirementWalk was already in horizonProps.",
     cx: "Low", im: "Low", af: ["HorizonShell.jsx → NumbersScreen (Year by year tab)"], sv: "showAllYears (local NumbersScreen state)"
   },
   {

@@ -76,7 +76,7 @@ All three loaded from Google Fonts via a `<style>` `@import` in `HorizonShell.js
 
 ### Arc style
 
-`arcStyle` in context: `"soft"` (default) / `"vivid"` / `"glow"`. Persisted to `localStorage` as `hz-arc-style`. Currently: `"glow"` adds `feDropShadow` to the arc line; `"soft"` and `"vivid"` behave identically (see open items — #73).
+`arcStyle` in context: `"soft"` (default) / `"vivid"` / `"glow"`. Persisted to `localStorage` as `hz-arc-style`. `"glow"` adds an `feDropShadow` bloom filter to the arc line. `"vivid"` renders a heavier 5px stroke (vs 3px for soft/glow). `HorizonShell` derives `strokeWidth = arcStyle === "vivid" ? 5 : 3` and passes it to `PlanScreen`, `IdeasScreen`, and ultimately `ArcGraph`. The two effects are independent and could be combined.
 
 ### Context API
 
@@ -106,6 +106,7 @@ The signature visual — a full-life portfolio balance curve from today to `life
 | `contribSeries` | `[{age, contrib}]` | null | For Sources view — cumulative contributions |
 | `height` | number | 300 | SVG height in px |
 | `glow` | boolean | true | Adds bloom filter to arc line |
+| `strokeWidth` | number | 3 | Arc stroke width in px; 5 for vivid, 3 for soft/glow |
 | `activeView` | `"arc"\|"stacked"\|"columns"\|"band"` | `"arc"` | |
 | `onViewChange` | `(key) => void` | — | |
 | `showToggle` | boolean | true | Show the 4-view toggle bar |
@@ -183,8 +184,8 @@ Scenario exploration — the arc is always the hero.
 **3 tabs:**
 
 - **Statement** — editorial 3-column layout (Income & tax / What you're building / Income for life), each column with a proportion bar. Footnotes with real effective federal rate.
-- **Year by year** — 6 milestone rows derived from real `chartData`: Today · First $1M · Retire · Peak · RMDs start (73) · For life. Balance bars green (accumulation) → amber (retirement).
-- **Money flow** — Sankey diagram placeholder (see open item #72).
+- **Year by year** — full scrollable table sourced from `retirementWalk.rows` (retirement phase). Columns: Age | Year | Portfolio | Draw | Growth | Tax. Year computed as `currentYear + (row.age − currentAge)`. First 50 rows shown; "Show all N years" toggle renders the rest. Zebra rows with `t.surf`/`t.line` alternating, `HM` monospace for all numbers.
+- **Money flow** — inline SVG `IncomeSankey` component. Left column: Gross income node. Bezier-filled bands fan out to three right-column nodes: Tax (`t.line2`), Savings (`t.warm`), Take-home (`t.good`). Heights proportional to dollar amounts. HTML labels with formatted values beside the SVG. Legend chips below. No external charting library.
 
 **Pinned banner:** Tax engine summary showing `yr1TaxSavings` and `netConversionBenefit` from the optimizer.
 
@@ -296,15 +297,11 @@ Life event chips trigger a ConfirmModal; on confirm, `setMoneyEvents` appends th
 ### ✓ #75 — "Make this my plan" confirm modal *(shipped Batch B, PR #16)*
 Both PlanScreen and IdeasScreen now have a ConfirmModal → `commitPlan` → 2-second toast flow. Shared `ConfirmModal` component in `src/horizon/ConfirmModal.jsx`.
 
-### #72 — Money flow Sankey diagram
-**What:** The "Money flow" tab in The Numbers screen is a placeholder.
-**What's needed:** A Sankey/flow diagram showing paycheck → tax / take-home / savings → four account buckets. All the numbers exist (`fedTax`, `ficaTotal`, `stateTaxAmt`, `currentContribTotal`, `takeHome`, `retVals`). The implementation work is purely the SVG Sankey layout.
-**Files:** `HorizonShell.jsx` → `NumbersScreen`
+### ✓ #72 — Money flow Sankey diagram *(shipped Batch D, PR #18)*
+Inline `IncomeSankey` SVG component in `NumbersScreen.jsx`. Bezier-filled bands: Gross income → Tax (`t.line2`) / Savings (`t.warm`) / Take-home (`t.good`). Heights proportional to dollar amounts. No external library.
 
-### #73 — "Vivid" arc style distinct from Soft
-**What:** The Settings "Arc style" toggle has Soft / Vivid / Glow. Glow adds a bloom filter. Soft and Vivid currently behave identically.
-**What's needed:** Decide the visual distinction. Options: Vivid increases fill opacity and stroke width; or Soft is the gradient fill + smooth line (current), Vivid is a filled area with a stronger single-color line. Apply via a `vivid` boolean prop to `ArcGraph` alongside `glow`.
-**Files:** `ArcGraph.jsx`, `HorizonShell.jsx`
+### ✓ #73 — "Vivid" arc style distinct from Soft *(shipped Batch D, PR #18)*
+`strokeWidth` prop added to `ArcGraph` (default 3). `HorizonShell` derives `strokeWidth = arcStyle === "vivid" ? 5 : 3` and passes it through `PlanScreen` and `IdeasScreen`. Vivid now renders a 5px arc versus 3px for Soft/Glow.
 
 ### #74 — Mobile/responsive Horizon layout
 **What:** The Horizon shell is designed for a ≥900px viewport. On mobile, the nav tabs overflow, stat cards squeeze, and the arc graph becomes unreadable.
@@ -329,10 +326,8 @@ Both PlanScreen and IdeasScreen now have a ConfirmModal → `commitPlan` → 2-s
 ### ✓ #79 — Onboarding wizard writes back to App.jsx state *(shipped Batch C, PR #17)*
 The +/− stepper buttons update local `vals` state during the wizard. The Done screen's "Save as my plan" button shows a ConfirmModal; on confirm, `commitPlan({ currentAge, currentIncome, retirementAge, annualExpenses })` is called. "Skip for now" dismisses without touching App.jsx state.
 
-### #80 — Year by year: full age-by-age table option
-**What:** The "Year by year" tab currently shows 6 key milestone rows. The Classic view has a full table. Power users want every year.
-**What's needed:** Add a "Show all years" toggle below the milestone table. When on, render all rows from `chartData` (covering both accumulation via `simData` and retirement via the walk). Income column uses `simData[row].income` for working years; "—" for retirement.
-**Files:** `HorizonShell.jsx` → `NumbersScreen`
+### ✓ #80 — Year by year: full age-by-age table option *(shipped Batch D, PR #18)*
+Year by year tab replaced with a full grid table from `retirementWalk.rows`. Columns: Age | Year | Portfolio | Draw | Growth | Tax. First 50 rows shown by default; "Show all N years" toggle renders the rest. Zebra rows + `HM` monospace numbers.
 
 ---
 
@@ -358,4 +353,4 @@ The SVG coordinate space is fixed: VW=1200, PAD `{l:62, r:92, t:38, b:46}`. Age 
 
 ---
 
-*Last updated: 2026-06-11. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding). Open items remaining: #72, #73, #74, #76, #77, #80 (Batches D & E).*
+*Last updated: 2026-06-11. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding), #18 Batch D (Sankey, vivid arc, yearly table). Open items remaining: #74, #76, #77 (Batch E).*
