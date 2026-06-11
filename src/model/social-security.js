@@ -10,11 +10,15 @@ import {
 
 // Returns the AIME (Average Indexed Monthly Earnings) from working-year earnings.
 // Sum income for each working year (capped at FICA wage base), divide by max(workYears, 35).
-export function calcAIME(currentIncome, incomeGrowth, workYears) {
+// incomeGrowthEndAge + currentAge: if set, income stops growing once the user reaches that age.
+export function calcAIME(currentIncome, incomeGrowth, workYears, incomeGrowthEndAge = null, currentAge = 0) {
   const g = incomeGrowth / 100;
   let total = 0;
   for (let y = 0; y < workYears; y++) {
-    const yearEarnings = currentIncome * Math.pow(1 + g, y);
+    const growthYears = incomeGrowthEndAge != null
+      ? Math.min(y, incomeGrowthEndAge - currentAge)
+      : y;
+    const yearEarnings = currentIncome * Math.pow(1 + g, growthYears);
     total += Math.min(yearEarnings, FICA_WAGE_BASE);
   }
   return (total / Math.max(workYears, SS_AIME_YEARS)) / ASSUMPTIONS.MONTHS_PER_YEAR;

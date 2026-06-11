@@ -15,7 +15,7 @@ import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./social-security.j
 import { SS_FRA, SS_MAX_CLAIM_AGE, SS_FACTORS, ASSUMPTIONS } from "../config/irs-2026.js";
 
 export function calcRetirementIncome({
-  currentIncome, incomeGrowth, safeRetAge, currentAge,
+  currentIncome, incomeGrowth, incomeGrowthEndAge = null, safeRetAge, currentAge,
   ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
   pensionMonthly, pensionStartAge,
   isMarried = false, spouseClaimingAge = SS_FRA, spouseBenefitBasis = "own",
@@ -23,7 +23,7 @@ export function calcRetirementIncome({
   const MPY = ASSUMPTIONS.MONTHS_PER_YEAR;
 
   const ssWorkYears      = Math.max(1, safeRetAge - currentAge);
-  const ssAIME           = calcAIME(currentIncome, incomeGrowth, ssWorkYears);
+  const ssAIME           = calcAIME(currentIncome, incomeGrowth, ssWorkYears, incomeGrowthEndAge, currentAge);
   const ssPIA            = calcPIA(ssAIME);
   const ssMonthlyBenefit = calcBenefit(ssPIA, ssClaimingAge);
   const ssAnnualBenefit  = ssMonthlyBenefit * MPY;

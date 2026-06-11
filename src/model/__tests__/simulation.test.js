@@ -316,3 +316,41 @@ describe("runSimulation — MFJ LTCG combined income", () => {
     expect(mfj[9]["Taxable"]).toBeLessThan(single[9]["Taxable"]);
   });
 });
+
+describe("runSimulation — income growth plateau (incomeGrowthEndAge)", () => {
+  it("contributions are identical at and after the plateau age (cTaxable test)", () => {
+    // currentAge=30, incomeGrowthEndAge=40: growth caps after 10 years.
+    // cTaxable at age 42 and age 50 should be identical (both use growFactor = (1.03)^10).
+    const rows = defaultSim({ incomeGrowthEndAge: 40, totalYears: 25 });
+    const rowAt42 = rows.find(r => r.age === 42);
+    const rowAt50 = rows.find(r => r.age === 50);
+    expect(rowAt42).toBeDefined();
+    expect(rowAt50).toBeDefined();
+    expect(rowAt42.cTaxable).toBe(rowAt50.cTaxable);
+  });
+
+  it("income still grows up to the plateau year", () => {
+    // At age 40 (y=10), growthYears = min(9, 10) = 9 → income still growing.
+    // At age 41 (y=11), growthYears = min(10, 10) = 10 → plateau reached.
+    const rows = defaultSim({ incomeGrowthEndAge: 40, totalYears: 15 });
+    const rowAt40 = rows.find(r => r.age === 40);
+    const rowAt41 = rows.find(r => r.age === 41);
+    const rowAt50 = rows.find(r => r.age === 45);
+    expect(rowAt40.cTaxable).toBeLessThan(rowAt41.cTaxable); // still growing before plateau
+    expect(rowAt41.cTaxable).toBe(rowAt50.cTaxable);          // plateau holds
+  });
+
+  it("null incomeGrowthEndAge (default) produces the same result as no plateau param", () => {
+    const withNull    = defaultSim({ incomeGrowthEndAge: null });
+    const withoutParam = defaultSim();
+    expect(withNull[34].tradGross).toBe(withoutParam[34].tradGross);
+  });
+
+  it("plateau reduces end portfolio vs uncapped baseline for high income growth", () => {
+    // With plateau at age 40, contributions stop growing at that age → smaller final balance.
+    const capped    = defaultSim({ incomeGrowthEndAge: 40, incomeGrowth: 5 });
+    const uncapped  = defaultSim({ incomeGrowthEndAge: null, incomeGrowth: 5 });
+    // After plateau, employer match + employee deferral freeze; final balance must be lower.
+    expect(capped[34].tradGross).toBeLessThan(uncapped[34].tradGross);
+  });
+});
