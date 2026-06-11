@@ -41,7 +41,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Classic UI design system & tokens: `docs/DESIGN.md` *(dark dashboard — the original UI)*
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (90 items, 37 done, 53 planned)
+- Feature backlog: `feature-tracker.html` (90 items, 40 done, 50 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -258,6 +258,16 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   Year by year tab now sources from `retirementWalk.rows` (Age | Year | Portfolio | Draw | Growth
   | Tax columns); first 50 rows with "Show all N years" toggle; zebra rows + HM monospace numbers.
   No model changes; 307 tests unchanged.
+- Horizon Batch E shipped (Jun 11 2026, PR #19): mobile layout, activity in Settings, photo upload.
+  #74 — Mobile layout: window resize listener + `isMobile = windowWidth < 640` in `HorizonShell`;
+  top nav + OnTrackPill hidden on mobile; fixed 60px bottom tab bar with emoji icons; `PlanScreen`
+  gets 2×2 stat grid, reduced padding, smaller headline font, and arc height 200px. #76 — Activity
+  in Settings: `ACTIVITIES` now exported from `SomedayScreen.jsx`; `SettingsScreen` imports it and
+  renders the same 6-chip selector; `activity` + `setActivity` passed as props from `HorizonShell`.
+  #77 — Someday photo upload: hidden file `<input>` + `FileReader.readAsDataURL` stores a session-
+  only `customPhoto` in `useState`; click the photo area to pick, hover for "change photo" hint;
+  gradient placeholder replaced by `<img objectFit="cover">` when photo loaded. No model changes;
+  307 tests unchanged.
 
 ## Commands
 - `npm run dev` — start dev server
