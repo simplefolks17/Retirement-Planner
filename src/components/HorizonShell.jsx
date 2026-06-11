@@ -3,7 +3,7 @@
 // Screens: Plan · Ideas · The numbers · Settings · Someday
 // LAYOUT/STYLING ONLY — no calculation logic lives here.
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import ArcGraph, { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme } from "../horizon/ThemeContext.jsx";
 
@@ -63,7 +63,7 @@ function StatCard({ t, label, value, accent, warm, large }) {
 function TabBar({ t, tabs, active, onChange }) {
   return (
     <div style={{ display: "flex", gap: 4 }}>
-      {tabs.map(({ id, label }, i) => (
+      {tabs.map(({ id, label }) => (
         <div key={id} onClick={() => onChange(id)}
           style={{
             padding: "6px 13px", borderRadius: 8, cursor: "pointer",
@@ -90,10 +90,9 @@ function fmtMo(annual) {
   if (annual == null || isNaN(annual)) return "—";
   return `$${Math.round(annual / 12).toLocaleString()}`;
 }
-function fmtProg(pct) { return `${Math.round(pct)}%`; }
 
 // ── PLAN SCREEN ───────────────────────────────────────────────────────────────
-function PlanScreen({ t, props }) {
+function PlanScreen({ t, props, glow }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, yearsSustained, isSustainable,
@@ -111,9 +110,6 @@ function PlanScreen({ t, props }) {
     : `${Math.round(progressPct)}% there`;
 
   const progressColor = isSustainable ? t.good : progressPct >= 75 ? t.good : t.warm;
-
-  const monthlyKeep = Math.round(takeHome / 12);
-  const monthlyIncome = Math.round(effectiveExpenses / 12);
 
   return (
     <div style={{
@@ -167,7 +163,7 @@ function PlanScreen({ t, props }) {
           lifeExpect={lifeExpect}
           contribSeries={contribSeries}
           height={280}
-          glow
+          glow={glow}
           activeView={arcView}
           onViewChange={setArcView}
           showToggle
@@ -186,6 +182,49 @@ function PlanScreen({ t, props }) {
 }
 
 // ── IDEAS SCREEN ──────────────────────────────────────────────────────────────
+
+// Scenario definitions: scale factors applied to chartData totals (indicative paths, not model output)
+const SCENARIOS = [
+  { k: "retire63", label: "Retire 2 yrs earlier", sub: "Save $250/mo more.",  color: "good",   retireAdj: -2, scale: 0.92, stats: { retire: -2,  incomeScale: 0.90, nestScale: 0.92 } },
+  { k: "retire60", label: "Retire at 60",          sub: "5 yrs sooner.",       color: "warm",   retireAdj: -5, scale: 0.82, stats: { retire: -5,  incomeScale: 0.80, nestScale: 0.82 } },
+  { k: "saveMore", label: "Save $300 more/mo",     sub: "Retire at 64.",       color: "good",   retireAdj: -1, scale: 1.10, stats: { retire: -1,  incomeScale: 1.10, nestScale: 1.10 } },
+  { k: "bigTrip",  label: "Big trip at 70",        sub: "Still funded.",       color: "accent", retireAdj:  0, scale: 0.96, stats: { retire:  0,  incomeScale: 0.97, nestScale: 0.96 } },
+];
+
+const LIFE_EVENTS = [
+  { l: "Buy a home",    age: 40, scen: "retire63" },
+  { l: "Kid's college", age: 52, scen: "retire60" },
+  { l: "Big trip · $40k", age: 70, scen: "bigTrip" },
+  { l: "Downsize",      age: 72, scen: "saveMore" },
+  { l: "Part-time at 60", age: 60, scen: "retire60" },
+];
+
+function ScenStatCard({ t, label, baseVal, scenVal, warm }) {
+  const changed = scenVal != null && scenVal !== baseVal;
+  return (
+    <div style={{
+      flex: 1, background: t.surf, border: `1px solid ${t.line}`,
+      borderRadius: 12, padding: "11px 13px"
+    }}>
+      <div style={{ font: `400 11px ${HF}`, color: t.mut, marginBottom: 5 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "nowrap" }}>
+        {changed ? (
+          <>
+            <span style={{ font: `400 14px ${HM}`, color: t.faint, textDecoration: "line-through" }}>
+              {baseVal}
+            </span>
+            <span style={{ font: `600 18px ${HM}`, color: warm ? t.warm : t.accent }}>
+              {scenVal}
+            </span>
+          </>
+        ) : (
+          <span style={{ font: `600 18px ${HM}`, color: warm ? t.warm : t.ink }}>{baseVal}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function IdeasScreen({ t, props }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
@@ -194,6 +233,24 @@ function IdeasScreen({ t, props }) {
   } = props;
 
   const [mode, setMode] = useState(null);
+  const [activeScen, setActiveScen] = useState(null);
+  const [placedEvents, setPlacedEvents] = useState([]);
+
+  const scen = activeScen ? SCENARIOS.find(s => s.k === activeScen) : null;
+
+  // Compute scenario overlay data (indicative — not model output)
+  const scenarioData = useMemo(() => {
+    if (!scen || !chartData?.length) return null;
+    return chartData.map(d => ({ age: d.age, total: d.total * scen.scale }));
+  }, [scen, chartData]);
+
+  // Scenario-adjusted stats
+  const scenRetire = scen ? retirementAge + (scen.stats.retire ?? 0) : null;
+  const scenIncome = scen ? fmtMo(effectiveExpenses * (scen.stats.incomeScale ?? 1)) : null;
+  const scenNest   = scen ? fmt(totalAtRet * (scen.stats.nestScale ?? 1)) : null;
+  const scenLeft90 = scen ? fmt(balAt90 * (scen.stats.nestScale ?? 1)) : null;
+
+  const clearScen = () => { setActiveScen(null); setPlacedEvents([]); };
 
   const modeButtons = [
     { k: "life",    l: "Drop life onto timeline" },
@@ -207,19 +264,47 @@ function IdeasScreen({ t, props }) {
       flex: 1, padding: "16px 26px 14px",
       display: "flex", flexDirection: "column", overflow: "hidden"
     }}>
-      {/* arc hero */}
-      <ArcGraph
-        t={t}
-        chartData={chartData}
-        currentAge={currentAge}
-        retirementAge={retirementAge}
-        lifeExpect={lifeExpect}
-        contribSeries={contribSeries}
-        height={260}
-        glow={false}
-        activeView="arc"
-        showToggle={false}
-      />
+      {/* page title */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        marginBottom: 12, flexShrink: 0
+      }}>
+        <div style={{ font: `600 20px ${HF}`, color: t.ink, letterSpacing: "-0.02em" }}>
+          Your future, explored.
+        </div>
+        {scen && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 7,
+              font: `600 12px ${HF}`, color: t.accent }}>
+              <svg width="24" height="8">
+                <line x1="0" y1="4" x2="24" y2="4" stroke={t.accent} strokeWidth="2.4" strokeDasharray="8 5"/>
+              </svg>
+              {scen.label}
+            </span>
+            <button onClick={clearScen} style={{
+              font: `400 12px ${HF}`, color: t.faint, background: "transparent",
+              border: `1px solid ${t.line}`, borderRadius: 6, padding: "3px 9px", cursor: "pointer"
+            }}>✕ clear</button>
+          </div>
+        )}
+      </div>
+
+      {/* arc hero with optional scenario overlay */}
+      <div style={{ flexShrink: 0 }}>
+        <ArcGraph
+          t={t}
+          chartData={chartData}
+          currentAge={currentAge}
+          retirementAge={retirementAge}
+          lifeExpect={lifeExpect}
+          contribSeries={contribSeries}
+          height={240}
+          glow={false}
+          activeView="arc"
+          showToggle={false}
+          scenarioData={scenarioData}
+        />
+      </div>
 
       {/* mode buttons */}
       <div style={{ display: "flex", gap: 7, margin: "10px 0 0", flexShrink: 0 }}>
@@ -227,7 +312,7 @@ function IdeasScreen({ t, props }) {
           const on = mode === k;
           return (
             <div key={k}
-              onClick={() => setMode(on ? null : k)}
+              onClick={() => { setMode(on ? null : k); if (!on) clearScen(); }}
               style={{
                 flex: 1, padding: "9px 10px", borderRadius: 10,
                 cursor: "pointer", textAlign: "center",
@@ -250,26 +335,101 @@ function IdeasScreen({ t, props }) {
             background: t.surf, border: `1px solid ${t.line}`,
             borderRadius: 13, padding: 14
           }}>
+            {/* ── Life events ── */}
             {mode === "life" && (
-              <div style={{ font: `400 13px ${HF}`, color: t.mut }}>
-                Life event pins — connect your{" "}
-                <span style={{ color: t.accent, fontWeight: 600 }}>Money Events panel</span>{" "}
-                below to place purchases, inheritances, and big trips directly on the Arc.
+              <div>
+                <div style={{ font: `500 12px ${HF}`, color: t.mut, marginBottom: 9 }}>
+                  Click to place on your arc:
+                </div>
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  {LIFE_EVENTS.map(({ l, scen: s }) => {
+                    const placed = placedEvents.includes(l);
+                    return (
+                      <div key={l} onClick={() => {
+                        if (placed) { setPlacedEvents(ev => ev.filter(e => e !== l)); setActiveScen(null); }
+                        else { setPlacedEvents(ev => [...ev, l]); setActiveScen(s); }
+                      }} style={{
+                        padding: "6px 13px", borderRadius: 999, cursor: "pointer",
+                        border: `1px solid ${placed ? t.warm : t.line2}`,
+                        background: placed ? `${t.warm}14` : "transparent",
+                        font: `${placed ? 600 : 400} 13px ${HF}`,
+                        color: placed ? t.ink : t.mut
+                      }}>
+                        {placed ? "✓  " : ""}{l}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
+
+            {/* ── Dial your future ── */}
             {mode === "dials" && (
-              <div style={{ font: `400 13px ${HF}`, color: t.mut }}>
-                Use the <span style={{ color: t.accent, fontWeight: 600 }}>Simple Planner</span> sliders
-                (retirement age, life expectancy, return rate) to dial your future — the Arc updates in real time.
+              <div style={{ display: "flex", gap: 20, alignItems: "flex-end", flexWrap: "wrap" }}>
+                {[
+                  { label: "Retire at", val: String(retirementAge) },
+                  { label: "Extra savings / mo", val: "+$0" },
+                  { label: "Monthly spend", val: fmtMo(effectiveExpenses) },
+                ].map(({ label, val }) => (
+                  <div key={label} style={{ minWidth: 140 }}>
+                    <div style={{ font: `500 12px ${HF}`, color: t.mut, marginBottom: 6 }}>{label}</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{
+                        width: 36, height: 36, flexShrink: 0, borderRadius: 9,
+                        border: `1.5px solid ${t.line2}`, background: t.bg,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        font: `600 18px ${HF}`, color: t.accent, cursor: "pointer"
+                      }}>−</span>
+                      <div style={{
+                        flex: 1, height: 40, borderRadius: 10, border: `1.5px solid ${t.line2}`,
+                        background: t.bg, display: "flex", alignItems: "center", justifyContent: "center",
+                        font: `600 17px ${HM}`, color: t.ink
+                      }}>{val}</div>
+                      <span style={{
+                        width: 36, height: 36, flexShrink: 0, borderRadius: 9,
+                        border: `1.5px solid ${t.line2}`, background: t.bg,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        font: `600 18px ${HF}`, color: t.accent, cursor: "pointer"
+                      }}>+</span>
+                    </div>
+                  </div>
+                ))}
+                <div onClick={() => setActiveScen("retire63")}
+                  style={{
+                    padding: "11px 18px", borderRadius: 11, background: t.accent,
+                    cursor: "pointer", flexShrink: 0, alignSelf: "flex-end"
+                  }}>
+                  <span style={{ font: `600 14px ${HF}`, color: "#fff" }}>Show on arc →</span>
+                </div>
               </div>
             )}
+
+            {/* ── Horizon suggestions ── */}
             {mode === "suggest" && (
-              <div style={{ font: `400 13px ${HF}`, color: t.mut }}>
-                Horizon's optimizer found suggestions in the{" "}
-                <span style={{ color: t.accent, fontWeight: 600 }}>What-If panel</span>{" "}
-                below — try "Work longer" or "Retire early" to see the Arc shift.
+              <div style={{ display: "flex", gap: 9 }}>
+                {SCENARIOS.map(({ k, label, sub, color }) => {
+                  const on = activeScen === k;
+                  const c = t[color];
+                  return (
+                    <div key={k} onClick={() => setActiveScen(on ? null : k)}
+                      style={{
+                        flex: 1, padding: "12px 12px", borderRadius: 10, cursor: "pointer",
+                        border: `1px solid ${on ? c : t.line2}`,
+                        background: on ? `${c}12` : "transparent"
+                      }}>
+                      <span style={{
+                        width: 8, height: 8, borderRadius: 999,
+                        background: c, display: "block", marginBottom: 6
+                      }} />
+                      <div style={{ font: `600 14px ${HF}`, color: t.ink, lineHeight: 1.05 }}>{label}</div>
+                      <div style={{ font: `400 12px ${HF}`, color: t.mut, marginTop: 3 }}>{sub}</div>
+                    </div>
+                  );
+                })}
               </div>
             )}
+
+            {/* ── What if… ── */}
             {mode === "askit" && (
               <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
                 <span style={{ font: `600 16px ${HF}`, color: t.accent, flexShrink: 0 }}>What if…</span>
@@ -282,11 +442,12 @@ function IdeasScreen({ t, props }) {
                     I retire at {retirementAge - 2} instead of {retirementAge}?
                   </span>
                 </div>
-                <div style={{
-                  padding: "11px 18px", borderRadius: 11, background: t.accent,
-                  cursor: "pointer", flexShrink: 0
-                }}>
-                  <span style={{ font: `600 14px ${HF}`, color: "#fff" }}>Use What-If panel →</span>
+                <div onClick={() => setActiveScen("retire63")}
+                  style={{
+                    padding: "11px 18px", borderRadius: 11, background: t.accent,
+                    cursor: "pointer", flexShrink: 0
+                  }}>
+                  <span style={{ font: `600 14px ${HF}`, color: "#fff" }}>Show on arc →</span>
                 </div>
               </div>
             )}
@@ -296,20 +457,17 @@ function IdeasScreen({ t, props }) {
 
       {/* stats row */}
       <div style={{ display: "flex", gap: 9, marginTop: 8, flexShrink: 0 }}>
-        {[
-          { label: "Retire at",    value: String(retirementAge),      warm: false },
-          { label: "Income / mo",  value: fmtMo(effectiveExpenses),   warm: true  },
-          { label: "Nest egg",     value: fmt(totalAtRet),            warm: false },
-          { label: "Left at 90",   value: fmt(balAt90),               warm: false },
-        ].map(({ label, value, warm }) => (
-          <div key={label} style={{
-            flex: 1, background: t.surf, border: `1px solid ${t.line}`,
-            borderRadius: 12, padding: "11px 13px"
-          }}>
-            <div style={{ font: `400 11px ${HF}`, color: t.mut, marginBottom: 5 }}>{label}</div>
-            <div style={{ font: `600 18px ${HM}`, color: warm ? t.warm : t.ink }}>{value}</div>
+        <ScenStatCard t={t} label="Retire at"   baseVal={String(retirementAge)} scenVal={scen ? String(scenRetire) : null} />
+        <ScenStatCard t={t} label="Income / mo" baseVal={fmtMo(effectiveExpenses)} scenVal={scenIncome} warm />
+        <ScenStatCard t={t} label="Nest egg"    baseVal={fmt(totalAtRet)} scenVal={scenNest} />
+        <ScenStatCard t={t} label="Left at 90"  baseVal={fmt(balAt90)} scenVal={scenLeft90} />
+        {scen && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", flexShrink: 0 }}>
+            <div style={{ padding: "11px 16px", borderRadius: 11, background: t.accent, cursor: "pointer" }}>
+              <span style={{ font: `600 13px ${HF}`, color: "#fff" }}>Make this my plan</span>
+            </div>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
@@ -327,13 +485,13 @@ function StmtCol({ t, title, items, bar }) {
         borderBottom: `1.5px solid ${t.line2}`, paddingBottom: 8
       }}>{title}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {items.map(([label, val, strong]) => (
+        {items.map(([label, val, foot, strong]) => (
           <div key={label} style={{
             display: "flex", justifyContent: "space-between",
             alignItems: "baseline", gap: 12
           }}>
             <span style={{ font: `${strong ? 600 : 400} 14px ${SERIF}`, color: strong ? t.ink : t.mut, whiteSpace: "nowrap" }}>
-              {label}
+              {label}{foot && <sup style={{ font: `700 10px ${HF}`, color: t.accent }}>{foot}</sup>}
             </span>
             <span style={{ font: `${strong ? 600 : 400} 14px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>
               {val}
@@ -366,7 +524,7 @@ function NumbersScreen({ t, props }) {
     currentIncome, fedTax, ficaTotal, stateTaxAmt, takeHome, currentContribTotal,
     totalAtRet, retVals, effectiveExpenses, balAt90,
     householdSS, yearsSustained, isSustainable, withdrawalRate,
-    retirementAge, currentAge, simData,
+    retirementAge, currentAge, lifeExpect, simData, chartData,
     netConversionBenefit, yr1TaxSavings,
   } = props;
 
@@ -389,10 +547,65 @@ function NumbersScreen({ t, props }) {
 
   const runsOutLabel = isSustainable ? "never" : `age ${Math.round(retirementAge + yearsSustained)}`;
 
-  // Year-by-year snapshot rows from simData (key ages only)
-  const keyAges = [currentAge, ...Array.from({ length: 6 }, (_, i) => Math.round(currentAge + (retirementAge - currentAge) * (i + 1) / 6))
-    .filter(a => a > currentAge && a < retirementAge), retirementAge];
-  const uniqueKeyAges = [...new Set(keyAges)].sort((a, b) => a - b);
+  // Compute milestone rows for Yearly tab
+  const milestoneRows = useMemo(() => {
+    if (!chartData?.length) return [];
+    const rows = [];
+
+    const balAtAge = (age) => {
+      const exact = chartData.find(d => d.age === age);
+      if (exact) return exact.total;
+      for (let i = 0; i < chartData.length - 1; i++) {
+        const a0 = chartData[i], a1 = chartData[i + 1];
+        if (age >= a0.age && age <= a1.age)
+          return a0.total + (a1.total - a0.total) * (age - a0.age) / (a1.age - a0.age);
+      }
+      return 0;
+    };
+
+    // Find First $1M crossing
+    let firstMilAge = null;
+    for (let i = 0; i < chartData.length - 1; i++) {
+      if (chartData[i].total < 1e6 && chartData[i + 1].total >= 1e6) {
+        firstMilAge = Math.round(chartData[i].age +
+          (1e6 - chartData[i].total) / (chartData[i + 1].total - chartData[i].total));
+        break;
+      }
+    }
+
+    // Peak balance age
+    const peakRow = chartData.reduce((best, d) => d.total > (best?.total ?? 0) ? d : best, null);
+
+    // Today
+    rows.push({ age: currentAge, total: balAtAge(currentAge), tag: "Today", tc: "good" });
+
+    // First $1M
+    if (firstMilAge && firstMilAge > currentAge && firstMilAge < retirementAge) {
+      rows.push({ age: firstMilAge, total: 1e6, tag: "First $1M", tc: "accent" });
+    }
+
+    // Retire
+    rows.push({ age: retirementAge, total: balAtAge(retirementAge), tag: "Retire", tc: "accent" });
+
+    // Peak (if after retirement and not same as retire)
+    if (peakRow && peakRow.age > retirementAge) {
+      rows.push({ age: peakRow.age, total: peakRow.total, tag: "Peak", tc: "warm" });
+    }
+
+    // RMDs start at 73
+    const rmdAge = 73;
+    if (rmdAge > retirementAge && rmdAge < (lifeExpect ?? 90)) {
+      rows.push({ age: rmdAge, total: balAtAge(rmdAge), tag: "RMDs start", tc: "warm" });
+    }
+
+    // For life
+    const safeEnd = lifeExpect ?? 90;
+    rows.push({ age: safeEnd, total: balAtAge(safeEnd), tag: "For life", tc: "warm" });
+
+    return rows.sort((a, b) => a.age - b.age).filter(r => r.total != null);
+  }, [chartData, currentAge, retirementAge, lifeExpect]);
+
+  const peakTotal = milestoneRows.reduce((m, r) => Math.max(m, r.total), 1);
 
   return (
     <div style={{
@@ -451,6 +664,8 @@ function NumbersScreen({ t, props }) {
         borderRadius: 14, padding: 20, display: "flex", flexDirection: "column",
         minHeight: 0, overflow: "auto"
       }}>
+
+        {/* ── Statement ── */}
         {tab === "statement" && (
           <>
             <div style={{
@@ -477,11 +692,11 @@ function NumbersScreen({ t, props }) {
             </div>
             <div style={{ flex: 1, display: "flex", gap: 28, minHeight: 0, flexWrap: "wrap" }}>
               <StmtCol t={t} title="Income & tax" items={[
-                ["Gross income",   `$${Math.round(currentIncome).toLocaleString()}`, false],
-                ["Federal tax",    `−$${Math.round(fedTax ?? 0).toLocaleString()}`,  false],
-                ["FICA + state",   `−$${Math.round(ficaTotal ?? 0).toLocaleString()}`, false],
-                ["Pre-tax savings",`−$${Math.round(currentContribTotal).toLocaleString()}`, false],
-                ["Take-home",      `$${Math.round(takeHome).toLocaleString()}`,       true],
+                ["Gross income",    `$${Math.round(currentIncome).toLocaleString()}`, null, false],
+                ["Federal tax",     `−$${Math.round(fedTax ?? 0).toLocaleString()}`,  "1",  false],
+                ["FICA + state",    `−$${Math.round((ficaTotal ?? 0) + (stateTaxAmt ?? 0)).toLocaleString()}`, null, false],
+                ["Pre-tax savings", `−$${Math.round(currentContribTotal).toLocaleString()}`, null, false],
+                ["Take-home",       `$${Math.round(takeHome).toLocaleString()}`,       null, true],
               ]} bar={{
                 segs: [
                   { f: keepPct, c: t.good, l: `Keep ${keepPct}%` },
@@ -492,11 +707,11 @@ function NumbersScreen({ t, props }) {
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
               <StmtCol t={t} title="What you're building" items={[
-                ["Trad 401k",     fmt(trad401),   false],
-                ["Roth IRA",      fmt(roth),      false],
-                ["Taxable",       fmt(taxable),   false],
-                ["HSA",           fmt(hsa),       false],
-                ["Nest egg by " + retirementAge, fmt(totalAtRet), true],
+                ["Trad 401k",         fmt(trad401), null, false],
+                ["Roth IRA",          fmt(roth),    "2",  false],
+                ["Taxable",           fmt(taxable), null, false],
+                ["HSA",               fmt(hsa),     null, false],
+                [`Nest egg by ${retirementAge}`, fmt(totalAtRet), null, true],
               ]} bar={{
                 segs: [
                   { f: trad401, c: t.good,   l: "401k" },
@@ -508,74 +723,76 @@ function NumbersScreen({ t, props }) {
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
               <StmtCol t={t} title="Income for life" items={[
-                ["Social Security",  `${fmtMo(householdSS)}/mo`, false],
-                ["Portfolio draw",   `$${monthlyPortDraw.toLocaleString()}/mo`, false],
-                ["Safe rate",        `${Math.round(withdrawalRate * 100 * 10) / 10}%`, false],
-                ["Runs dry at",      runsOutLabel, false],
-                ["Total monthly",    `$${monthlyTotal.toLocaleString()}/mo`, true],
+                ["Social Security",   `${fmtMo(householdSS)}/mo`, "3",  false],
+                ["Portfolio draw",    `$${monthlyPortDraw.toLocaleString()}/mo`, null, false],
+                ["Safe rate",         `${Math.round(withdrawalRate * 100 * 10) / 10}%`, null, false],
+                ["Runs dry at",       runsOutLabel,  null, false],
+                ["Total monthly",     `$${monthlyTotal.toLocaleString()}/mo`, null, true],
               ]} bar={{
                 segs: [
                   { f: monthlyHHSS,     c: t.warm, l: "Soc Sec" },
-                  { f: monthlyPortDraw, c: t.good,  l: "Portfolio draw" },
+                  { f: monthlyPortDraw, c: t.good,  l: "Portfolio" },
                 ],
                 cap: "blended monthly income"
               }} />
             </div>
+            {/* footnotes */}
+            <div style={{
+              borderTop: `1px solid ${t.line2}`, marginTop: 12, paddingTop: 8,
+              display: "flex", gap: 20, flexWrap: "wrap"
+            }}>
+              {[
+                `1 Eff. federal rate ${currentIncome > 0 ? Math.round((fedTax ?? 0) / currentIncome * 1000) / 10 : 0}%.`,
+                "2 5% real return, contributions to retirement.",
+                "3 Claimed at Social Security age."
+              ].map((f, i) => (
+                <span key={i} style={{ font: `400 11px ${SERIF}`, color: t.faint }}>{f}</span>
+              ))}
+            </div>
           </>
         )}
 
+        {/* ── Year by year ── */}
         {tab === "yearly" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
             <div style={{
-              display: "grid", gridTemplateColumns: "56px 1fr 1fr 2fr 1fr",
+              display: "grid", gridTemplateColumns: "56px 2.8fr 1.2fr",
               padding: "10px 14px", borderBottom: `1.5px solid ${t.ink}`,
               background: t.surf2, flexShrink: 0
             }}>
-              {["Age", "Income", "Tax", "Portfolio", ""].map((c, i) => (
+              {["Age", "Balance", ""].map((c, i) => (
                 <span key={i} style={{ font: `600 12px ${HF}`, color: t.ink }}>{c}</span>
               ))}
             </div>
             <div style={{ flex: 1, overflow: "auto" }}>
-              {uniqueKeyAges.map(age => {
-                const row = simData?.find(d => d.age === age);
-                if (!row) return null;
-                const total = (row.trad ?? 0) + (row.roth ?? 0) + (row.taxable ?? 0) + (row.hsa ?? 0);
-                const maxBal = totalAtRet > 0 ? totalAtRet : 1;
+              {milestoneRows.map(({ age, total, tag, tc }) => {
                 const isRetire = age === retirementAge;
-                const tagLabel = age === currentAge ? "Today" : isRetire ? "Retire" : null;
-                const tc = isRetire ? t.accent : t.good;
                 return (
-                  <div key={age} style={{
-                    display: "grid", gridTemplateColumns: "56px 1fr 1fr 2fr 1fr",
+                  <div key={`${age}-${tag}`} style={{
+                    display: "grid", gridTemplateColumns: "56px 2.8fr 1.2fr",
                     alignItems: "center", padding: "11px 14px",
                     borderBottom: `1px solid ${t.line}`,
                     background: isRetire ? `${t.accent}0e` : "transparent"
                   }}>
-                    <span style={{ font: `600 15px ${HM}`, color: tc }}>{age}</span>
-                    <span style={{ font: `400 13px ${HM}`, color: t.mut }}>
-                      {row.income ? `$${Math.round(row.income / 1000)}k` : "—"}
-                    </span>
-                    <span style={{ font: `400 13px ${HM}`, color: t.mut }}>—</span>
+                    <span style={{ font: `600 15px ${HM}`, color: t[tc] }}>{age}</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 10, paddingRight: 16 }}>
                       <span style={{ flex: 1, height: 12, borderRadius: 3, background: t.line, overflow: "hidden" }}>
                         <span style={{
                           display: "block", height: "100%",
-                          width: `${Math.min(100, (total / maxBal) * 100)}%`,
+                          width: `${Math.min(100, (total / peakTotal) * 100)}%`,
                           background: age >= retirementAge ? t.warm : t.good, opacity: 0.75
                         }} />
                       </span>
-                      <span style={{ font: `600 12px ${HM}`, color: t.ink, width: 52, textAlign: "right" }}>
+                      <span style={{ font: `600 13px ${HM}`, color: t.ink, width: 56, textAlign: "right" }}>
                         {fmt(total)}
                       </span>
                     </span>
-                    {tagLabel ? (
-                      <span style={{
-                        display: "inline-flex", alignItems: "center", gap: 6,
-                        padding: "3px 10px", borderRadius: 999,
-                        border: `1px solid ${tc}55`, background: `${tc}14`,
-                        font: `600 11px ${HF}`, color: tc, whiteSpace: "nowrap"
-                      }}>{tagLabel}</span>
-                    ) : <span />}
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "3px 10px", borderRadius: 999,
+                      border: `1px solid ${t[tc]}55`, background: `${t[tc]}14`,
+                      font: `600 11px ${HF}`, color: t[tc], whiteSpace: "nowrap"
+                    }}>{tag}</span>
                   </div>
                 );
               })}
@@ -589,6 +806,7 @@ function NumbersScreen({ t, props }) {
           </div>
         )}
 
+        {/* ── Money flow ── */}
         {tab === "flow" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 16 }}>
             <div style={{
@@ -596,7 +814,7 @@ function NumbersScreen({ t, props }) {
               background: t.surf2, borderRadius: 10, border: `1px dashed ${t.line2}`
             }}>
               <span style={{ font: `400 14px ${HF}`, color: t.faint }}>
-                Sankey diagram — Money flow · paycheck → accounts → {fmt(totalAtRet)}
+                Sankey diagram — paycheck → accounts → {fmt(totalAtRet)}
               </span>
             </div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -625,65 +843,121 @@ function NumbersScreen({ t, props }) {
 
 // ── SETTINGS SCREEN ───────────────────────────────────────────────────────────
 function SettingsScreen({ t }) {
-  const { palKey, setPalKey, modePref, setModePref } = useTheme();
+  const { palKey, setPalKey, modePref, setModePref, arcStyle, setArcStyle } = useTheme();
 
   return (
     <div style={{
       flex: 1, padding: "28px 36px",
-      display: "flex", flexDirection: "column", gap: 28, overflow: "auto"
+      display: "flex", gap: 44, overflow: "auto"
     }}>
-      <div>
-        <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 16 }}>
-          Palette
+      {/* left: controls */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 28, minWidth: 260 }}>
+
+        <div>
+          <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 16 }}>
+            Palette
+          </div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {Object.entries(PALETTES).map(([key, pal]) => {
+              const on = palKey === key;
+              return (
+                <div key={key} onClick={() => setPalKey(key)}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <div style={{
+                    width: 44, height: 44, borderRadius: 999, background: pal.swatch,
+                    border: `3px solid ${on ? t.ink : "transparent"}`,
+                    boxShadow: `0 0 0 2px ${t.bg}`
+                  }} />
+                  <span style={{ font: `${on ? 600 : 400} 12px ${HF}`, color: on ? t.ink : t.mut }}>
+                    {pal.name}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-          {Object.entries(PALETTES).map(([key, pal]) => {
-            const on = palKey === key;
-            return (
-              <div key={key} onClick={() => setPalKey(key)}
-                style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <div style={{
-                  width: 44, height: 44, borderRadius: 999, background: pal.swatch,
-                  border: `3px solid ${on ? t.ink : "transparent"}`,
-                  boxShadow: `0 0 0 2px ${t.bg}`
-                }} />
-                <span style={{ font: `${on ? 600 : 400} 12px ${HF}`, color: on ? t.ink : t.mut }}>
-                  {pal.name}
-                </span>
-              </div>
-            );
-          })}
+
+        <div>
+          <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
+            Theme
+          </div>
+          <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 11, background: t.line, width: "fit-content" }}>
+            {[["light","Light"],["dark","Dark"],["auto","Auto"]].map(([k, l]) => {
+              const on = modePref === k;
+              return (
+                <div key={k} onClick={() => setModePref(k)} style={{
+                  padding: "8px 20px", borderRadius: 8, cursor: "pointer",
+                  background: on ? t.surf2 : "transparent",
+                  font: `${on ? 600 : 500} 13px ${HF}`,
+                  color: on ? t.ink : t.mut,
+                  boxShadow: on ? "0 1px 4px rgba(0,0,0,.10)" : "none"
+                }}>{l}</div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
+            Arc style
+          </div>
+          <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 11, background: t.line, width: "fit-content" }}>
+            {[["soft","Soft"],["vivid","Vivid"],["glow","Glow"]].map(([k, l]) => {
+              const on = arcStyle === k;
+              return (
+                <div key={k} onClick={() => setArcStyle(k)} style={{
+                  padding: "8px 20px", borderRadius: 8, cursor: "pointer",
+                  background: on ? t.surf2 : "transparent",
+                  font: `${on ? 600 : 500} 13px ${HF}`,
+                  color: on ? t.ink : t.mut,
+                  boxShadow: on ? "0 1px 4px rgba(0,0,0,.10)" : "none"
+                }}>{l}</div>
+              );
+            })}
+          </div>
+          <div style={{ font: `400 12px ${HF}`, color: t.faint, marginTop: 8 }}>
+            Glow adds a light bloom to the arc line.
+          </div>
+        </div>
+
+        <div>
+          <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>
+            About
+          </div>
+          <p style={{ font: `400 13px ${HF}`, color: t.mut, lineHeight: 1.6, maxWidth: 460, margin: 0 }}>
+            Horizon is a retirement planning tool that shows you the complete picture of your financial life —
+            from today through retirement and beyond. All calculations use 2026 IRS limits.
+          </p>
         </div>
       </div>
 
-      <div>
-        <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 16 }}>
-          Theme
+      {/* right: live preview */}
+      <div style={{ width: 300, flexShrink: 0 }}>
+        <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
+          Preview
         </div>
-        <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 11, background: t.line, alignSelf: "flex-start", width: "fit-content" }}>
-          {[["light","Light"],["dark","Dark"],["auto","Auto"]].map(([k, l]) => {
-            const on = modePref === k;
-            return (
-              <div key={k} onClick={() => setModePref(k)} style={{
-                padding: "8px 20px", borderRadius: 8, cursor: "pointer",
-                background: on ? t.surf2 : "transparent",
-                font: `${on ? 600 : 500} 13px ${HF}`,
-                color: on ? t.ink : t.mut,
-                boxShadow: on ? "0 1px 4px rgba(0,0,0,.10)" : "none"
-              }}>{l}</div>
-            );
-          })}
+        <div style={{
+          background: t.bg, border: `1px solid ${t.line}`,
+          borderRadius: 16, overflow: "hidden", padding: "14px 14px 10px"
+        }}>
+          <GhostArc t={t} opacity={arcStyle === "soft" ? 0.70 : 0.90} blur={0} H={160} />
+          <div style={{
+            marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center"
+          }}>
+            <span style={{ font: `500 12px ${HF}`, color: t.mut }}>
+              {PALETTES[palKey]?.name} · {modePref === "auto" ? "Auto" : modePref.charAt(0).toUpperCase() + modePref.slice(1)}
+            </span>
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "4px 10px", borderRadius: 999,
+              border: `1px solid ${t.good}55`, background: `${t.good}18`,
+              font: `600 11px ${HF}`, color: t.good
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: 999, background: t.good }} />
+              On track
+            </span>
+          </div>
         </div>
-      </div>
-
-      <div>
-        <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>
-          About
-        </div>
-        <p style={{ font: `400 13px ${HF}`, color: t.mut, lineHeight: 1.6, maxWidth: 520 }}>
-          Horizon is a retirement planning tool that shows you the complete picture of your financial life —
-          from today through retirement and beyond. All calculations use 2026 IRS limits.
-        </p>
       </div>
     </div>
   );
@@ -791,11 +1065,11 @@ function SomedayScreen({ t, props }) {
 
 // ── ONBOARDING (first-run wizard) ─────────────────────────────────────────────
 const OB_STEPS = [
-  { q: "How old are you?",                          hint: "we'll map from today to 90",           field: "currentAge" },
-  { q: "What do you earn a year?",                  hint: "before tax — rough is fine",           field: "currentIncome" },
-  { q: "How much have you saved so far?",           hint: "all accounts combined, ballpark",      field: "totalSaved" },
-  { q: "When would you like to retire?",            hint: "age, not year — easy to change",       field: "retirementAge" },
-  { q: "How much to spend each month\nin retirement?", hint: "today's dollars",                  field: "monthlySpend" },
+  { q: "How old are you?",                          hint: "we'll map from today to 90",        field: "currentAge" },
+  { q: "What do you earn a year?",                  hint: "before tax — rough is fine",        field: "currentIncome" },
+  { q: "How much have you saved so far?",           hint: "all accounts combined, ballpark",   field: "totalSaved" },
+  { q: "When would you like to retire?",            hint: "age, not year — easy to change",    field: "retirementAge" },
+  { q: "How much to spend each month\nin retirement?", hint: "today's dollars",               field: "monthlySpend" },
 ];
 
 function OnboardingScreen({ t, initialValues, onComplete }) {
@@ -813,6 +1087,12 @@ function OnboardingScreen({ t, initialValues, onComplete }) {
     retirementAge: initialValues?.retirementAge ?? 65,
     monthlySpend:  `$${((initialValues?.monthlySpend ?? 6_000)).toLocaleString()}`,
   };
+
+  const summaryStats = [
+    ["Income for life", fmtMo(initialValues?.monthlySpend * 12 ?? 72000), t.warm],
+    ["Retire at", String(initialValues?.retirementAge ?? 65), t.ink],
+    ["Left at 90", "—", t.ink],
+  ];
 
   return (
     <div style={{
@@ -870,6 +1150,15 @@ function OnboardingScreen({ t, initialValues, onComplete }) {
             <div style={{ font: `600 17px ${HF}`, color: t.accent, lineHeight: 1.2 }}>
               Work optional.<br />Golf course mandatory.
             </div>
+            {summaryStats.map(([l, v, c]) => (
+              <div key={l} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "baseline",
+                padding: "12px 0", borderBottom: `1px solid ${t.line}`
+              }}>
+                <span style={{ font: `400 13px ${HF}`, color: t.mut }}>{l}</span>
+                <span style={{ font: `600 18px ${HM}`, color: c }}>{v}</span>
+              </div>
+            ))}
             <span style={{ flex: 1 }} />
             <div onClick={onComplete} style={{
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -923,6 +1212,10 @@ function OnboardingScreen({ t, initialValues, onComplete }) {
                 </span>
               </div>
             </div>
+            {step > 0 && (
+              <div style={{ font: `400 12px ${HF}`, color: t.faint, textAlign: "center",
+                cursor: "pointer", textDecoration: "underline" }}>skip</div>
+            )}
           </div>
         )}
       </div>
@@ -935,15 +1228,17 @@ const SCREENS = [
   { id: "plan",    label: "Plan" },
   { id: "ideas",   label: "Ideas" },
   { id: "numbers", label: "The numbers" },
+  { id: "someday", label: "Someday" },
   { id: "settings",label: "Settings" },
 ];
 
 export default function HorizonShell({ onShowClassic, ...props }) {
-  const { t } = useTheme();
+  const { t, arcStyle } = useTheme();
   const [screen, setScreen] = useState("plan");
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   const { isSustainable, retirementAge } = props;
+  const glow = arcStyle === "glow";
 
   return (
     <div style={{
@@ -982,7 +1277,6 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             <TabBar t={t} tabs={SCREENS} active={screen} onChange={setScreen} />
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <OnTrackPill t={t} isSustainable={isSustainable} />
-              {/* classic view escape hatch */}
               <button onClick={onShowClassic} style={{
                 font: `400 11px ${HF}`, color: t.faint,
                 background: "transparent", border: `1px solid ${t.line}`,
@@ -993,11 +1287,11 @@ export default function HorizonShell({ onShowClassic, ...props }) {
 
           {/* screen body */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-            {screen === "plan"     && <PlanScreen    t={t} props={props} />}
+            {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} />}
             {screen === "ideas"    && <IdeasScreen   t={t} props={props} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} />}
-            {screen === "settings" && <SettingsScreen t={t} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} />}
+            {screen === "settings" && <SettingsScreen t={t} />}
           </div>
         </>
       )}

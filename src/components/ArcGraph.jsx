@@ -571,6 +571,7 @@ export default function ArcGraph({
   activeView = "arc",
   onViewChange,
   showToggle = true,
+  scenarioData = null, // optional [{age,total}] — renders a dotted overlay on the arc view
 }) {
   const pad = { l: 62, r: 92, t: 38, b: 46 };
 
@@ -650,6 +651,17 @@ export default function ArcGraph({
               chartData={validData} currentAge={currentAge}
               retirementAge={retirementAge} s={s} vmax={vmax} />
           )}
+
+          {/* scenario dotted overlay — shown in arc view only */}
+          {activeView === "arc" && scenarioData?.length >= 2 && (() => {
+            const sPts = scenarioData
+              .filter(d => d.age >= ageMin && d.age <= ageMax)
+              .map(d => [s.xOf(d.age), +s.yOf(Math.max(0, Math.min(d.total, vmax * 1.02))).toFixed(1)]);
+            return sPts.length >= 2 ? (
+              <path d={smoothPath(sPts)} fill="none"
+                stroke={t.accent} strokeWidth="2.4" strokeDasharray="8 5" opacity="0.85" />
+            ) : null;
+          })()}
         </svg>
       </div>
     </div>

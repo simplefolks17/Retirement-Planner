@@ -79,6 +79,9 @@ export function HorizonThemeProvider({ children }) {
   const [modePref, setModePrefRaw] = useState(
     () => safeGet("hz-mode") || "light"
   );
+  const [arcStyle, setArcStyleRaw] = useState(
+    () => safeGet("hz-arc-style") || "soft"
+  );
 
   const setPalKey = useCallback((k) => {
     setPalKeyRaw(k);
@@ -90,12 +93,17 @@ export function HorizonThemeProvider({ children }) {
     safeSet("hz-mode", m);
   }, []);
 
+  const setArcStyle = useCallback((s) => {
+    setArcStyleRaw(s);
+    safeSet("hz-arc-style", s);
+  }, []);
+
   const resolvedMode = resolveMode(modePref);
   const pal = PALETTES[palKey] ?? PALETTES.apricot;
   const t = pal[resolvedMode];
 
   return (
-    <ThemeCtx.Provider value={{ t, palKey, setPalKey, modePref, setModePref, resolvedMode }}>
+    <ThemeCtx.Provider value={{ t, palKey, setPalKey, modePref, setModePref, resolvedMode, arcStyle, setArcStyle }}>
       {children}
     </ThemeCtx.Provider>
   );
