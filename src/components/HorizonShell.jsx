@@ -91,12 +91,19 @@ const OB_CLAMPS = {
   monthlySpend:  [500, 50_000],
 };
 
+// Compact money: $3.5M / $185k / $900 — never the runaway "$3484k".
+function obMoney(val) {
+  if (val >= 1e6) return `$${(val / 1e6).toFixed(val % 1e6 === 0 ? 0 : 1)}M`;
+  if (val >= 1e3) return `$${Math.round(val / 1e3)}k`;
+  return `$${Math.round(val)}`;
+}
+
 function fmtField(field, val) {
   switch (field) {
     case "currentAge":
     case "retirementAge": return String(val);
-    case "currentIncome": return `$${(val / 1_000).toFixed(0)}k`;
-    case "totalSaved":    return `$${(val / 1_000).toFixed(0)}k`;
+    case "currentIncome": return obMoney(val);
+    case "totalSaved":    return obMoney(val);
     case "monthlySpend":  return `$${val.toLocaleString()}`;
     default: return String(val);
   }
@@ -140,7 +147,7 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
   const summaryStats = [
     ["Retire at",       String(vals.retirementAge),                        t.ink],
     ["Monthly income",  `$${vals.monthlySpend.toLocaleString()}/mo`,       t.warm],
-    ["Savings today",   `$${(vals.totalSaved / 1_000).toFixed(0)}k`,       t.ink],
+    ["Savings today",   obMoney(vals.totalSaved),                          t.ink],
   ];
 
   const stepBtnStyle = {
@@ -150,43 +157,47 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
     font: `600 18px ${HF}`, color: t.accent, cursor: "pointer", userSelect: "none",
   };
 
+  const navBtnPrimary = {
+    flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+    padding: "13px", borderRadius: 12, background: t.accent, cursor: "pointer",
+  };
+
   return (
     <div style={{
-      width: "100%", height: "100%", background: t.bg, fontFamily: HF,
-      display: "flex", position: "relative", overflow: "hidden"
+      width: "100%", flex: 1, minHeight: "100vh", background: t.bg, fontFamily: HF,
+      position: "relative", overflow: "hidden",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: "72px 20px 0",
     }}>
-      {/* ghost arc that reveals as user progresses */}
-      <div style={{ position: "absolute", inset: "24px 360px 60px 32px", pointerEvents: "none" }}>
-        <GhostArc t={t} opacity={arcOp} blur={arcBlur} H={560} />
-      </div>
-
-      {/* emerging headline copies the App's real retirement age as they fill it in */}
+      {/* ── background arc figurehead — a horizon that rises as answers come in ── */}
       <div style={{
-        position: "absolute", left: 44, bottom: 80,
-        opacity: step >= 3 ? 1 : 0, transition: "opacity .5s", pointerEvents: "none"
+        position: "absolute", left: 0, right: 0, bottom: 0, height: "44%",
+        display: "flex", alignItems: "flex-end", pointerEvents: "none",
       }}>
-        <div style={{ font: `600 28px ${HF}`, color: t.ink, letterSpacing: "-0.02em" }}>
-          On track to retire at{" "}
-          <span style={{ color: t.accent }}>{vals.retirementAge}</span>.
-        </div>
-        {step >= 4 && (
-          <div style={{ font: `400 16px ${HF}`, color: t.mut, marginTop: 6 }}>
-            Work optional,{" "}
-            <span style={{ color: t.accent, fontWeight: 600 }}>your thing</span> mandatory.
-          </div>
-        )}
+        <GhostArc t={t} opacity={arcOp} blur={arcBlur} H={420} />
       </div>
-
-      {/* right panel */}
+      {/* fade the arc's base softly into the background */}
       <div style={{
-        width: 360, marginLeft: "auto", flexShrink: 0, height: "100%",
-        background: t.surf, borderLeft: `1px solid ${t.line}`,
-        display: "flex", flexDirection: "column", padding: "36px 28px", gap: 20, zIndex: 2
-      }}>
+        position: "absolute", left: 0, right: 0, bottom: 0, height: "18%",
+        background: `linear-gradient(to bottom, transparent, ${t.bg})`, pointerEvents: "none",
+      }} />
+
+      {/* top-centered logo */}
+      <div style={{ position: "absolute", top: 26, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
         <Logo t={t} />
+      </div>
 
+      {/* ── centered card ── */}
+      <div style={{
+        position: "relative", zIndex: 2, width: "100%", maxWidth: 440,
+        marginBottom: "6%",
+        background: t.surf, border: `1px solid ${t.line}`, borderRadius: 22,
+        boxShadow: "0 18px 50px rgba(0,0,0,.10)",
+        padding: "30px 32px 26px",
+        display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 16,
+      }}>
         {/* progress pips */}
-        <div style={{ display: "flex", gap: 5 }}>
+        <div style={{ display: "flex", gap: 5, width: "100%", maxWidth: 240 }}>
           {OB_STEPS.map((_, i) => (
             <span key={i} style={{
               flex: 1, height: 4, borderRadius: 999,
@@ -201,88 +212,76 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 
         {done ? (
           /* ── Summary + action buttons ── */
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ font: `600 26px ${HF}`, color: t.ink, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+          <>
+            <div style={{ font: `600 27px ${HF}`, color: t.ink, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
               Your plan is ready.
             </div>
-            <div style={{ font: `600 17px ${HF}`, color: t.accent, lineHeight: 1.2 }}>
-              Work optional.<br />Your thing mandatory.
+            <div style={{ font: `600 16px ${HF}`, color: t.accent, lineHeight: 1.3 }}>
+              Work optional. Your thing mandatory.
             </div>
-            {summaryStats.map(([l, v, c]) => (
-              <div key={l} style={{
-                display: "flex", justifyContent: "space-between", alignItems: "baseline",
-                padding: "12px 0", borderBottom: `1px solid ${t.line}`
-              }}>
-                <span style={{ font: `400 13px ${HF}`, color: t.mut }}>{l}</span>
-                <span style={{ font: `600 18px ${HM}`, color: c }}>{v}</span>
-              </div>
-            ))}
-            <span style={{ flex: 1 }} />
-            {/* primary CTA: save answers to the model */}
-            <div onClick={() => setShowConfirm(true)} style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              padding: "13px 20px", borderRadius: 12, background: t.accent, cursor: "pointer"
-            }}>
+            <div style={{ width: "100%", marginTop: 4 }}>
+              {summaryStats.map(([l, v, c]) => (
+                <div key={l} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "baseline",
+                  padding: "11px 0", borderBottom: `1px solid ${t.line}`
+                }}>
+                  <span style={{ font: `400 13px ${HF}`, color: t.mut }}>{l}</span>
+                  <span style={{ font: `600 18px ${HM}`, color: c }}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div onClick={() => setShowConfirm(true)} style={{ ...navBtnPrimary, width: "100%", marginTop: 6 }}>
               <span style={{ font: `600 15px ${HF}`, color: "#fff" }}>Save as my plan →</span>
             </div>
-            {/* secondary: just enter the app without changing anything */}
             <div onClick={onComplete} style={{
-              textAlign: "center", font: `400 13px ${HF}`, color: t.faint,
-              cursor: "pointer", textDecoration: "underline"
+              font: `400 13px ${HF}`, color: t.faint, cursor: "pointer", textDecoration: "underline"
             }}>
               Skip for now
             </div>
-          </div>
+          </>
         ) : (
           /* ── Per-step question + stepper ── */
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 18 }}>
+          <>
             <div style={{
-              font: `600 26px ${HF}`, color: t.ink, letterSpacing: "-0.02em",
-              lineHeight: 1.15, whiteSpace: "pre-line"
+              font: `600 27px ${HF}`, color: t.ink, letterSpacing: "-0.02em",
+              lineHeight: 1.18, whiteSpace: "pre-line", marginTop: 2
             }}>{cur.q}</div>
-            <div style={{ font: `400 13px ${HF}`, color: t.mut }}>{cur.hint}</div>
+            <div style={{ font: `400 13.5px ${HF}`, color: t.mut, marginTop: -4 }}>{cur.hint}</div>
 
             {/* stepper with live numeric state */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 320, marginTop: 4 }}>
               <span style={stepBtnStyle} onClick={() => adjust(cur.field, -1)}>−</span>
               <div style={{
-                flex: 1, height: 40, borderRadius: 10, border: `1.5px solid ${t.line2}`,
+                flex: 1, height: 50, borderRadius: 12, border: `1.5px solid ${t.line2}`,
                 background: t.bg, display: "flex", alignItems: "center", justifyContent: "center",
-                font: `600 18px ${HM}`, color: t.ink
+                font: `600 22px ${HM}`, color: t.ink
               }}>
                 {fmtField(cur.field, vals[cur.field])}
               </div>
               <span style={stepBtnStyle} onClick={() => adjust(cur.field, +1)}>+</span>
             </div>
 
-            <span style={{ flex: 1 }} />
-
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 320, marginTop: 4 }}>
               {step > 0 && (
                 <div onClick={() => setStep(s => s - 1)} style={{
-                  padding: "12px 18px", borderRadius: 11,
+                  padding: "13px 18px", borderRadius: 12,
                   border: `1px solid ${t.line2}`, background: t.surf,
                   font: `500 14px ${HF}`, color: t.mut, cursor: "pointer"
-                }}>← Back</div>
+                }}>←</div>
               )}
-              <div onClick={() => setStep(s => s + 1)} style={{
-                flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
-                padding: "13px", borderRadius: 11, background: t.accent, cursor: "pointer"
-              }}>
+              <div onClick={() => setStep(s => s + 1)} style={navBtnPrimary}>
                 <span style={{ font: `600 15px ${HF}`, color: "#fff" }}>
                   {step === OB_STEPS.length - 1 ? "Build my plan →" : "Next →"}
                 </span>
               </div>
             </div>
 
-            {/* skip at any point — just enters app with existing defaults */}
             <div onClick={onComplete} style={{
-              font: `400 12px ${HF}`, color: t.faint, textAlign: "center",
-              cursor: "pointer", textDecoration: "underline"
+              font: `400 12px ${HF}`, color: t.faint, cursor: "pointer", textDecoration: "underline", marginTop: 2
             }}>
               skip
             </div>
-          </div>
+          </>
         )}
       </div>
 
@@ -303,11 +302,11 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 
 // ── MAIN SHELL ────────────────────────────────────────────────────────────────
 const SCREENS = [
-  { id: "plan",    label: "Plan" },
-  { id: "ideas",   label: "Ideas" },
-  { id: "numbers", label: "The numbers" },
-  { id: "someday", label: "Someday" },
-  { id: "settings",label: "Settings" },
+  { id: "plan",    label: "Plan",     short: "Plan",    icon: "◎" },
+  { id: "ideas",   label: "Ideas",    short: "Ideas",   icon: "✦" },
+  { id: "numbers", label: "The numbers", short: "Numbers", icon: "▦" },
+  { id: "someday", label: "Someday",  short: "Someday", icon: "☀" },
+  { id: "settings",label: "Settings", short: "Settings",icon: "⚙" },
 ];
 
 export default function HorizonShell({ onShowClassic, ...props }) {
@@ -389,8 +388,8 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             paddingBottom: isMobile ? 60 : 0,
           }}>
             {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} />}
-            {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} />}
-            {screen === "numbers"  && <NumbersScreen t={t} props={props} />}
+            {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} />}
+            {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} />}
             {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} />}
           </div>
@@ -402,20 +401,21 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               background: t.bg, borderTop: `1px solid ${t.line}`,
               display: "flex",
             }}>
-              {SCREENS.map(({ id, label }) => {
+              {SCREENS.map(({ id, short, icon }) => {
                 const on = screen === id;
                 return (
                   <div key={id} onClick={() => setScreen(id)} style={{
                     flex: 1, display: "flex", flexDirection: "column",
-                    alignItems: "center", justifyContent: "center",
-                    padding: "8px 0 10px", cursor: "pointer",
+                    alignItems: "center", justifyContent: "center", gap: 3,
+                    padding: "7px 0 9px", cursor: "pointer",
                     borderTop: `2px solid ${on ? t.accent : "transparent"}`,
                   }}>
+                    <span style={{ font: `400 16px ${HF}`, color: on ? t.accent : t.mut, lineHeight: 1 }}>{icon}</span>
                     <span style={{
-                      font: `${on ? 600 : 400} 11px ${HF}`,
+                      font: `${on ? 600 : 400} 10.5px ${HF}`,
                       color: on ? t.accent : t.mut,
-                      textAlign: "center", lineHeight: 1.2,
-                    }}>{label}</span>
+                      textAlign: "center", lineHeight: 1,
+                    }}>{short}</span>
                   </div>
                 );
               })}
