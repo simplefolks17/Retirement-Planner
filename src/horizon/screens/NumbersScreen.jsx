@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 
@@ -48,86 +48,100 @@ function StmtCol({ t, title, items, bar }) {
 }
 
 // ── Income Sankey ─────────────────────────────────────────────────────────────
-// Self-contained flow diagram: Gross income → Tax | Savings | Take-home.
-// The ribbons are tapering bezier bands (contiguous on the left, gapped on the
-// right) drawn in SVG; every label is real DOM positioned over the band so it
-// stays crisp and attached at any width.
+// Responsive flow diagram drawn in actual pixel space (no viewBox scaling).
+// ResizeObserver keeps `w` in sync with the SVG wrapper so bezier control
+// points are always computed in the rendered coordinate system — this is
+// what makes the S-curves smooth rather than blocky.
 function IncomeSankey({ t, income, tax, save, keep }) {
-  const total = Math.max(tax + save + keep, 1);
-  const grossBasis = Math.max(income, 1); // % shown relative to gross, matching the legend
-  const H = 250;
-  const PADV = 12;
-  const usable = H - PADV * 2;
-  const GAP = 10;                 // vertical gap between the right-hand nodes
+  const wrapRef = useRef(null);
+  const [w, setW] = useState(420);
 
-  // Left side: three contiguous segments stacked over the full income node.
-  const lH = { tax: (tax / total) * usable, save: (save / total) * usable };
-  lH.keep = usable - lH.tax - lH.save;
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    setW(el.offsetWidth || 420);
+    const ro = new ResizeObserver(e => setW(Math.round(e[0].contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const H = 310, PADV = 14, GAP = 65, NW = 16;
+  const usable = H - PADV * 2;
+  const rUsable = usable - GAP * 2;
+  const total = Math.max(tax + save + keep, 1);
+
+  const lH = {
+    tax:  (tax  / total) * usable,
+    save: (save / total) * usable,
+    keep: usable - (tax / total) * usable - (save / total) * usable,
+  };
   const lY = { tax: PADV, save: PADV + lH.tax, keep: PADV + lH.tax + lH.save };
 
-  // Right side: same proportions, but the two gaps shrink the bands a touch so
-  // the ribbons visibly taper into separated destination nodes.
-  const rUsable = usable - GAP * 2;
-  const rH = { tax: (tax / total) * rUsable, save: (save / total) * rUsable };
-  rH.keep = rUsable - rH.tax - rH.save;
+  const rH = {
+    tax:  (tax  / total) * rUsable,
+    save: (save / total) * rUsable,
+    keep: rUsable - (tax / total) * rUsable - (save / total) * rUsable,
+  };
   const rY = { tax: PADV, save: PADV + rH.tax + GAP, keep: PADV + rH.tax + GAP + rH.save + GAP };
 
-  // viewBox coordinate space (preserveAspectRatio="none" stretches X to fit)
-  const VBW = 1000, NW = 62, LX = NW, RX = VBW - NW, MX = VBW / 2;
-
-  const segs = [
-    { key: "tax",  label: "Tax",       color: t.mut,  amount: tax  },
-    { key: "save", label: "Savings",   color: t.warm, amount: save },
-    { key: "keep", label: "Take-home", color: t.good, amount: keep },
-  ];
-
-  // Tapering ribbon: top edge L→R, then bottom edge R→L, closed.
-  const ribbon = (k) => {
+  // Pixel-space ribbon path. Control points at 45% and 55% of horizontal span
+  // (not both at the midpoint) produce a natural S-curve at any container width.
+  const LX = NW, RX = w - NW, dx = RX - LX;
+  const C1 = LX + dx * 0.45, C2 = LX + dx * 0.55;
+  const ribbon = k => {
     const lt = lY[k], lb = lY[k] + lH[k];
     const rt = rY[k], rb = rY[k] + rH[k];
-    return `M ${LX} ${lt} C ${MX} ${lt} ${MX} ${rt} ${RX} ${rt}` +
-           ` L ${RX} ${rb} C ${MX} ${rb} ${MX} ${lb} ${LX} ${lb} Z`;
+    return `M${LX} ${lt} C${C1} ${lt} ${C2} ${rt} ${RX} ${rt}` +
+           ` L${RX} ${rb} C${C2} ${rb} ${C1} ${lb} ${LX} ${lb}Z`;
   };
 
+  const grossBasis = Math.max(income, 1);
   const fmtK = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
   const pctOf = n => `${Math.round((n / grossBasis) * 100)}%`;
 
+  const segs = [
+    { key: "tax",  label: "Tax",       color: "#b09070", amount: tax  },
+    { key: "save", label: "Savings",   color: t.warm,    amount: save },
+    { key: "keep", label: "Take-home", color: t.good,    amount: keep },
+  ];
+
   return (
     <div style={{ display: "flex", alignItems: "stretch", height: H, width: "100%", flexShrink: 0 }}>
-      {/* left label — vertically centered beside the source node */}
+      {/* left label */}
       <div style={{
-        width: 100, flexShrink: 0, display: "flex", flexDirection: "column",
+        width: 96, flexShrink: 0, display: "flex", flexDirection: "column",
         justifyContent: "center", alignItems: "flex-start",
       }}>
-        <span style={{ font: `600 11px ${HF}`, color: t.mut }}>Gross income</span>
-        <span style={{ font: `700 20px ${HM}`, color: t.accent, marginTop: 2 }}>{fmtK(income)}</span>
+        <span style={{ font: `500 11px ${HF}`, color: t.mut }}>Gross income</span>
+        <span style={{ font: `700 19px ${HM}`, color: t.accent, marginTop: 2 }}>{fmtK(income)}</span>
       </div>
 
-      {/* ribbons */}
-      <svg viewBox={`0 0 ${VBW} ${H}`} preserveAspectRatio="none"
-        style={{ flex: 1, height: "100%", minWidth: 0 }}>
-        <rect x={0} y={PADV} width={NW} height={usable} rx={7} fill={t.accent} fillOpacity={0.85} />
-        {segs.map(s => (
-          <path key={s.key} d={ribbon(s.key)} fill={s.color} fillOpacity={0.32} />
-        ))}
-        {segs.map(s => (
-          <rect key={s.key + "r"} x={RX} y={rY[s.key]} width={NW}
-            height={Math.max(rH[s.key], 3)} rx={5} fill={s.color} fillOpacity={0.85} />
-        ))}
-      </svg>
+      {/* SVG drawn in actual pixel coordinates so bezier curves are never squished */}
+      <div ref={wrapRef} style={{ flex: 1, minWidth: 0 }}>
+        <svg viewBox={`0 0 ${w} ${H}`} width="100%" height={H}>
+          <rect x={0} y={PADV} width={NW} height={usable} rx={6} fill={t.accent} fillOpacity={0.9} />
+          {segs.map(s => (
+            <path key={s.key} d={ribbon(s.key)} fill={s.color} fillOpacity={0.5} />
+          ))}
+          {segs.map(s => (
+            <rect key={s.key + "r"} x={RX} y={rY[s.key]} width={NW}
+              height={Math.max(rH[s.key], 4)} rx={4} fill={s.color} fillOpacity={0.9} />
+          ))}
+        </svg>
+      </div>
 
-      {/* right labels — each pinned to the vertical center of its node */}
-      <div style={{ width: 118, flexShrink: 0, position: "relative" }}>
+      {/* right labels pinned to each node's vertical centre */}
+      <div style={{ width: 122, flexShrink: 0, position: "relative" }}>
         {segs.map(s => {
-          const centerPct = ((rY[s.key] + rH[s.key] / 2) / H) * 100;
+          const cy = ((rY[s.key] + rH[s.key] / 2) / H) * 100;
           return (
             <div key={s.key} style={{
-              position: "absolute", left: 8, right: 0, top: `${centerPct}%`,
-              transform: "translateY(-50%)",
+              position: "absolute", left: 10, right: 0,
+              top: `${cy}%`, transform: "translateY(-50%)",
               display: "flex", flexDirection: "column", gap: 1,
             }}>
               <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{s.label}</span>
-              <span style={{ font: `400 12px ${HM}`, color: t.mut }}>
+              <span style={{ font: `400 11px ${HM}`, color: t.mut }}>
                 {fmtK(s.amount)} · {pctOf(s.amount)}
               </span>
             </div>
@@ -309,7 +323,7 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
               <div style={{ font: `400 11px ${HF}`, color: t.accent, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
                 The bottom line
               </div>
-              <div style={{ font: `700 32px ${SERIF}`, color: t.ink, lineHeight: 1 }}>
+              <div style={{ font: `700 32px/1 ${SERIF}`, color: t.ink }}>
                 {fmtMo(effectiveExpenses)}{" "}
                 <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month, for life</span>
               </div>
@@ -455,22 +469,25 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
             <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase" }}>
               Where your paycheck goes
             </div>
-            <IncomeSankey
-              t={t}
-              income={currentIncome ?? 0}
-              tax={(fedTax ?? 0) + (ficaTotal ?? 0) + (stateTaxAmt ?? 0)}
-              save={currentContribTotal ?? 0}
-              keep={takeHome ?? 0}
-            />
+            {/* constrain to ~580 px so the aspect ratio keeps S-curves visible */}
+            <div style={{ maxWidth: 580, width: "100%", alignSelf: "center" }}>
+              <IncomeSankey
+                t={t}
+                income={currentIncome ?? 0}
+                tax={(fedTax ?? 0) + (ficaTotal ?? 0) + (stateTaxAmt ?? 0)}
+                save={currentContribTotal ?? 0}
+                keep={takeHome ?? 0}
+              />
+            </div>
             <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", textAlign: "center" }}>
               Of every dollar you earn, {keepPct}% comes home, {savePct}% builds your future, {taxPct}% goes to tax.
             </div>
             {/* legend chips */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, justifyContent: "center" }}>
               {[
-                ["Tax",       t.line2, `${taxPct}%`],
-                ["Savings",   t.warm,  `${savePct}%`],
-                ["Take-home", t.good,  `${keepPct}%`],
+                ["Tax",       "#b09070", `${taxPct}%`],
+                ["Savings",   t.warm,   `${savePct}%`],
+                ["Take-home", t.good,   `${keepPct}%`],
               ].map(([label, c, pct]) => (
                 <span key={label} style={{
                   display: "flex", alignItems: "center", gap: 6,

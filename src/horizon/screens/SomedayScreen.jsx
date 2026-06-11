@@ -111,11 +111,11 @@ export default function SomedayScreen({ t, props }) {
             letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10
           }}>work optional.</div>
           <div style={{
-            font: `700 62px ${HD}`, color: "#ffffff", lineHeight: 1.0,
+            font: `700 62px/1 ${HD}`, color: "#ffffff",
             textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: 2
           }}>{activeAct.l}</div>
           <div style={{
-            font: `400 62px ${HD}`, color: "rgba(255,255,255,.75)", lineHeight: 1.0,
+            font: `400 62px/1 ${HD}`, color: "rgba(255,255,255,.75)",
             textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: 22
           }}>mandatory.</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>

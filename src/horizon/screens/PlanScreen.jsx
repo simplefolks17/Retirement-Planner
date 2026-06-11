@@ -49,8 +49,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       }}>
         <div>
           <div style={{
-            font: `600 ${isMobile ? "20px" : "28px"} ${HF}`, color: t.ink,
-            letterSpacing: "-0.025em", lineHeight: 1.1
+            font: `600 ${isMobile ? "20px" : "28px"}/1.1 ${HF}`, color: t.ink,
+            letterSpacing: "-0.025em"
           }}>
             {isSustainable
               ? `On track to retire at ${retirementAge}.`

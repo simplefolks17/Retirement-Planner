@@ -26,7 +26,7 @@ export default function ConfirmModal({ t, title, body, confirmLabel = "Confirm",
           {title}
         </div>
         {body && (
-          <div style={{ font: `400 14px ${HF}`, color: t.mut, marginBottom: 18, lineHeight: 1.5 }}>
+          <div style={{ font: `400 14px/1.5 ${HF}`, color: t.mut, marginBottom: 18 }}>
             {body}
           </div>
         )}

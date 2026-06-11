@@ -312,7 +312,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                         width: 8, height: 8, borderRadius: 999,
                         background: c, display: "block", marginBottom: 6
                       }} />
-                      <div style={{ font: `600 14px ${HF}`, color: t.ink, lineHeight: 1.05 }}>{label}</div>
+                      <div style={{ font: `600 14px/1.05 ${HF}`, color: t.ink }}>{label}</div>
                       <div style={{ font: `400 12px ${HF}`, color: t.mut, marginTop: 3 }}>{sub}</div>
                     </div>
                   );

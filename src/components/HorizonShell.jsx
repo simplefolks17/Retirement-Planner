@@ -213,10 +213,10 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
         {done ? (
           /* ── Summary + action buttons ── */
           <>
-            <div style={{ font: `600 27px ${HF}`, color: t.ink, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+            <div style={{ font: `600 27px/1.1 ${HF}`, color: t.ink, letterSpacing: "-0.02em" }}>
               Your plan is ready.
             </div>
-            <div style={{ font: `600 16px ${HF}`, color: t.accent, lineHeight: 1.3 }}>
+            <div style={{ font: `600 16px/1.3 ${HF}`, color: t.accent }}>
               Work optional. Your thing mandatory.
             </div>
             <div style={{ width: "100%", marginTop: 4 }}>
@@ -410,11 +410,11 @@ export default function HorizonShell({ onShowClassic, ...props }) {
                     padding: "7px 0 9px", cursor: "pointer",
                     borderTop: `2px solid ${on ? t.accent : "transparent"}`,
                   }}>
-                    <span style={{ font: `400 16px ${HF}`, color: on ? t.accent : t.mut, lineHeight: 1 }}>{icon}</span>
+                    <span style={{ font: `400 16px/1 ${HF}`, color: on ? t.accent : t.mut }}>{icon}</span>
                     <span style={{
-                      font: `${on ? 600 : 400} 10.5px ${HF}`,
+                      font: `${on ? 600 : 400} 10.5px/1 ${HF}`,
                       color: on ? t.accent : t.mut,
-                      textAlign: "center", lineHeight: 1,
+                      textAlign: "center",
                     }}>{short}</span>
                   </div>
                 );
