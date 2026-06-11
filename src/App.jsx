@@ -602,7 +602,7 @@ export default function App() {
   const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae } = {}) => {
     if (ra !== undefined) setRetirementAge(ra);
     if (ae !== undefined) setAnnualExpenses(ae);
-  }, []);
+  }, [setRetirementAge, setAnnualExpenses]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart needs so
   // IdeasScreen can call calcWhatIfChart(whatIfSimInputs, { retireAdj }) directly.

@@ -175,6 +175,7 @@ export function calcWhatIfChart({
       startBal,
       startAge: scenarioRetAge,
       endAge,
+      moneyEvents: retDrawShared.moneyEvents ?? [],
     });
   } catch {
     return [];
