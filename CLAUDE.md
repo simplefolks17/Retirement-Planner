@@ -38,9 +38,10 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 ## Quick Links
 - Architecture & data flow: `docs/ARCHITECTURE.md`
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
-- Design system & tokens: `docs/DESIGN.md`
+- Classic UI design system & tokens: `docs/DESIGN.md` *(dark dashboard — the original UI)*
+- Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (74 items, 26 done, 48 planned)
+- Feature backlog: `feature-tracker.html` (90 items, 28 done, 62 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -217,6 +218,15 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   growing at the specified age, capping contributions, employer match, MAGI, and SS AIME.
   UI: "Income plateau age" slider + live projected-retirement-income preview. Default `null`
   = no cap = zero golden master impact. 299 → **303** tests (+4 plateau regression tests).
+- Horizon UI shell shipped (Jun 11 2026): a warm, additive second interface layered on top of
+  the classic dark dashboard. Horizon is now the default view; Classic is always accessible via
+  the "Classic view" button and returns to Horizon via "✦ Horizon view" in the Classic header.
+  **No model logic was changed** — Horizon is purely layout, styling, and navigation.
+  New files: `src/horizon/ThemeContext.jsx` (6-palette token system), `src/components/ArcGraph.jsx`
+  (SVG portfolio arc, 4 views), `src/components/HorizonShell.jsx` (Plan/Ideas/Numbers/Someday/Settings).
+  10 follow-up items tracked in `feature-tracker.html` (section "Horizon UI", IDs 69–80) and
+  documented in `docs/HORIZON.md`. **`docs/DESIGN.md` describes the Classic (dark) UI only —
+  do not merge the two; they are separate design systems.**
 
 ## Commands
 - `npm run dev` — start dev server

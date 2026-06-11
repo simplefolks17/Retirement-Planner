@@ -120,6 +120,72 @@ export function calcWhatIfDelta({
   };
 }
 
+// ── calcWhatIfChart ──────────────────────────────────────────────────────────
+// Returns a [{age, total}] series for a scenario override, suitable for passing
+// as the `scenarioData` prop to ArcGraph. Covers the retirement phase only.
+//
+// Accepts the same argument shape as calcWhatIfDelta but returns a chart series
+// instead of summary scalars. The `whatIfBundle` passed from App.jsx via
+// horizonProps.whatIfSimInputs includes simInputs, fedMarginal, retDrawShared,
+// safeRetAge, safeLifeExp, and baseTotalAtRet.
+//
+// overrides: { retireAdj, retirementAge, annualExpenses, scenarioEvents }
+//   retireAdj       — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
+//   retirementAge   — absolute retirement age override (takes precedence over retireAdj)
+//   annualExpenses  — override for retirement spending
+//   scenarioEvents  — additional one-time events for this scenario only (e.g. a lump-sum trip spend)
+//
+// Returns [] when inputs are invalid or the retirement walk produces no rows.
+export function calcWhatIfChart({
+  simInputs,
+  fedMarginal,
+  retDrawShared,
+  safeRetAge,
+  safeLifeExp,
+  baseTotalAtRet,
+}, overrides = {}) {
+  if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return [];
+
+  const retireAdj        = overrides.retireAdj ?? 0;
+  const scenarioRetAge   = overrides.retirementAge ?? (safeRetAge + retireAdj);
+  const scenarioExpenses = overrides.annualExpenses ?? retDrawShared.effectiveExpenses;
+  const scenarioEvents   = overrides.scenarioEvents ?? [];
+
+  // Determine starting portfolio balance at the scenario retirement age
+  let startBal = baseTotalAtRet ?? 0;
+
+  if (scenarioRetAge !== safeRetAge) {
+    try {
+      const raw    = runSimulation({ ...simInputs, moneyEvents: [] });
+      const retIdx = scenarioRetAge - simInputs.currentAge - 1;
+      const at     = raw[retIdx];
+      if (!at) return [];
+      startBal = Math.round((at.tradGross ?? 0) * (1 - (fedMarginal ?? 0)))
+        + (at["Roth IRA"] ?? 0) + (at["Taxable"] ?? 0) + (at["HSA"] ?? 0);
+    } catch {
+      return [];
+    }
+  }
+
+  const endAge = Math.max(safeLifeExp, scenarioRetAge + 5);
+
+  let walk;
+  try {
+    walk = buildRetirementDrawdown({
+      ...retDrawShared,
+      effectiveExpenses: scenarioExpenses,
+      startBal,
+      startAge: scenarioRetAge,
+      endAge,
+      moneyEvents: [...(retDrawShared.moneyEvents ?? []), ...scenarioEvents],
+    });
+  } catch {
+    return [];
+  }
+
+  return (walk.rows ?? []).map(r => ({ age: r.age, total: r.total }));
+}
+
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
 // Binary search for the largest one-time outflow at `purchaseAge` such that
 // the portfolio still sustains to `targetLifeExpectancy`.

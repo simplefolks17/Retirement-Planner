@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -42,7 +42,9 @@ import { FlowConn }          from "./components/FlowConn.jsx";
 import { WhatIfPanel }       from "./components/WhatIfPanel.jsx";
 import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
 import { calcWhatIfDelta }   from "./model/what-if.js";
-import { PhaseCard }     from "./components/PhaseCard.jsx";
+import { PhaseCard }       from "./components/PhaseCard.jsx";
+import { HorizonThemeProvider } from "./horizon/ThemeContext.jsx";
+import HorizonShell       from "./components/HorizonShell.jsx";
 
 export default function App() {
 
@@ -86,6 +88,10 @@ export default function App() {
   const [preApplySnapshot,     setPreApplySnapshot]     = useState(null);
 
   const [activeTab, setActiveTab] = useState("planner");
+
+  // Horizon shell state
+  const [showHorizon, setShowHorizon] = useState(true);
+  const [activity,    setActivity]    = useState("golf course");
 
   const [ssClaimingAge,     setSsClaimingAge]     = useState(SS_FRA);
   const [isMarried,         setIsMarried]         = useState(false);
@@ -430,6 +436,31 @@ export default function App() {
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
     [accumChart, retirementWalk]);
 
+  // Balance at life expectancy — used by Horizon "Left at 90" stat card
+  const balAt90 = useMemo(() => {
+    const rows = retirementWalk.rows;
+    if (!rows || rows.length === 0) return 0;
+    const target = safeLifeExp;
+    const exact = rows.find(r => r.age === target);
+    if (exact) return Math.max(0, exact.total);
+    const last = rows[rows.length - 1];
+    return Math.max(0, last?.total ?? 0);
+  }, [retirementWalk, safeLifeExp]);
+
+  // Approximate contribution series for Horizon Sources view (cumulative contributions, no growth)
+  const contribSeries = useMemo(() => {
+    if (!simData.length) return null;
+    const initBal = (bal401k ?? 0) + (balRoth ?? 0) + (balTaxable ?? 0) + (balHSA ?? 0);
+    let cumContrib = initBal;
+    const series = [];
+    for (const row of simData) {
+      series.push({ age: row.age, contrib: cumContrib });
+      const rowTotal = (row.trad ?? 0) + (row.roth ?? 0) + (row.taxable ?? 0) + (row.hsa ?? 0);
+      cumContrib = Math.min(cumContrib + (contrib401k + contribRoth + contribTaxable + contribHSA), rowTotal);
+    }
+    return series;
+  }, [simData, bal401k, balRoth, balTaxable, balHSA, contrib401k, contribRoth, contribTaxable, contribHSA]);
+
   // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA + ACA.
   // Only runs in custom mode — bracket mode uses per-year targets derived from the bracket
   // choice, not a searchable flat scalar; optimizing a flat amount there produces a different
@@ -566,6 +597,52 @@ export default function App() {
     moneyEvents,
   };
 
+  // Single entry point for Horizon-initiated mutations to App state.
+  // Always called after user confirms in a modal — never fired directly by screens.
+  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae } = {}) => {
+    if (ra !== undefined) setRetirementAge(ra);
+    if (ae !== undefined) setAnnualExpenses(ae);
+  }, [setRetirementAge, setAnnualExpenses]);
+
+  // Extended what-if bundle: includes everything calcWhatIfChart needs so
+  // IdeasScreen can call calcWhatIfChart(whatIfSimInputs, { retireAdj }) directly.
+  const whatIfBundle = {
+    simInputs: whatIfSimInputs,
+    fedMarginal,
+    retDrawShared,
+    safeRetAge,
+    safeLifeExp,
+    baseTotalAtRet: totalAtRet,
+  };
+
+  // Props bundle for HorizonShell — display values only (plus the two write-back hooks)
+  const horizonProps = {
+    chartData: totalChartData,
+    currentAge, retirementAge, lifeExpect,
+    totalAtRet, yearsSustained, isSustainable,
+    takeHome, effectiveExpenses, withdrawalRate,
+    balAt90, contribSeries,
+    householdSS, activity, setActivity,
+    currentIncome,
+    fedTax, ficaTotal: fica, stateTaxAmt: stateTax,
+    currentContribTotal,
+    retVals, simData,
+    netConversionBenefit, yr1TaxSavings,
+    // Batch A additions:
+    moneyEvents, setMoneyEvents,
+    whatIfSimInputs: whatIfBundle,
+    commitPlan,
+    retirementWalk,
+  };
+
+  if (showHorizon) {
+    return (
+      <HorizonThemeProvider>
+        <HorizonShell {...horizonProps} onShowClassic={() => setShowHorizon(false)} />
+      </HorizonThemeProvider>
+    );
+  }
+
   return (
     <div className="page-wrap" style={{ background: C.bg, minHeight: "100vh", color: C.text,
       fontFamily: "'DM Sans', system-ui, sans-serif" }}>
@@ -626,13 +703,19 @@ export default function App() {
       `}</style>
 
       <div style={{ marginBottom: 28 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-          <h1 className="h1-title" style={{ margin: 0, fontWeight: 700, color: C.text }}>
-            Retirement Account Modeler
-          </h1>
-          <span style={{ fontSize: 12, color: C.gold, ...mono, background: "#d4a84320", padding: "2px 8px", borderRadius: 4 }}>
-            2026 Tax Year
-          </span>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+            <h1 className="h1-title" style={{ margin: 0, fontWeight: 700, color: C.text }}>
+              Retirement Account Modeler
+            </h1>
+            <span style={{ fontSize: 12, color: C.gold, ...mono, background: "#d4a84320", padding: "2px 8px", borderRadius: 4 }}>
+              2026 Tax Year
+            </span>
+          </div>
+          <button onClick={() => setShowHorizon(true)} style={{
+            fontSize: 11, color: C.muted, background: "transparent",
+            border: `1px solid #21262d`, borderRadius: 6, padding: "4px 10px", cursor: "pointer",
+          }}>✦ Horizon view</button>
         </div>
         <p style={{ margin: 0, fontSize: 14, color: C.muted }}>
           Compare after-tax outcomes across retirement vehicles. All inputs update in real time.
