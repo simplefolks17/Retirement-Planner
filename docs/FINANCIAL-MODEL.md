@@ -214,6 +214,7 @@ These are intentional modeling choices, not bugs. Document them so users and rev
 | State retirement income exemptions not modeled | Overstates retirement state tax for most states | 13 states exempt SS; many exempt pension/401k. Feature #33 (bracket-accurate retirement tax) is done; structured per-source exemption flags are the remaining gap — planned as feature #52. |
 | Inflation applied to returns but not to brackets/limits | Subtle asymmetry | IRS adjusts limits annually. Sim uses 2026 limits with inflation-adjusted returns. |
 | SS benefit assumes continuous work to retirement | Overstates SS for anyone with career gaps | Retiring at 45 leaves fewer high-earning years in the 35-year average. Work-gap input planned: feature #11. |
+| Income growth compounds indefinitely without a user-set plateau | Overstates contribution capacity and SS AIME for long projections | A $100k earner at 3%/yr reaches $289k by 65. Users can cap this with the "Income plateau age" slider; `incomeGrowthEndAge` passed to both `runSimulation` and `calcAIME`. Default null = no cap. |
 | Spouse 401k/Roth/HSA accounts not modeled | Understates household contribution capacity for dual-income MFJ | Spouse accounts tracked as planned premium feature #30. Current sliders are primary earner only. |
 | Single fixed return rate for full projection | Ignores sequence-of-returns risk | A bad decade early in retirement is far worse than the same average return. Monte Carlo planned: feature #38. |
 

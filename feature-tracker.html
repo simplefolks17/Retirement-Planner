@@ -75,7 +75,7 @@
 <body>
 
 <h1>Retirement Calculator — Feature Tracker</h1>
-<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-11</p>
+<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-11 (74 items: 26 done, 48 planned)</p>
 
 <div class="summary" id="summary"></div>
 <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
@@ -641,6 +641,14 @@ var DATA = [
     ds: "The what-if engine reuses baseline RMD and conversion tax maps for all scenarios — a documented approximation. For small changes (±10%) the error is negligible. For large scenarios (retire 10 years early, $500k inheritance, big savings boost) the maps diverge materially and longevity estimates skew.",
     dt: "In calcWhatIfDelta, after computing scenarioTotalAtRet, check if abs(scenarioTotalAtRet - baseTotalAtRet) / baseTotalAtRet > LARGE_CHANGE_THRESHOLD (suggested 0.15). If so, recompute rmdTaxByAge via calcRMDTaxSchedule with the scaled trad balance. If the scenario also shifts the conversion window (retirementAgeOverride), run a full evaluateConversionPlan re-run to get a new conversionTaxByAge. Gate behind the threshold so small scenarios stay fast (~1 extra evaluateConversionPlan call per large-delta what-if). Update the documented approximation note in CLAUDE.md and what-if.js when shipped. Add LARGE_CHANGE_THRESHOLD to ASSUMPTIONS in irs-2026.js.",
     cx: "Medium", im: "Medium", af: ["calcWhatIfDelta (conditional recompute path)", "calcRMDTaxSchedule (new call with scaled balance)", "evaluateConversionPlan (new call when window shifts)", "buildRetirementDrawdown (updated maps)", "yearsSustained accuracy"], sv: "LARGE_CHANGE_THRESHOLD (new ASSUMPTIONS constant)"
+  },
+  // ─── Overview / Income ────────────────────────────────────────────────────
+  {
+    id: 75, pr: 1, sec: "Overview / Income", st: "done",
+    ti: "Income growth plateau (incomeGrowthEndAge)",
+    ds: "A $100k earner at 3%/yr compounded for 35 years reaches $289k — unrealistic for most careers. Users can now set an age at which income stops growing. This caps contributions, employer match, MAGI, and SS AIME at a realistic peak instead of projecting ever-increasing salaries.",
+    dt: "Shipped Jun 11 2026. New optional param incomeGrowthEndAge (null = no cap) added to runSimulation (simulation.js) and calcAIME (social-security.js), threaded through calcRetirementIncome (retirement-income.js) and App.jsx. growFactor capped via Math.min(y-1, incomeGrowthEndAge - currentAge) — a single-line guard that cascades correctly to employee deferral, employer match, MAGI, and LTCG basis. calcAIME uses the same cap for SS wage history so the SS benefit doesn't overstate earnings post-plateau. UI: 'Income plateau age' slider (currentAge+1 to retirementAge; 'None' when at max) + live 'Projected at retirement: $X/yr' preview. Default null → no cap → zero golden master impact. whatIfSimInputs threaded. 4 new tests (299 → 303).",
+    cx: "Low", im: "High", af: ["runSimulation (growFactor cap)", "calcAIME (plateau for SS AIME)", "calcRetirementIncome (threaded)", "employer match (capped via growFactor)", "MAGI / Roth phase-out (capped)", "whatIfSimInputs"], sv: "incomeGrowthEndAge (App state, null default)"
   }
 ];
 

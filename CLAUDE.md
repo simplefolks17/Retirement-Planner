@@ -40,7 +40,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Design system & tokens: `docs/DESIGN.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (73 items, 25 done, 48 planned)
+- Feature backlog: `feature-tracker.html` (74 items, 26 done, 48 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -212,6 +212,11 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   7. **`src/components/MoneyEventsPanel.jsx`** (new) — up to 6 one-time events (label, amount, age, inflow/outflow, taxable flag); renders in main planner; events flow through `simData` and `retDrawShared` so all downstream calculations (RMD, conversion, longevity) see them.
   8. **`App.jsx`** — added `moneyEvents` state, `whatIfSimInputs` object; threaded `moneyEvents` into `simData` (accum) and `retDrawShared` (retirement); rendered `WhatIfPanel` after retirement snapshot, `MoneyEventsPanel` before Tax Rate Phases.
   272 → **299** tests (25 files). New: `money-events.test.js`, `what-if.test.js`.
+- Income growth plateau feature (Jun 11 2026, feature #75): unrealistic compounding fixed.
+  New optional `incomeGrowthEndAge` param in `runSimulation` and `calcAIME`; income stops
+  growing at the specified age, capping contributions, employer match, MAGI, and SS AIME.
+  UI: "Income plateau age" slider + live projected-retirement-income preview. Default `null`
+  = no cap = zero golden master impact. 299 → **303** tests (+4 plateau regression tests).
 
 ## Commands
 - `npm run dev` — start dev server
