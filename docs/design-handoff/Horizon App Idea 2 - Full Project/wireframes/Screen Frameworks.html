@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Horizon — Screen Frameworks (low-fi)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Architects+Daughter&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #e9e4da; height: 100%; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#f6f3ec"/>
+    <rect x="22" y="24" width="56" height="40" rx="4" fill="none" stroke="#3a352d" stroke-width="3"/>
+    <line x1="30" y1="40" x2="56" y2="40" stroke="#c2693f" stroke-width="3" stroke-linecap="round"/>
+    <line x1="30" y1="50" x2="48" y2="50" stroke="#b9b3a8" stroke-width="3" stroke-linecap="round"/>
+    <path d="M26 74 L40 70 L54 60 L74 56" stroke="#c2693f" stroke-width="3" fill="none" stroke-linecap="round"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="wire-kit.jsx"></script>
+<script type="text/babel" src="wire-onboarding.jsx"></script>
+<script type="text/babel" src="wire-ideas.jsx"></script>
+<script type="text/babel" src="wire-ideas-alt.jsx"></script>
+<script type="text/babel" src="wire-numbers.jsx"></script>
+<script type="text/babel" src="wire-numbers-alt.jsx"></script>
+<script type="text/babel" src="wire-numbers-combined.jsx"></script>
+<script type="text/babel" src="wire-onboarding-combined.jsx"></script>
+<script type="text/babel" src="wire-ideas-combined.jsx"></script>
+<script type="text/babel" src="wire-someday-updated.jsx"></script>
+
+<script type="text/babel">
+function App() {
+  return (
+    <DesignCanvas>
+
+      <DCSection
+        id="promoted"
+        title="Promoted designs — the chosen directions, combined & interactive"
+        subtitle="These are the locked-in picks, promoted from exploration to framework: Onboarding A+B hybrid (5 guided steps with a ghost arc building behind); Ideas I4+ unified (arc as hero, 4 live mode panels — try clicking them); The numbers combined blend (already in section ③″ above); Someday updated (photo bg + 'Work optional, X mandatory' as foreground); and the 'work optional X mandatory' theme shown at all three key moments it appears.">
+
+        <DCArtboard id="promo-onb" label="★ Onboarding A+B — 5 guided steps with ghost arc building behind (interactive)" width={1280} height={780}>
+          <OnbCombined />
+        </DCArtboard>
+
+        <DCArtboard id="promo-ideas" label="★ Ideas I4+ unified — Arc as hero, 4 live mode panels. Click each mode button, then interact." width={1340} height={900}>
+          <IdeasCombined />
+        </DCArtboard>
+
+        <DCArtboard id="promo-someday" label="★ Someday — photo bg + foreground copy. Try the activity selector." width={1060} height={680}>
+          <SomedayUpdated />
+        </DCArtboard>
+
+        <DCArtboard id="promo-theme" label="'Work optional, X mandatory' — the theme at 3 moments (plan / onboarding / someday)" width={1280} height={680}>
+          <WorkOptionalTheme />
+        </DCArtboard>
+
+      </DCSection>
+
+      <DCSection
+        id="onboarding"
+        title="① Onboarding — three entry frameworks to compare"
+        subtitle="You asked to explore a few onboarding approaches; here are three, ordered by how much they ask up front. All feed the same model and hand off to the Shape-it drawer on the Plan for the ~40 deeper inputs. Inputs use the stepper control (− value +) you picked. Low-fi on purpose — we're agreeing on structure & flow before any pastel polish.">
+        <DCArtboard id="onb-a" label="A · Two answers — ask the least, show a plan instantly (the brief's ideal)" width={1180} height={760}>
+          <OnbTwoAnswers />
+        </DCArtboard>
+        <DCArtboard id="onb-b" label="B · Guided steps — short 5-step wizard, one question at a time" width={1180} height={760}>
+          <OnbGuided />
+        </DCArtboard>
+        <DCArtboard id="onb-c" label="C · Single scroll, live plan — all inputs left, Arc reacts on the right" width={1280} height={780}>
+          <OnbLive />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="ideas"
+        title="② Ideas — all-in-one (suggestions + stackable gallery + comparison board)"
+        subtitle="One tab holding all three things you asked for. Top: suggestions the app surfaces ('Horizon noticed…'). Left: a gallery of what-if cards you toggle and STACK. Right: a live comparison board showing today's plan vs the stacked result, with deltas and a two-line overlay. 'Make this my plan' commits the stack.">
+        <DCArtboard id="ideas-main" label="Ideas tab — stack what-ifs, compare against today, commit" width={1340} height={880}>
+          <IdeasTab />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="ideas-alts"
+        title="②′ Ideas — alternative paradigms to compare"
+        subtitle="Not variations of the stack-and-compare board above — four fundamentally different interaction models for 'explore your future.' Each leads with a different verb: ask, sculpt, compare, plan. Judge them against the all-in-one and against each other; we can also combine (e.g. an Ask bar on top of any of them).">
+        <DCArtboard id="ideas-ask" label="I1 · Ask Horizon — conversational copilot (type a what-if, get an answer)" width={1340} height={880}>
+          <IdeasAsk />
+        </DCArtboard>
+        <DCArtboard id="ideas-dial" label="I2 · The Dial Lab — direct-manipulation sandbox, one live future" width={1340} height={880}>
+          <IdeasDial />
+        </DCArtboard>
+        <DCArtboard id="ideas-duel" label="I3 · Head to head — two scenarios, full side-by-side duel" width={1340} height={880}>
+          <IdeasDuel />
+        </DCArtboard>
+        <DCArtboard id="ideas-timeline" label="I4 · Life Timeline — drag life events onto your years" width={1340} height={880}>
+          <IdeasTimeline />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="numbers"
+        title="③ The numbers — trimmed headlines + ƒ thread-pull"
+        subtitle="Calm by default: three plain-English headlines (where money goes / what you're building / income for life). Pull the ƒ thread on any to reveal its derivation — and pulls nest, so each line can itself be expanded. Section 1 is shown pulled-open to demonstrate; 2 and 3 are collapsed.">
+        <DCArtboard id="numbers-main" label="The numbers — three headlines, section 1 expanded via ƒ thread-pull" width={1340} height={880}>
+          <NumbersTab />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="numbers-premium"
+        title="③′ The numbers — premium directions to explore"
+        subtitle="You felt the trimmed-headlines version was a touch too simple for something people pay for. Here are four richer directions, each premium on a DIFFERENT axis — pick one, or we blend (e.g. Statement as the default view with a 'Year by year' and 'Money flow' tab). All keep the ƒ thread-pull as the way to go deeper; they differ in what greets you first.">
+        <DCArtboard id="num-p1" label="P1 · Money Flow — a sankey of every dollar (VISUAL premium)" width={1340} height={880}>
+          <NumPremFlow />
+        </DCArtboard>
+        <DCArtboard id="num-p2" label="P2 · Optimizer — 'what we actively do for you' + $ value (INTELLIGENCE premium)" width={1340} height={880}>
+          <NumPremOptimizer />
+        </DCArtboard>
+        <DCArtboard id="num-p3" label="P3 · Year by year — the full age-by-age projection (DEPTH premium)" width={1340} height={880}>
+          <NumPremYearly />
+        </DCArtboard>
+        <DCArtboard id="num-p4" label="P4 · Statement — a private-wealth statement (EDITORIAL premium)" width={1340} height={880}>
+          <NumPremStatement />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="numbers-combined"
+        title="③″ The numbers — the blend (recommended)"
+        subtitle="Putting it together the way you described: the Optimizer value-banner pinned on top, the Statement as the default tab, and Year-by-year + Money-flow one tab away. The Statement now has the original #3 proportion bars woven into each column — so it keeps its editorial authority but gains the at-a-glance visual you liked. The tabs are live — click them on the first artboard.">
+        <DCArtboard id="num-combined" label="★ Combined — pinned banner + tabbed [Statement · Year by year · Money flow] · tabs are live" width={1340} height={900}>
+          <NumCombined />
+        </DCArtboard>
+        <DCArtboard id="num-stmt-bars" label="Statement + bars — the new #3 (editorial authority + the bar visual you liked)" width={1340} height={880}>
+          <NumStatementBars />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="someday"
+        title="④ Someday moment — with & without the backdrop"
+        subtitle="The emotional beat from Direction D, carried into the new system — shown both ways so you can judge. WITH: an auto/curated/your-photo backdrop behind the for-life number. WITHOUT: the same beat, type-led, zero image cost. The backdrop becomes a Settings toggle (Auto · Pick one · Yours · Off), exactly like Horizon style.">
+        <DCArtboard id="someday-with" label="WITH backdrop — image-led, more emotional" width={760} height={560}>
+          <SomedayWith />
+        </DCArtboard>
+        <DCArtboard id="someday-without" label="WITHOUT backdrop — type-led, calmer, free" width={760} height={560}>
+          <SomedayWithout />
+        </DCArtboard>
+      </DCSection>
+
+    </DesignCanvas>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

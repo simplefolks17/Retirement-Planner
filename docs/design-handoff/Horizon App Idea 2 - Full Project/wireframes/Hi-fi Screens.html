@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Horizon App Idea 2 — Hi-fi Screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #e9e4da; height: 100%; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#f7efe6"/>
+    <path d="M12 72 C34 58 50 38 66 34 C76 32 82 42 88 58" stroke="#cd6f4f" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <circle cx="12" cy="72" r="3.5" fill="#7a9b74"/>
+    <circle cx="44" cy="52" r="3.5" fill="#cd6f4f"/>
+    <circle cx="66" cy="34" r="3.5" fill="#cd6f4f"/>
+    <circle cx="88" cy="58" r="3.5" fill="#df9a52"/>
+    <rect x="8" y="14" width="84" height="10" rx="3" fill="#f0e8de"/>
+    <rect x="8" y="14" width="52" height="10" rx="3" fill="#cd6f4f" opacity="0.4"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="frames-pastel.jsx"></script>
+<script type="text/babel" src="frames-graph.jsx"></script>
+<script type="text/babel" src="frames-hifi-screens.jsx"></script>
+
+<script type="text/babel">
+const L = window.GPALS.apricot.light;
+const D = window.GPALS.periwinkle.dark;
+
+function App() {
+  return (
+    <DesignCanvas>
+
+      <DCSection
+        id="playground"
+        title="★ Playground — all four screens, any palette, Light · Dark · Auto"
+        subtitle="The full hi-fi set in one place. Use the top bar to switch between Onboarding / Ideas / The numbers / Someday, pick a palette swatch, and toggle Light · Dark · Auto. All four screens are fully interactive — click through onboarding steps, click mode buttons on Ideas, switch tabs on Numbers, try the activity chips on Someday.">
+        <DCArtboard id="play" label="★ Playground · Onboarding · Ideas · Numbers · Someday × palette × theme" width={1340} height={900}>
+          <HiFiPlayground />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="screens"
+        title="The four screens, side by side · Apricot light"
+        subtitle="Each screen at its natural proportion, all in Apricot light. Scroll right to compare across the four. The palette and theme are hardcoded here — use the Playground above for live switching.">
+        <DCArtboard id="onb-hifi" label="Onboarding — 5 steps, ghost Arc materialises behind. Click Next." width={1280} height={760}>
+          <HiFiOnboarding t={L} />
+        </DCArtboard>
+        <DCArtboard id="ideas-hifi" label="Ideas — Arc hero + 4 live mode panels + dotted what-if overlay." width={1340} height={820}>
+          <HiFiIdeas t={L} />
+        </DCArtboard>
+        <DCArtboard id="numbers-hifi" label="The numbers — Optimizer banner + Statement · Year by year · Money flow tabs." width={1340} height={820}>
+          <HiFiNumbers t={L} />
+        </DCArtboard>
+        <DCArtboard id="someday-hifi" label="Someday — photo bg + 'Work optional. X mandatory.' Try the activity chips." width={1060} height={680}>
+          <HiFiSomeday t={L} />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="dark"
+        title="Dark themes · Periwinkle dark"
+        subtitle="The same four screens on Periwinkle dark — confirming the hi-fi components recolor cleanly with the PALS token system and all three font families (DM Sans, IBM Plex Mono, Newsreader) hold across both themes.">
+        <DCArtboard id="onb-dark" label="Onboarding · Periwinkle dark" width={1280} height={760}>
+          <HiFiOnboarding t={D} />
+        </DCArtboard>
+        <DCArtboard id="ideas-dark" label="Ideas · Periwinkle dark" width={1340} height={820}>
+          <HiFiIdeas t={D} />
+        </DCArtboard>
+        <DCArtboard id="numbers-dark" label="The numbers · Periwinkle dark" width={1340} height={820}>
+          <HiFiNumbers t={D} />
+        </DCArtboard>
+        <DCArtboard id="someday-dark" label="Someday · Periwinkle dark" width={1060} height={680}>
+          <HiFiSomeday t={D} />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="palette-check"
+        title="Someday across warm palettes · confirming 'work optional' type reads"
+        subtitle="The Someday screen has the darkest overlay, so the type needs to work across all palette temperatures. Checking the three warmest palettes here.">
+        <DCArtboard id="sd-apricot" label="Someday · Apricot light" width={1060} height={540}>
+          <HiFiSomeday t={window.GPALS.apricot.light} />
+        </DCArtboard>
+        <DCArtboard id="sd-honey" label="Someday · Honey dark" width={1060} height={540}>
+          <HiFiSomeday t={window.GPALS.honey.dark} />
+        </DCArtboard>
+        <DCArtboard id="sd-sage" label="Someday · Sage light" width={1060} height={540}>
+          <HiFiSomeday t={window.GPALS.sage.light} />
+        </DCArtboard>
+      </DCSection>
+
+    </DesignCanvas>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

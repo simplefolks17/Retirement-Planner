@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Retirement Planner — UX Redesign Directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; height: 100%; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#0e1116"/>
+    <circle cx="30" cy="30" r="6" fill="#5fa777"/>
+    <rect x="30" y="46" width="44" height="5" rx="2.5" fill="#283039"/>
+    <rect x="30" y="56" width="34" height="5" rx="2.5" fill="#283039"/>
+    <line x1="26" y1="74" x2="74" y2="74" stroke="#39424f" stroke-width="2"/>
+    <circle cx="34" cy="74" r="4" fill="#5fa777"/><circle cx="50" cy="74" r="3" fill="#39424f"/><circle cx="66" cy="74" r="3" fill="#39424f"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="image-slot.js"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="frames-shared.jsx"></script>
+<script type="text/babel" src="frames-overview.jsx"></script>
+<script type="text/babel" src="frames-a.jsx"></script>
+<script type="text/babel" src="frames-b.jsx"></script>
+<script type="text/babel" src="frames-c.jsx"></script>
+<script type="text/babel" src="frames-cplus.jsx"></script>
+<script type="text/babel" src="frames-d.jsx"></script>
+<script type="text/babel" src="frames-e.jsx"></script>
+<script type="text/babel" src="frames-rec.jsx"></script>
+
+<script type="text/babel">
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection id="dir-rec" title="★ Recommended · the consolidated flow" subtitle="The keepers folded into ONE product, now a complete journey: onboarding → home → edit a phase → someday → the numbers. C+ is the calm baseline; D's delight (what-if chips, the someday moment, golden hour) and E's depth (ƒ thread-pull, the Numbers page) are both opt-in. Tagline rotates every 5s. This is the build to take forward — the explorations that led here remain below.">
+        <DCArtboard id="rec-spec" label="Concept · how the three fold together" width={470} height={900}><RecSpec /></DCArtboard>
+        <DCArtboard id="rec-onboard" label="1 · Onboarding · two answers → an instant, real plan" width={1280} height={860}><RecOnboard /></DCArtboard>
+        <DCArtboard id="rec-home" label="2 · Home · C+ calm + D what-ifs + E ƒ thread-pull (tap chips & ƒ)" width={1340} height={1000}><RecHome /></DCArtboard>
+        <DCArtboard id="rec-phase" label="3 · Edit a phase · Shape it / Read it (full controls)" width={1340} height={880}><RecPhase /></DCArtboard>
+        <DCArtboard id="rec-moment" label="4 · Your someday · scene follows the tagline (auto) / curated / Premium / off" width={1100} height={620}><RecMoment /></DCArtboard>
+        <DCArtboard id="rec-numbers" label="5 · The numbers · full statement, reached on purpose" width={1340} height={1900}><RecNumbers /></DCArtboard>
+        <DCArtboard id="rec-phone" label="Consolidated home · on phone" width={390} height={820}><RecPhone /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="overview" title="Audit & three directions" subtitle="Where the current build hurts, the values shared across redesigns, and the three navigation models compared.">
+        <DCArtboard id="audit" label="The audit" width={540} height={800}><OverviewAudit /></DCArtboard>
+        <DCArtboard id="principles" label="Shared principles" width={540} height={800}><OverviewPrinciples /></DCArtboard>
+        <DCArtboard id="matrix" label="Directions compared" width={860} height={800}><OverviewMatrix /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="dir-a" title="A · The Check-In" subtitle="Answer-first, no chrome. Conversational first-run, very aggressive disclosure — a 2-minute glance, then back to life.">
+        <DCArtboard id="a-spec" label="Concept" width={470} height={840}><ASpec /></DCArtboard>
+        <DCArtboard id="a-onb1" label="First run · question" width={390} height={820}><AOnboard1 /></DCArtboard>
+        <DCArtboard id="a-onb2" label="First run · a choice" width={390} height={820}><AOnboard2 /></DCArtboard>
+        <DCArtboard id="a-home" label="Home · on track" width={1280} height={840}><AHome /></DCArtboard>
+        <DCArtboard id="a-phone" label="Home · on phone" width={390} height={820}><AHomePhone /></DCArtboard>
+        <DCArtboard id="a-edit" label="Expand a card + edit sheet (input ↔ output)" width={1280} height={840}><AExpanded /></DCArtboard>
+        <DCArtboard id="a-deep" label="Deep · a plain-language idea" width={1280} height={840}><ADeep /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="dir-b" title="B · Plan & Workspace" subtitle="Two-pane command center: a topic rail replaces the tabs, results fill the canvas, inputs live in a drawer and collapse to chips. Moderate disclosure.">
+        <DCArtboard id="b-spec" label="Concept" width={470} height={860}><BSpec /></DCArtboard>
+        <DCArtboard id="b-first" label="First run · smart defaults" width={1340} height={860}><BFirstRun /></DCArtboard>
+        <DCArtboard id="b-home" label="Overview · on track" width={1340} height={860}><BHome /></DCArtboard>
+        <DCArtboard id="b-edit" label="Editing a topic (input ↔ output)" width={1340} height={860}><BEdit /></DCArtboard>
+        <DCArtboard id="b-acct" label="Accounts · advanced collapsed" width={1340} height={860}><BAccounts /></DCArtboard>
+        <DCArtboard id="b-deep" label="Deep · strategy comparison" width={1340} height={860}><BDeep /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="dir-c" title="C · The Journey" subtitle="The whole plan as one life timeline — today on the left, the finish at 90. Each phase opens on demand with its own edit + read sides.">
+        <DCArtboard id="c-spec" label="Concept" width={470} height={860}><CSpec /></DCArtboard>
+        <DCArtboard id="c-home" label="Timeline · on track" width={1340} height={860}><CHome /></DCArtboard>
+        <DCArtboard id="c-now" label="Phase open · Building it (input ↔ output)" width={1340} height={860}><CPhaseNow /></DCArtboard>
+        <DCArtboard id="c-conv" label="Deep · the conversion window" width={1340} height={860}><CPhaseConvert /></DCArtboard>
+        <DCArtboard id="c-phone" label="Timeline · on phone" width={390} height={820}><CPhone /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="dir-cplus" title="C+ · The reframed Journey" subtitle="Your direction, built: C's timeline spine warmed with A's tone and B's instant-plan onboarding — with the mortality read engineered out. The progress bar is shown four ways to compare.">
+        <DCArtboard id="cp-spec" label="Concept" width={470} height={900}><CpSpec /></DCArtboard>
+        <DCArtboard id="cp-onb" label="Onboarding · two answers → instant plan" width={1280} height={860}><CpOnboard /></DCArtboard>
+        <DCArtboard id="cp-home" label="Timeline home · reframed (open-ended, warm)" width={1340} height={880}><CpHome /></DCArtboard>
+        <DCArtboard id="cp-prog" label="Progress bar · four treatments compared" width={940} height={900}><CpProgress /></DCArtboard>
+        <DCArtboard id="cp-phase" label="Phase open · Shape it / Read it (warmed)" width={1340} height={880}><CpPhase /></DCArtboard>
+        <DCArtboard id="cp-phone" label="Journey · on phone (open-ended)" width={390} height={820}><CpPhone /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="dir-d" title="D · The living Horizon" subtitle="C+ pushed further: a what-if playground, numbers that animate, a golden-hour timeline, and a 'future self' moment with your own photo. Compare it head-to-head with C+ above.">
+        <DCArtboard id="d-spec" label="Concept · what's new vs C+" width={470} height={900}><DSpec /></DCArtboard>
+        <DCArtboard id="d-home" label="Living home · tap the what-if chips" width={1340} height={880}><DHome /></DCArtboard>
+        <DCArtboard id="d-moment" label="Your someday · scene follows the tagline (auto) / curated / Premium / off" width={1100} height={620}><DMoment /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="dir-e" title="E · The full picture" subtitle="For the number-hawks: the deep financial detail the old app had — taxes, Social Security, Roth conversions, drawdown — reached two calm ways (pull-the-thread ƒ, and a quiet 'Numbers' door) so casual users never trip over it.">
+        <DCArtboard id="e-spec" label="Concept · discoverable but not in the way" width={470} height={900}><ESpec /></DCArtboard>
+        <DCArtboard id="e-doorway" label="The doorway · tap ƒ to unfold the math inline" width={1340} height={880}><EDoorway /></DCArtboard>
+        <DCArtboard id="e-ledger" label="The numbers · full statement (taxes → drawdown)" width={1340} height={1900}><ELedger /></DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

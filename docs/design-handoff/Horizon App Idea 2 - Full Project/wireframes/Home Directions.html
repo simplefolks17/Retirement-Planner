@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Horizon — Home Aesthetic Directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; height: 100%; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body style="background-color: rgb(169, 161, 144); font-family: Newsreader">
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#0e1116"/>
+    <circle cx="72" cy="32" r="11" fill="#c8a86a"/>
+    <path d="M10 70 C30 60 50 48 90 36 L90 84 L10 84 Z" fill="#21384a"/>
+    <path d="M10 76 C34 70 56 60 90 50" stroke="#5fa777" stroke-width="2.5" fill="none"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="frames-sketch.jsx"></script>
+<script type="text/babel" src="frames-pastel.jsx"></script>
+
+<script type="text/babel">
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection id="settings" title="Settings & theming · all options stay available" subtitle="Nobody has to pick one — the theme lives in Settings: six accent colors (incl. yellow), Light/Dark/Auto, a Horizon style, and now a Horizon marker (what sits at the end of the road). Everything has a live preview, and the app remembers the choice. The playground mirrors the same controls as a floating bar.">
+        <DCArtboard id="settings" label="★ Settings · Appearance — accent, theme, graph style & end-marker, all live" width={1240} height={948}><SettingsScreen /></DCArtboard>
+        <DCArtboard id="themed" label="★ Playground · switch accent / graph / marker / Light·Dark·Auto and drag the horizon" width={1240} height={880}><ThemedHome /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="endmarker" title="What sits at the end of the road · five ideas to replace the sun" subtitle="The literal sun read a bit videogame / utopia, so here are alternatives — all keep a soft warm glow so the good years still feel warm, but swap the motif. A cabin (a place of your own) is the current default; a destination flag, a north-star beacon, a beach umbrella, or a pure abstract dawn glow are one tap away in Settings. Tell me which lands — I can also drop in a real illustrated asset if you have one.">
+        <DCArtboard id="end-cabin" label="Cabin · a place of your own — warm, human, on-theme (default)" width={760} height={420}><HorizonCard endcap="cabin" note="the someday place" /></DCArtboard>
+        <DCArtboard id="end-flag" label="Flag · a destination planted at the summit — navigational, grown-up" width={760} height={420}><HorizonCard endcap="flag" note="you arrive here" /></DCArtboard>
+        <DCArtboard id="end-beacon" label="Beacon · a north-star to steer by — abstract, aspirational" width={760} height={420}><HorizonCard endcap="beacon" note="your guiding goal" /></DCArtboard>
+        <DCArtboard id="end-umbrella" label="Umbrella · the good life — playful, a touch of leisure" width={760} height={420}><HorizonCard endcap="umbrella" note="kick back" /></DCArtboard>
+        <DCArtboard id="end-dawn" label="Dawn · pure abstract glow, no object — calmest, most premium" width={760} height={420}><HorizonCard endcap="dawn" note="just warm light" /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="graphstyles" title="The hero graph · now a readable chart, three styles to compare" subtitle="The graph is rebuilt as a real value chart: a $ axis with gridlines on the left and an age axis along the bottom, so you can read your balance at any age — not just watch a line rise. All three styles keep the gridlines; they differ only in fill/line richness. Soft = calm; Vivid = brighter fill; Glow = a luminous line (the default).">
+        <DCArtboard id="g-soft" label="Soft · calm, low-contrast fill — still fully readable" width={1180} height={720}><PastelHome t={PALS.apricot.light} gid="gs1" viz="soft" /></DCArtboard>
+        <DCArtboard id="g-vivid" label="Vivid · brighter accent fill" width={1180} height={720}><PastelHome t={PALS.apricot.light} gid="gs2" viz="vivid" /></DCArtboard>
+        <DCArtboard id="g-glow" label="Glow · luminous line that shines up the climb (default)" width={1180} height={720}><PastelHome t={PALS.apricot.light} gid="gs3" viz="glow" /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="pastel" title="The six palettes · light & dark" subtitle="Comfort-color directions for a younger audience — soft, friendly, Apple/Claude-ish. Each shown on the full home; the graph picks up the accent. Apricot and Honey lead the warm side; Sage and Slate are the calm safe options; Blush and Periwinkle add personality.">
+        <DCArtboard id="p-apricot" label="Apricot · warm clay + cream (light)" width={1180} height={720}><PastelHome t={PALS.apricot.light} gid="pa" /></DCArtboard>
+        <DCArtboard id="p-honey" label="Honey · golden yellow (light) — the requested yellow" width={1180} height={720}><PastelHome t={PALS.honey.light} gid="ph2" /></DCArtboard>
+        <DCArtboard id="p-blush" label="Blush · soft rose (light)" width={1180} height={720}><PastelHome t={PALS.blush.light} gid="pb" /></DCArtboard>
+        <DCArtboard id="p-sage" label="Sage · fresh green + peach (light)" width={1180} height={720}><PastelHome t={PALS.sage.light} gid="ps" /></DCArtboard>
+        <DCArtboard id="p-peri" label="Periwinkle · soft lavender + mint (light)" width={1180} height={720}><PastelHome t={PALS.periwinkle.light} gid="pp" /></DCArtboard>
+        <DCArtboard id="p-slate" label="Slate · cool neutral, understated (light)" width={1180} height={720}><PastelHome t={PALS.slate.light} gid="psl" /></DCArtboard>
+        <DCArtboard id="p-honey-dark" label="Honey · dark mode — warm amber, not black" width={1180} height={720}><PastelHome t={PALS.honey.dark} gid="phd" /></DCArtboard>
+        <DCArtboard id="p-periwinkle-dark" label="Periwinkle · dark mode — soft indigo dusk" width={1180} height={720}><PastelHome t={PALS.periwinkle.dark} gid="ppd" /></DCArtboard>
+        <DCArtboard id="p-apricot-dark" label="Apricot · dark mode — warm espresso, not black" width={1180} height={720}><PastelHome t={PALS.apricot.dark} gid="pad" /></DCArtboard>
+        <DCArtboard id="editorial-v2" label="Editorial, refined · smaller type, centered column, horizon demoted to a slim footer" width={1180} height={720}><EditorialV2 /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="singles" title="Five routes · one axis each" subtitle="Quick sketches to feel the mood — copy & numbers are placeholder. Each changes a different lever: A the hero object, B the mood, C the composition, D the emotional presence, E the interaction.">
+        <DCArtboard id="sk-a" label="A · dark + horizon-as-hero — the chart IS the journey" width={1180} height={760}><SkA /></DCArtboard>
+        <DCArtboard id="sk-b" label="B · warm paper + dashboard — same bones, warmer skin & a serif" width={1180} height={760}><SkB /></DCArtboard>
+        <DCArtboard id="sk-c" label="C · dark + editorial — big type, asymmetry, pull-quote numbers" width={1180} height={760}><SkC /></DCArtboard>
+        <DCArtboard id="sk-d" label="D · dusk + ambient glass — the someday scene becomes the home" width={1180} height={760}><SkD /></DCArtboard>
+        <DCArtboard id="sk-e" label="E · conversational — talk to your future self; chips are the main event" width={1180} height={760}><SkE /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="combos" title="Two combos" subtitle="A+B is my recommended pairing — warm the skin and make the horizon the hero, both pure additions to the flow you already like. A+B+C goes all the way to an art-directed spread.">
+        <DCArtboard id="sk-ab" label="A+B · paper + horizon-as-hero — warm, airy, a clear focal object (recommended)" width={1180} height={760}><SkAB /></DCArtboard>
+        <DCArtboard id="sk-abc" label="A+B+C · paper + horizon + editorial — the fullest, most art-directed expression" width={1180} height={760}><SkABC /></DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

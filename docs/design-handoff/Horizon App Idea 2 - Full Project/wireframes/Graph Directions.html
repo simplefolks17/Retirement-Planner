@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Horizon — Hero Graph Directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; height: 100%; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#f7efe6"/>
+    <path d="M14 72 C36 58 52 40 66 38 C76 37 82 46 86 60" stroke="#cd6f4f" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <circle cx="14" cy="72" r="4" fill="#7a9b74"/>
+    <circle cx="46" cy="55" r="4" fill="#cd6f4f"/>
+    <circle cx="66" cy="38" r="4" fill="#cd6f4f"/>
+    <circle cx="86" cy="60" r="4" fill="#df9a52"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="frames-pastel.jsx"></script>
+<script type="text/babel" src="frames-graph.jsx"></script>
+
+<script type="text/babel">
+function App() {
+  return (
+    <DesignCanvas>
+
+      <DCSection
+        id="playground"
+        title="Playground · palette × theme, with 5-view toggle built in"
+        subtitle="The fastest way to compare. The chart toggle (Arc / Sources / Decades / Scenarios / Stations) lives inside the home screen itself — pick a palette and theme above, then flip between views. Everything you approved is preserved: palettes, light/dark/glow, settings page. Two fixes apply everywhere: the plot is inset so start/end ages and their pills never clip, and the floating horizon marker is replaced by content anchored inside the chart.">
+        <DCArtboard id="play" label="★ Playground — palette × Light · Dark · Auto, chart toggle in-context" width={1280} height={900}>
+          <GraphPlayground />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="concepts"
+        title="Four views, side by side"
+        subtitle="Arc is the default and the primary view — the honest life-curve with milestone stops (Today, First Million, Second Million, Retire, For Life). Stations has been retired; its milestone idea is now fully absorbed into Arc. Columns uses green for accumulation and warm for retirement across every palette.">
+        <DCArtboard id="c-arc" label="Arc — life curve with milestone stops (combines #1 + #7)" width={860} height={530}>
+          <GraphCard which="arc" />
+        </DCArtboard>
+        <DCArtboard id="c-stacked" label="Sources — what you put in vs what the market earned" width={860} height={530}>
+          <GraphCard which="stacked" />
+        </DCArtboard>
+        <DCArtboard id="c-columns" label="Decades — five-year bars, green accumulate / warm retire" width={860} height={530}>
+          <GraphCard which="columns" />
+        </DCArtboard>
+        <DCArtboard id="c-band" label="Scenarios — expected line inside lean ↔ strong cone" width={860} height={530}>
+          <GraphCard which="band" />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="contrast"
+        title="Columns contrast check · warm palettes vs cool"
+        subtitle="The earlier issue: apricot and honey had two similarly warm hues for pre/post retirement bars, making the distinction hard to read. Now accumulation is always t.good (green/teal) and retirement is t.warm — universally high-contrast regardless of palette temperature.">
+        <DCArtboard id="col-apricot-l" label="Columns · Apricot light (was the problem palette)" width={860} height={400}>
+          <GraphCard which="columns" t={window.PALS.apricot.light} H={300} />
+        </DCArtboard>
+        <DCArtboard id="col-honey-l" label="Columns · Honey light (also warm)" width={860} height={400}>
+          <GraphCard which="columns" t={window.PALS.honey.light} H={300} />
+        </DCArtboard>
+        <DCArtboard id="col-apricot-d" label="Columns · Apricot dark" width={860} height={400}>
+          <GraphCard which="columns" t={window.PALS.apricot.dark} H={300} />
+        </DCArtboard>
+        <DCArtboard id="col-periwinkle-d" label="Columns · Periwinkle dark (reference — always worked)" width={860} height={400}>
+          <GraphCard which="columns" t={window.PALS.periwinkle.dark} H={300} />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        id="dark"
+        title="Dark themes across concepts"
+        subtitle="The Arc milestones, Stacked bands, and Stations route all recolor with the palette. No concept relies on specific light/dark hues — everything derives from t.good, t.accent, t.warm tokens.">
+        <DCArtboard id="d-arc-hw" label="Arc · Honey dark" width={860} height={530}>
+          <GraphCard which="arc" t={window.PALS.honey.dark} />
+        </DCArtboard>
+        <DCArtboard id="d-band-pw" label="Scenarios · Periwinkle dark" width={860} height={530}>
+          <GraphCard which="band" t={window.PALS.periwinkle.dark} />
+        </DCArtboard>
+        <DCArtboard id="d-stn-sw" label="Stations · Slate dark" width={860} height={530}>
+          <GraphCard which="stations" t={window.PALS.slate.dark} />
+        </DCArtboard>
+        <DCArtboard id="d-stk-sg" label="Sources · Sage dark" width={860} height={530}>
+          <GraphCard which="stacked" t={window.PALS.sage.dark} />
+        </DCArtboard>
+      </DCSection>
+
+    </DesignCanvas>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
