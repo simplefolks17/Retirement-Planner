@@ -112,7 +112,7 @@ export default function SettingsScreen({ t, activity, setActivity }) {
           <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>
             About
           </div>
-          <p style={{ font: `400 13px ${HF}`, color: t.mut, lineHeight: 1.6, maxWidth: 460, margin: 0 }}>
+          <p style={{ font: `400 13px/1.6 ${HF}`, color: t.mut, maxWidth: 460, margin: 0 }}>
             Horizon is a retirement planning tool that shows you the complete picture of your financial life —
             from today through retirement and beyond. All calculations use 2026 IRS limits.
           </p>

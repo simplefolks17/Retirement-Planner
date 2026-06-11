@@ -55,7 +55,7 @@ function ScenStatCard({ t, label, baseVal, scenVal, warm }) {
   );
 }
 
-export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3 }) {
+export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, isMobile = false }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, effectiveExpenses, balAt90,
@@ -168,8 +168,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3 })
         )}
       </div>
 
-      {/* arc hero with scenario overlay */}
-      <div style={{ flexShrink: 0 }}>
+      {/* arc hero with scenario overlay — grows to fill, so no dead bottom gap */}
+      <div style={{ flex: "1 1 0", display: "flex", flexDirection: "column", minHeight: 200 }}>
         <ArcGraph
           t={t}
           chartData={chartData}
@@ -177,7 +177,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3 })
           retirementAge={retirementAge}
           lifeExpect={lifeExpect}
           contribSeries={contribSeries}
-          height={240}
+          fillHeight
+          compact={isMobile}
           glow={glow}
           strokeWidth={strokeWidth}
           activeView="arc"
@@ -187,14 +188,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3 })
       </div>
 
       {/* mode buttons */}
-      <div style={{ display: "flex", gap: 7, margin: "10px 0 0", flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: 7, margin: "10px 0 0", flexShrink: 0, flexWrap: isMobile ? "wrap" : "nowrap" }}>
         {modeButtons.map(({ k, l }) => {
           const on = mode === k;
           return (
             <div key={k}
               onClick={() => { setMode(on ? null : k); if (!on) clearScen(); }}
               style={{
-                flex: 1, padding: "9px 10px", borderRadius: 10,
+                flex: isMobile ? "1 1 45%" : 1, padding: "9px 10px", borderRadius: 10,
                 cursor: "pointer", textAlign: "center",
                 border: `1px solid ${on ? t.accent : t.line2}`,
                 background: on ? `${t.accent}14` : t.surf,
@@ -311,7 +312,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3 })
                         width: 8, height: 8, borderRadius: 999,
                         background: c, display: "block", marginBottom: 6
                       }} />
-                      <div style={{ font: `600 14px ${HF}`, color: t.ink, lineHeight: 1.05 }}>{label}</div>
+                      <div style={{ font: `600 14px/1.05 ${HF}`, color: t.ink }}>{label}</div>
                       <div style={{ font: `400 12px ${HF}`, color: t.mut, marginTop: 3 }}>{sub}</div>
                     </div>
                   );

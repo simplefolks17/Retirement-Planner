@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 
@@ -47,78 +47,100 @@ function StmtCol({ t, title, items, bar }) {
   );
 }
 
-// ── Income Sankey ─────────────────────────────────────────────────────────────
-// Pure SVG flow diagram: Gross income → Tax | Savings | Take-home
-function IncomeSankey({ t, income, tax, save, keep }) {
-  const total = Math.max(tax + save + keep, 1);
-  const H = 170;
-  const NW = 60;     // node width
-  const SVG_W = 540;
-  const RX = SVG_W - NW;
-  const MX = SVG_W / 2;
+// ── Income Waterfall ──────────────────────────────────────────────────────────
+// Where your paycheck goes, shown as a running-balance waterfall:
+// Gross income, then each deduction (Tax, Savings) drops the balance until
+// what's left is your take-home. Drawn in measured pixel space so the SVG text
+// labels stay crisp at any width.
+//
+// Take-home is computed here as the RESIDUAL (gross − tax − savings) so the
+// waterfall always reconciles cleanly to 100% of gross. We deliberately don't
+// use the model's `takeHome` value for the bar height: pre-tax savings lowers
+// taxable income, so `takeHome` isn't a literal subtraction off gross and the
+// three pieces wouldn't close. The residual is the honest "cash in your pocket
+// after tax and saving" figure for an allocation view.
+function IncomeWaterfall({ t, income, tax, save }) {
+  const wrapRef = useRef(null);
+  const [w, setW] = useState(520);
 
-  const hTax  = (tax  / total) * H;
-  const hSave = (save / total) * H;
-  const hKeep = H - hTax - hSave; // absorbs rounding drift
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    setW(el.offsetWidth || 520);
+    const ro = new ResizeObserver(e => setW(Math.round(e[0].contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
-  const segs = [
-    { key: "tax",  label: "Tax",       y: 0,            h: hTax,  color: t.line2, amount: tax  },
-    { key: "save", label: "Savings",   y: hTax,         h: hSave, color: t.warm,  amount: save },
-    { key: "keep", label: "Take-home", y: hTax + hSave, h: hKeep, color: t.good,  amount: keep },
+  const H = 300, PADT = 30, PADB = 48;
+  const plotH = H - PADT - PADB;
+  const gross = Math.max(income, 1);
+  const y = v => PADT + plotH * (1 - v / gross);   // value → pixel (axis = gross)
+
+  const COLS = 4;
+  const slot = w / COLS;
+  const barW = Math.min(slot * 0.62, 130);
+  const cx = i => slot * i + slot / 2;             // column centre
+  const bx = i => cx(i) - barW / 2;                // column left edge
+
+  const afterTax  = gross - tax;
+  const keep      = Math.max(afterTax - save, 0);  // residual take-home
+
+  const bars = [
+    { i: 0, label: "Gross income", val: gross, top: gross,    bot: 0,        color: t.accent,  full: true },
+    { i: 1, label: "Tax",          val: tax,   top: gross,    bot: afterTax, color: "#b09070" },
+    { i: 2, label: "Savings",      val: save,  top: afterTax, bot: keep,     color: t.warm },
+    { i: 3, label: "Take-home",    val: keep,  top: keep,     bot: 0,        color: t.good,    full: true },
   ];
 
-  // Filled bezier band — control points at MX keep same-y edges straight
-  const flowPath = (y1, y2) =>
-    `M ${NW} ${y1} C ${MX} ${y1} ${MX} ${y1} ${RX} ${y1}` +
-    ` L ${RX} ${y2} C ${MX} ${y2} ${MX} ${y2} ${NW} ${y2} Z`;
+  // dashed connectors link each running-balance level across the gap
+  const connectors = [
+    { yv: gross,    from: 0 },
+    { yv: afterTax, from: 1 },
+    { yv: keep,     from: 2 },
+  ];
 
-  const fmtK = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
+  const fmtK  = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
+  const pctOf = n => `${Math.round((n / Math.max(income, 1)) * 100)}%`;
 
   return (
-    <div style={{ display: "flex", gap: 14, alignItems: "stretch", width: "100%", flex: 1, minWidth: 0 }}>
-      {/* left label */}
-      <div style={{
-        display: "flex", flexDirection: "column", justifyContent: "center",
-        alignItems: "center", width: 86, gap: 4, flexShrink: 0,
-      }}>
-        <span style={{ font: `600 11px ${HF}`, color: t.mut, textAlign: "center" }}>Gross income</span>
-        <span style={{ font: `600 17px ${HM}`, color: t.accent }}>{fmtK(income)}</span>
-      </div>
+    <div ref={wrapRef} style={{ width: "100%" }}>
+      <svg viewBox={`0 0 ${w} ${H}`} width="100%" height={H}>
+        {/* baseline */}
+        <line x1={0} y1={y(0)} x2={w} y2={y(0)} stroke={t.line2} strokeWidth={1} />
 
-      {/* SVG */}
-      <svg viewBox={`0 0 ${SVG_W} ${H}`} style={{ flex: 1, height: H, minWidth: 0 }} preserveAspectRatio="none">
-        {/* left node */}
-        <rect x={0} y={0} width={NW} height={H} rx={7} fill={t.ink} fillOpacity={0.10} />
-        {/* flow paths */}
-        {segs.map(s => (
-          <path key={s.key} d={flowPath(s.y, s.y + s.h)} fill={s.color} fillOpacity={0.20} />
+        {/* running-balance connectors */}
+        {connectors.map(c => (
+          <line key={c.from} x1={bx(c.from) + barW} y1={y(c.yv)}
+            x2={bx(c.from + 1)} y2={y(c.yv)}
+            stroke={t.faint} strokeWidth={1} strokeDasharray="3 3" />
         ))}
-        {/* right nodes */}
-        {segs.map(s => (
-          <rect key={s.key + "r"} x={RX} y={s.y + 1} width={NW}
-            height={Math.max(s.h - 2, 2)} rx={5}
-            fill={s.color} fillOpacity={0.58} />
-        ))}
+
+        {bars.map(b => {
+          const yt = y(b.top), yb = y(b.bot);
+          return (
+            <g key={b.label}>
+              <rect x={bx(b.i)} y={yt} width={barW} height={Math.max(yb - yt, 3)} rx={5}
+                fill={b.color} fillOpacity={b.full ? 0.9 : 0.72} />
+              {/* dollar value above the bar */}
+              <text x={cx(b.i)} y={yt - 9} textAnchor="middle"
+                style={{ font: `600 13px ${HM}` }} fill={t.ink}>
+                {(b.full ? "" : "−") + fmtK(b.val)}
+              </text>
+              {/* category + percent below the axis */}
+              <text x={cx(b.i)} y={H - 26} textAnchor="middle"
+                style={{ font: `600 12px ${HF}` }} fill={t.mut}>{b.label}</text>
+              <text x={cx(b.i)} y={H - 10} textAnchor="middle"
+                style={{ font: `400 11px ${HM}` }} fill={t.faint}>{pctOf(b.val)}</text>
+            </g>
+          );
+        })}
       </svg>
-
-      {/* right labels */}
-      <div style={{ width: 88, flexShrink: 0, position: "relative", height: H }}>
-        {segs.map(s => (
-          <div key={s.key} style={{
-            position: "absolute", top: s.y, height: s.h,
-            display: "flex", flexDirection: "column", justifyContent: "center",
-            gap: 1, paddingLeft: 4,
-          }}>
-            {s.h > 22 && <span style={{ font: `600 11px ${HF}`, color: t.ink }}>{s.label}</span>}
-            {s.h > 36 && <span style={{ font: `400 11px ${HM}`, color: t.mut }}>{fmtK(s.amount)}</span>}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
 
-export default function NumbersScreen({ t, props }) {
+export default function NumbersScreen({ t, props, isMobile = false }) {
   const {
     currentIncome, fedTax, ficaTotal, stateTaxAmt, takeHome, currentContribTotal,
     totalAtRet, retVals, effectiveExpenses, balAt90,
@@ -136,6 +158,16 @@ export default function NumbersScreen({ t, props }) {
   const keepPct  = currentIncome > 0 ? Math.round((takeHome / currentIncome) * 100) : 0;
   const taxPct   = currentIncome > 0 ? Math.round((taxTotal / currentIncome) * 100) : 0;
   const savePct  = currentIncome > 0 ? Math.round((currentContribTotal / currentIncome) * 100) : 0;
+
+  // Reconciled allocation for the Money-flow waterfall: take-home is the
+  // residual (gross − tax − savings) so the three pieces sum to exactly 100%
+  // of gross. (keepPct above is the model's take-home over gross, which can
+  // exceed 100% combined with savings because pre-tax saving lowers taxable
+  // income — fine for the statement, but a waterfall must reconcile.)
+  const flowKeep    = Math.max((currentIncome ?? 0) - taxTotal - (currentContribTotal ?? 0), 0);
+  const flowTaxPct  = currentIncome > 0 ? Math.round((taxTotal / currentIncome) * 100) : 0;
+  const flowSavePct = currentIncome > 0 ? Math.round((currentContribTotal / currentIncome) * 100) : 0;
+  const flowKeepPct = currentIncome > 0 ? Math.round((flowKeep / currentIncome) * 100) : 0;
 
   const monthlyHHSS     = Math.round((householdSS ?? 0) / 12);
   const monthlyPortDraw = Math.round(Math.max(0, effectiveExpenses - (householdSS ?? 0)) / 12);
@@ -216,7 +248,7 @@ export default function NumbersScreen({ t, props }) {
 
   return (
     <div style={{
-      flex: 1, padding: "16px 26px 14px",
+      flex: 1, padding: isMobile ? "12px 14px 10px" : "16px 26px 14px",
       display: "flex", flexDirection: "column", overflow: "hidden"
     }}>
       {/* optimizer banner */}
@@ -289,7 +321,7 @@ export default function NumbersScreen({ t, props }) {
               <div style={{ font: `400 11px ${HF}`, color: t.accent, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
                 The bottom line
               </div>
-              <div style={{ font: `700 32px ${SERIF}`, color: t.ink, lineHeight: 1 }}>
+              <div style={{ font: `700 32px/1 ${SERIF}`, color: t.ink }}>
                 {fmtMo(effectiveExpenses)}{" "}
                 <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month, for life</span>
               </div>
@@ -332,7 +364,7 @@ export default function NumbersScreen({ t, props }) {
               <StmtCol t={t} title="Income for life" items={[
                 ["Social Security",   `${fmtMo(householdSS)}/mo`, "3",  false],
                 ["Portfolio draw",    `$${monthlyPortDraw.toLocaleString()}/mo`, null, false],
-                ["Safe rate",         `${Math.round(withdrawalRate * 100 * 10) / 10}%`, null, false],
+                ["Safe rate",         `${(Math.round(withdrawalRate * 10) / 10).toFixed(1)}%`, null, false],
                 ["Runs dry at",       runsOutLabel,  null, false],
                 ["Total monthly",     `$${monthlyTotal.toLocaleString()}/mo`, null, true],
               ]} bar={{
@@ -431,23 +463,27 @@ export default function NumbersScreen({ t, props }) {
 
         {/* ── Money flow ── */}
         {tab === "flow" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, justifyContent: "center" }}>
             <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase" }}>
               Where your paycheck goes
             </div>
-            <IncomeSankey
-              t={t}
-              income={currentIncome ?? 0}
-              tax={(fedTax ?? 0) + (ficaTotal ?? 0) + (stateTaxAmt ?? 0)}
-              save={currentContribTotal ?? 0}
-              keep={takeHome ?? 0}
-            />
+            <div style={{ maxWidth: 620, width: "100%", alignSelf: "center" }}>
+              <IncomeWaterfall
+                t={t}
+                income={currentIncome ?? 0}
+                tax={taxTotal}
+                save={currentContribTotal ?? 0}
+              />
+            </div>
+            <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", textAlign: "center" }}>
+              Of every dollar you earn, {flowKeepPct}% comes home, {flowSavePct}% builds your future, {flowTaxPct}% goes to tax.
+            </div>
             {/* legend chips */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, justifyContent: "center" }}>
               {[
-                ["Tax",       t.line2, `${taxPct}%`],
-                ["Savings",   t.warm,  `${savePct}%`],
-                ["Take-home", t.good,  `${keepPct}%`],
+                ["Tax",       "#b09070", `${flowTaxPct}%`],
+                ["Savings",   t.warm,   `${flowSavePct}%`],
+                ["Take-home", t.good,   `${flowKeepPct}%`],
               ].map(([label, c, pct]) => (
                 <span key={label} style={{
                   display: "flex", alignItems: "center", gap: 6,

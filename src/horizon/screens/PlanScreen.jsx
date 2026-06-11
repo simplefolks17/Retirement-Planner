@@ -49,8 +49,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       }}>
         <div>
           <div style={{
-            font: `600 ${isMobile ? "20px" : "28px"} ${HF}`, color: t.ink,
-            letterSpacing: "-0.025em", lineHeight: 1.1
+            font: `600 ${isMobile ? "20px" : "28px"}/1.1 ${HF}`, color: t.ink,
+            letterSpacing: "-0.025em"
           }}>
             {isSustainable
               ? `On track to retire at ${retirementAge}.`
@@ -67,7 +67,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{progressLabel}</span>
             <span style={{ font: `600 11.5px ${HF}`, color: progressColor }}>
-              {isSustainable ? "↗ gaining" : withdrawalRate <= 0.04 ? "↗ on target" : "↗ adjust"}
+              {isSustainable ? "↗ gaining" : withdrawalRate <= 4 ? "↗ on target" : "↗ adjust"}
             </span>
           </div>
           <div style={{ height: 7, borderRadius: 6, background: t.line, overflow: "hidden" }}>
@@ -79,8 +79,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
         </div>
       </div>
 
-      {/* arc graph */}
-      <div style={{ flex: "1 1 0", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {/* arc graph — fills the available vertical space so there's no dead gap */}
+      <div style={{ flex: "1 1 0", display: "flex", flexDirection: "column", minHeight: isMobile ? 220 : 260 }}>
         <ArcGraph
           t={t}
           chartData={chartData}
@@ -88,12 +88,13 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           retirementAge={retirementAge}
           lifeExpect={lifeExpect}
           contribSeries={contribSeries}
-          height={isMobile ? 200 : 280}
+          fillHeight
+          compact={isMobile}
           glow={glow}
           strokeWidth={strokeWidth}
           activeView={arcView}
           onViewChange={setArcView}
-          showToggle
+          showToggle={!isMobile}
         />
       </div>
 
