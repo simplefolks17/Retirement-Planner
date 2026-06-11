@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo } from "../shared.jsx";
+import ConfirmModal from "../ConfirmModal.jsx";
 
 export default function PlanScreen({ t, props, glow }) {
   const {
@@ -9,9 +10,12 @@ export default function PlanScreen({ t, props, glow }) {
     totalAtRet, yearsSustained, isSustainable,
     takeHome, effectiveExpenses, balAt90,
     withdrawalRate, contribSeries, activity,
+    commitPlan,
   } = props;
 
-  const [arcView, setArcView] = useState("arc");
+  const [arcView, setArcView]       = useState("arc");
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saved, setSaved]           = useState(false);
 
   const progressPct = isSustainable ? 100
     : Math.min(99, Math.round((yearsSustained / Math.max(1, lifeExpect - retirementAge)) * 100));
@@ -21,6 +25,13 @@ export default function PlanScreen({ t, props, glow }) {
     : `${Math.round(progressPct)}% there`;
 
   const progressColor = isSustainable ? t.good : progressPct >= 75 ? t.good : t.warm;
+
+  const handleConfirm = () => {
+    commitPlan({ retirementAge, annualExpenses: effectiveExpenses });
+    setShowConfirm(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
 
   return (
     <div style={{
@@ -88,6 +99,33 @@ export default function PlanScreen({ t, props, glow }) {
         <StatCard t={t} label="Income for life"  value={fmtMo(effectiveExpenses)} accent={t.warm} warm />
         <StatCard t={t} label="Left at 90"       value={fmt(balAt90)}             accent={t.ink} />
       </div>
+
+      {/* plan action */}
+      <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+        <button
+          onClick={() => !saved && setShowConfirm(true)}
+          style={{
+            font: `600 13px ${HF}`, color: saved ? t.good : t.mut,
+            background: "transparent",
+            border: `1px solid ${saved ? t.good : t.line}`,
+            borderRadius: 8, padding: "8px 16px", cursor: saved ? "default" : "pointer",
+            transition: "all .2s",
+          }}
+        >
+          {saved ? "✓ Plan saved" : "Make this my plan"}
+        </button>
+      </div>
+
+      {showConfirm && (
+        <ConfirmModal
+          t={t}
+          title="Lock in your plan?"
+          body={`Retire at ${retirementAge} · ${fmtMo(effectiveExpenses)}/mo income`}
+          confirmLabel="Save plan"
+          onConfirm={handleConfirm}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
     </div>
   );
 }

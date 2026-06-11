@@ -129,10 +129,11 @@ export function calcWhatIfDelta({
 // horizonProps.whatIfSimInputs includes simInputs, fedMarginal, retDrawShared,
 // safeRetAge, safeLifeExp, and baseTotalAtRet.
 //
-// overrides: { retireAdj, retirementAge, annualExpenses }
-//   retireAdj  — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
-//   retirementAge — absolute retirement age override (takes precedence over retireAdj)
-//   annualExpenses — override for retirement spending
+// overrides: { retireAdj, retirementAge, annualExpenses, scenarioEvents }
+//   retireAdj       — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
+//   retirementAge   — absolute retirement age override (takes precedence over retireAdj)
+//   annualExpenses  — override for retirement spending
+//   scenarioEvents  — additional one-time events for this scenario only (e.g. a lump-sum trip spend)
 //
 // Returns [] when inputs are invalid or the retirement walk produces no rows.
 export function calcWhatIfChart({
@@ -145,9 +146,10 @@ export function calcWhatIfChart({
 }, overrides = {}) {
   if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return [];
 
-  const retireAdj      = overrides.retireAdj ?? 0;
-  const scenarioRetAge = overrides.retirementAge ?? (safeRetAge + retireAdj);
+  const retireAdj        = overrides.retireAdj ?? 0;
+  const scenarioRetAge   = overrides.retirementAge ?? (safeRetAge + retireAdj);
   const scenarioExpenses = overrides.annualExpenses ?? retDrawShared.effectiveExpenses;
+  const scenarioEvents   = overrides.scenarioEvents ?? [];
 
   // Determine starting portfolio balance at the scenario retirement age
   let startBal = baseTotalAtRet ?? 0;
@@ -175,7 +177,7 @@ export function calcWhatIfChart({
       startBal,
       startAge: scenarioRetAge,
       endAge,
-      moneyEvents: retDrawShared.moneyEvents ?? [],
+      moneyEvents: [...(retDrawShared.moneyEvents ?? []), ...scenarioEvents],
     });
   } catch {
     return [];
