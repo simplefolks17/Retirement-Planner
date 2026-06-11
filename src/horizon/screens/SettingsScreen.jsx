@@ -1,9 +1,12 @@
 import React from "react";
 import { GhostArc } from "../../components/ArcGraph.jsx";
 import { PALETTES, HF, useTheme } from "../ThemeContext.jsx";
+import { ACTIVITIES } from "./SomedayScreen.jsx";
 
-export default function SettingsScreen({ t }) {
+export default function SettingsScreen({ t, activity, setActivity }) {
   const { palKey, setPalKey, modePref, setModePref, arcStyle, setArcStyle } = useTheme();
+  const activeAct = ACTIVITIES.find(a => a.l.toLowerCase() === (activity ?? "golf course").toLowerCase())
+    ?? ACTIVITIES[0];
 
   return (
     <div style={{
@@ -77,6 +80,31 @@ export default function SettingsScreen({ t }) {
           </div>
           <div style={{ font: `400 12px ${HF}`, color: t.faint, marginTop: 8 }}>
             Vivid thickens the arc stroke. Glow adds a light bloom effect.
+          </div>
+        </div>
+
+        <div>
+          <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
+            Your activity
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {ACTIVITIES.map(a => {
+              const on = a.k === activeAct.k;
+              return (
+                <div key={a.k} onClick={() => setActivity?.(a.l.toLowerCase())}
+                  style={{
+                    padding: "6px 14px", borderRadius: 999, cursor: "pointer",
+                    border: `1.5px solid ${on ? t.accent : t.line2}`,
+                    background: on ? `${t.accent}18` : "transparent",
+                    font: `${on ? 600 : 400} 12.5px ${HF}`,
+                    color: on ? t.accent : t.mut,
+                    transition: "all .15s",
+                  }}>{a.l}</div>
+              );
+            })}
+          </div>
+          <div style={{ font: `400 12px ${HF}`, color: t.faint, marginTop: 8 }}>
+            Drives the "Work optional, {activeAct.l.toLowerCase()} mandatory" tagline on Plan.
           </div>
         </div>
 

@@ -4,7 +4,7 @@ import { HF, HM } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
 
-export default function PlanScreen({ t, props, glow, strokeWidth = 3 }) {
+export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile = false }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, yearsSustained, isSustainable,
@@ -35,17 +35,21 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3 }) {
 
   return (
     <div style={{
-      flex: 1, padding: "20px 28px 18px",
+      flex: 1, padding: isMobile ? "14px 16px 12px" : "20px 28px 18px",
       display: "flex", flexDirection: "column", minHeight: 0
     }}>
       {/* headline row */}
       <div style={{
-        display: "flex", justifyContent: "space-between",
-        alignItems: "flex-start", marginBottom: 14
+        display: "flex",
+        flexDirection: isMobile ? "column" : "row",
+        justifyContent: "space-between",
+        alignItems: isMobile ? "stretch" : "flex-start",
+        gap: isMobile ? 10 : 0,
+        marginBottom: 14,
       }}>
         <div>
           <div style={{
-            font: `600 28px ${HF}`, color: t.ink,
+            font: `600 ${isMobile ? "20px" : "28px"} ${HF}`, color: t.ink,
             letterSpacing: "-0.025em", lineHeight: 1.1
           }}>
             {isSustainable
@@ -59,7 +63,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3 }) {
           </div>
         </div>
         {/* progress bar */}
-        <div style={{ width: 210, paddingTop: 5 }}>
+        <div style={{ width: isMobile ? "100%" : 210, paddingTop: isMobile ? 0 : 5 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{progressLabel}</span>
             <span style={{ font: `600 11.5px ${HF}`, color: progressColor }}>
@@ -84,7 +88,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3 }) {
           retirementAge={retirementAge}
           lifeExpect={lifeExpect}
           contribSeries={contribSeries}
-          height={280}
+          height={isMobile ? 200 : 280}
           glow={glow}
           strokeWidth={strokeWidth}
           activeView={arcView}
@@ -93,8 +97,12 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3 }) {
         />
       </div>
 
-      {/* stats row */}
-      <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+      {/* stats row — 2×2 grid on mobile, single row on desktop */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)",
+        gap: 10, marginTop: 14,
+      }}>
         <StatCard t={t} label="You keep / mo"   value={fmtMo(takeHome)}          accent={t.good} />
         <StatCard t={t} label="Retire at"        value={String(retirementAge)}    accent={t.ink} />
         <StatCard t={t} label="Income for life"  value={fmtMo(effectiveExpenses)} accent={t.warm} warm />

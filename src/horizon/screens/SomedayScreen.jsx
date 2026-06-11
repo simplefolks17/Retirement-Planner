@@ -1,8 +1,8 @@
-import React from "react";
+import React, { useState, useRef } from "react";
 import { HF, HM, HD } from "../ThemeContext.jsx";
 import { fmtMo } from "../shared.jsx";
 
-const ACTIVITIES = [
+export const ACTIVITIES = [
   { k: "golf",    l: "Golf course",    sub: "18 holes whenever you want." },
   { k: "travel",  l: "First class",    sub: "The trip you've been putting off." },
   { k: "hiking",  l: "The mountains",  sub: "The trail has been waiting." },
@@ -16,28 +16,76 @@ export default function SomedayScreen({ t, props }) {
   const activeAct = ACTIVITIES.find(a => a.l.toLowerCase() === (activity ?? "golf course").toLowerCase())
     ?? ACTIVITIES[0];
 
+  const [customPhoto, setCustomPhoto] = useState(null);
+  const [photoHover, setPhotoHover] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setCustomPhoto(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
   const statusLabel = isSustainable ? `Age ${retirementAge} · fully funded` : `Age ${retirementAge} · keep building`;
 
   return (
     <div style={{ flex: 1, position: "relative", overflow: "hidden", background: "#1a1410" }}>
-      {/* photo placeholder */}
-      <div style={{
-        position: "absolute", inset: 0,
-        background: "linear-gradient(135deg, #2a2018 0%, #3d3020 40%, #2a2820 100%)"
-      }}>
-        <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, opacity: 0.08 }}
-          preserveAspectRatio="none">
-          <line x1="0" y1="0" x2="100%" y2="100%" stroke="#fff" strokeWidth="1" />
-          <line x1="100%" y1="0" x2="0" y2="100%" stroke="#fff" strokeWidth="1" />
-        </svg>
-        <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center"
-        }}>
-          <span style={{ font: `400 13px ${HF}`, color: "rgba(255,255,255,.15)", position: "relative", zIndex: 1 }}>
-            thematic photo · {activeAct.l.toLowerCase()}
-          </span>
-        </div>
+      {/* photo area — click to upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
+      <div
+        onClick={() => fileInputRef.current?.click()}
+        onMouseEnter={() => setPhotoHover(true)}
+        onMouseLeave={() => setPhotoHover(false)}
+        style={{
+          position: "absolute", inset: 0, cursor: "pointer",
+          background: customPhoto ? "transparent" : "linear-gradient(135deg, #2a2018 0%, #3d3020 40%, #2a2820 100%)",
+        }}
+      >
+        {customPhoto ? (
+          <img
+            src={customPhoto}
+            alt="your photo"
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        ) : (
+          <>
+            <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, opacity: 0.08 }}
+              preserveAspectRatio="none">
+              <line x1="0" y1="0" x2="100%" y2="100%" stroke="#fff" strokeWidth="1" />
+              <line x1="100%" y1="0" x2="0" y2="100%" stroke="#fff" strokeWidth="1" />
+            </svg>
+            <div style={{
+              position: "absolute", inset: 0,
+              display: "flex", alignItems: "center", justifyContent: "center"
+            }}>
+              <span style={{
+                font: `400 13px ${HF}`,
+                color: photoHover ? "rgba(255,255,255,.40)" : "rgba(255,255,255,.18)",
+                transition: "color .2s",
+              }}>
+                {photoHover ? "tap to add a photo" : `thematic photo · ${activeAct.l.toLowerCase()}`}
+              </span>
+            </div>
+          </>
+        )}
+        {/* change photo hint when photo is loaded */}
+        {customPhoto && photoHover && (
+          <div style={{
+            position: "absolute", top: 16, right: 16, zIndex: 10,
+            background: "rgba(0,0,0,.55)", borderRadius: 8, padding: "6px 12px",
+            font: `500 12px ${HF}`, color: "rgba(255,255,255,.85)",
+          }}>
+            change photo
+          </div>
+        )}
       </div>
       {/* dark gradient overlay */}
       <div style={{
