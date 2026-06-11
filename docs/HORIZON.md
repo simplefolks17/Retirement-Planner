@@ -153,10 +153,10 @@ Right side of nav: "On track" / "Needs attention" status pill + "Classic view" b
 ### Plan screen
 
 - Headline: `"On track to retire at {retirementAge}."` or fallback
-- Sub-headline: `"Work optional, {activity} mandatory."` — `activity` comes from shell state (user picks in Someday screen)
+- Sub-headline: `"Work optional, {activity} mandatory."` — `activity` comes from shell state (user picks in Someday or Settings)
 - Progress bar toward sustainable retirement
-- ArcGraph (height 280, with 4-view toggle, glow from `arcStyle`)
-- Stats row: You keep / mo · Retire at · Income for life · Left at 90
+- ArcGraph (height 280 desktop / 200 mobile, with 4-view toggle, glow from `arcStyle`, strokeWidth from `arcStyle`)
+- Stats row: You keep / mo · Retire at · Income for life · Left at 90 (4-wide desktop → 2×2 grid mobile)
 - **"Make this my plan"** button → ConfirmModal → calls `commitPlan({ retirementAge, annualExpenses })` → 2-second "✓ Plan saved" toast
 
 ### Ideas screen
@@ -191,15 +191,25 @@ Scenario exploration — the arc is always the hero.
 
 ### Someday screen
 
-Full-bleed aspirational screen. Activity selector (Golf course / First class / The mountains / The kitchen / The garden / The grandkids). The selected activity drives the display text and is persisted in shell state as `activity` prop (passed back to Plan screen sub-headline). Photo placeholder — real photos are a future feature (see open item #77).
+Full-bleed aspirational screen. Activity selector (Golf course / First class / The mountains / The kitchen / The garden / The grandkids). The selected activity drives the display text and is persisted in shell state as `activity` prop (passed back to Plan screen sub-headline and Settings screen).
+
+**Photo upload (#77):** The photo area is a clickable `<div>` that triggers a hidden `<input type="file" accept="image/*">`. `FileReader.readAsDataURL` stores the result as a `data:` URL in `useState` (session-only, no persistence). When a photo is loaded, it renders as `<img objectFit="cover">` filling the area. Hovering shows a "change photo" pill in the top-right corner. Without a photo, a cross-hatch SVG placeholder + activity-aware hint text is shown; hover changes the hint to "tap to add a photo".
 
 ### Settings screen
 
 - **Palette** — 6 circular swatches, updates ThemeContext live
 - **Theme** — Light / Dark / Auto toggle
 - **Arc style** — Soft / Vivid / Glow toggle (all three persisted to localStorage)
+- **Your activity** — same 6-chip selector as Someday screen (#76); changes the `activity` value that drives the "Work optional, X mandatory" tagline on Plan. `ACTIVITIES` is exported from `SomedayScreen.jsx` and imported here.
 - **Live preview** — mini `GhostArc` in the right panel reflecting the selected palette/mode instantly
 - **About** — app description
+
+### Mobile layout (#74)
+
+At viewport width < 640px (`isMobile` derived from a `window.resize` listener in `HorizonShell`):
+- Top nav bar and "On track" pill are hidden
+- Fixed 60px bottom tab bar renders at the bottom of the screen using the `SCREENS` array (emoji icon + label per tab); screen body gets `paddingBottom: 60` to avoid overlap
+- `PlanScreen` receives `isMobile={true}`: headline font 20px (vs 28px), progress bar full-width, stats 2×2 grid, ArcGraph height 200px, padding tightened
 
 ### Onboarding wizard
 
@@ -303,22 +313,16 @@ Inline `IncomeSankey` SVG component in `NumbersScreen.jsx`. Bezier-filled bands:
 ### ✓ #73 — "Vivid" arc style distinct from Soft *(shipped Batch D, PR #18)*
 `strokeWidth` prop added to `ArcGraph` (default 3). `HorizonShell` derives `strokeWidth = arcStyle === "vivid" ? 5 : 3` and passes it through `PlanScreen` and `IdeasScreen`. Vivid now renders a 5px arc versus 3px for Soft/Glow.
 
-### #74 — Mobile/responsive Horizon layout
-**What:** The Horizon shell is designed for a ≥900px viewport. On mobile, the nav tabs overflow, stat cards squeeze, and the arc graph becomes unreadable.
-**What's needed:** A breakpoint at ~640px: stack the nav tabs into a bottom tab bar (or hamburger), collapse stat cards to 2-up, reduce arc height to ~180px, and simplify the Settings layout to single-column.
-**Files:** `HorizonShell.jsx` (add responsive styles), `ArcGraph.jsx` (test at small heights)
+### ✓ #74 — Mobile/responsive Horizon layout *(shipped Batch E, PR #19)*
+Breakpoint at 640px. Window resize listener in `HorizonShell` sets `isMobile`. Top nav hidden; fixed 60px bottom tab bar shown instead. `PlanScreen` adapts: 2×2 stat grid, 200px arc height, smaller headline, tighter padding.
 
 ### #75 — *(shipped, see above)*
 
-### #76 — Activity preference in Settings
-**What:** The user's activity ("golf course," "first class," etc.) can only be changed on the Someday screen. Settings is the natural home for persistent preferences.
-**What's needed:** Add an "Activity" section to `SettingsScreen` with the same 6-chip selector. Since `activity` is shell state (not ThemeContext), pass `activity` + `setActivity` as additional props to `SettingsScreen`, or move `activity` into ThemeContext alongside `arcStyle`.
-**Files:** `HorizonShell.jsx` → `SettingsScreen`
+### ✓ #76 — Activity preference in Settings *(shipped Batch E, PR #19)*
+`ACTIVITIES` exported from `SomedayScreen.jsx`. `SettingsScreen` imports it and renders the same 6-chip selector. `activity` + `setActivity` passed as props from `HorizonShell` to `SettingsScreen`.
 
-### #77 — Someday screen real photography
-**What:** The Someday screen uses a CSS gradient placeholder where a photo should appear.
-**What's needed:** A set of 6 curated photos (one per activity: golf, travel, hiking, cooking, garden, grandkids) bundled with the app or fetched from a CDN. Each should be warm-toned, lifestyle-oriented, and work under the dark gradient overlay. The `background-image` CSS property replaces the gradient placeholder.
-**Files:** `HorizonShell.jsx` → `SomedayScreen`, `public/` (photo assets)
+### ✓ #77 — Someday screen photo upload *(shipped Batch E, PR #19)*
+User-upload approach: hidden file input + `FileReader.readAsDataURL` → `useState`. Click the photo area to pick a local image; it fills the screen with `objectFit: cover`. Hover shows "change photo" pill. No bundled assets needed.
 
 ### ✓ #78 — Horizon onboarding first-run detection *(shipped Batch C, PR #17)*
 `showOnboarding` now initializes to `safeGet("hz-onboarded") !== "1"`. Completing or skipping the wizard calls `safeSet("hz-onboarded", "1")` so returning users skip it.
@@ -353,4 +357,4 @@ The SVG coordinate space is fixed: VW=1200, PAD `{l:62, r:92, t:38, b:46}`. Age 
 
 ---
 
-*Last updated: 2026-06-11. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding), #18 Batch D (Sankey, vivid arc, yearly table). Open items remaining: #74, #76, #77 (Batch E).*
+*Last updated: 2026-06-11. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding), #18 Batch D (Sankey, vivid arc, yearly table), #19 Batch E (mobile layout, activity in Settings, photo upload). All 12 Horizon open items shipped (#69–#80).*

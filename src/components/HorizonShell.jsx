@@ -3,7 +3,7 @@
 // Screens: Plan · Ideas · The numbers · Settings · Someday
 // LAYOUT/STYLING ONLY — no calculation logic lives here.
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
@@ -321,6 +321,16 @@ export default function HorizonShell({ onShowClassic, ...props }) {
   const glow = arcStyle === "glow";
   const strokeWidth = arcStyle === "vivid" ? 5 : 3;
 
+  const [windowWidth, setWindowWidth] = useState(
+    () => typeof window !== "undefined" ? window.innerWidth : 1200
+  );
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const isMobile = windowWidth < 640;
+
   const handleOnboardingComplete = () => {
     safeSet("hz-onboarded", "1");
     setShowOnboarding(false);
@@ -354,32 +364,63 @@ export default function HorizonShell({ onShowClassic, ...props }) {
         </div>
       ) : (
         <>
-          {/* nav bar */}
+          {/* top nav — full on desktop, slim on mobile */}
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "12px 28px", borderBottom: `1px solid ${t.line}`,
-            background: t.bg, flexShrink: 0
+            padding: isMobile ? "10px 16px" : "12px 28px",
+            borderBottom: `1px solid ${t.line}`,
+            background: t.bg, flexShrink: 0,
           }}>
             <Logo t={t} />
-            <TabBar t={t} tabs={SCREENS} active={screen} onChange={setScreen} />
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <OnTrackPill t={t} isSustainable={isSustainable} />
+            {!isMobile && <TabBar t={t} tabs={SCREENS} active={screen} onChange={setScreen} />}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {!isMobile && <OnTrackPill t={t} isSustainable={isSustainable} />}
               <button onClick={onShowClassic} style={{
                 font: `400 11px ${HF}`, color: t.faint,
                 background: "transparent", border: `1px solid ${t.line}`,
-                borderRadius: 6, padding: "4px 10px", cursor: "pointer"
+                borderRadius: 6, padding: "4px 10px", cursor: "pointer",
               }}>Classic view</button>
             </div>
           </div>
 
-          {/* screen body */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-            {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} />}
+          {/* screen body — bottom-padded on mobile to clear tab bar */}
+          <div style={{
+            flex: 1, display: "flex", flexDirection: "column", minHeight: 0,
+            paddingBottom: isMobile ? 60 : 0,
+          }}>
+            {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} />}
             {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} />}
-            {screen === "settings" && <SettingsScreen t={t} />}
+            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} />}
           </div>
+
+          {/* bottom tab bar — mobile only */}
+          {isMobile && (
+            <div style={{
+              position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
+              background: t.bg, borderTop: `1px solid ${t.line}`,
+              display: "flex",
+            }}>
+              {SCREENS.map(({ id, label }) => {
+                const on = screen === id;
+                return (
+                  <div key={id} onClick={() => setScreen(id)} style={{
+                    flex: 1, display: "flex", flexDirection: "column",
+                    alignItems: "center", justifyContent: "center",
+                    padding: "8px 0 10px", cursor: "pointer",
+                    borderTop: `2px solid ${on ? t.accent : "transparent"}`,
+                  }}>
+                    <span style={{
+                      font: `${on ? 600 : 400} 11px ${HF}`,
+                      color: on ? t.accent : t.mut,
+                      textAlign: "center", lineHeight: 1.2,
+                    }}>{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </>
       )}
     </div>

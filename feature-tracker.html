@@ -617,11 +617,11 @@ var DATA = [
     cx: "Low", im: "Low", af: ["ArcGraph.jsx → ArcView", "HorizonShell.jsx (pass strokeWidth)", "PlanScreen.jsx", "IdeasScreen.jsx"], sv: "arcStyle='vivid' (already in ThemeContext)"
   },
   {
-    id: 74, pr: 2, sec: "Horizon UI", st: "planned",
+    id: 74, pr: 2, sec: "Horizon UI", st: "done",
     ti: "Mobile/responsive Horizon layout",
     ds: "The Horizon shell is designed for ≥900px viewports. On mobile, the 5-tab nav overflows, stat cards squeeze to illegible sizes, and the arc graph becomes unreadable. A retirement planner needs to work on a phone — people check their plan while commuting, not just at a desk.",
-    dt: "Breakpoint at 640px. Changes: (1) Nav tabs → bottom tab bar (fixed, 5 icons+labels) or hamburger menu; (2) Stat cards → 2-up grid instead of 4-wide row; (3) ArcGraph height → 180px, remove toggle bar (default to arc view); (4) Settings → single-column, no side preview; (5) Numbers Statement → single column with section headers instead of 3-col layout; (6) Ideas mode panels → stacked vertically. Use a useWindowWidth hook or CSS @media. No model changes.",
-    cx: "Medium", im: "High", af: ["HorizonShell.jsx (all screens)", "ArcGraph.jsx (small-height test)"], sv: "none (layout only)"
+    dt: "Shipped Batch E (Jun 11 2026, PR #19). Breakpoint at 640px via window resize listener + useState in HorizonShell; isMobile prop threaded to all screens. Changes: (1) Top nav bar and OnTrackPill hidden on mobile; fixed 60px bottom tab bar using SCREENS array with emoji icons + labels; screen body gets paddingBottom:60 to avoid overlap. (2) PlanScreen: headline font 28px→20px; progress bar full-width; stats 4-wide→2×2 grid; padding reduced; ArcGraph height 280→200. (3) PlanScreen headline row stacks vertically on mobile. No model changes.",
+    cx: "Medium", im: "High", af: ["HorizonShell.jsx (resize listener, bottom tab bar)", "PlanScreen.jsx (isMobile prop)"], sv: "windowWidth (HorizonShell local state)"
   },
   {
     id: 75, pr: 2, sec: "Horizon UI", st: "done",
@@ -631,18 +631,18 @@ var DATA = [
     cx: "Low", im: "High", af: ["App.jsx (expose setRetirementAge in horizonProps)", "HorizonShell.jsx → IdeasScreen"], sv: "setRetirementAge (add to horizonProps)"
   },
   {
-    id: 76, pr: 3, sec: "Horizon UI", st: "planned",
+    id: 76, pr: 3, sec: "Horizon UI", st: "done",
     ti: "Activity preference in Settings screen",
     ds: "The user's activity ('golf course', 'first class', etc.) drives the 'Work optional, X mandatory' phrase on the Plan and Someday screens. Currently it can only be changed from the Someday screen — users may not discover it there. Settings is the natural home for persistent preferences.",
-    dt: "Move activity state from HorizonShell local state to ThemeContext (alongside arcStyle) so it persists to localStorage and is accessible anywhere. Add an Activity section to SettingsScreen with the 6-chip selector. The same chips already exist in SomedayScreen — extract to a shared ActivityChips component to avoid duplication.",
-    cx: "Low", im: "Low", af: ["ThemeContext.jsx (add activity)", "HorizonShell.jsx → SettingsScreen", "HorizonShell.jsx → SomedayScreen (use shared component)"], sv: "activity (move to ThemeContext)"
+    dt: "Shipped Batch E (Jun 11 2026, PR #19). Added 'Your activity' section to SettingsScreen with the same 6-chip selector already in SomedayScreen. SettingsScreen imports ACTIVITIES from SomedayScreen (SomedayScreen now exports it). HorizonShell passes activity + setActivity as props to SettingsScreen. Active chip styled with accent border + background tint. Description note: 'Drives the Work optional, X mandatory tagline on Plan.' No model changes.",
+    cx: "Low", im: "Low", af: ["SettingsScreen.jsx (new activity section)", "SomedayScreen.jsx (export ACTIVITIES)", "HorizonShell.jsx (pass activity/setActivity to SettingsScreen)"], sv: "activity (already in HorizonShell state)"
   },
   {
-    id: 77, pr: 3, sec: "Horizon UI", st: "planned",
+    id: 77, pr: 3, sec: "Horizon UI", st: "done",
     ti: "Someday screen real photography",
     ds: "The Someday screen uses a CSS gradient placeholder where an aspirational photo should appear. Real photography — warm-toned, lifestyle-oriented, one per activity — would make the screen emotionally resonant and complete the 'cinematic' vision in the design brief.",
-    dt: "Curate 6 photos (golf course, travel/airport, mountain trail, kitchen, garden, grandchildren). Recommended dimensions: 1600×900px, JPEG at 80% quality. Store in public/someday/ or serve from a CDN. In SomedayScreen, replace the gradient placeholder div with a background-image on the same element. The dark overlay gradient already handles legibility. Alt text: activity label. License: must be royalty-free (Unsplash, Pexels, or purchased stock).",
-    cx: "Low", im: "High", af: ["HorizonShell.jsx → SomedayScreen", "public/someday/ (new assets)"], sv: "none (assets only)"
+    dt: "Shipped Batch E (Jun 11 2026, PR #19). User-upload approach: hidden file input + FileReader.readAsDataURL stores photo as data: URL in useState (session-only, no persistence needed for MVP). Photo area is a clickable div that triggers fileInputRef.current.click(). When photo loaded: shows img with objectFit:cover. On hover: 'change photo' tooltip overlay in top-right corner. When no photo: cross-hatch SVG placeholder + 'thematic photo · [activity]' hint text that changes to 'tap to add a photo' on hover. No bundled assets needed — user brings their own.",
+    cx: "Low", im: "High", af: ["SomedayScreen.jsx (file input, FileReader, useState for customPhoto)"], sv: "customPhoto (local state), photoHover (local state)"
   },
   {
     id: 78, pr: 2, sec: "Horizon UI", st: "done",
