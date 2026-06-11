@@ -21,6 +21,7 @@ export function runSimulation({
   currentAge,
   currentIncome,
   incomeGrowth,
+  incomeGrowthEndAge = null, // null = grows until retirement; age = plateau year
   filingStatus,
   spouseIncome,
   spouseIncomeGrowth,
@@ -42,7 +43,10 @@ export function runSimulation({
 
   for (let y = 1; y <= totalYears; y++) {
     const age        = currentAge + y;
-    const growFactor = Math.pow(1 + g, y - 1);
+    const growthYears = incomeGrowthEndAge != null
+      ? Math.min(y - 1, incomeGrowthEndAge - currentAge)
+      : y - 1;
+    const growFactor = Math.pow(1 + g, growthYears);
 
     const isEligibleForCatchup = currentAge + (y - 1) >= CATCHUP_AGE;
     const limit415cYr    = isEligibleForCatchup ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;

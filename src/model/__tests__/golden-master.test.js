@@ -50,7 +50,7 @@ const fedMarginal = marginalRate(agi, filingStatus);
 const em = (s, c) => calcEmployerMatch(s, c, { matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct });
 
 const sim = runSimulation({
-  totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+  totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge: null, filingStatus,
   spouseIncome: 0, spouseIncomeGrowth: 3, returnRate,
   bal401k, balRoth, balTaxable, balHSA,
   contrib401k, contribRoth, contribTaxable, contribHSA,

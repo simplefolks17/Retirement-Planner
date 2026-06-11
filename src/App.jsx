@@ -52,8 +52,9 @@ export default function App() {
   const [returnRate,    setReturnRate]    = useState(5);
   const [inflationRate, setInflationRate] = useState(4);
 
-  const [currentIncome, setCurrentIncome] = useState(100_000);
-  const [incomeGrowth,  setIncomeGrowth]  = useState(3);
+  const [currentIncome,      setCurrentIncome]      = useState(100_000);
+  const [incomeGrowth,       setIncomeGrowth]       = useState(3);
+  const [incomeGrowthEndAge, setIncomeGrowthEndAge] = useState(null); // null = grows until retirement
   const [selectedState, setSelectedState] = useState("TX");
   const [stateRateOverride, setStateRateOverride] = useState(null);
   const [filingStatus,  setFilingStatus]  = useState("single");
@@ -155,7 +156,7 @@ export default function App() {
 
   const simData = useMemo(() => {
     const raw = runSimulation({
-      totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+      totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
       spouseIncome, spouseIncomeGrowth, returnRate,
       bal401k, balRoth, balTaxable, balHSA,
       contrib401k, contribRoth, contribTaxable, contribHSA,
@@ -172,7 +173,7 @@ export default function App() {
       "Trad 401k": Math.round((d.tradGross ?? 0) * (1 - fedMarginal)),
     }));
   }, [
-    returnRate, totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+    returnRate, totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
     spouseIncome, spouseIncomeGrowth, fedMarginal,
     bal401k, balRoth, balTaxable, balHSA,
     contrib401k, contribRoth, contribTaxable, contribHSA,
@@ -255,7 +256,7 @@ export default function App() {
     ss70Annual, household70SS, ss70DrawReduction, effectivePension,
     spouseAlt, spouseAltHigher,
   } = calcRetirementIncome({
-    currentIncome, incomeGrowth, safeRetAge, currentAge,
+    currentIncome, incomeGrowth, incomeGrowthEndAge, safeRetAge, currentAge,
     ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
     pensionMonthly, pensionStartAge,
     isMarried, spouseClaimingAge, spouseBenefitBasis,
@@ -556,7 +557,7 @@ export default function App() {
   // Inputs needed for what-if re-simulation. Collected once here so WhatIfPanel
   // receives a stable reference and its useMemo only fires on genuine input changes.
   const whatIfSimInputs = {
-    totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
+    totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
     spouseIncome, spouseIncomeGrowth, returnRate,
     bal401k, balRoth, balTaxable, balHSA,
     contrib401k, contribRoth, contribTaxable, contribHSA,
@@ -668,6 +669,32 @@ export default function App() {
                   format={v => `$${v.toLocaleString()}`} onChange={setCurrentIncome} />
                 <Slider label="Income Growth / yr" value={incomeGrowth} min={0} max={15} step={0.5}
                   format={v => `${v}%`} onChange={setIncomeGrowth} valueColor={C.purple} />
+                {incomeGrowth > 0 && (
+                  <Slider
+                    label="Income plateau age"
+                    value={incomeGrowthEndAge ?? safeRetAge}
+                    min={currentAge + 1}
+                    max={safeRetAge}
+                    step={1}
+                    format={v => v >= safeRetAge ? "None" : `Age ${v}`}
+                    onChange={v => setIncomeGrowthEndAge(v >= safeRetAge ? null : v)}
+                    valueColor={incomeGrowthEndAge != null ? C.orange : C.muted}
+                  />
+                )}
+                <div style={{ fontSize: 10, color: C.muted, paddingLeft: 2, marginTop: -4 }}>
+                  {"Projected at retirement: "}
+                  <span style={{ color: incomeGrowthEndAge != null ? C.orange : C.green, ...mono, fontWeight: 600 }}>
+                    {fmt(currentIncome * Math.pow(
+                      1 + incomeGrowth / 100,
+                      incomeGrowthEndAge != null
+                        ? Math.min(safeRetAge - currentAge, incomeGrowthEndAge - currentAge)
+                        : safeRetAge - currentAge
+                    ))}{"/yr"}
+                  </span>
+                  {incomeGrowthEndAge != null && (
+                    <span style={{ color: C.muted }}>{` (capped at age ${incomeGrowthEndAge})`}</span>
+                  )}
+                </div>
                 <div style={{ marginTop: 4, padding: "8px 10px", background: C.card, borderRadius: 6 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
                     <span style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>

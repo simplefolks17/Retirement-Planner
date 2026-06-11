@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (299 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (303 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 
@@ -40,7 +40,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Design system & tokens: `docs/DESIGN.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (67 items, 24 done, 43 planned)
+- Feature backlog: `feature-tracker.html` (74 items, 26 done, 48 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -212,10 +212,15 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   7. **`src/components/MoneyEventsPanel.jsx`** (new) — up to 6 one-time events (label, amount, age, inflow/outflow, taxable flag); renders in main planner; events flow through `simData` and `retDrawShared` so all downstream calculations (RMD, conversion, longevity) see them.
   8. **`App.jsx`** — added `moneyEvents` state, `whatIfSimInputs` object; threaded `moneyEvents` into `simData` (accum) and `retDrawShared` (retirement); rendered `WhatIfPanel` after retirement snapshot, `MoneyEventsPanel` before Tax Rate Phases.
   272 → **299** tests (25 files). New: `money-events.test.js`, `what-if.test.js`.
+- Income growth plateau feature (Jun 11 2026, feature #75): unrealistic compounding fixed.
+  New optional `incomeGrowthEndAge` param in `runSimulation` and `calcAIME`; income stops
+  growing at the specified age, capping contributions, employer match, MAGI, and SS AIME.
+  UI: "Income plateau age" slider + live projected-retirement-income preview. Default `null`
+  = no cap = zero golden master impact. 299 → **303** tests (+4 plateau regression tests).
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (299 tests)
+- `npm test` — run model + formatter + render-smoke tests (303 tests)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)
