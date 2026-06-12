@@ -75,7 +75,7 @@
 <body>
 
 <h1>Retirement Calculator — Feature Tracker</h1>
-<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-11</p>
+<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-12</p>
 
 <div class="summary" id="summary"></div>
 <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
@@ -822,10 +822,10 @@ var DATA = [
   },
   {
     id: 99, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
-    ti: "L3 / WI-3.2 — Settings split: 'My details' + 'Appearance'",
-    ds: "Settings splits into Appearance (palette/theme/arc style/activity, unchanged) and My details: collapsed topic cards — income & job, spending, accounts & match, health & Medicare, assumptions — each showing a one-line summary when closed and steppers/sliders when opened, with inline 'Why this matters' notes from Classic's explainer text.",
-    dt: "SettingsScreen gets two sub-tabs. Topic cards consume the WI-3.1 (#98) bundles; mobile uses the onboarding stepper/preset pattern instead of raw range sliders. Done when every input in the profile/spending/accounts/health/assumptions bundles has exactly one home here, closed-card summaries are accurate, and it's usable on mobile. See docs/ROADMAP.md WI-3.2.",
-    cx: "Medium", im: "High", af: ["SettingsScreen.jsx (sub-tabs, topic cards)", "HorizonShell.jsx (pass bundles)"], sv: "none (UI over #98 bundles)"
+    ti: "L3 / WI-3.2 — 'My details' screen: plan facts get their own top-level destination",
+    ds: "All profile-level inputs as a new top-level My details screen: collapsed topic cards — income & job, spending, accounts & match, health & Medicare, assumptions (growing to ~9 cards at end state) — each showing a one-line summary when closed and steppers/sliders when opened, with inline 'Why this matters' notes from Classic's explainer text. NOT part of Settings (owner decision Jun 12 2026): plan facts are the user's data, not app preferences; Settings stays app-centric (Appearance, About, replay onboarding, Legacy view — and later Sharing #42, login/subscription) and renders as a right-side gear utility on desktop.",
+    dt: "New src/horizon/screens/MyDetailsScreen.jsx added to SCREENS (desktop nav position 7; in the mobile More sheet). Topic cards consume the WI-3.1 (#98) bundles; mobile uses the onboarding stepper/preset pattern instead of raw range sliders. Done when every input in the profile/spending/accounts/health/assumptions bundles has exactly one home here, closed-card summaries are accurate, it's usable on mobile, and Settings contains no plan-fact inputs. See docs/ROADMAP.md WI-3.2 + End state (owner decision 4).",
+    cx: "Medium", im: "High", af: ["MyDetailsScreen.jsx (new)", "SettingsScreen.jsx (slims to app-centric)", "HorizonShell.jsx (SCREENS + gear placement)"], sv: "none (UI over #98 bundles)"
   },
   {
     id: 100, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
@@ -910,6 +910,48 @@ var DATA = [
     ds: "Make the design principles machine-checked instead of memory-checked: horizonProps is currently rebuilt on every render (defeating screen memos — the same bug class as the fixed commitPlan missing-deps incident), the repo has no ESLint config so exhaustive-deps violations go uncaught, and the hardcoded SCENARIOS/LIFE_EVENTS preset tables have no value-lock tests.",
     dt: "Memoize horizonProps and whatIfBundle in App.jsx with complete dependency arrays (App.jsx:611–638). Add ESLint flat config with react-hooks/rules-of-hooks + react-hooks/exhaustive-deps; wire npm run lint; fix what it surfaces. Add value-lock tests for SCENARIOS and LIFE_EVENTS (IdeasScreen). Done when lint runs clean, a render-count smoke test shows horizonProps referentially stable across a no-op re-render, and the full suite is green. Covers register items V9–V11. See docs/ROADMAP.md WI-0.2.",
     cx: "Low", im: "High", af: ["App.jsx (useMemo horizonProps/whatIfBundle)", "eslint.config.js (new)", "package.json (lint script)", "src/model/__tests__/ or src/horizon/__tests__/ (value-locks)"], sv: "none (tooling)"
+  },
+  {
+    id: 112, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L5 / WI-5.1 — Money timeline primitive (one store for every dated money fact)",
+    ds: "Implements #48's sources[] primitive and pattern SP-2: one canonical model store (label, amount, start/end age, growth, taxability, category) that subsumes moneyEvents (a one-time event = a source with startAge === endAge). One shared MoneyTimeline editor with two doors — My details ('Income & expense timeline' card) edits committed facts; Ideas Events mode stages explorations through the confirm path. Arc markers become doors (tap → 'Edit in My details' / 'Explore in Ideas'). Eight backlog items (#10/#17/#35/#36/#43/#53/#54/#58/#64) become pre-filled templates of this one editor instead of bespoke panels.",
+    dt: "New src/model/timeline.js; migrate moneyEvents consumers (simulation.js, retirement-drawdown.js, what-if.js, both editor panels) ONCE, before per-feature start/stop fields proliferate. Done when moneyEvents is gone (or a thin compat shim), golden master is unmoved at defaults, both doors round-trip, and template-instantiation tests exist per migrated item. May start alongside Level 3 if advanced-income work is pulled forward. See docs/ROADMAP.md WI-5.1 + SP-2.",
+    cx: "High", im: "High", af: ["timeline.js (new)", "simulation.js / retirement-drawdown.js / what-if.js (migration)", "MoneyTimeline editor (new, shared)", "ArcGraph.jsx (marker popovers)"], sv: "sources[] (replaces moneyEvents)"
+  },
+  {
+    id: 113, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L5 / WI-5.2 — Entitlements & read-only chrome (premium gating as chrome)",
+    ds: "Pattern SP-4: premium gating (#29) ships as an entitlements bundle in horizonProps plus ONE shared LockedCard/upsell component — locks render in place, no interstitials, quiet by default per SP-1 (in-section teaser only when the dollar is honestly computable from free data; otherwise a single collapsed 'N more strategies with Premium' row). Designed with a readOnly capability from day one, because the advisor share link (#42) is entitlements:none + readOnly:true on the same mechanism — retrofitting read-only later would touch every input surface twice.",
+    dt: "entitlements bundle (shape documented in ARCHITECTURE.md) + LockedCard component + More-sheet premium badge. Done when flipping the flag locks/unlocks every gated surface with no screen restructuring, readOnly:true renders all screens with setters inert, and smoke tests cover both states. Prerequisite for #42 and for all premium-tier items. See docs/ROADMAP.md WI-5.2 + SP-4.",
+    cx: "Medium", im: "High", af: ["App.jsx (entitlements bundle)", "LockedCard.jsx (new, shared)", "HorizonShell.jsx (More-sheet badge)", "docs/ARCHITECTURE.md (bundle shape)"], sv: "entitlements (bundle)"
+  },
+  {
+    id: 114, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L5 / WI-5.3 — Monte Carlo lens (Range view, not a screen)",
+    ds: "Pattern SP-3: Monte Carlo (#38) ships as real percentile data behind the arc band view — renamed 'Scenarios' → 'Range' (the current name collides with Ideas' scenario cards) — with the success % as the view caption, a driver line in the on-track pill popover, and a low-odds signal deep-linking to the working-longer card (#55). Historical stress (#39, premium) follows as a History mode of the same view (named paths: 1966, 2000, 2008). One verdict on Plan — no second glance-level probability number. Owner note (binding): confidence levels must be visually available somewhere (the Range view is that home); after the lens ships and is tested in practice, revisit whether this route is still best — alternatives should be explored.",
+    dt: "Percentile engine as a pure model function first (principle 4), value-locked; ArcGraph VIEWS rename + real percentile series; calcSignals gains the low-odds signal. Done when Range shows real percentiles at golden-master defaults, Plan still has exactly one verdict, and the rename leaves the other three arc views untouched. See docs/ROADMAP.md WI-5.3 + SP-3.",
+    cx: "High", im: "High", af: ["src/model/ (percentile engine, new)", "ArcGraph.jsx (Range rename + series)", "signals.js (low-odds signal)", "PlanScreen.jsx (pill popover driver)"], sv: "none (engine over existing inputs)"
+  },
+  {
+    id: 115, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L5 / WI-5.4 — Ideas governance: one arc, one mode control (Dials · Events · Scenarios · Solvers)",
+    ds: "Pattern SP-5 for Ideas: as Ideas absorbs its backlog it stays one arc + verdict badge (#85) + ONE segmented mode control — never stacked panels. Solvers panel unifies affordability (WI-3.8/#105), the recurring-spend solver (#82), and the required-contribution solver (#83) as three questions of one panel; #84 upgrades the retirement-age dial to a free slider; #40 adds a 'My scenarios' shelf + compare sub-view (premium; stacked A/B on mobile) per SP-4.",
+    dt: "Segmented control with four modes; verdict badge in the header and inside ApplyPreviewModal (#106); all solver answers from model functions (zero math in screens); compare renders two real calcWhatIfChart runs. Done when one mode is visible at a time and smoke tests cover each mode. See docs/ROADMAP.md WI-5.4 + SP-5.",
+    cx: "Medium", im: "High", af: ["IdeasScreen.jsx (mode control, Solvers, shelf)", "what-if.js (solver fns as needed)", "ApplyPreviewModal.jsx (badge)"], sv: "savedScenarios (premium, #40)"
+  },
+  {
+    id: 116, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L5 / WI-5.5 — Strategies catalogue v2 (applicability gating + sections + 'For you')",
+    ds: "Pattern SP-1: the catalogue scales from ~6 cards (L3) to ~15 (end state) without becoming a wall. Non-applicable cards don't render (no rental → no rental-sale card; typical visible: 5–8), with a quiet 'Browse all strategies' foot-disclosure; four fixed editorial sections — Taxes (conversion, withdrawal order, TLH #65, DAF #68) / Income timing (SS, working longer #55, NQDC #64, S-corp #62) / Accounts (RMD, surplus, mega backdoor, DB plan #63) / Assets (stock #67, rental sale #59, inherited IRA #66) — empty sections hidden; a 'For you' strip capped at 3 ranked by the SAME calcSignals brain as Plan's strip (one ranking, two surfaces). Three card states: active / not set up / locked (via #113, quiet per SP-1).",
+    dt: "Applicability flags come from the model per principle 8 (no eligibility conditions in JSX). Done when golden-master default shows only applicable cards, the For-you ranking equals the signals ranking (anti-divergence test), and a fact added in My details makes its card appear with no screen code changes. See docs/ROADMAP.md WI-5.5 + SP-1.",
+    cx: "Medium", im: "High", af: ["StrategiesScreen.jsx (sections, gating, For-you)", "signals.js (shared ranking)", "App.jsx (applicability flags in bundles)"], sv: "none (flags from model)"
+  },
+  {
+    id: 117, pr: 3, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L5 / WI-5.6 — Household scope: You / Spouse / Household toggle",
+    ds: "Pattern SP-6 for the spouse engine (#30): per-person data gets a You / Spouse / Household segment toggle, rendered only when household.hasSpouse (the applicability flag travels with the data, principle 8) and only on genuinely per-scope surfaces — Plan stats, Numbers → Accounts, Journey. Strategy flows stay household-scope by default (conversion, SS coordination, and RMDs are inherently MFJ-level computations), which keeps the catalogue from exploding into per-scope answers. The locked Spouse segment is the natural #30 upsell surface; the Household segment is #31's dashboard.",
+    dt: "Gated on the #30 engine shipping its household bundle. Done when the single-filer default renders no toggle anywhere, the three surfaces scope correctly with a spouse bundle present (smoke tests), and strategy flows show one household answer. See docs/ROADMAP.md WI-5.6 + SP-6.",
+    cx: "Medium", im: "Medium", af: ["PlanScreen.jsx / NumbersScreen.jsx / JourneyScreen.jsx (scope toggle)", "App.jsx (household bundle pass-through)"], sv: "none (renders #30's bundle)"
   }
 ];
 

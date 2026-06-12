@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (111 items, 38 done, 73 planned)
+- Feature backlog: `feature-tracker.html` (117 items, 38 done, 79 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -299,6 +299,27 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   stats will visibly change fake → real) and WI-0.2/#111 enforcement tooling (memoize
   `horizonProps`/`whatIfBundle`, add ESLint `react-hooks/exhaustive-deps`, value-lock the
   SCENARIOS/LIFE_EVENTS preset tables — V9–V11). Tracker 109 → 111 items (38 done, 73 planned).
+- End-state review canonicalized (Jun 12 2026, docs-only — 307 tests unchanged): a full backlog
+  inventory found 23 planned items with no obvious home in the end-state navigation; a pressure
+  test of the IA (design principles + 3 stress scenarios) concluded the content screens **hold —
+  an 8th "Analytics" screen would be the regression vector back to Classic** — but only with six
+  named scaling patterns now recorded in `docs/ROADMAP.md` → **End state**: SP-1 Strategies
+  catalogue (applicability gating, 4 editorial sections, For-you strip on the `calcSignals`
+  brain), SP-2 one money timeline (#48 `sources[]` subsumes `moneyEvents`), SP-3 uncertainty is
+  a lens not a screen (Monte Carlo behind the arc band view, renamed "Scenarios" → "Range" —
+  naming collision with Ideas' scenario cards), SP-4 platform is chrome (PDF = Journey export,
+  compare = Ideas shelf, advisor share = read-only entitlements), SP-5 surface governance
+  (Numbers ≤ 6 tabs; Ideas = one mode control; My details grows by collapsed cards), SP-6
+  household scope toggle. Four owner decisions recorded: mobile bar swaps Strategies in at L3;
+  premium locks quiet by default; Monte Carlo = lens with one verdict (+ a binding revisit note);
+  **"My details" is its own top-level screen, NOT part of Settings** (WI-3.2/#99 rewritten —
+  Settings stays app-centric for Appearance/Sharing/About and future login/subscription, rendered
+  as a desktop gear utility). Also: a per-item capacity map (every unhomed backlog item → fact
+  home / output / decision surface / tier), a stress-test record (forced the shared
+  `bracketRoomByYear` model view — #57 — consumed by #59/#67/#68/conversions, and day-one
+  `readOnly` in the entitlements design), three disposition upgrades (PDF, A/B compare, Monte
+  Carlo: Defer → Adopt), and a new **Level 5 — End-state build-out** batch WI-5.1…5.6.
+  Tracker 111 → 117 items (38 done, 79 planned; IDs 112–117).
 
 ## Commands
 - `npm run dev` — start dev server

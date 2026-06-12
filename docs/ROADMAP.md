@@ -1,7 +1,7 @@
 # Horizon Depth Ladder — Roadmap
 
 **Status:** approved Jun 12 2026 (owner). This is the build plan for closing the depth gap between the Classic (Legacy) dashboard and the Horizon shell, level by level, until Classic can be retired.
-**Tracker:** every work item (WI) below has a `feature-tracker.html` entry — IDs **88–111**, section "Horizon Depth Ladder".
+**Tracker:** every work item (WI) below has a `feature-tracker.html` entry — IDs **88–117**, section "Horizon Depth Ladder".
 **Related docs:** `docs/HORIZON.md` (Horizon design system & shipped batches) · `docs/ARCHITECTURE.md` (model layer) · `docs/DESIGN.md` (Classic UI only).
 
 ---
@@ -33,7 +33,7 @@ Expanded Jun 12 2026 after a code audit of real Horizon incidents (wrong functio
 ### B. Data integrity — the wrong-number rules
 6. **Screens format, never transform.** No `+ − × ÷` on model values in `src/horizon/`: no month↔year conversions, percentages, residuals, deltas, or age arithmetic. If a screen needs a derived number, it is added to the model (or an App.jsx memo calling the model) and passed **by name**. Formatting (`toLocaleString`, display rounding) and pure layout math (pixel positions, SVG scales) are fine. This sharpens the original "zero math in `src/horizon/`" rule — transformation is math even when it looks like display glue. *Incidents: the Statement waterfall residual, depletion age (`retirementAge + yearsSustained`), and the Plan progress % are all computed in JSX today, where no golden-master test can see them.*
 7. **Real data or no data.** Never scale, approximate, or invent a number to fill a gap — render a designed empty state instead. Decorative fakes are allowed only when isolated in `Ghost*`-named components that never share a code path with real data (`GhostArc` is the compliant example). *Incident: the Ideas scenario stats row still shows hardcoded multipliers (`totalAtRet × 0.92`) while the arc beside it shows a real `calcWhatIfChart` run — two different answers on one screen.*
-8. **Applicability travels with the data.** A number that only applies in some situations (SS after claim age, conversion window if one exists, spousal benefit if married, RMDs from age 73) is passed pre-gated by the model together with its applicability flag (the `hasConvWindow` / `ssAtRet` pattern). Screens never re-implement an eligibility condition — no age comparisons in JSX. *This is CLAUDE.md rule 5b's per-year-gating lesson applied to the UI; screen-side age gates exist today in the Numbers milestone logic.*
+8. **Applicability travels with the data.** A number that only applies in some situations (SS after claim age, conversion window if one exists, spousal benefit if married, RMDs from age 73) is passed pre-gated by the model together with its applicability flag (the `hasConvWindow` / `ssAtRet` pattern). Screens never re-implement an eligibility condition — no age comparisons in JSX. *This is CLAUDE.md rule 5b's per-year-gating lesson applied to the UI; screen-side age gates exist today in the Numbers milestone logic.* Household-scope rendering (You / Spouse / Household) follows the same rule — see scaling pattern **SP-6** in the End state section.
 9. **Constants come from config — even in copy.** IRS values (RMD age, FRA, contribution limits) are imported from `src/config/irs-2026.js` wherever they appear, including display text. *Incident: `rmdAge = 73` hardcoded in NumbersScreen — the exact class CLAUDE.md rule 1 exists to prevent.*
 10. **Missing data is not zero.** No bare `?? 0` / `?? 90` fallbacks that make absent data indistinguishable from real values. Every nullable/Infinity-capable field documents its edge values at the moment it's added to `horizonProps` (`yearsSustained: Infinity`, `depletionAge: null`, `ssBreakEven: null`, …), and screens render a designed state for them ("lasts beyond your plan", "not set up") rather than a defaulted number. A genuinely-zero value (no SS) is passed as an explicit 0 by the model, never synthesized by the screen.
 
@@ -46,12 +46,93 @@ Expanded Jun 12 2026 after a code audit of real Horizon incidents (wrong functio
 14. **Tests gate the wiring.** Every new screen ships a render-smoke test at golden-master defaults; every displayed number that has a locked value gets a wiring assertion; hardcoded UI tables (`SCENARIOS`, `LIFE_EVENTS`) get value-locks so silent edits are caught. (Detailed in the Testing strategy section — listed here because it is the enforcement arm of principles 6–12.)
 15. **Mobile parity is a ship gate**, not a follow-up (existing `isMobile = windowWidth < 640` pattern in `HorizonShell.jsx`).
 
-## Target navigation (end state)
+## End state — navigation, scaling patterns, and backlog capacity
 
-- Desktop top nav (7): **Plan · Journey · Ideas · Numbers · Strategies · Someday · Settings**
-- Mobile bottom bar (5): **Plan · Journey · Ideas · Numbers · More** — "More" opens a slide-up sheet (Strategies / Someday / Settings).
-- Implemented by extending the `SCREENS` array in `HorizonShell.jsx` and adding a `MoreSheet` for mobile once SCREENS > 5.
-- New top-level screens: **Journey** (Level 2) and **Strategies** (Level 3). Numbers grows from 3 tabs to 6.
+*Added Jun 12 2026 after an end-state review: a full inventory of the 73-item backlog found 23 planned items with no obvious home in the original 7-screen list (the advanced-income set #58–#68, the analytics set #38/#39/#55–#57, the timeline primitive #48, the platform set #40–#42, and several orphans). The IA was pressure-tested against the design principles plus three stress scenarios (a premium spouse+rental+stock+DAF user; "what are my odds?"; an advisor share link). This section records the verdict, the owner decisions, the six scaling patterns that make the verdict hold, and the per-item capacity map.*
+
+### Verdict
+
+**The content screens hold — an 8th "Analytics" screen would be the regression vector back to Classic.** The screens survive the full backlog because they are defined by **user intent, not feature category**: Plan = glance, Journey = understand, Ideas = explore (uncommitted), Numbers = verify, Strategies = decide, Someday = feel, **My details = your facts (committed inputs)**, Settings = app preferences (a utility, not a content destination). Every backlog item decomposes into those intents — a rental property is a fact in My details, a band in Money flow, a marker on the arc, and a sale-timing decision in Strategies. That is principles 1+2 applied to the backlog. **No Analytics screen, ever** — numbers without an intent attached is the Classic failure mode. But the screens only hold *internally* if the scaling patterns below are followed; without them Strategies becomes a 15-card wall, Ideas becomes 7 stacked panels, and My details becomes a second Classic.
+
+**Owner decisions (Jun 12 2026), binding:**
+1. **Mobile bar at Level 3 ship: swap Strategies in** — the bar holds the four habitual intents (glance / explore / verify / decide).
+2. **Locked premium features are quiet by default** — see SP-1.
+3. **Monte Carlo is a lens, not a screen, with one verdict on Plan** — see SP-3, including the owner's revisit note recorded there verbatim.
+4. **"My details" is NOT part of Settings.** Settings hosting plan facts conflates app preferences with the user's data — confusing for users, and it would crowd out real settings (login, profile, subscription) when the premium tier ships. My details is its own top-level destination (plan-fact topic cards, growing 5 → ~9 per SP-5); Settings shrinks to app-centric only: Appearance (palette / theme / arc style / activity), Sharing (#42), About, replay onboarding, the Legacy-view link — and later login/subscription.
+
+### Navigation spec
+
+- **Desktop content nav (7):** **Plan · Journey · Ideas · Numbers · Strategies · Someday · My details** — plus **Settings as a right-side gear utility** next to the existing on-track pill / Classic button (not a content tab; content nav stays at 7).
+- **Mobile bottom bar (5), at Level 2 ship:** **Plan · Journey · Ideas · Numbers · More** — "More" opens a slide-up sheet (Strategies · Someday · My details · Settings).
+- **Mobile bottom bar at Level 3 ship:** **Plan · Ideas · Numbers · Strategies · More** (Journey · Someday · My details · Settings) — owner decision 1; Strategies replaces Journey in the bar because deciding is habitual, narrative is occasional. Desktop keeps Journey at position 2.
+- Implemented by extending the `SCREENS` array in `HorizonShell.jsx` and adding a `MoreSheet` for mobile once SCREENS > 5. The More sheet carries a premium badge when locked items live inside it.
+- New top-level screens: **Journey** (Level 2), **Strategies** (Level 3), **My details** (Level 3, WI-3.2). Numbers grows from 3 tabs to 6.
+
+### Scaling patterns (SP-1 … SP-6 — citable in PRs like WIs)
+
+- **SP-1 — Strategies catalogue.** Order of organization as the catalogue grows (~6 cards at L3 → ~15 at end state): **(1) applicability gating** — non-applicable cards don't render (no rental → no rental-sale card; typical visible count: 5–8 of ~15), with a quiet "Browse all strategies" foot-disclosure for discovery; **(2) fixed editorial sections** — **Taxes** (Roth conversion, withdrawal order, tax-loss harvesting #65, DAF #68) / **Income timing** (SS timing, working longer #55, NQDC #64, S-corp #62) / **Accounts** (RMD outlook, surplus deployment, mega backdoor, DB plan #63) / **Assets** (concentrated stock #67, rental sale #59, inherited IRA #66); empty sections don't render; **(3) a "For you" strip capped at 3**, ranked by the **same `calcSignals` brain** as Plan's signals strip — one ranking, two surfaces, can never disagree. Cards have three states: *active* (configured, shows live dollars), *not set up* ("see what this could be worth"), *locked* (premium). **Locked is quiet by default** (owner decision 2): a locked card renders in-section only when its teaser dollar is honestly computable from free data; otherwise locked items collapse into one "N more strategies with Premium" row. No wall of locks.
+- **SP-2 — One money timeline.** One canonical model store for every dated money fact: the #48 `sources[]` primitive (`src/model/timeline.js`) **subsumes `moneyEvents`** (a one-time event = a source with `startAge === endAge`) — migrate once, **before** #10/#17/#35/#36/#43/#53/#54/#58/#64 each invent their own start/stop fields. One shared `MoneyTimeline` editor with two doors: **My details → "Income & expense timeline"** card edits committed facts; **Ideas → Events mode** stages explorations and commits through the confirm path. Arc event markers become doors: tap → popover → "Edit in My details" / "Explore in Ideas". Eight backlog items become pre-filled templates of this one editor instead of eight bespoke panels.
+- **SP-3 — Uncertainty is a lens, not a screen.** Monte Carlo (#38) ships as real percentile data behind the arc's band view (**renamed "Range"** — the current "Scenarios" name collides with Ideas' scenario cards), with the success % as the Range view caption, a driver line in the on-track pill popover, and a low-odds signal that deep-links to the working-longer card (#55). Historical stress (#39, premium) is a "History" mode of the same view (named paths: 1966, 2000, 2008). **No second glance-level verdict on Plan** — one pill; long-term the pill's verdict itself becomes confidence-aware *in the model*. **Owner note (verbatim, binding):** Monte Carlo charts are a feature users often like seeing; confidence levels must be visually available somewhere (the Range view is that home). After the lens ships and is tested in practice, revisit whether the recommended route is still best — alternatives should be explored.
+- **SP-4 — Platform is chrome, not screens.** Scenario save/compare (#40) → an Ideas "My scenarios" shelf + compare sub-view (mobile: stacked A/B), not a new screen. PDF report (#41) → **Journey's header gets "Export my plan"** — the export IS the Journey narrative plus the Statement; one home, premium. Advisor share (#42) → a Sharing card in Settings; the recipient gets **read-only Horizon** — same screens, no setters. Premium gating (#29) → an `entitlements` bundle in `horizonProps` + one shared `LockedCard` / upsell-nudge component; locks render in place (no interstitials), and the mechanism is **designed with a `readOnly` capability from day one** because the advisor link is `entitlements: none + readOnly: true` on the same mechanism.
+- **SP-5 — Surface governance.** **Numbers stays ≤ 6 tabs forever** — extend an existing tab before adding one (state exemptions #52 → a "Where you'll retire" section of Taxes; NIIT #45 → a Taxes warning row + a surtax line in the conversion flow's impact panel; withdrawal sequencing #47 → per-account draw columns in Year-by-year + upgrades the Withdrawal-order card to Apply-with-preview). **Ideas = arc + verdict badge (#85) on top + ONE segmented mode control: Dials · Events · Scenarios · Solvers** (affordability + #82 recurring-spend + #83 required-contribution = three questions in one Solvers panel; #84 upgrades the retirement-age dial to a free slider) — never stacked panels. **My details grows only by collapsed topic cards** (5 at L3 → ~9 at end state: adds Property & rentals, Business & partnerships, Family & estate, Spouse & household, Income & expense timeline) — closed cards are one summary line, so 9 cards stay calmer than Classic's 110 visible inputs.
+- **SP-6 — Household scope.** When spouse modeling (#30) ships, per-person data gets a **You / Spouse / Household segment toggle** rendered only when `household.hasSpouse` (per principle 8 — the flag travels with the data) and only on surfaces that are genuinely per-scope (Plan stats, Numbers → Accounts, Journey). **Strategy flows are household-scope by default** — conversion, SS coordination, and RMDs are inherently MFJ-level computations, which avoids per-scope strategy answers exploding the catalogue. The locked "Spouse" segment is the natural #30 upsell surface (#31 household dashboard = the Household segment).
+
+### Capacity map — where every flagged backlog item lives
+
+Sibling to the parity-audit table: every backlog item that had no obvious home, mapped to its **fact home** (where the input is committed), its **output rendering** (where the consequence shows), its **decision surface** (if it carries a choice), and its lock tier. Items not listed here either already have a WI home or are infrastructure.
+
+| # | Item | Fact home | Output rendering | Decision surface | Tier |
+|---|---|---|---|---|---|
+| 48 | Income/expense timeline primitive | — (model: `timeline.js` `sources[]`, SP-2) | Arc markers; Money flow bands; Year-by-year | — | Free |
+| 10 | Variable spending in retirement | My details → Spending (phase rows on the timeline) | Money flow (retirement); arc | — | Free |
+| 17 | Pension timing granularity | My details → Income & expense timeline | Journey ch. 3; Money flow | — | Free |
+| 35 | Part-time / bridge income | Timeline template (SP-2) | Arc marker; Money flow | — | Free |
+| 36 | Rental income as retirement income | My details → Property & rentals | Money flow; Journey ch. 3 | — | Free |
+| 43 | Long-term care expense shock | Timeline template (SP-2) | Arc marker; Range view | — | Premium |
+| 53 | Mortgage payoff + expense step-down | My details → Spending (timeline template) | Arc marker; Money flow | — | Free |
+| 54 | Inheritance / windfall | Timeline template (SP-2) | Arc marker | — | Free |
+| 58 | Rental cash flow / depreciation split | My details → Property & rentals | Numbers → Taxes; Money flow | — | Premium |
+| 59 | Rental depreciation recapture at sale | My details → Property & rentals | sale-year tax in Taxes | Strategies → Assets: "Sell the rental?" | Premium |
+| 60 | REIT dividends + §199A | My details → Accounts (holding flag) | Numbers → Taxes (MAGI line) | — | Premium |
+| 61 | K-1 partnership income | My details → Business & partnerships | Numbers → Taxes | — | Premium |
+| 62 | S-corp salary/distribution split | My details → Business & partnerships | Numbers → Taxes | Strategies → Income timing | Premium |
+| 63 | Defined benefit / cash balance plan | My details → Accounts | Journey ch. 2; Money flow | Strategies → Accounts | Premium |
+| 64 | NQDC / 409A income flood | My details → Business & partnerships (timeline) | Money flow; Numbers → Taxes | Strategies → Income timing (distribution schedule) | Premium |
+| 65 | Tax-loss harvesting | — (uses taxable balance) | annual alpha in card | Strategies → Taxes | Premium |
+| 66 | Inherited IRA 10-year rule | My details → Family & estate | Numbers → Taxes; Year-by-year | Strategies → Assets (distribution timing) | Premium |
+| 67 | Concentrated stock position | My details → Accounts (position card) | Range view (concentration risk) | Strategies → Assets (diversify vs tax) | Premium |
+| 68 | Donor-Advised Fund | My details → Family & estate (giving) | Numbers → Taxes | Strategies → Taxes (bunching calendar) | Premium |
+| 38 | Monte Carlo success rate | — (model engine) | **Range view** + caption % + pill driver + signal (SP-3) | — | Free |
+| 39 | Historical sequence stress-test | — (model engine) | Range view → History mode | — | Premium |
+| 55 | Working-longer break-even | — (derived) | Ideas → Solvers; low-odds signal target | Strategies → Income timing card | Free |
+| 56 | Tax diversification score | — (derived) | Numbers → Accounts (composition bar + score) | signal when concentrated | Free |
+| 57 | Conversion-window tax calendar | — (model: `bracketRoomByYear`, see WI-3.6 note) | conversion flow year table | shared by #59/#67/#68 flows | Free |
+| 40 | Scenario save & compare | — (saved scenario objects) | Ideas → My scenarios shelf + compare (SP-4) | — | Premium |
+| 41 | PDF plan report | — | Journey → "Export my plan" (SP-4) | — | Premium |
+| 42 | Advisor share | Settings → Sharing card | read-only Horizon for recipient (SP-4) | — | Premium |
+| 29 | Premium gating | — (`entitlements` bundle + `LockedCard`, SP-4) | locks in place, quiet (SP-1) | — | Infra |
+| 45 | NIIT surtax awareness | — (derived) | Numbers → Taxes warning row; conversion-impact line (SP-5) | — | Free |
+| 52 | Per-state retirement exemptions | My details → Assumptions (retirement state, exists) | Numbers → Taxes "Where you'll retire" (SP-5) | — | Free |
+| 49 | HSA funding method + coverage | My details → Accounts & match | Numbers → Budget (FICA note) | — | Free |
+| 50 | Health insurance source wizard | My details → Health & Medicare | conversion flow healthcare impact | — | Free |
+| 11 | Work gap / zero-earning years | My details → Income & job (timeline) | accum chart; SS AIME effect in ssView | — | Free |
+| 9 | Legacy / estate goal | My details → Family & estate | Plan ("Left at 90" card gains target state); Journey ch. 3 | — | Free |
+| 47 | Withdrawal sequencing in engine | — (model engine) | Year-by-year per-account draw columns (SP-5) | upgrades Withdrawal-order card to Apply | Free |
+| 30 | Spouse account engine | My details → Spouse & household | scope toggle surfaces (SP-6) | household-scope strategy flows | Premium |
+| 31 | Household dashboard | — | the Household segment of SP-6's toggle | — | Premium |
+| 82 | Recurring-spend solver | — | Ideas → Solvers (SP-5) | — | Free |
+| 83 | Required-contribution solver | — | Ideas → Solvers (SP-5) | — | Free |
+| 84 | Free retirement-age slider | — | Ideas → Dials (upgrade) | — | Free |
+| 85 | Verdict badge | — (model verdict field) | Ideas header + ApplyPreviewModal | — | Free |
+| 86 | Scenario-aware conversion recompute | — (model) | Ideas scenario stats; ApplyPreviewModal delta | — | Free |
+
+### Stress-test record
+
+The IA was tested, not assumed. Three scenarios were walked end-to-end; two forced amendments, recorded here so future reviews don't re-litigate:
+
+1. **Premium power user (spouse + rental + concentrated stock + DAF).** Walks cleanly *only* with SP-1's applicability gating and SP-6's household-default strategy flows. **Amendment forced:** rental sale (#59), stock diversification (#67), DAF bunching (#68), and Roth conversions all compete for the *same* bracket/MAGI headroom in the same years — answering each in isolation would over-fill the bracket. The conversion calendar (#57) therefore ships as a shared model view **`bracketRoomByYear`** that all four flows consume (see WI-3.6 note), so every strategy sees the room the others have already claimed.
+2. **"What are my odds?"** Answerable in two taps (pill popover → Range view) without a new screen — confirms SP-3. The temptation this scenario creates (a dedicated probability dashboard) is exactly the rejected Analytics screen.
+3. **Advisor share link.** The recipient needs all screens but no setters. **Amendment forced:** the #29 entitlements mechanism must carry a `readOnly` capability from day one (SP-4) — retrofitting read-only onto a lock system built only for paid/unpaid would mean touching every input surface twice.
 
 ---
 
@@ -171,10 +252,10 @@ A Jun 12 2026 code audit found the design principles above already violated in s
 Copy each input's min/max/step constraints verbatim from the Classic JSX (e.g., the SS claim-age floor at `currentAge` — BUG-17 guard). Document the bundle shapes in `docs/ARCHITECTURE.md`.
 **Done when:** a value changed in Horizon is immediately reflected in Classic (manual round-trip on 3 representative fields); render-smoke test mounts HorizonShell with bundles and fires one setter per bundle without crashing.
 
-### WI-3.2 (#99) Settings split → "My details" + "Appearance"
-**Target:** all profile-level Classic inputs reachable in Horizon, calm by default.
-**Actions:** `SettingsScreen.jsx` gets two sub-tabs. *Appearance* keeps palette/theme/arc-style/activity/replay-onboarding. *My details* renders collapsed topic cards (income & job, spending, accounts & match, health & Medicare, assumptions) — each closed card shows a one-line summary ("$100k, growing 3%/yr"); expanded cards use the onboarding stepper/preset pattern on mobile, sliders on desktop. Inline "Why this matters" notes ported from Classic explainer text.
-**Done when:** every input in the `profile/spending/accounts/health/assumptions` bundles has exactly one home here (checklist); summaries accurate; usable on mobile.
+### WI-3.2 (#99) "My details" screen — plan facts get their own destination
+**Target:** all profile-level Classic inputs reachable in Horizon, calm by default — and **not in Settings** (owner decision 4, End state section: plan facts are the user's data, not app preferences; Settings stays free for login/profile/subscription when premium ships).
+**Actions:** new top-level `src/horizon/screens/MyDetailsScreen.jsx` (added to `SCREENS`; desktop nav position 7; in the mobile More sheet). It renders collapsed topic cards (income & job, spending, accounts & match, health & Medicare, assumptions — growing to ~9 cards per SP-5) — each closed card shows a one-line summary ("$100k, growing 3%/yr"); expanded cards use the onboarding stepper/preset pattern on mobile, sliders on desktop. Inline "Why this matters" notes ported from Classic explainer text. `SettingsScreen.jsx` keeps app-centric content only: Appearance (palette/theme/arc-style/activity), replay-onboarding, About, the Legacy-view link (WI-4.2), and later Sharing (#42); on desktop Settings renders as a right-side gear utility rather than a content tab.
+**Done when:** every input in the `profile/spending/accounts/health/assumptions` bundles has exactly one home here (checklist); summaries accurate; usable on mobile; Settings contains no plan-fact inputs.
 
 ### WI-3.3 (#100) Strategies screen scaffold
 **Target:** a card grid where each strategy shows its dollar stakes and opens a guided flow.
@@ -195,6 +276,7 @@ Copy each input's min/max/step constraints verbatim from the Classic JSX (e.g., 
 **Target:** the full conversion pipeline — Classic's deepest feature — interactive in Horizon.
 **Actions:** pass `horizonProps.conversionView` = the display path's `evaluateConversionPlan` result (`conversionSim, rmdDataPostConversion, rmdTaxSaved, netConversionBenefit, irmaaCost, acaLoss, cliffYears, adjustedNetConversionBenefit`) + `calcBracketFillTargets` outputs (`convSteadyTarget/convPeakTarget/targetsVary`) + the existing optimizer suggestion. Flow sections: window summary; mode toggle (bracket 12/22/24 vs custom amount); tax-source toggle; outcome cards (conversion, tax cost, RMD tax saved, net); healthcare impact (ACA cliff years, IRMAA cost, adjusted net); year-by-year conversion table + RMD before/after; **optimizer suggestion with Apply** (sets `annualConversionAmt` + `conversionMode="custom"` through the WI-3.9 preview modal).
 **Done when:** all values equal Classic's conversion section at the same state (incl. the locked default `netConversionBenefit` = 77,861 path); Apply round-trips and the suggestion clears once applied.
+**Forward note (End state, stress test 1):** the per-year bracket-headroom table this flow displays ships as a shared model view **`bracketRoomByYear`** (the #57 conversion calendar), because the rental-sale (#59), concentrated-stock (#67), and DAF (#68) flows must consume the *same* room — strategies that each assume an empty bracket would jointly over-fill it.
 
 ### WI-3.7 (#104) Withdrawal order, Surplus deployment, Mega backdoor flows
 **Target:** the remaining three Classic strategy sections in Horizon.
@@ -236,15 +318,51 @@ Copy each input's min/max/step constraints verbatim from the Classic JSX (e.g., 
 
 ---
 
+# Level 5 — End-state build-out (the scaling patterns become code)
+
+The End state section's patterns, turned into work items. Sequencing: Level 5 follows Level 4, **except** WI-5.1 and WI-5.2 may start alongside Level 3 if advanced-income (#58–#68) or premium work is pulled forward — they are the prerequisites the rest of the backlog builds on.
+
+### WI-5.1 (#112) Money timeline primitive
+**Target:** one canonical store for every dated money fact (SP-2).
+**Actions:** new `src/model/timeline.js` implementing #48's `sources[]` (label, amount, startAge, endAge, growth, taxability, category); migrate `moneyEvents` (one-time event = `startAge === endAge`) in `simulation.js`, `retirement-drawdown.js`, `what-if.js`, and the two editor panels — one migration, before #10/#17/#35/#36/#43/#53/#54/#58/#64 invent per-feature fields. Shared `MoneyTimeline` editor component with the two doors (My details card = committed; Ideas Events mode = staged) and arc-marker popovers ("Edit in My details" / "Explore in Ideas"). Backlog items become pre-filled templates.
+**Done when:** `moneyEvents` is gone (or a thin compat shim over `sources[]`); golden master unmoved at defaults; both doors round-trip; template-instantiation tests per migrated item.
+
+### WI-5.2 (#113) Entitlements & read-only chrome
+**Target:** premium gating (#29) as chrome, with advisor-share readiness (SP-4).
+**Actions:** `entitlements` bundle in `horizonProps` (+ documented shape in ARCHITECTURE.md) **including a `readOnly` capability from day one** (stress test 3); shared `LockedCard` / upsell-nudge component; SP-1's quiet-lock rules (in-section teaser only when the dollar is computable from free data, else one collapsed "N more strategies with Premium" row); More-sheet premium badge.
+**Done when:** flipping the entitlements flag locks/unlocks every gated surface with no screen restructuring; `readOnly: true` renders all screens with setters inert; smoke tests for both states.
+
+### WI-5.3 (#114) Monte Carlo lens
+**Target:** #38 as a lens, not a screen (SP-3).
+**Actions:** percentile engine as a pure model function (model-first, principle 4); arc band view renamed **"Scenarios" → "Range"** in `ArcGraph.jsx` VIEWS and fed real percentile series; success % as the Range caption; driver line in the pill popover; low-odds signal (`calcSignals`) deep-linking to the working-longer card. #39 History mode (premium) follows on the same view. **Carries the owner's revisit note (SP-3, verbatim there): after the lens ships and is tested in practice, revisit whether this route is still best — alternatives should be explored.**
+**Done when:** Range view shows real percentiles at golden-master defaults; one verdict on Plan (review); engine value-locked; the rename leaves the other three arc views untouched.
+
+### WI-5.4 (#115) Ideas governance
+**Target:** Ideas stays one arc + one mode control as it absorbs its backlog (SP-5).
+**Actions:** segmented mode control **Dials · Events · Scenarios · Solvers**; verdict badge #85 in the header (and inside ApplyPreviewModal); Solvers panel unifying affordability (WI-3.8) + #82 recurring-spend + #83 required-contribution as three questions of one panel; #84 free retirement-age slider replacing the ±2-year presets; #40 My scenarios shelf + compare sub-view (premium; mobile stacked A/B).
+**Done when:** no stacked panels (one mode visible at a time); all solver answers come from model functions; compare shows two real `calcWhatIfChart` runs; smoke tests per mode.
+
+### WI-5.5 (#116) Strategies catalogue v2
+**Target:** the catalogue scales 6 → ~15 cards without becoming a wall (SP-1).
+**Actions:** applicability gating (cards render only when their facts exist — flags from the model per principle 8); the four editorial sections (Taxes / Income timing / Accounts / Assets), empty sections hidden; "Browse all strategies" foot-disclosure; "For you" strip capped at 3 and ranked by `calcSignals` (one brain with Plan's strip); three card states (active / not set up / locked via WI-5.2).
+**Done when:** golden-master default shows only applicable cards; For-you ranking equals the signals ranking (anti-divergence test); a fact added in My details makes its card appear without code changes to the screen.
+
+### WI-5.6 (#117) Household scope
+**Target:** You / Spouse / Household scope rendering for the #30 engine (SP-6).
+**Actions:** scope toggle rendered only when `household.hasSpouse` (flag travels with the data, principle 8), only on per-scope surfaces (Plan stats, Numbers → Accounts, Journey); strategy flows stay household-scope by default; locked Spouse segment as the #30 upsell surface; #31 household dashboard = the Household segment.
+**Done when:** single-filer default renders no toggle anywhere; with a spouse bundle present, the three surfaces scope correctly (smoke tests); strategy flows show one household answer.
+
+---
+
 ## Parity audit checklist — seed (completed at WI-4.1)
 
 | Classic surface | Planned Horizon home | WI |
 |---|---|---|
 | Headline stats (take-home, total at retirement, years sustained, withdrawal rate) | Plan stat cards + pill (shipped) | — |
-| Income & job inputs (income, growth, plateau, spouse income, filing status, state) | Settings → My details | 3.2 |
-| Spending inputs (living expenses + growth, retirement expenses, target) | Settings → My details | 3.2 |
-| Account inputs (4 × balance/contribution/end-age) + employer match | Settings → My details | 3.2 |
-| Assumptions (return, inflation, life expectancy, retirement state) | Settings → My details | 3.2 |
+| Income & job inputs (income, growth, plateau, spouse income, filing status, state) | My details | 3.2 |
+| Spending inputs (living expenses + growth, retirement expenses, target) | My details | 3.2 |
+| Account inputs (4 × balance/contribution/end-age) + employer match | My details | 3.2 |
+| Assumptions (return, inflation, life expectancy, retirement state) | My details | 3.2 |
 | Budget savings waterfall + deficit warning | Numbers → Budget | 2.2 |
 | Optimized allocation suggestion + Apply/Revert | Numbers → Budget (view) · Strategies → Surplus (apply) | 2.2 / 3.7 |
 | Account comparison at retirement + milestones | Numbers → Accounts | 2.3 |
@@ -260,7 +378,7 @@ Copy each input's min/max/step constraints verbatim from the Classic JSX (e.g., 
 | RMD section (table selection, outside balances, schedule, tax) | Strategies → RMD outlook | 3.5 |
 | Roth conversion section (mode, bracket fill, tax source, sim, net benefit) | Strategies → Conversion planner | 3.6 |
 | ACA cliff + IRMAA exposure | Strategies → Conversion planner (healthcare impact) | 3.6 |
-| Healthcare inputs (marketplace, household size, premium, Medicare persons) | Settings → My details + Conversion flow | 3.2 / 3.6 |
+| Healthcare inputs (marketplace, household size, premium, Medicare persons) | My details + Conversion flow | 3.2 / 3.6 |
 | Conversion optimizer suggestion | Signals strip + Conversion planner Apply | 1.2 / 3.6 |
 | Withdrawal order (taxable→trad→Roth, year-1 tax savings) | Strategies → Withdrawal order | 3.7 |
 | Mega backdoor calculator | Strategies → Mega backdoor | 3.7 |
@@ -283,12 +401,13 @@ Rows not covered by a WI by the time Level 3 ships get an explicit *merge* or *d
 
 ## Sequencing → PR batches (one reviewable PR each; level exit gates between levels)
 
-1. **Docs batch** *(this one)*: `docs/ROADMAP.md` + `docs/HORIZON.md` link + tracker IDs 88–111.
+1. **Docs batches** *(shipped)*: this roadmap + `docs/HORIZON.md` link + tracker IDs 88–109; then the principles/Level-0 batch (IDs 110–111); then the end-state batch (End state section + Level 5, IDs 112–117).
 2. **L0 (foundations):** WI-0.1 + WI-0.2 — clear the Violations register and install lint/memoization before any new screens are built.
 3. **L1:** WI-1.1, 1.2, 1.3.
 4. **L2a:** WI-2.1 (Journey + MoreSheet). **L2b:** WI-2.2–2.4 (Numbers tabs). **L2c:** WI-2.5–2.7.
 5. **L3a:** WI-3.1 + 3.2 (plumbing + My details). **L3b:** WI-3.3–3.5. **L3c:** WI-3.6 + 3.9. **L3d:** WI-3.7 + 3.8.
 6. **L4:** WI-4.1 → 4.2 → 4.3.
+7. **L5:** WI-5.1–5.6 in dependency order (5.1/5.2 are prerequisites for most of the rest; both may be pulled forward alongside L3 if advanced-income or premium work starts early).
 
 ## Creative options explored (disposition record)
 
@@ -300,9 +419,9 @@ Rows not covered by a WI by the time Level 3 ships get an explicit *merge* or *d
 | Strategies screen as premium surface | **Adopt** — WI-3.3; prerequisite for premium tier #29/#30/#31 |
 | Retirement-phase money-flow Sankey | **Adopt** — WI-2.6 |
 | Affordability mode in Ideas | **Adopt** — WI-3.8 (model fn already exists) |
-| Printable/PDF "Horizon Statement" | **Defer** — Statement tab is the basis; `WhatIfPanel`'s `window.print()` shows the path; good premium add-on later |
-| Plan A vs Plan B side-by-side comparison | **Defer** — `calcWhatIfChart` makes it cheap later; Ideas overlays cover most of it today |
-| Monte Carlo / probability of success | **Defer** — already on the backlog; the Scenarios arc view (uncertainty cone) is its placeholder |
+| Printable/PDF "Horizon Statement" | **Adopt** *(upgraded from Defer, Jun 12 2026 end-state review)* — Journey header "Export my plan", premium (#41, SP-4) |
+| Plan A vs Plan B side-by-side comparison | **Adopt** *(upgraded from Defer, Jun 12 2026)* — Ideas "My scenarios" shelf + compare sub-view, premium (#40, WI-5.4) |
+| Monte Carlo / probability of success | **Adopt as lens** *(upgraded from Defer, Jun 12 2026)* — explicitly **not a screen**: Range arc view + caption + pill driver + signal (#38/#39, SP-3, WI-5.3) |
 | Account import (Plaid etc.) | **Defer** — per `docs/INTEGRATIONS.md`, post-launch |
 | Gamified badges/streaks | **Reject** — tone clash with Horizon's calm, premium voice; arc milestones give the same payoff |
 | AI chat advisor | **Reject for now** — scope and compliance risk; revisit post-launch |
