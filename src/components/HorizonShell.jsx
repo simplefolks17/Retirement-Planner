@@ -3,7 +3,7 @@
 // Screens: Plan · Ideas · The numbers · Settings · Someday
 // LAYOUT/STYLING ONLY — no calculation logic lives here.
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
@@ -107,6 +107,34 @@ function fmtField(field, val) {
     case "monthlySpend":  return `$${val.toLocaleString()}`;
     default: return String(val);
   }
+}
+
+function ObInput({ t, field, vals, setVals }) {
+  const [draft, setDraft] = useState("");
+  const [focused, setFocused] = useState(false);
+  const [lo, hi] = OB_CLAMPS[field];
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={focused ? draft : fmtField(field, vals[field])}
+      onFocus={() => { setFocused(true); setDraft(String(vals[field])); }}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => {
+        const n = parseInt(draft.replace(/[^0-9]/g, ""), 10);
+        if (!isNaN(n)) setVals(v => ({ ...v, [field]: Math.max(lo, Math.min(hi, n)) }));
+        setFocused(false);
+      }}
+      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      style={{
+        flex: 1, height: 50, borderRadius: 12,
+        border: `1.5px solid ${t.line2}`, background: t.bg,
+        font: `600 22px ${HM}`, color: t.ink,
+        textAlign: "center", outline: "none",
+        padding: "0 12px", minWidth: 0, cursor: "text",
+      }}
+    />
+  );
 }
 
 function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
@@ -251,13 +279,7 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
             {/* stepper with live numeric state */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 320, marginTop: 4 }}>
               <span style={stepBtnStyle} onClick={() => adjust(cur.field, -1)}>−</span>
-              <div style={{
-                flex: 1, height: 50, borderRadius: 12, border: `1.5px solid ${t.line2}`,
-                background: t.bg, display: "flex", alignItems: "center", justifyContent: "center",
-                font: `600 22px ${HM}`, color: t.ink
-              }}>
-                {fmtField(cur.field, vals[cur.field])}
-              </div>
+              <ObInput key={cur.field} t={t} field={cur.field} vals={vals} setVals={setVals} />
               <span style={stepBtnStyle} onClick={() => adjust(cur.field, +1)}>+</span>
             </div>
 
@@ -353,7 +375,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             initialValues={{
               currentAge:    props.currentAge,
               currentIncome: props.currentIncome,
-              totalSaved:    props.totalAtRet,
+              totalSaved:    props.currentTotalSaved,
               retirementAge: retirementAge,
               monthlySpend:  Math.round((props.effectiveExpenses ?? 0) / 12),
             }}
@@ -391,7 +413,8 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} />}
-            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} />}
+            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity}
+              onResetOnboarding={() => { safeSet("hz-onboarded", ""); setShowOnboarding(true); }} />}
           </div>
 
           {/* bottom tab bar — mobile only */}

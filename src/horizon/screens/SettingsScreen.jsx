@@ -3,7 +3,7 @@ import { GhostArc } from "../../components/ArcGraph.jsx";
 import { PALETTES, HF, useTheme } from "../ThemeContext.jsx";
 import { ACTIVITIES } from "./SomedayScreen.jsx";
 
-export default function SettingsScreen({ t, activity, setActivity }) {
+export default function SettingsScreen({ t, activity, setActivity, onResetOnboarding }) {
   const { palKey, setPalKey, modePref, setModePref, arcStyle, setArcStyle } = useTheme();
   const activeAct = ACTIVITIES.find(a => a.l.toLowerCase() === (activity ?? "golf course").toLowerCase())
     ?? ACTIVITIES[0];
@@ -112,10 +112,20 @@ export default function SettingsScreen({ t, activity, setActivity }) {
           <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>
             About
           </div>
-          <p style={{ font: `400 13px/1.6 ${HF}`, color: t.mut, maxWidth: 460, margin: 0 }}>
+          <p style={{ font: `400 13px/1.6 ${HF}`, color: t.mut, maxWidth: 460, margin: "0 0 14px" }}>
             Horizon is a retirement planning tool that shows you the complete picture of your financial life —
             from today through retirement and beyond. All calculations use 2026 IRS limits.
           </p>
+          <button
+            onClick={onResetOnboarding}
+            style={{
+              font: `500 12px ${HF}`, color: t.faint,
+              background: "transparent", border: `1px solid ${t.line2}`,
+              borderRadius: 8, padding: "6px 14px", cursor: "pointer",
+            }}
+          >
+            Replay onboarding
+          </button>
         </div>
       </div>
 

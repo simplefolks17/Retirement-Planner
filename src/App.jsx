@@ -631,6 +631,8 @@ export default function App() {
     currentContribTotal,
     retVals, simData,
     netConversionBenefit, yr1TaxSavings,
+    // Sum of all current account balances — used by onboarding "savings today" field
+    currentTotalSaved: bal401k + balRoth + balTaxable + balHSA,
     // Batch A additions:
     moneyEvents, setMoneyEvents,
     whatIfSimInputs: whatIfBundle,
