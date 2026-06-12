@@ -531,9 +531,11 @@ export default function ArcGraph({
   compact = false,
   scenarioData = null,
 }) {
-  const pad = compact
+  // Memoized so the scales memo below can list `pad` honestly in its deps
+  // (a fresh object each render would defeat the memo — principle 13).
+  const pad = useMemo(() => compact
     ? { l: 46, r: 60, t: 30, b: 40 }
-    : { l: 62, r: 92, t: 38, b: 46 };
+    : { l: 62, r: 92, t: 38, b: 46 }, [compact]);
 
   const [boxRef, { w, h }] = useSize();
 
@@ -558,7 +560,7 @@ export default function ArcGraph({
   }, [w, h]);
 
   const s = useMemo(() => makeScales(vbH, pad, ageMin, ageMax, vmax),
-    [vbH, pad.l, pad.r, pad.t, pad.b, ageMin, ageMax, vmax]);
+    [vbH, pad, ageMin, ageMax, vmax]);
 
   const gid = `arc-${activeView}`;
 

@@ -47,6 +47,10 @@ import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
 
+// The four account display keys (static — module level so memos that map over
+// them can keep honest, complete dependency arrays).
+const ACCOUNT_DATA_KEYS = ["Trad 401k", "Roth IRA", "Taxable", "HSA"];
+
 export default function App() {
 
   const [currentAge,    setCurrentAge]    = useState(30);
@@ -187,7 +191,7 @@ export default function App() {
     bal401k, balRoth, balTaxable, balHSA,
     contrib401k, contribRoth, contribTaxable, contribHSA,
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-    employerMatchPct, matchMode, matchFormulaRate, matchFormulaCap,
+    employerMatch,
     moneyEvents,
   ]);
 
@@ -243,17 +247,27 @@ export default function App() {
   ];
 
   // Memoized on atRetirement (a stable reference: either a memoized simData row or
-  // the memoized currentSnapshot). ACCOUNTS' dataKeys are static, so atRetirement is
-  // the only varying input — keeping retVals stable lets conversionSim/optimizer skip
+  // the memoized currentSnapshot). Built over the static ACCOUNT_DATA_KEYS (not the
+  // per-render ACCOUNTS array, which carries setters) so the deps array is honest
+  // and complete — keeping retVals stable lets conversionSim/optimizer skip
   // re-running unless the retirement balances actually change.
   const retVals = useMemo(() => Object.fromEntries(
-    ACCOUNTS.map(a => [a.dataKey, atRetirement[a.dataKey] ?? 0])
+    ACCOUNT_DATA_KEYS.map(k => [k, atRetirement[k] ?? 0])
   ), [atRetirement]);
   const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
 
   const totalAtRet        = Object.values(retVals).reduce((s, v) => s + v, 0);
   const effectiveExpenses = annualExpenses ?? Math.round(totalAtRet * ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE);
   const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
+
+  // Per-account retirement balances as plain scalars, extracted once so the
+  // conversion-plan and optimizer memos can list them in their deps arrays
+  // (exhaustive-deps forbids `retVals["…"]` expressions in deps).
+  const retTaxable     = retVals["Taxable"]   ?? 0;
+  const retTrad        = retVals["Trad 401k"] ?? 0;
+  const retRoth        = retVals["Roth IRA"]  ?? 0;
+  // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
+  const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
   // Household retirement income (SS + pension), extracted to
   // src/model/retirement-income.js. ssAtRet / effectivePension carry the
@@ -309,10 +323,13 @@ export default function App() {
     includeSS, ssClaimingAge, ssTaxableRet,
     pensionMonthly, pensionStartAge, effectivePension, rmdStartAge: RMD_START_AGE,
   });
-  const { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate } = calcRMDTaxSchedule({
+  // Memoized (V9): rmdDataWithTax feeds rmdTaxByAge → retDrawShared → the shared
+  // retirement walk; an unmemoized fresh array here would re-reference the whole
+  // chain (chartData, retirementWalk, horizonProps) on every render.
+  const { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate } = useMemo(() => calcRMDTaxSchedule({
     rmdData, rmdIncomeFloor, filingStatus, retStateRate,
     fedMarginal, maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
-  });
+  }), [rmdData, rmdIncomeFloor, filingStatus, retStateRate, fedMarginal]);
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
@@ -363,8 +380,8 @@ export default function App() {
       returnRate, retIncomeFloor, retIncomeFloors: convFloors,
       filingStatus, conversionTaxSource, retStateRate,
       tradGrossAtRetirement: (retRow?.tradGross ?? 0) + addlPreTaxBal,
-      rothBalAtRet: retVals["Roth IRA"] ?? 0,
-      taxableBalAtRet: retVals["Taxable"] ?? 0,
+      rothBalAtRet: retRoth,
+      taxableBalAtRet: retTaxable,
       safeRetAge,
       rmdData, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
       rmdTaxBite, rmdIncomeFloor,
@@ -372,7 +389,7 @@ export default function App() {
       personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
     });
   }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion,
-      conversionMode, bracketFillConversions, retVals["Roth IRA"], retVals["Taxable"], returnRate,
+      conversionMode, bracketFillConversions, retRoth, retTaxable, returnRate,
       retIncomeFloor, convFloors, filingStatus, conversionTaxSource, retStateRate, addlPreTaxBal,
       rmdData, safeLifeExp, useTable2, spouseCurrentAge, rmdTaxBite, rmdIncomeFloor,
       convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, personOnMedicare,
@@ -475,8 +492,8 @@ export default function App() {
     const retRow = simData.find(d => d.age === safeRetAge)
       ?? (safeRetAge === currentAge ? currentSnapshot : null);
     const tradGross = (retRow?.tradGross ?? 0) + addlPreTaxBal;
-    const rothBal   = retVals["Roth IRA"] ?? 0;
-    const taxableBal = retVals["Taxable"] ?? 0;
+    const rothBal   = retRoth;
+    const taxableBal = retTaxable;
     // Capture loop vars for closure (avoids stale deps)
     const _convFloors = convFloors;
     const _convMAGIFloors = convMAGIFloors;
@@ -503,7 +520,7 @@ export default function App() {
 
     return findOptimalConversion({ getNetBenefit });
   }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, retStateRate,
-      retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
+      retRoth, retTaxable, returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
       addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
       hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot,
       hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
@@ -512,12 +529,6 @@ export default function App() {
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
   const megaCapacity     = Math.max(0, limit415c - contrib401k - employerMatchAmt);
   const megaGrowth       = calcMegaBackdoorGrowth({ megaCapacity, returnRate });
-
-  const retTaxable     = retVals["Taxable"]   ?? 0;
-  const retTrad        = retVals["Trad 401k"] ?? 0;
-  const retRoth        = retVals["Roth IRA"]  ?? 0;
-  // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
-  const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
   // Year-1 withdrawal-order tax (tax-optimal taxable→trad→Roth vs worst-case
   // all-pre-tax) — extracted to src/model/retirement-tax.js. Drives the
