@@ -119,7 +119,7 @@ The signature visual — a full-life portfolio balance curve from today to `life
 | `arc` | Arc | Cubic bezier spline with milestone pills (Today · First Million · Retire · For life) |
 | `stacked` | Sources | Total arc + contributions band (market growth vs contributions split) |
 | `columns` | Decades | 5-year bar chart, green → amber at retirement |
-| `band` | Scenarios | Uncertainty cone (±28% spread growing with time) |
+| `band` | Scenarios | Uncertainty cone (±28% spread growing with time). *Planned rename: "Scenarios" → "Range" (name collides with Ideas' scenario cards); ships with WI-5.3/#114 when the cone becomes real Monte Carlo percentile data (`docs/ROADMAP.md` → SP-3).* |
 
 ### SVG coordinate system
 
@@ -335,6 +335,19 @@ Year by year tab replaced with a full grid table from `retirementWalk.rows`. Col
 
 ---
 
+## Depth Ladder Roadmap
+
+With the original 12 open items (#69–#80) all shipped, Horizon's next phase is the **Depth Ladder** — the owner-approved plan (Jun 12 2026) to close the depth gap with the Classic view level by level, then retire Classic:
+
+- **Level 1 Glance** — tappable stat cards, signals strip, arc event markers
+- **Level 2 Understand** — new **Journey** screen (Flow-Down port), Numbers grows 3→6 tabs (Budget / Accounts / Taxes), arc tap-to-scrub
+- **Level 3 Control** — new **Strategies** screen (conversion planner, RMD, SS timing, withdrawal order, surplus, mega backdoor), new **My details** screen (own top-level destination for plan-fact topic cards; Settings stays app-centric — owner decision Jun 12 2026), Ideas events editor + affordability
+- **Level 4 Retire Classic** — parity audit, demotion, removal
+
+Full plan with per-work-item targets, actions, and done-metrics: **`docs/ROADMAP.md`**. Tracker entries: `feature-tracker.html` IDs **88–117**, section "Horizon Depth Ladder" (110–111 are the **Level 0 — Foundations** compliance/enforcement batch added Jun 12 after the design-principles audit; 112–117 are the **Level 5 — End-state build-out** batch added Jun 12 after the end-state review). The end-state spec — scaling patterns SP-1…SP-6, the navigation spec, owner decisions, and the per-item backlog capacity map — is canonical in **`docs/ROADMAP.md` → End state**. Binding rules for all of it: the 15 design principles in `docs/ROADMAP.md` — headline rule: screens render `horizonProps` fields only; format, never transform.
+
+---
+
 ## Extension Guide
 
 ### Adding a new palette
@@ -346,15 +359,17 @@ Year by year tab replaced with a full grid table from `retirementWalk.rows`. Col
 1. Create a function component `FooScreen({ t, props })` in `HorizonShell.jsx`.
 2. Add `{ id: "foo", label: "Foo" }` to the `SCREENS` array.
 3. Add `{screen === "foo" && <FooScreen t={t} props={props} />}` to the screen body.
+4. Screens **render, never compute** — no arithmetic on model values, no eligibility/age checks in JSX, no `?? 0`-style fallbacks for missing data. Binding rules: `docs/ROADMAP.md` → Design principles (esp. 6–10) and CLAUDE.md rule 10. Ship a render-smoke test at golden-master defaults.
 
 ### Adding a prop to horizonProps
 1. Add the computed value to `App.jsx`'s `horizonProps` object.
 2. Destructure it in the relevant screen component inside `HorizonShell.jsx`.
 3. If the value requires a new `useMemo` computation, add it near the existing `balAt90` and `contribSeries` memos in `App.jsx`. **Do not add model logic to `App.jsx` — add it to `src/model/` first.**
+4. Grow by **named topic bundles** (`ssView`, `rmdView`, `budget`, …), document the shape in `docs/ARCHITECTURE.md` when adding, and document any null/Infinity edge values the field can take — screens must render a designed state for them, not a defaulted number. Never repurpose or re-mean an existing field (`docs/ROADMAP.md` → Design principles 10–12).
 
 ### Modifying the ArcGraph
 The SVG coordinate space is fixed: VW=1200, PAD `{l:62, r:92, t:38, b:46}`. Age 30–90 maps to x; balance 0–vmax maps to y. The `makeScales` function in `ArcGraph.jsx` produces the transform functions. If you need access to these from outside the component (e.g. to pre-compute overlay paths), export `makeScales` or accept pre-computed `[x, y]` points as a prop.
 
 ---
 
-*Last updated: 2026-06-11. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding), #18 Batch D (Sankey, vivid arc, yearly table), #19 Batch E (mobile layout, activity in Settings, photo upload). All 12 Horizon open items shipped (#69–#80).*
+*Last updated: 2026-06-12. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding), #18 Batch D (Sankey, vivid arc, yearly table), #19 Batch E (mobile layout, activity in Settings, photo upload). All 12 Horizon open items shipped (#69–#80). Next phase: the Depth Ladder roadmap (`docs/ROADMAP.md`, tracker IDs 88–117).*

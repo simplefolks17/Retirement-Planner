@@ -15,6 +15,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (307 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
+10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
 
 ## Git & PR Workflow
 - **Always use a feature branch.** Never commit directly to `main`.
@@ -40,8 +41,9 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Classic UI design system & tokens: `docs/DESIGN.md` *(dark dashboard — the original UI)*
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
+- Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (90 items, 40 done, 50 planned)
+- Feature backlog: `feature-tracker.html` (117 items, 38 done, 79 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -213,7 +215,8 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   7. **`src/components/MoneyEventsPanel.jsx`** (new) — up to 6 one-time events (label, amount, age, inflow/outflow, taxable flag); renders in main planner; events flow through `simData` and `retDrawShared` so all downstream calculations (RMD, conversion, longevity) see them.
   8. **`App.jsx`** — added `moneyEvents` state, `whatIfSimInputs` object; threaded `moneyEvents` into `simData` (accum) and `retDrawShared` (retirement); rendered `WhatIfPanel` after retirement snapshot, `MoneyEventsPanel` before Tax Rate Phases.
   272 → **299** tests (25 files). New: `money-events.test.js`, `what-if.test.js`.
-- Income growth plateau feature (Jun 11 2026, feature #75): unrealistic compounding fixed.
+- Income growth plateau feature (Jun 11 2026, feature #87 — tracker ID, renumbered from #75
+  in the Jun 12 de-duplication pass): unrealistic compounding fixed.
   New optional `incomeGrowthEndAge` param in `runSimulation` and `calcAIME`; income stops
   growing at the specified age, capping contributions, employer match, MAGI, and SS AIME.
   UI: "Income plateau age" slider + live projected-retirement-income preview. Default `null`
@@ -268,6 +271,55 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   only `customPhoto` in `useState`; click the photo area to pick, hover for "change photo" hint;
   gradient placeholder replaced by `<img objectFit="cover">` when photo loaded. No model changes;
   307 tests unchanged.
+- Depth Ladder roadmap recorded (Jun 12 2026, docs-only — no `src/` changes, 307 tests unchanged):
+  owner-approved plan to close the Classic↔Horizon depth gap level by level (Glance → Understand →
+  Control → Retire Classic) and eventually remove the Classic view. Full plan with per-work-item
+  targets, actions, and done-metrics in new `docs/ROADMAP.md`; summary + link in `docs/HORIZON.md`;
+  22 tracker entries added (IDs 88–109, section "Horizon Depth Ladder"). Headlines: new **Journey**
+  screen (Flow-Down port), Numbers 3→6 tabs (Budget/Accounts/Taxes + retirement money flow), new
+  **Strategies** screen (conversion planner, RMD, SS timing, withdrawal order, surplus, mega
+  backdoor), Settings → "My details" topic cards, signals strip on Plan, arc tap-to-scrub. Binding
+  rule: zero math in `src/horizon/` — screens render `horizonProps` fields only (BUG-31 prevention).
+  Also fixed a tracker data bug found during the pass: the "What-If Scenarios" section reused IDs
+  69–74 (and "Overview / Income" reused 75) already taken by the Horizon UI section; since the
+  tracker's status map keys by ID, the shipped Horizon items #70–#74 displayed as "planned" and the
+  header counts were wrong. Renumbered the colliding entries to 81–87 (cross-refs updated) — IDs are
+  unique again and counts render correctly (109 items, 38 done, 71 planned).
+- Horizon design principles expanded (Jun 12 2026, docs-only — 307 tests unchanged): after real
+  incidents where Horizon screens used numbers that didn't apply (scenario stats row showing
+  hardcoded `totalAtRet × 0.92` approximations beside an arc showing the real model run), a code
+  audit inventoried all live violations and the ROADMAP principles grew 5 → 15 in four groups:
+  Product direction (model-first; every PR advances a named WI), Data integrity (screens format
+  never transform; real data or no data; applicability travels with the data; constants from
+  config even in copy; missing data is not zero), Forward compatibility (grow by named bundles,
+  never repurpose a field; degrade by absence), Enforcement (referential stability is correctness;
+  tests gate the wiring; mobile parity ship gate). New CLAUDE.md Critical Rule 10 is the compact
+  version. Findings filed as a Violations register in `docs/ROADMAP.md` (V1–V11) plus a new
+  **Level 0 — Foundations** build batch: WI-0.1/#110 compliance pass (fix V1–V8; note: scenario
+  stats will visibly change fake → real) and WI-0.2/#111 enforcement tooling (memoize
+  `horizonProps`/`whatIfBundle`, add ESLint `react-hooks/exhaustive-deps`, value-lock the
+  SCENARIOS/LIFE_EVENTS preset tables — V9–V11). Tracker 109 → 111 items (38 done, 73 planned).
+- End-state review canonicalized (Jun 12 2026, docs-only — 307 tests unchanged): a full backlog
+  inventory found 23 planned items with no obvious home in the end-state navigation; a pressure
+  test of the IA (design principles + 3 stress scenarios) concluded the content screens **hold —
+  an 8th "Analytics" screen would be the regression vector back to Classic** — but only with six
+  named scaling patterns now recorded in `docs/ROADMAP.md` → **End state**: SP-1 Strategies
+  catalogue (applicability gating, 4 editorial sections, For-you strip on the `calcSignals`
+  brain), SP-2 one money timeline (#48 `sources[]` subsumes `moneyEvents`), SP-3 uncertainty is
+  a lens not a screen (Monte Carlo behind the arc band view, renamed "Scenarios" → "Range" —
+  naming collision with Ideas' scenario cards), SP-4 platform is chrome (PDF = Journey export,
+  compare = Ideas shelf, advisor share = read-only entitlements), SP-5 surface governance
+  (Numbers ≤ 6 tabs; Ideas = one mode control; My details grows by collapsed cards), SP-6
+  household scope toggle. Four owner decisions recorded: mobile bar swaps Strategies in at L3;
+  premium locks quiet by default; Monte Carlo = lens with one verdict (+ a binding revisit note);
+  **"My details" is its own top-level screen, NOT part of Settings** (WI-3.2/#99 rewritten —
+  Settings stays app-centric for Appearance/Sharing/About and future login/subscription, rendered
+  as a desktop gear utility). Also: a per-item capacity map (every unhomed backlog item → fact
+  home / output / decision surface / tier), a stress-test record (forced the shared
+  `bracketRoomByYear` model view — #57 — consumed by #59/#67/#68/conversions, and day-one
+  `readOnly` in the entitlements design), three disposition upgrades (PDF, A/B compare, Monte
+  Carlo: Defer → Adopt), and a new **Level 5 — End-state build-out** batch WI-5.1…5.6.
+  Tracker 111 → 117 items (38 done, 79 planned; IDs 112–117).
 
 ## Commands
 - `npm run dev` — start dev server
