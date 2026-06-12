@@ -10,10 +10,10 @@ import { fmt, fmtPct } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
-import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth } from "./model/budget.js";
+import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
-import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
+import { buildRetirementDrawdown, calcPlanProgress, buildYearlyRows } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
 import { calcRMDProjection } from "./model/rmd.js";
@@ -23,7 +23,7 @@ import { findOptimalConversion } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { calcMilestones, buildAccumChart } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart, calcChartMilestones } from "./model/accumulation.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
@@ -140,10 +140,12 @@ export default function App() {
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
 
-  const employerMatch = (salary, employeeContrib) =>
+  // useCallback so memos that depend on it (simData, whatIfSimInputs) can list it
+  // honestly in their deps without re-running every render (V9 / principle 13).
+  const employerMatch = useCallback((salary, employeeContrib) =>
     calcEmployerMatch(salary, employeeContrib, {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
-    });
+    }), [matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct]);
 
   // Working-year tax basis (agi, fed/state/FICA, Roth phase-out, grossAfterTax),
   // extracted to src/model/tax-basis.js. Computed here as ONE call — before
@@ -396,7 +398,9 @@ export default function App() {
   // The chart, the headline longevity, and the Flow-Down waterfall all consume
   // this so they can never diverge (the BUG-31 root cause). SS/pension gate
   // per-year inside the walk (rule 5b); the tax maps make it tax-honest.
-  const retDrawShared = {
+  // Memoized (V9 / principle 13): retirementWalk, whatIfBundle, and horizonProps
+  // all depend on this object, so its reference must only change when an input does.
+  const retDrawShared = useMemo(() => ({
     rReal, effectiveExpenses,
     ssAmount: householdSS,
     ssClaimAge: includeSS ? ssClaimingAge : Infinity,
@@ -404,7 +408,9 @@ export default function App() {
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     rmdTaxByAge, conversionTaxByAge,
     moneyEvents: moneyEvents.filter(ev => ev.age >= safeRetAge),
-  };
+  }), [rReal, effectiveExpenses, householdSS, includeSS, ssClaimingAge,
+       pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
+       moneyEvents, safeRetAge]);
 
   // Headline longevity: walk to a far horizon so "years sustained" is meaningful
   // even past life expectancy (matching the old closed-form semantics), but now
@@ -429,9 +435,7 @@ export default function App() {
     ...retDrawShared,
     startBal: accumChart[accumChart.length - 1]?.total ?? 0,
     startAge: safeRetAge, endAge: safeLifeExp,
-  }), [accumChart, safeRetAge, safeLifeExp, rReal, effectiveExpenses,
-       includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
-       rmdTaxByAge, conversionTaxByAge]);
+  }), [retDrawShared, accumChart, safeRetAge, safeLifeExp]);
 
   const totalChartData = useMemo(
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
@@ -586,9 +590,10 @@ export default function App() {
   ]);
 
 
-  // Inputs needed for what-if re-simulation. Collected once here so WhatIfPanel
-  // receives a stable reference and its useMemo only fires on genuine input changes.
-  const whatIfSimInputs = {
+  // Inputs needed for what-if re-simulation. Memoized (V9) so WhatIfPanel and the
+  // whatIfBundle below receive a stable reference and their useMemos only fire on
+  // genuine input changes.
+  const whatIfSimInputs = useMemo(() => ({
     totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
     spouseIncome, spouseIncomeGrowth, returnRate,
     bal401k, balRoth, balTaxable, balHSA,
@@ -596,7 +601,12 @@ export default function App() {
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
     calcEmployerMatchFn: employerMatch,
     moneyEvents,
-  };
+  }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
+       spouseIncome, spouseIncomeGrowth, returnRate,
+       bal401k, balRoth, balTaxable, balHSA,
+       contrib401k, contribRoth, contribTaxable, contribHSA,
+       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+       employerMatch, moneyEvents]);
 
   // Single entry point for Horizon-initiated mutations to App state.
   // Always called after user confirms in a modal — never fired directly by screens.
@@ -607,19 +617,56 @@ export default function App() {
     if (ae !== undefined) setAnnualExpenses(ae);
   }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses]);
 
-  // Extended what-if bundle: includes everything calcWhatIfChart needs so
-  // IdeasScreen can call calcWhatIfChart(whatIfSimInputs, { retireAdj }) directly.
-  const whatIfBundle = {
+  // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
+  // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
+  // memoized whatIfSimInputs + retDrawShared as deps. Grown by named fields only —
+  // baseYearsSustained added for calcWhatIfScenario's deltaYears (never repurpose).
+  const whatIfBundle = useMemo(() => ({
     simInputs: whatIfSimInputs,
     fedMarginal,
     retDrawShared,
     safeRetAge,
     safeLifeExp,
     baseTotalAtRet: totalAtRet,
-  };
+    baseYearsSustained: yearsSustained,
+  }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
+       totalAtRet, yearsSustained]);
 
-  // Props bundle for HorizonShell — display values only (plus the two write-back hooks)
-  const horizonProps = {
+  // ── Horizon display bundles (WI-0.1) — derived numbers come from the model, ──
+  // pre-gated and display-ready, so screens only format (principle 6).
+  // Edge states are documented at the model functions; none use ?? 0 fallbacks.
+
+  // Statement / Money-flow tab numbers (percentages, waterfall residual set,
+  // monthly conversions, eff-fed-rate footnote). Percentages are null when
+  // currentIncome ≤ 0 — screens render "—".
+  const statementView = useMemo(() => calcStatementView({
+    currentIncome, fedTax, fica, stateTax, takeHome,
+    currentContribTotal, householdSS, effectiveExpenses,
+  }), [currentIncome, fedTax, fica, stateTax, takeHome,
+       currentContribTotal, householdSS, effectiveExpenses]);
+
+  // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
+  // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE
+  // from config inside the model (V2).
+  const chartMilestones = useMemo(() => calcChartMilestones({
+    chartData: totalChartData, currentAge, retirementAge: safeRetAge, lifeExpect: safeLifeExp,
+  }), [totalChartData, currentAge, safeRetAge, safeLifeExp]);
+
+  // Plan-screen progress (V6). progressPct: 100 when sustainable (incl. Infinity
+  // yearsSustained), else 0–99.
+  const planView = useMemo(() => calcPlanProgress({
+    yearsSustained, isSustainable, lifeExpect: safeLifeExp, retirementAge: safeRetAge,
+  }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge]);
+
+  // Year-by-year table rows: walk rows + calendar year (age→year math in the model).
+  const yearlyRows = useMemo(() => buildYearlyRows({
+    rows: retirementWalk.rows, currentAge, currentYear: new Date().getFullYear(),
+  }), [retirementWalk, currentAge]);
+
+  // Props bundle for HorizonShell — display values only (plus the two write-back
+  // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
+  // so the bundle reference only changes when an input actually changes.
+  const horizonProps = useMemo(() => ({
     chartData: totalChartData,
     currentAge, retirementAge, lifeExpect,
     totalAtRet, yearsSustained, isSustainable,
@@ -638,12 +685,29 @@ export default function App() {
     whatIfSimInputs: whatIfBundle,
     commitPlan,
     retirementWalk,
-  };
+    // WI-0.1 display bundles (shapes documented at their model functions):
+    statementView,    // calcStatementView — pcts null when no income
+    chartMilestones,  // calcChartMilestones — { rows, peakTotal }
+    planView,         // calcPlanProgress — { progressPct }
+    yearlyRows,       // buildYearlyRows — walk rows + calendar year
+  }), [totalChartData, currentAge, retirementAge, lifeExpect,
+       totalAtRet, yearsSustained, isSustainable,
+       takeHome, effectiveExpenses, withdrawalRate,
+       balAt90, contribSeries, householdSS, activity, setActivity,
+       currentIncome, fedTax, fica, stateTax, currentContribTotal,
+       retVals, simData, netConversionBenefit, yr1TaxSavings,
+       bal401k, balRoth, balTaxable, balHSA,
+       moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
+       statementView, chartMilestones, planView, yearlyRows]);
+
+  // Stable handler (V9): keeps HorizonShell's props identity-stable across
+  // no-op re-renders so the referential-stability smoke test can assert it.
+  const onShowClassic = useCallback(() => setShowHorizon(false), [setShowHorizon]);
 
   if (showHorizon) {
     return (
       <HorizonThemeProvider>
-        <HorizonShell {...horizonProps} onShowClassic={() => setShowHorizon(false)} />
+        <HorizonShell {...horizonProps} onShowClassic={onShowClassic} />
         <Analytics />
       </HorizonThemeProvider>
     );

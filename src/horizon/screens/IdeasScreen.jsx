@@ -3,21 +3,24 @@ import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
-import { calcWhatIfChart } from "../../model/what-if.js";
+import { calcWhatIfScenario } from "../../model/what-if.js";
 
-// Scenario definitions. `scenarioEvents` are one-time events applied to the
-// retirement walk for scenarios that don't shift the retirement age.
-const SCENARIOS = [
+// Scenario definitions — overrides only, no display numbers. Every figure shown
+// for a scenario comes from ONE calcWhatIfScenario run (the same run the arc
+// overlay renders), so the stats and the arc can never disagree (V1/principle 7).
+// `scenarioEvents` are one-time events applied to the retirement walk for
+// scenarios that don't shift the retirement age.
+// Exported for the preset value-lock tests (V11/principle 14).
+export const SCENARIOS = [
   { k: "retire63", label: "Retire 2 yrs earlier", sub: "Save $250/mo more.",  color: "good",
-    retireAdj: -2, stats: { retire: -2, incomeScale: 0.90, nestScale: 0.92 } },
+    retireAdj: -2 },
   { k: "retire60", label: "Retire at 60",          sub: "5 yrs sooner.",       color: "warm",
-    retireAdj: -5, stats: { retire: -5, incomeScale: 0.80, nestScale: 0.82 } },
+    retireAdj: -5 },
   { k: "saveMore", label: "Save $300 more/mo",     sub: "Retire at 64.",       color: "good",
-    retireAdj: -1, stats: { retire: -1, incomeScale: 1.10, nestScale: 1.10 } },
+    retireAdj: -1 },
   { k: "bigTrip",  label: "Big trip at 70",        sub: "Still funded.",       color: "accent",
     retireAdj:  0,
-    scenarioEvents: [{ label: "Big trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false }],
-    stats: { retire: 0, incomeScale: 0.97, nestScale: 0.96 } },
+    scenarioEvents: [{ label: "Big trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false }] },
 ];
 
 // Life events that can be added to the user's plan as one-time money events.
@@ -64,6 +67,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     whatIfSimInputs: whatIfBundle,
     commitPlan,
     setMoneyEvents,
+    // WI-0.1: model-provided monthly figure for the spend dial seed
+    statementView,
   } = props;
 
   const [mode, setMode] = useState(null);
@@ -82,28 +87,35 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   const scen = activeScen ? SCENARIOS.find(s => s.k === activeScen) : null;
 
-  // Real model overlay for the active scenario card (#70)
-  const scenarioData = useMemo(() => {
+  // ONE model run per active scenario (V1): calcWhatIfScenario returns BOTH the
+  // arc chart series and the stat scalars, so the stats row and the overlay can
+  // never show different answers. The screen only passes the scenario's overrides
+  // through and formats what comes back — no arithmetic on model values here.
+  const scenario = useMemo(() => {
     if (!scen || !whatIfBundle) return null;
-    const result = calcWhatIfChart(whatIfBundle, {
+    return calcWhatIfScenario(whatIfBundle, {
       retireAdj:      scen.retireAdj,
       scenarioEvents: scen.scenarioEvents ?? [],
     });
-    return result.length ? result : null;
   }, [scen, whatIfBundle]);
+
+  const scenarioData = scenario?.chart?.length ? scenario.chart : null;
 
   // Overlay shown on the arc — dials take precedence when that mode is open
   const activeOverlay = mode === "dials" ? dialOverlay : scenarioData;
 
-  // Scenario-adjusted stats (illustrative labels from static config)
-  const scenRetire = scen ? retirementAge + (scen.stats.retire ?? 0) : null;
-  const scenIncome = scen ? fmtMo(effectiveExpenses * (scen.stats.incomeScale ?? 1)) : null;
-  const scenNest   = scen ? fmt(totalAtRet * (scen.stats.nestScale ?? 1)) : null;
-  const scenLeft90 = scen ? fmt(balAt90 * (scen.stats.nestScale ?? 1)) : null;
+  // Real scenario stats from the SAME run as the arc. scenarioBalAt90 === null
+  // means the walk never reaches age 90 (not applicable, NOT zero) — designed
+  // "—" state; a genuine depletion at/before 90 arrives as a real 0.
+  const scenRetire = scenario ? String(scenario.scenarioRetAge) : null;
+  const scenIncome = scenario ? fmtMo(scenario.scenarioExpenses) : null;
+  const scenNest   = scenario ? fmt(scenario.scenarioTotalAtRet) : null;
+  const scenLeft90 = scenario ? fmt(scenario.scenarioBalAt90) : null; // fmt(null) → "—"
 
-  // Dial display values
-  const dialRetireAge   = retirementAge + dialRetireOffset;
-  const dialMonthlySpend = Math.round(effectiveExpenses / 12) + dialSpendOffset;
+  // Dial display values — input staging: the dials EDIT a value (offset is screen
+  // state), seeded from the model's display-ready monthly figure (no /12 here).
+  const dialRetireAge    = retirementAge + dialRetireOffset;
+  const dialMonthlySpend = statementView.monthlyTotal + dialSpendOffset;
 
   const clearScen = () => {
     setActiveScen(null);
@@ -115,13 +127,13 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   const handleDialsShow = () => {
     if (!whatIfBundle) return;
     const raOverride = dialRetireOffset !== 0 ? dialRetireAge : undefined;
-    const aeOverride = dialSpendOffset   !== 0 ? dialMonthlySpend * 12 : undefined;
-    if (raOverride == null && aeOverride == null) { setDialOverlay(null); return; }
-    const result = calcWhatIfChart(whatIfBundle, {
-      retirementAge:  raOverride,
-      annualExpenses: aeOverride,
+    const moOverride = dialSpendOffset  !== 0 ? dialMonthlySpend : undefined;
+    if (raOverride == null && moOverride == null) { setDialOverlay(null); return; }
+    const result = calcWhatIfScenario(whatIfBundle, {
+      retirementAge:   raOverride,
+      monthlyExpenses: moOverride,  // month→year conversion happens in the model
     });
-    setDialOverlay(result.length ? result : null);
+    setDialOverlay(result?.chart?.length ? result.chart : null);
   };
 
   const modeButtons = [
@@ -330,7 +342,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                   display: "flex", alignItems: "center", paddingLeft: 12
                 }}>
                   <span style={{ font: `400 14px ${HF}`, color: t.mut }}>
-                    I retire at {retirementAge - 2} instead of {retirementAge}?
+                    I retire two years earlier, instead of at {retirementAge}?
                   </span>
                 </div>
                 <div
@@ -350,7 +362,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
       {/* stats row */}
       <div style={{ display: "flex", gap: 9, marginTop: 8, flexShrink: 0 }}>
-        <ScenStatCard t={t} label="Retire at"   baseVal={String(retirementAge)} scenVal={scen ? String(scenRetire) : null} />
+        <ScenStatCard t={t} label="Retire at"   baseVal={String(retirementAge)} scenVal={scenRetire} />
         <ScenStatCard t={t} label="Income / mo" baseVal={fmtMo(effectiveExpenses)} scenVal={scenIncome} warm />
         <ScenStatCard t={t} label="Nest egg"    baseVal={fmt(totalAtRet)} scenVal={scenNest} />
         <ScenStatCard t={t} label="Left at 90"  baseVal={fmt(balAt90)} scenVal={scenLeft90} />
@@ -401,14 +413,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
       )}
 
       {/* ── Confirm: make this my plan ── */}
-      {showMakePlan && scen && (
+      {showMakePlan && scenario && (
         <ConfirmModal
           t={t}
           title="Save this as your plan?"
-          body={`Retire at ${scenRetire} · Est. income ${scenIncome}/mo`}
+          body={`Retire at ${scenario.scenarioRetAge} · Est. income ${fmtMo(scenario.scenarioExpenses)}/mo`}
           confirmLabel="Save plan"
           onConfirm={() => {
-            commitPlan({ retirementAge: scenRetire });
+            commitPlan({ retirementAge: scenario.scenarioRetAge });
             setShowMakePlan(false);
             setPlanSaved(true);
             setTimeout(() => setPlanSaved(false), 2000);

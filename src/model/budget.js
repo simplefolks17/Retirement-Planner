@@ -3,6 +3,7 @@ import {
   ROTH_IRA_LIMIT_2026,
   TRAD_401K_LIMIT_2026,
   ROTH_PHASEOUT_2026,
+  ASSUMPTIONS,
 } from "../config/irs-2026.js";
 import { fvAnnuity } from "./finance-math.js";
 
@@ -109,4 +110,67 @@ export function calcOptimizedAllocation({
   alloc.optHSA     = contribHSA   + alloc.extraHSA;
   alloc.optTaxable = contribTaxable + alloc.extraTaxable;
   return alloc;
+}
+
+// ── Statement view (Horizon Numbers screen) ──────────────────────────────────
+// Display-ready numbers for the Statement and Money-flow tabs (V3 fix — these
+// percentages, the waterfall residual, and the month conversions used to be
+// computed in NumbersScreen.jsx JSX; screens render, never compute).
+//
+// Inputs come straight from calcTaxBasis / calcSavingsCapacity / calcRetirementIncome.
+//
+// Two percentage sets, deliberately different bases:
+//   keepPct/taxPct/savePct — the statement bar: take-home is the MODEL's takeHome,
+//     so keep+tax+save can exceed 100% (pre-tax saving lowers taxable income).
+//   flow* — the waterfall set: take-home is the RESIDUAL (gross − tax − savings),
+//     so the pieces reconcile to exactly 100% of gross. flowKeep is the honest
+//     "cash in your pocket after tax and saving" level for an allocation view.
+//
+// Designed empty state: when currentIncome is missing or ≤ 0, every percentage
+// (and effFedRatePct) is null — NOT 0 — and screens render "—" (principle 10).
+export function calcStatementView({
+  currentIncome,
+  fedTax,
+  fica,
+  stateTax,
+  takeHome,
+  currentContribTotal,
+  householdSS,
+  effectiveExpenses,
+}) {
+  const hasIncome = currentIncome != null && currentIncome > 0;
+  const gross     = hasIncome ? currentIncome : 0;
+
+  const taxTotal      = fedTax + fica + stateTax;
+  const ficaPlusState = fica + stateTax;
+  const pct = (n) => hasIncome ? Math.round((n / currentIncome) * 100) : null;
+
+  // Statement bar (model take-home basis)
+  const keepPct = pct(takeHome);
+  const taxPct  = pct(taxTotal);
+  const savePct = pct(currentContribTotal);
+
+  // Waterfall set (residual basis — reconciles to 100% of gross)
+  const afterTaxLevel = gross - taxTotal;
+  const flowKeep      = Math.max(gross - taxTotal - currentContribTotal, 0);
+  const flowTaxPct    = pct(taxTotal);
+  const flowSavePct   = pct(currentContribTotal);
+  const flowKeepPct   = pct(flowKeep);
+
+  // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
+  const monthlyHHSS     = Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPortDraw = Math.round(Math.max(0, effectiveExpenses - householdSS) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyTotal    = Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR);
+
+  // Effective federal rate footnote (1 decimal place), null when no income
+  const effFedRatePct = hasIncome ? Math.round((fedTax / currentIncome) * 1000) / 10 : null;
+
+  return {
+    gross, taxTotal, ficaPlusState,
+    saveTotal: currentContribTotal,
+    keepPct, taxPct, savePct,
+    afterTaxLevel, flowKeep, flowTaxPct, flowSavePct, flowKeepPct,
+    monthlyHHSS, monthlyPortDraw, monthlyTotal,
+    effFedRatePct,
+  };
 }

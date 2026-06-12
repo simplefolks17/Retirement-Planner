@@ -377,7 +377,8 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               currentIncome: props.currentIncome,
               totalSaved:    props.currentTotalSaved,
               retirementAge: retirementAge,
-              monthlySpend:  Math.round((props.effectiveExpenses ?? 0) / 12),
+              // model-provided monthly figure (calcStatementView) — no /12 here
+              monthlySpend:  props.statementView.monthlyTotal,
             }}
             onComplete={handleOnboardingComplete}
             commitPlan={props.commitPlan}

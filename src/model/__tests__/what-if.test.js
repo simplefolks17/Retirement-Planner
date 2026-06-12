@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart } from "../what-if.js";
+import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario } from "../what-if.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
@@ -232,5 +232,79 @@ describe("calcWhatIfChart", () => {
   it("returns [] for missing inputs", () => {
     expect(calcWhatIfChart({})).toEqual([]);
     expect(calcWhatIfChart({ simInputs: null, retDrawShared: null })).toEqual([]);
+  });
+});
+
+// ── calcWhatIfScenario ───────────────────────────────────────────────────────
+// The V1 anti-divergence primitive: ONE run returns both the chart and the
+// stat scalars, so the Ideas stats row and the arc overlay can never disagree.
+describe("calcWhatIfScenario", () => {
+  it("chart is identical to calcWhatIfChart for the same bundle/overrides (one run, two outputs)", () => {
+    const overrides = { retireAdj: -2 };
+    const scenario = calcWhatIfScenario(baseArgs, overrides);
+    const chart    = calcWhatIfChart(baseArgs, overrides);
+    expect(scenario.chart).toEqual(chart);
+  });
+
+  it("no overrides returns baseline values (retire age, expenses, totalAtRet, deltaYears 0)", () => {
+    const s = calcWhatIfScenario(baseArgs);
+    expect(s.scenarioRetAge).toBe(safeRetAge);
+    expect(s.scenarioExpenses).toBe(retDrawShared.effectiveExpenses);
+    expect(s.scenarioTotalAtRet).toBe(realBaseTotalAtRet);
+    expect(s.scenarioYears).toBeCloseTo(baseYearsSustained, 4);
+    expect(s.deltaYears).toBeCloseTo(0, 4);
+  });
+
+  it("retireAdj recomputes the starting balance from the simulation (lower when earlier)", () => {
+    const s = calcWhatIfScenario(baseArgs, { retireAdj: -2 });
+    expect(s.scenarioRetAge).toBe(safeRetAge - 2);
+    expect(s.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
+  });
+
+  it("scenarioBalAt90 reads the age-90 row of the SAME walk the chart shows", () => {
+    const s = calcWhatIfScenario(baseArgs);
+    const row90 = s.chart.find(r => r.age === 90);
+    expect(row90).toBeDefined();
+    expect(s.scenarioBalAt90).toBe(row90.total);
+  });
+
+  it("scenarioBalAt90 is null (not 0) when the walk never reaches 90", () => {
+    // Life expectancy 85 → walk ends at 85; age 90 is NOT APPLICABLE, not zero.
+    const s = calcWhatIfScenario({ ...baseArgs, safeLifeExp: 85 });
+    expect(s.chart[s.chart.length - 1].age).toBe(85);
+    expect(s.scenarioBalAt90).toBeNull();
+  });
+
+  it("scenarioBalAt90 is a real 0 on genuine depletion at/before 90", () => {
+    const s = calcWhatIfScenario(depletingArgs);
+    expect(s.scenarioYears).toBeLessThan(90 - safeRetAge); // depletes before 90
+    expect(s.scenarioBalAt90).toBe(0);
+  });
+
+  it("monthlyExpenses override equals the annualExpenses override × 12 (conversion in the model)", () => {
+    const viaMonthly = calcWhatIfScenario(depletingArgs, { monthlyExpenses: 7_500 });
+    const viaAnnual  = calcWhatIfScenario(depletingArgs, { annualExpenses: 90_000 });
+    expect(viaMonthly.scenarioExpenses).toBe(90_000);
+    expect(viaMonthly.chart).toEqual(viaAnnual.chart);
+    expect(viaMonthly.scenarioYears).toBeCloseTo(viaAnnual.scenarioYears, 6);
+  });
+
+  it("honors permanent accumulation-phase plan events in retire-earlier re-sims (BUG-34)", () => {
+    const withEvent = calcWhatIfScenario({
+      ...baseArgs,
+      simInputs: {
+        ...simInputs,
+        moneyEvents: [{ label: "Home", amount: 100_000, age: 40, isInflow: false, isTaxable: false }],
+      },
+    }, { retireAdj: -2 });
+    const withoutEvent = calcWhatIfScenario(baseArgs, { retireAdj: -2 });
+    // The permanent $100k outflow at 40 must reduce the scenario's starting balance
+    // (the old calcWhatIfChart dropped it by re-simulating with moneyEvents: []).
+    expect(withEvent.scenarioTotalAtRet).toBeLessThan(withoutEvent.scenarioTotalAtRet);
+  });
+
+  it("returns null for missing inputs (and calcWhatIfChart maps that to [])", () => {
+    expect(calcWhatIfScenario({})).toBeNull();
+    expect(calcWhatIfChart({})).toEqual([]);
   });
 });

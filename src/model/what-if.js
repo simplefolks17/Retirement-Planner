@@ -11,6 +11,7 @@
 
 import { runSimulation } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
+import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
 // Computes the impact of scenario overrides vs the baseline.
@@ -120,35 +121,62 @@ export function calcWhatIfDelta({
   };
 }
 
-// ── calcWhatIfChart ──────────────────────────────────────────────────────────
-// Returns a [{age, total}] series for a scenario override, suitable for passing
-// as the `scenarioData` prop to ArcGraph. Covers the retirement phase only.
+// Reference age for the "Left at 90" stat — the Ideas scenario stat row compares
+// the scenario's balance at this age against the baseline card. Not an IRS value;
+// a product-level display anchor.
+const BAL_REFERENCE_AGE = 90;
+
+// ── calcWhatIfScenario ───────────────────────────────────────────────────────
+// ONE model run returning BOTH the arc chart series and the real stat scalars
+// for a scenario override, so a screen showing them side by side can never show
+// two different answers (principle 7 / the V1 anti-divergence form).
 //
-// Accepts the same argument shape as calcWhatIfDelta but returns a chart series
-// instead of summary scalars. The `whatIfBundle` passed from App.jsx via
-// horizonProps.whatIfSimInputs includes simInputs, fedMarginal, retDrawShared,
-// safeRetAge, safeLifeExp, and baseTotalAtRet.
+// bundle (the `whatIfBundle` App.jsx passes via horizonProps.whatIfSimInputs):
+//   { simInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
+//     baseTotalAtRet, baseYearsSustained }
 //
-// overrides: { retireAdj, retirementAge, annualExpenses, scenarioEvents }
+// overrides: { retireAdj, retirementAge, annualExpenses, monthlyExpenses, scenarioEvents }
 //   retireAdj       — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
 //   retirementAge   — absolute retirement age override (takes precedence over retireAdj)
 //   annualExpenses  — override for retirement spending
+//   monthlyExpenses — same override expressed monthly (annualExpenses wins if both
+//                     are given); the month→year conversion lives HERE, not in JSX
 //   scenarioEvents  — additional one-time events for this scenario only (e.g. a lump-sum trip spend)
 //
-// Returns [] when inputs are invalid or the retirement walk produces no rows.
-export function calcWhatIfChart({
+// Returns null when inputs are invalid; otherwise:
+//   {
+//     chart,              // [{age, total}] retirement-phase series for the arc overlay
+//     scenarioRetAge,
+//     scenarioTotalAtRet, // portfolio at the scenario retirement age
+//     scenarioExpenses,   // annual retirement spending under the scenario
+//     scenarioYears,      // years sustained (far-horizon walk; Infinity = never depletes)
+//     deltaYears,         // scenarioYears − baseYearsSustained (±Infinity handled)
+//     scenarioBalAt90,    // balance at age 90 from the walk rows.
+//                         //   null  → the walk never reaches 90 (e.g. life expectancy < 90):
+//                         //           "not applicable", NOT zero — screens render "—".
+//                         //   0     → a genuine depletion at/before 90 (a real $0).
+//   }
+//
+// Never reimplements the walk: both walks are buildRetirementDrawdown, and
+// permanent plan events are honored on both phases (retDrawShared.moneyEvents
+// merged into the retirement walk; simInputs.moneyEvents kept for re-sims).
+export function calcWhatIfScenario({
   simInputs,
   fedMarginal,
   retDrawShared,
   safeRetAge,
   safeLifeExp,
   baseTotalAtRet,
+  baseYearsSustained,
 }, overrides = {}) {
-  if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return [];
+  if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return null;
 
   const retireAdj        = overrides.retireAdj ?? 0;
   const scenarioRetAge   = overrides.retirementAge ?? (safeRetAge + retireAdj);
-  const scenarioExpenses = overrides.annualExpenses ?? retDrawShared.effectiveExpenses;
+  const scenarioExpenses = overrides.annualExpenses
+    ?? (overrides.monthlyExpenses != null
+      ? overrides.monthlyExpenses * ASSUMPTIONS.MONTHS_PER_YEAR
+      : retDrawShared.effectiveExpenses);
   const scenarioEvents   = overrides.scenarioEvents ?? [];
 
   // Determine starting portfolio balance at the scenario retirement age
@@ -156,34 +184,97 @@ export function calcWhatIfChart({
 
   if (scenarioRetAge !== safeRetAge) {
     try {
-      const raw    = runSimulation({ ...simInputs, moneyEvents: [] });
+      // Keep permanent accumulation-phase plan events in the re-sim (BUG-34):
+      // only events at/after the scenario retirement age move to the walk below.
+      const accumEvents = (simInputs.moneyEvents ?? []).filter(ev => ev.age < scenarioRetAge);
+      const raw    = runSimulation({ ...simInputs, moneyEvents: accumEvents });
       const retIdx = scenarioRetAge - simInputs.currentAge - 1;
       const at     = raw[retIdx];
-      if (!at) return [];
+      if (!at) return null;
       startBal = Math.round((at.tradGross ?? 0) * (1 - (fedMarginal ?? 0)))
         + (at["Roth IRA"] ?? 0) + (at["Taxable"] ?? 0) + (at["HSA"] ?? 0);
     } catch {
-      return [];
+      return null;
     }
   }
 
   const endAge = Math.max(safeLifeExp, scenarioRetAge + 5);
+  // Permanent plan events + this scenario's own events (same merge the chart
+  // always used — see the fixed Batch-A incident in docs/ROADMAP.md). When the
+  // scenario retires EARLIER than the base plan, permanent events between the
+  // two retirement ages move from the accumulation phase into the walk
+  // (retDrawShared.moneyEvents was filtered at the BASE retirement age).
+  const gapEvents = scenarioRetAge < safeRetAge
+    ? (simInputs.moneyEvents ?? []).filter(ev => ev.age >= scenarioRetAge && ev.age < safeRetAge)
+    : [];
+  const mergedEvents = [...(retDrawShared.moneyEvents ?? []), ...gapEvents, ...scenarioEvents];
 
-  let walk;
+  let lifeWalk, farWalk;
   try {
-    walk = buildRetirementDrawdown({
+    // Chart walk to life expectancy — what the arc renders.
+    lifeWalk = buildRetirementDrawdown({
       ...retDrawShared,
       effectiveExpenses: scenarioExpenses,
       startBal,
       startAge: scenarioRetAge,
       endAge,
-      moneyEvents: [...(retDrawShared.moneyEvents ?? []), ...scenarioEvents],
+      moneyEvents: mergedEvents,
+    });
+    // Far-horizon walk for yearsSustained (same semantics as the App headline).
+    farWalk = buildRetirementDrawdown({
+      ...retDrawShared,
+      effectiveExpenses: scenarioExpenses,
+      startBal,
+      startAge: scenarioRetAge,
+      endAge: scenarioRetAge + 130,
+      moneyEvents: mergedEvents,
     });
   } catch {
-    return [];
+    return null;
   }
 
-  return (walk.rows ?? []).map(r => ({ age: r.age, total: r.total }));
+  const chart = (lifeWalk.rows ?? []).map(r => ({ age: r.age, total: r.total }));
+
+  // Balance at age 90 — null means "the walk never reaches 90" (not applicable,
+  // NOT zero); a genuine depletion at/before 90 is a real 0.
+  let scenarioBalAt90;
+  if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= BAL_REFERENCE_AGE) {
+    scenarioBalAt90 = 0;
+  } else {
+    const row90 = (lifeWalk.rows ?? []).find(r => r.age === BAL_REFERENCE_AGE);
+    scenarioBalAt90 = row90 ? row90.total : null;
+  }
+
+  const scenarioYears = farWalk.yearsSustained;
+  const deltaYears = (scenarioYears === Infinity && baseYearsSustained === Infinity)
+    ? 0
+    : scenarioYears === Infinity
+      ? Infinity
+      : baseYearsSustained === Infinity
+        ? -Infinity
+        : scenarioYears - baseYearsSustained;
+
+  return {
+    chart,
+    scenarioRetAge,
+    scenarioTotalAtRet: startBal,
+    scenarioExpenses,
+    scenarioYears,
+    deltaYears,
+    scenarioBalAt90,
+  };
+}
+
+// ── calcWhatIfChart ──────────────────────────────────────────────────────────
+// Returns a [{age, total}] series for a scenario override, suitable for passing
+// as the `scenarioData` prop to ArcGraph. Covers the retirement phase only.
+//
+// Thin wrapper over calcWhatIfScenario — the chart and the scenario stats come
+// from the SAME run by construction, so they can never diverge.
+// Returns [] when inputs are invalid or the retirement walk produces no rows.
+export function calcWhatIfChart(bundle, overrides = {}) {
+  const scenario = calcWhatIfScenario(bundle, overrides);
+  return scenario ? scenario.chart : [];
 }
 
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────

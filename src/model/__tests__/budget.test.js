@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth } from "../budget.js";
+import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "../budget.js";
 
 describe("calcGrossAfterTax", () => {
   it("subtracts all taxes from income", () => {
@@ -118,5 +118,63 @@ describe("calcMegaBackdoorGrowth", () => {
   it("falls back to linear (capacity × years) when return is 0", () => {
     const g = calcMegaBackdoorGrowth({ megaCapacity: 10_000, returnRate: 0 });
     expect(g.map(x => x.val)).toEqual([50_000, 100_000, 200_000]);
+  });
+});
+
+describe("calcStatementView", () => {
+  const base = {
+    currentIncome: 100_000,
+    fedTax: 12_000,
+    fica: 7_650,
+    stateTax: 0,
+    takeHome: 80_350,
+    currentContribTotal: 24_850,
+    householdSS: 30_000,
+    effectiveExpenses: 75_000,
+  };
+
+  it("reconciliation invariant: the waterfall pieces sum exactly to gross", () => {
+    const v = calcStatementView(base);
+    // taxTotal + saveTotal + flowKeep === gross (flowKeep is the residual)
+    expect(v.taxTotal + v.saveTotal + v.flowKeep).toBe(v.gross);
+    expect(v.gross).toBe(base.currentIncome);
+    expect(v.afterTaxLevel).toBe(v.gross - v.taxTotal);
+  });
+
+  it("computes tax composition and percentages", () => {
+    const v = calcStatementView(base);
+    expect(v.taxTotal).toBe(19_650);
+    expect(v.ficaPlusState).toBe(7_650);
+    expect(v.keepPct).toBe(Math.round(80_350 / 100_000 * 100));
+    expect(v.taxPct).toBe(Math.round(19_650 / 100_000 * 100));
+    expect(v.savePct).toBe(Math.round(24_850 / 100_000 * 100));
+    expect(v.flowKeepPct).toBe(Math.round(v.flowKeep / 100_000 * 100));
+    expect(v.effFedRatePct).toBe(12); // 12,000 / 100,000 → 12.0
+  });
+
+  it("monthly figures: SS, portfolio draw, and total (conversion lives in the model)", () => {
+    const v = calcStatementView(base);
+    expect(v.monthlyHHSS).toBe(Math.round(30_000 / 12));
+    expect(v.monthlyPortDraw).toBe(Math.round((75_000 - 30_000) / 12));
+    expect(v.monthlyTotal).toBe(Math.round(75_000 / 12));
+  });
+
+  it("portfolio draw never goes negative when SS exceeds expenses", () => {
+    const v = calcStatementView({ ...base, householdSS: 100_000 });
+    expect(v.monthlyPortDraw).toBe(0);
+  });
+
+  it("designed empty state: no income → percentages are null, NOT 0 (principle 10)", () => {
+    const v = calcStatementView({ ...base, currentIncome: 0, fedTax: 0, fica: 0, stateTax: 0, takeHome: 0 });
+    expect(v.keepPct).toBeNull();
+    expect(v.taxPct).toBeNull();
+    expect(v.savePct).toBeNull();
+    expect(v.flowTaxPct).toBeNull();
+    expect(v.flowSavePct).toBeNull();
+    expect(v.flowKeepPct).toBeNull();
+    expect(v.effFedRatePct).toBeNull();
+    // missing income behaves the same as 0
+    const v2 = calcStatementView({ ...base, currentIncome: null });
+    expect(v2.keepPct).toBeNull();
   });
 });

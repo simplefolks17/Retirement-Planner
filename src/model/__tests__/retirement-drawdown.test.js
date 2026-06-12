@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRetirementDrawdown } from "../retirement-drawdown.js";
+import { buildRetirementDrawdown, calcPlanProgress, buildYearlyRows } from "../retirement-drawdown.js";
 import { calcDrawdownYears, calcYearsSustained } from "../drawdown.js";
 
 // A representative retirement scenario (numbers chosen to deplete within the
@@ -120,5 +120,51 @@ describe("reconciliation with existing longevity functions (R1)", () => {
     const closed = calcYearsSustained(staticNetNeed, p.startBal, p.rReal);
     const walked = buildRetirementDrawdown(p).yearsSustained;
     expect(closed).toBeGreaterThan(walked);
+  });
+});
+
+describe("calcPlanProgress", () => {
+  it("returns 100 when sustainable (including Infinity yearsSustained)", () => {
+    expect(calcPlanProgress({ yearsSustained: Infinity, isSustainable: true, lifeExpect: 90, retirementAge: 65 }))
+      .toEqual({ progressPct: 100 });
+    expect(calcPlanProgress({ yearsSustained: 40, isSustainable: true, lifeExpect: 90, retirementAge: 65 }))
+      .toEqual({ progressPct: 100 });
+    // Defensive: Infinity years with a stale isSustainable=false still reads 100,
+    // never NaN/Infinity in the UI.
+    expect(calcPlanProgress({ yearsSustained: Infinity, isSustainable: false, lifeExpect: 90, retirementAge: 65 }))
+      .toEqual({ progressPct: 100 });
+  });
+
+  it("computes the percent of the retirement horizon covered when unsustainable", () => {
+    // 12.5 of 25 years → 50%
+    expect(calcPlanProgress({ yearsSustained: 12.5, isSustainable: false, lifeExpect: 90, retirementAge: 65 }))
+      .toEqual({ progressPct: 50 });
+  });
+
+  it("caps an unsustainable plan at 99% — it never reads as done", () => {
+    expect(calcPlanProgress({ yearsSustained: 24.9, isSustainable: false, lifeExpect: 90, retirementAge: 65 }))
+      .toEqual({ progressPct: 99 });
+  });
+
+  it("guards the zero/negative horizon (retiring at or past life expectancy)", () => {
+    const r = calcPlanProgress({ yearsSustained: 0.5, isSustainable: false, lifeExpect: 65, retirementAge: 65 });
+    expect(Number.isFinite(r.progressPct)).toBe(true);
+    expect(r.progressPct).toBeGreaterThanOrEqual(0);
+    expect(r.progressPct).toBeLessThanOrEqual(99);
+  });
+});
+
+describe("buildYearlyRows", () => {
+  it("attaches the calendar year to each walk row (age→year math in the model)", () => {
+    const rows = [{ age: 66, total: 1 }, { age: 67, total: 2 }];
+    const out = buildYearlyRows({ rows, currentAge: 30, currentYear: 2026 });
+    expect(out.map(r => r.year)).toEqual([2026 + 36, 2026 + 37]);
+    // original row fields preserved
+    expect(out[0].total).toBe(1);
+  });
+
+  it("empty/missing rows → empty array", () => {
+    expect(buildYearlyRows({ rows: [], currentAge: 30, currentYear: 2026 })).toEqual([]);
+    expect(buildYearlyRows({ rows: undefined, currentAge: 30, currentYear: 2026 })).toEqual([]);
   });
 });
