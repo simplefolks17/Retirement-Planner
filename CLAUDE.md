@@ -40,8 +40,9 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Formulas & assumptions: `docs/FINANCIAL-MODEL.md`
 - Classic UI design system & tokens: `docs/DESIGN.md` *(dark dashboard — the original UI)*
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
+- Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (90 items, 40 done, 50 planned)
+- Feature backlog: `feature-tracker.html` (109 items, 38 done, 71 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -213,7 +214,8 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   7. **`src/components/MoneyEventsPanel.jsx`** (new) — up to 6 one-time events (label, amount, age, inflow/outflow, taxable flag); renders in main planner; events flow through `simData` and `retDrawShared` so all downstream calculations (RMD, conversion, longevity) see them.
   8. **`App.jsx`** — added `moneyEvents` state, `whatIfSimInputs` object; threaded `moneyEvents` into `simData` (accum) and `retDrawShared` (retirement); rendered `WhatIfPanel` after retirement snapshot, `MoneyEventsPanel` before Tax Rate Phases.
   272 → **299** tests (25 files). New: `money-events.test.js`, `what-if.test.js`.
-- Income growth plateau feature (Jun 11 2026, feature #75): unrealistic compounding fixed.
+- Income growth plateau feature (Jun 11 2026, feature #87 — tracker ID, renumbered from #75
+  in the Jun 12 de-duplication pass): unrealistic compounding fixed.
   New optional `incomeGrowthEndAge` param in `runSimulation` and `calcAIME`; income stops
   growing at the specified age, capping contributions, employer match, MAGI, and SS AIME.
   UI: "Income plateau age" slider + live projected-retirement-income preview. Default `null`
@@ -268,6 +270,20 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   only `customPhoto` in `useState`; click the photo area to pick, hover for "change photo" hint;
   gradient placeholder replaced by `<img objectFit="cover">` when photo loaded. No model changes;
   307 tests unchanged.
+- Depth Ladder roadmap recorded (Jun 12 2026, docs-only — no `src/` changes, 307 tests unchanged):
+  owner-approved plan to close the Classic↔Horizon depth gap level by level (Glance → Understand →
+  Control → Retire Classic) and eventually remove the Classic view. Full plan with per-work-item
+  targets, actions, and done-metrics in new `docs/ROADMAP.md`; summary + link in `docs/HORIZON.md`;
+  22 tracker entries added (IDs 88–109, section "Horizon Depth Ladder"). Headlines: new **Journey**
+  screen (Flow-Down port), Numbers 3→6 tabs (Budget/Accounts/Taxes + retirement money flow), new
+  **Strategies** screen (conversion planner, RMD, SS timing, withdrawal order, surplus, mega
+  backdoor), Settings → "My details" topic cards, signals strip on Plan, arc tap-to-scrub. Binding
+  rule: zero math in `src/horizon/` — screens render `horizonProps` fields only (BUG-31 prevention).
+  Also fixed a tracker data bug found during the pass: the "What-If Scenarios" section reused IDs
+  69–74 (and "Overview / Income" reused 75) already taken by the Horizon UI section; since the
+  tracker's status map keys by ID, the shipped Horizon items #70–#74 displayed as "planned" and the
+  header counts were wrong. Renumbered the colliding entries to 81–87 (cross-refs updated) — IDs are
+  unique again and counts render correctly (109 items, 38 done, 71 planned).
 
 ## Commands
 - `npm run dev` — start dev server

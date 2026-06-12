@@ -685,43 +685,45 @@ var DATA = [
   // Core engine: calcWhatIfDelta / calcAffordabilityMax (what-if.js),
   // applyMoneyEvents (money-events.js). Every new scenario type should extend
   // the shared engine rather than implement a parallel retirement walk.
+  // NOTE: renumbered 69–74 → 81–86 (Jun 12 2026) — the old IDs collided with the
+  // Horizon UI section (69–80), which corrupted displayed status/counts (sts keys by id).
   {
-    id: 69, pr: 1, sec: "What-If Scenarios", st: "done",
+    id: 81, pr: 1, sec: "What-If Scenarios", st: "done",
     ti: "Live what-if overlay + money events timeline",
     ds: "Always-on collapsible overlay (WhatIfPanel) answering 'what if I...' questions without touching saved inputs. Two modes: Scenario Delta (retirement-age shift, one-time event, annual spending change) and Max Affordable (binary search for largest one-time spend that still sustains to a target age). Persistent money events panel (MoneyEventsPanel, up to 6 events) threads into both accumulation and retirement walks. PDF export via window.print(). Fully isolated from main state.",
-    dt: "Shipped Jun 10 2026. New files: src/model/what-if.js (calcWhatIfDelta, calcAffordabilityMax), src/model/money-events.js (applyMoneyEvents, totalEventImpact), src/components/WhatIfPanel.jsx, src/components/MoneyEventsPanel.jsx. moneyEvents[] state threaded into runSimulation and buildRetirementDrawdown via retDrawShared. whatIfSimInputs object passed as props — WhatIfPanel never reads or writes main app state. calcWhatIfDelta re-runs runSimulation when accumulation-phase events or retirementAgeOverride are present; otherwise inherits baseline balance. Baseline rmdTaxByAge + conversionTaxByAge maps reused as-is (documented approximation — acceptable for modest scenario changes; see #74 for large-delta improvement). 272 → 299 tests.",
+    dt: "Shipped Jun 10 2026. New files: src/model/what-if.js (calcWhatIfDelta, calcAffordabilityMax), src/model/money-events.js (applyMoneyEvents, totalEventImpact), src/components/WhatIfPanel.jsx, src/components/MoneyEventsPanel.jsx. moneyEvents[] state threaded into runSimulation and buildRetirementDrawdown via retDrawShared. whatIfSimInputs object passed as props — WhatIfPanel never reads or writes main app state. calcWhatIfDelta re-runs runSimulation when accumulation-phase events or retirementAgeOverride are present; otherwise inherits baseline balance. Baseline rmdTaxByAge + conversionTaxByAge maps reused as-is (documented approximation — acceptable for modest scenario changes; see #86 for large-delta improvement). 272 → 299 tests.",
     cx: "High", im: "High", af: ["buildRetirementDrawdown (moneyEvents param)", "runSimulation (moneyEvents param)", "yearsSustained (scenario comparison)", "totalAtRet (scenario comparison)"], sv: "moneyEvents[] (App state), whatIfSimInputs (derived object)"
   },
   {
-    id: 70, pr: 1, sec: "What-If Scenarios", st: "planned",
+    id: 82, pr: 1, sec: "What-If Scenarios", st: "planned",
     ti: "Recurring annual spending solver ('Can I spend $X more per year?')",
     ds: "The overlay shows the impact of an annual spending change but offers no solver. 'What is the maximum I can add to my annual lifestyle and still reach age X?' requires a binary search over annualExpensesOverride — the recurring-spend analog of calcAffordabilityMax.",
     dt: "Add calcMaxAnnualSpendIncrease({ targetAge, step = 500, maxSearch = 200_000, ...deltaArgs }) to what-if.js. Binary search: isSustainable(delta) = calcWhatIfDelta({ ...baseArgs, annualExpensesOverride: baseExpenses + delta }).scenarioYears >= targetAge - safeRetAge. Return { maxDelta, scenarioYears }. In WhatIfPanel extend Affordability mode (or add 'Lifestyle' mode): 'You can sustainably increase annual spending by up to $X/yr while lasting to age Y.' Pairs with the one-time affordability answer: show both side-by-side so a user can compare '$80k car once' vs '$5k/yr lifestyle bump forever.'",
     cx: "Low", im: "High", af: ["calcWhatIfDelta (search loop)", "annualExpensesOverride", "WhatIfPanel (Lifestyle mode)", "yearsSustained (scenario)"], sv: "none (new model function + WhatIfPanel mode)"
   },
   {
-    id: 71, pr: 1, sec: "What-If Scenarios", st: "planned",
+    id: 83, pr: 1, sec: "What-If Scenarios", st: "planned",
     ti: "Required-contribution solver ('How much more must I save to reach my goal?')",
     ds: "Completely absent today. A user 10 years from retirement asking 'I want $2M — how much more per year must I save?' has no answer. Requires a binary search over contribution amounts re-running the accumulation simulation — the inverse of calcSavingsCapacity.",
     dt: "Add findRequiredContribution({ targetPortfolio OR targetAge, step = 1000, maxSearch = 100_000, ...simInputs, ...retDrawArgs }) to what-if.js. Two goal types: (a) portfolio target — search until totalAtRet >= targetPortfolio; (b) longevity target — search until yearsSustained >= targetAge. Each iteration: re-run runSimulation with boosted contributions (IRS limits still enforced per-year by the sim), optionally run buildRetirementDrawdown for longevity check. Allocate extra contribution in IRS priority order (match gap → HSA → Roth → 401k → taxable) using calcOptimizedAllocation so the suggestion is actionable. In WhatIfPanel add 'Save More' mode: 'To reach [goal] you need to save $X/mo more — ideally $A to 401k, $B to Roth.'",
     cx: "Medium", im: "High", af: ["runSimulation (search loop)", "buildRetirementDrawdown (longevity check)", "calcOptimizedAllocation (IRS-priority split)", "WhatIfPanel (Save More mode)", "yearsSustained / totalAtRet (goal check)"], sv: "none (new model function + WhatIfPanel mode)"
   },
   {
-    id: 72, pr: 2, sec: "What-If Scenarios", st: "planned",
+    id: 84, pr: 2, sec: "What-If Scenarios", st: "planned",
     ti: "Free retirement-age slider in overlay (replaces fixed ±2-year presets)",
     ds: "The overlay's 'Work 2 more years / Retire 2 years early' presets are the only way to shift retirement age in a what-if. A FIRE user targeting 45 can't express that. The presets should snap a free slider (currentAge → 75) so any retirement age is explorable without touching the main planner.",
     dt: "In WhatIfPanel, replace the preset buttons with a retirement-age slider (min = currentAge, max = 75, step 1). The three presets become label shortcuts that snap the slider. retirementAgeOverride passed to calcWhatIfDelta is already an absolute age — no model change. Display the resulting conversion window length ('X years to convert before RMDs') alongside longevity delta so users see the full tradeoff of retiring early. Also surfaces the 'what happens if I stop working today?' question directly.",
     cx: "Low", im: "Medium", af: ["WhatIfPanel (UI only)", "retirementAgeOverride (absolute age, already supported)"], sv: "none (UI change only)"
   },
   {
-    id: 73, pr: 2, sec: "What-If Scenarios", st: "planned",
+    id: 85, pr: 2, sec: "What-If Scenarios", st: "planned",
     ti: "Prominent verdict badge: ON TRACK vs SHORTFALL with gap quantification",
     ds: "Scenario results show small delta chips ('−2.3 yrs') that the user must interpret. For 'quick question, quick answer, move on', every result needs one prominent verdict so a non-programmer never has to decide whether −2.3 years is a problem.",
-    dt: "In WhatIfPanel result display, add a large badge above detail chips. Logic: scenarioYears >= (safeLifeExp - safeRetAge) → 'ON TRACK ✓' (green) + 'Lasts to age X — Y years beyond goal.' Otherwise → 'SHORTFALL ✗' (red) + 'Runs out at age X — Y years short.' In Max Affordable mode: replace raw dollar amount with 'YES — up to $X' (green) or 'NO — plan already short' (red). Delta chips stay as secondary detail. When #71 (contribution solver) ships, add a one-line shortcut under SHORTFALL: 'Save ~$X/mo more to close the gap →'.",
+    dt: "In WhatIfPanel result display, add a large badge above detail chips. Logic: scenarioYears >= (safeLifeExp - safeRetAge) → 'ON TRACK ✓' (green) + 'Lasts to age X — Y years beyond goal.' Otherwise → 'SHORTFALL ✗' (red) + 'Runs out at age X — Y years short.' In Max Affordable mode: replace raw dollar amount with 'YES — up to $X' (green) or 'NO — plan already short' (red). Delta chips stay as secondary detail. When #83 (contribution solver) ships, add a one-line shortcut under SHORTFALL: 'Save ~$X/mo more to close the gap →'.",
     cx: "Low", im: "High", af: ["WhatIfPanel (display only)", "scenarioYears vs safeLifeExp (already computed)", "deltaYears (already returned by calcWhatIfDelta)"], sv: "none (display change only)"
   },
   {
-    id: 74, pr: 3, sec: "What-If Scenarios", st: "planned",
+    id: 86, pr: 3, sec: "What-If Scenarios", st: "planned",
     ti: "Scenario-aware Roth conversion recompute for large portfolio changes",
     ds: "The what-if engine reuses baseline RMD and conversion tax maps for all scenarios — a documented approximation. For small changes (±10%) the error is negligible. For large scenarios (retire 10 years early, $500k inheritance, big savings boost) the maps diverge materially and longevity estimates skew.",
     dt: "In calcWhatIfDelta, after computing scenarioTotalAtRet, check if abs(scenarioTotalAtRet - baseTotalAtRet) / baseTotalAtRet > LARGE_CHANGE_THRESHOLD (suggested 0.15). If so, recompute rmdTaxByAge via calcRMDTaxSchedule with the scaled trad balance. If the scenario also shifts the conversion window (retirementAgeOverride), run a full evaluateConversionPlan re-run to get a new conversionTaxByAge. Gate behind the threshold so small scenarios stay fast (~1 extra evaluateConversionPlan call per large-delta what-if). Update the documented approximation note in CLAUDE.md and what-if.js when shipped. Add LARGE_CHANGE_THRESHOLD to ASSUMPTIONS in irs-2026.js.",
@@ -729,11 +731,171 @@ var DATA = [
   },
   // ─── Overview / Income ────────────────────────────────────────────────────
   {
-    id: 75, pr: 1, sec: "Overview / Income", st: "done",
+    id: 87, pr: 1, sec: "Overview / Income", st: "done",
     ti: "Income growth plateau (incomeGrowthEndAge)",
     ds: "A $100k earner at 3%/yr compounded for 35 years reaches $289k — unrealistic for most careers. Users can now set an age at which income stops growing. This caps contributions, employer match, MAGI, and SS AIME at a realistic peak instead of projecting ever-increasing salaries.",
     dt: "Shipped Jun 11 2026. New optional param incomeGrowthEndAge (null = no cap) added to runSimulation (simulation.js) and calcAIME (social-security.js), threaded through calcRetirementIncome (retirement-income.js) and App.jsx. growFactor capped via Math.min(y-1, incomeGrowthEndAge - currentAge) — a single-line guard that cascades correctly to employee deferral, employer match, MAGI, and LTCG basis. calcAIME uses the same cap for SS wage history so the SS benefit doesn't overstate earnings post-plateau. UI: 'Income plateau age' slider (currentAge+1 to retirementAge; 'None' when at max) + live 'Projected at retirement: $X/yr' preview. Default null → no cap → zero golden master impact. whatIfSimInputs threaded. 4 new tests (299 → 303).",
     cx: "Low", im: "High", af: ["runSimulation (growFactor cap)", "calcAIME (plateau for SS AIME)", "calcRetirementIncome (threaded)", "employer match (capped via growFactor)", "MAGI / Roth phase-out (capped)", "whatIfSimInputs"], sv: "incomeGrowthEndAge (App state, null default)"
+  },
+  // ─── Horizon Depth Ladder ────────────────────────────────────────────────────
+  // The approved Jun 12 2026 roadmap for closing the depth gap between Classic and
+  // Horizon, level by level, until Classic can be retired. Full plan with targets,
+  // actions, and done-metrics per work item (WI): docs/ROADMAP.md. Binding rule for
+  // every item here: ZERO math in src/horizon/ — screens render horizonProps fields
+  // only; anything computed lives in src/model/ (BUG-31 class prevention).
+  {
+    id: 88, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L1 / WI-1.1 — Tappable Plan stat cards + on-track explainer",
+    ds: "Every number on the Plan screen becomes a door: the 4 stat cards navigate to the screen that explains them (Statement, Ideas dial, Year by year), and tapping the on-track pill opens a popover listing the 3 drivers (withdrawal rate vs 4%, years sustained vs horizon, savings rate) in plain language.",
+    dt: "Lift navigation in HorizonShell into navigate(screenId, subView?) passed to all screens; NumbersScreen accepts initialTab. Wire PlanScreen cards: You keep/mo → Numbers/Statement; Retire at → Ideas; Income for life → Numbers/Statement; Left at 90 → Numbers/Year by year. Pill popover computes nothing new — withdrawalRate, yearsSustained, lifeExpect, retirementAge, currentContribTotal, takeHome are all in horizonProps. Done when all 4 cards + pill navigate/explain, tap targets ≥44px mobile, review confirms zero new math. See docs/ROADMAP.md WI-1.1.",
+    cx: "Low", im: "High", af: ["HorizonShell.jsx (navigate callback)", "PlanScreen.jsx (card onClick)", "NumbersScreen.jsx (initialTab prop)"], sv: "none (navigation only)"
+  },
+  {
+    id: 89, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L1 / WI-1.2 — Signals strip on Plan",
+    ds: "Up to 2 severity-ranked, dollar-quantified nudges on the Plan screen — unclaimed employer match, Roth conversion benefit > $5k, budget deficit — each deep-linking to the screen where the user can act. Classic's Flow-Down action cards reborn as the front door to depth.",
+    dt: "New pure module src/model/signals.js: calcSignals({...}) → sorted [{id, title, body, dollars, target:{screen, subView}}]. Inputs all exist: extraMatch headroom (calcOptimizedAllocation), adjustedNetConversionBenefit (evaluateConversionPlan), availableSurplus (calcSavingsCapacity). App.jsx memo passes signals via horizonProps; PlanScreen renders SignalsStrip capped at 2; dismiss persisted via safeSet('hz-signal-dismissed-<id>'). Done when signals.test.js covers ranking/thresholds/cap and dismiss survives reload. See docs/ROADMAP.md WI-1.2.",
+    cx: "Medium", im: "High", af: ["src/model/signals.js (new)", "App.jsx (signals memo + horizonProps)", "PlanScreen.jsx (SignalsStrip)", "ThemeContext safeGet/safeSet"], sv: "hz-signal-dismissed-<id> (localStorage)"
+  },
+  {
+    id: 90, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L1 / WI-1.3 — Money-event markers on the arc",
+    ds: "Committed money events already bend the arc invisibly; render small dots at their ages (green inflow / warm outflow) with hover labels so life events are visible at a glance.",
+    dt: "ArcGraph gains optional events prop [{age, label, isInflow}]; reuse the existing age→x scale (fixed 30–90 axis) and interpolate y from chartData; PlanScreen/IdeasScreen pass props.moneyEvents. Done when events=[] renders pixel-identical (default unaffected) and 2 events produce 2 dots at correct ages, at minimum in Arc view. See docs/ROADMAP.md WI-1.3.",
+    cx: "Low", im: "Medium", af: ["ArcGraph.jsx (events prop)", "PlanScreen.jsx", "IdeasScreen.jsx"], sv: "none (display only)"
+  },
+  {
+    id: 91, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L2 / WI-2.1 — Journey screen (Flow-Down port) + mobile More sheet",
+    ds: "New top-level screen telling the money story in three chapters — Today, Building years, Retirement years — porting all ~20 Flow-Down waterfall metrics into Horizon's editorial style, with handoff numbers between chapters and swipeable chapters on mobile. Adding a 6th screen also triggers the mobile 'More' overflow sheet.",
+    dt: "Add {id:'journey'} to SCREENS (position 2); new src/horizon/screens/JourneyScreen.jsx. Pass the full calcFlowDown result (already computed in App for Classic) as horizonProps.flowDown + conversionWindowYrs + rmdStartAge. Chapters render startPortfolio/totalContrib/totalGrowth/peakPortfolio/totalAtRet; conversion-window callout when hasConvWindow (portPreRMD, convWindowDraws/Tax/Growth, totalConverted); retirement chapter renders distStartVal/distDraws/distRMDTax/distGrowth/distEndVal/depletionAge + income-floor strip. Mobile bottom bar becomes Plan·Journey·Ideas·Numbers·More (slide-up sheet: Strategies/Someday/Settings). Done when every calcFlowDown field is rendered, a render-smoke test mounts the screen with golden-master props, and review confirms zero recomputation. See docs/ROADMAP.md WI-2.1.",
+    cx: "High", im: "High", af: ["HorizonShell.jsx (SCREENS, MoreSheet)", "JourneyScreen.jsx (new)", "App.jsx (horizonProps.flowDown)", "flow-down.js (consumed, unchanged)"], sv: "none (flowDown already computed)"
+  },
+  {
+    id: 92, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L2 / WI-2.2 — Numbers → Budget tab (savings waterfall)",
+    ds: "Classic's budget story in Horizon: income after tax → living expenses → savings capacity → current contributions → available surplus, with a deficit warning and a read-only view of the optimized allocation suggestion.",
+    dt: "Pass horizonProps.budget = { grossAfterTax, effectiveLiving, savingsCapacity, currentContribTotal, availableSurplus, optimizedAllocation } from calcSavingsCapacity + calcOptimizedAllocation (budget.js, already called in App). New NumbersScreen tab in Statement editorial style. Apply button is deferred to WI-3.7 (#104). Done when every figure equals Classic's Budget panel at the same state + smoke test. See docs/ROADMAP.md WI-2.2.",
+    cx: "Low", im: "High", af: ["NumbersScreen.jsx (new tab)", "App.jsx (horizonProps.budget)", "budget.js (consumed, unchanged)"], sv: "none"
+  },
+  {
+    id: 93, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L2 / WI-2.3 — Numbers → Accounts tab (4-bucket comparison + milestones)",
+    ds: "Where the money lives at retirement: ranked bars for the 4 account buckets with % of total, per-account contribution notes, and milestone pills ($100k/$500k/$1M/goal) with progress coloring.",
+    dt: "Pass horizonProps.milestones (calcMilestones, accumulation.js) and retirementTarget. Render from retVals (already in props). Done when bars sum to totalAtRet and milestones equal Classic's; smoke test. See docs/ROADMAP.md WI-2.3.",
+    cx: "Low", im: "Medium", af: ["NumbersScreen.jsx (new tab)", "App.jsx (horizonProps.milestones)", "accumulation.js (consumed, unchanged)"], sv: "none"
+  },
+  {
+    id: 94, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L2 / WI-2.4 — Numbers → Taxes tab (phase rates + lifetime composition)",
+    ds: "Working vs retirement tax phases (Classic's TaxTimeline restyled), the user's current bracket position, and a lifetime composition bar: working-years tax vs RMD tax vs conversion tax.",
+    dt: "Pass horizonProps.taxView = { fedMarginal, fedEffective, effectiveRMDTaxRate, projectedRetBracket, rmdTaxBite, convTaxTotal } — all computed today (tax-basis.js, calcRMDTaxSchedule, projectRetirementBracket, conversion sim totals). Done when rates equal Classic's phase cards at the same state; review confirms no new math. See docs/ROADMAP.md WI-2.4.",
+    cx: "Low", im: "Medium", af: ["NumbersScreen.jsx (new tab)", "App.jsx (horizonProps.taxView)"], sv: "none"
+  },
+  {
+    id: 95, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L2 / WI-2.5 — Year by year: accumulation rows + RMD/Conversion columns",
+    ds: "Extend the yearly table to cover the whole life: accumulation-phase rows from the simulation, plus RMD and Conversion columns in the retirement years they apply, with milestone rows highlighted.",
+    dt: "Prepend rows from simData (age, year, total via sumAccountRow, contributions). Do NOT derive a growth residual in the UI — if per-year growth is wanted, add it to runSimulation rows in src/model/simulation.js first and lock with a test (anti-plug rule). Join RMD column from horizonProps.rmdDataWithTax (calcRMDTaxSchedule) and Conversion column from evaluateConversionPlan().conversionSim by age. Done when existing retirement rows are unchanged and the RMD column matches Classic's RMD table (first 10 rows). See docs/ROADMAP.md WI-2.5.",
+    cx: "Medium", im: "Medium", af: ["NumbersScreen.jsx (Year by year tab)", "App.jsx (horizonProps.rmdDataWithTax, conversion rows)", "simulation.js (only if growth column added)"], sv: "none"
+  },
+  {
+    id: 96, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L2 / WI-2.6 — Retirement-phase money flow (income sources Sankey)",
+    ds: "A second money-flow view answering 'where does retirement income come from?': Expenses ← Social Security + Pension + Portfolio draw, in the same band style as the paycheck Sankey, behind a Working years / Retirement years toggle.",
+    dt: "Pass horizonProps.effectivePension and netPortfolioNeed (calcNetPortfolioNeed, drawdown.js). Done when the bands sum exactly to effectiveExpenses and match Classic's 'Portfolio Needs Breakdown' at the same state. See docs/ROADMAP.md WI-2.6.",
+    cx: "Low", im: "Medium", af: ["NumbersScreen.jsx (Money flow tab toggle)", "App.jsx (horizonProps.effectivePension, netPortfolioNeed)"], sv: "none"
+  },
+  {
+    id: 97, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L2 / WI-2.7 — Arc tap-to-scrub",
+    ds: "Touch or hover a year on the arc to see that year's numbers in a floating chip — age, balance, and (in retirement years) draw, growth, and tax. Turns the hero visual into the yearly table's friendly twin.",
+    dt: "Pointer/touch handlers on the ArcGraph SVG; inverse-scale x→age; nearest chartData point; chip enriches from retirementWalk.rows when a matching age exists (pass walkRows as optional prop). Desktop hover, mobile touch-drag. Done when chip values equal the Year-by-year table for the same age (spot-check 3 ages); uses only existing series. See docs/ROADMAP.md WI-2.7.",
+    cx: "Medium", im: "Medium", af: ["ArcGraph.jsx (pointer handlers, chip)", "PlanScreen.jsx / IdeasScreen.jsx (pass walkRows)"], sv: "none (display only)"
+  },
+  {
+    id: 98, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.1 — Topic-grouped setter bundles in horizonProps",
+    ds: "The plumbing for all Level-3 work: Horizon gains write access to every Classic input via topic-grouped bundles of the existing App.jsx state + setters (profile, spending, accounts, ss, pension, conversion, health, assumptions). Both UIs keep sharing one state.",
+    dt: "Extend horizonProps with bundles wrapping existing useState pairs (currentIncome/incomeGrowth/incomeGrowthEndAge/spouseIncome/filingStatus/selectedState/...; bal+contrib+contribEnd ×4 + addlPreTaxBal + match fields; includeSS/ssClaimingAge/ssOverride/isMarried/spouseSsEstimate/spouseClaimingAge/spouseBenefitBasis/spouseCurrentAge/spouseIsSoleBenef; pensionMonthly/pensionStartAge; conversionMode/conversionBracketTarget/annualConversionAmt/conversionTaxSource; hasMarketplaceInsurance/householdSize/marketplaceMonthlyPremium/hasMedicare/personOnMedicare; returnRate/inflationRate/lifeExpect/retirementState/savingsSurplusPct). Copy each input's min/max/step constraints verbatim from Classic JSX (incl. the BUG-17 SS claim-age floor at currentAge). Document bundle shapes in docs/ARCHITECTURE.md. Done when a Horizon change is immediately reflected in Classic (3-field manual round-trip) + a smoke test fires one setter per bundle. See docs/ROADMAP.md WI-3.1.",
+    cx: "Medium", im: "High", af: ["App.jsx (horizonProps bundles)", "docs/ARCHITECTURE.md (bundle shapes)"], sv: "none (existing state, regrouped)"
+  },
+  {
+    id: 99, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.2 — Settings split: 'My details' + 'Appearance'",
+    ds: "Settings splits into Appearance (palette/theme/arc style/activity, unchanged) and My details: collapsed topic cards — income & job, spending, accounts & match, health & Medicare, assumptions — each showing a one-line summary when closed and steppers/sliders when opened, with inline 'Why this matters' notes from Classic's explainer text.",
+    dt: "SettingsScreen gets two sub-tabs. Topic cards consume the WI-3.1 (#98) bundles; mobile uses the onboarding stepper/preset pattern instead of raw range sliders. Done when every input in the profile/spending/accounts/health/assumptions bundles has exactly one home here, closed-card summaries are accurate, and it's usable on mobile. See docs/ROADMAP.md WI-3.2.",
+    cx: "Medium", im: "High", af: ["SettingsScreen.jsx (sub-tabs, topic cards)", "HorizonShell.jsx (pass bundles)"], sv: "none (UI over #98 bundles)"
+  },
+  {
+    id: 100, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.3 — Strategies screen scaffold",
+    ds: "New top-level screen: a card grid where each strategy shows its current status and dollar stakes — Roth conversion, RMD outlook, SS timing, Withdrawal order, Surplus deployment, Mega backdoor — opening a guided detail flow. Unconfigured cards show 'Not set up — see what this could be worth'. This is also the natural surface for the future premium tier (#29/#30/#31).",
+    dt: "Add {id:'strategies'} to SCREENS; new src/horizon/screens/StrategiesScreen.jsx with card grid + detail-flow container (back button). Status lines all from existing props (adjustedNetConversionBenefit, rmdDataWithTax first row, ssMonthlyBenefit, yr1TaxSavings, availableSurplus, mega capacity). Done when it renders at golden-master defaults with correct headline dollars on every card + smoke test. See docs/ROADMAP.md WI-3.3.",
+    cx: "Medium", im: "High", af: ["HorizonShell.jsx (SCREENS)", "StrategiesScreen.jsx (new)"], sv: "activeFlow (local StrategiesScreen state)"
+  },
+  {
+    id: 101, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.4 — Social Security timing flow (incl. spouse)",
+    ds: "The full Classic SS section as a guided flow: claim-age stepper with live benefit, break-even age, delay-to-70 impact, override input, and the married section (own-record vs spousal basis, spouse claim age, advisory note when the spousal benefit beats the own record).",
+    dt: "Pass horizonProps.ssView from calcRetirementIncome + calcSSBreakEven + calcSSDelayGain (already computed in App): ssMonthlyBenefit, ssAnnualBenefit, ss67Monthly, ssBreakEven, ss70Annual, ss70DrawReduction, delayGainYears, spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS. Claim stepper 62–70 with min currentAge (BUG-17 guard); writes via the ss bundle (#98). Done when every value equals Classic's SS + Spouse SS sections at the same state (default + one delayed-claim state) and changes round-trip to Classic. See docs/ROADMAP.md WI-3.4.",
+    cx: "Medium", im: "High", af: ["StrategiesScreen.jsx (SS flow)", "App.jsx (horizonProps.ssView)", "retirement-income.js / drawdown.js (consumed, unchanged)"], sv: "none (ss bundle from #98)"
+  },
+  {
+    id: 102, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.5 — RMD outlook flow",
+    ds: "Classic's RMD section as a guided flow: what-is-an-RMD explainer, IRS table selection (married / sole-beneficiary spouse / spouse age), outside pre-tax balances input, first-RMD / lifetime-total / est-tax stat cards, and the first-10-years table.",
+    dt: "Pass horizonProps.rmdView = { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate, firstRMD, lifetimeRMDTotal } (from calcRMDTaxSchedule; aggregates computed in the model/App memo, not JSX). Controls write isMarried/spouseIsSoleBenef/spouseCurrentAge/addlPreTaxBal via bundles (#98). Done when it equals Classic's RMD section at the same state and the Table II/III switch changes the schedule identically in both UIs. See docs/ROADMAP.md WI-3.5.",
+    cx: "Medium", im: "Medium", af: ["StrategiesScreen.jsx (RMD flow)", "App.jsx (horizonProps.rmdView)", "retirement-tax.js (consumed, unchanged)"], sv: "none (bundles from #98)"
+  },
+  {
+    id: 103, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.6 — Roth conversion planner flow",
+    ds: "Classic's deepest feature, interactive in Horizon: conversion window summary, bracket-fill vs custom mode, tax-source toggle, outcome cards (tax cost, RMD tax saved, net benefit), healthcare impact (ACA cliff years, IRMAA cost, adjusted net), year-by-year tables, and the optimizer suggestion with an Apply button behind a before/after preview.",
+    dt: "Pass horizonProps.conversionView = the display path's evaluateConversionPlan result (conversionSim, rmdDataPostConversion, rmdTaxSaved, netConversionBenefit, irmaaCost, acaLoss, cliffYears, adjustedNetConversionBenefit) + calcBracketFillTargets outputs (convSteadyTarget/convPeakTarget/targetsVary) + the existing optimizer suggestion. Controls write the conversion bundle (#98). Apply sets annualConversionAmt + conversionMode='custom' through the WI-3.9 (#106) preview modal. Done when all values equal Classic's conversion section at the same state (incl. the locked default netConversionBenefit = 77,861 path) and Apply round-trips with the suggestion clearing once applied. See docs/ROADMAP.md WI-3.6.",
+    cx: "High", im: "High", af: ["StrategiesScreen.jsx (conversion flow)", "App.jsx (horizonProps.conversionView)", "conversion-evaluation.js / conversion-planning.js (consumed, unchanged)"], sv: "none (conversion bundle from #98)"
+  },
+  {
+    id: 104, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.7 — Withdrawal order, Surplus deployment, Mega backdoor flows",
+    ds: "The remaining three Classic strategy sections: the taxable→trad→Roth withdrawal sequence with year-1 tax savings (read-only); surplus deployment with the optimized allocation and a shared Apply/Revert; and the mega backdoor 415(c) capacity calculator with growth projections.",
+    dt: "Withdrawal order renders calcWithdrawalOrderTax fields (yr1FromTaxable/Trad/Roth, yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings). Surplus deployment: extract Classic's existing apply handler (writes opt401k/optRoth/optHSA/optTaxable into contributions, snapshots into preApplySnapshot) into applyAllocation/revertAllocation callbacks passed via horizonProps so both UIs share ONE implementation (BUG-25 #4 duplication shape). Mega backdoor: match inputs via the accounts bundle + calcMegaBackdoorGrowth projections. Done when all three match Classic, Apply in Horizon shows the same applied/revert state in Classic, and revert restores the snapshot exactly. See docs/ROADMAP.md WI-3.7.",
+    cx: "Medium", im: "Medium", af: ["StrategiesScreen.jsx (3 flows)", "App.jsx (applyAllocation/revertAllocation extraction)", "retirement-tax.js / budget.js (consumed, unchanged)"], sv: "none (preApplySnapshot already exists)"
+  },
+  {
+    id: 105, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.8 — Ideas growth: money-events editor + affordability mode",
+    ds: "Ideas gains full money-event control (parity with Classic's MoneyEventsPanel: up to 6 events with label, amount, age, inflow/outflow, taxable flag, delete) and an affordability mode: 'What's the biggest one-time expense I can afford at age X and still last to Y?'",
+    dt: "Events editor uses moneyEvents/setMoneyEvents already in horizonProps — same state as Classic's panel, no new mechanism. Affordability calls calcAffordabilityMax (what-if.js, currently unused by Horizon) with the existing whatIfSimInputs bundle; purchase-age + target-age steppers. Done when an event added in Horizon appears in Classic's panel and moves the arc, and the affordability result equals Classic WhatIfPanel's for identical inputs. See docs/ROADMAP.md WI-3.8.",
+    cx: "Low", im: "High", af: ["IdeasScreen.jsx (editor + affordability panels)", "what-if.js / money-events.js (consumed, unchanged)"], sv: "none (moneyEvents already shared)"
+  },
+  {
+    id: 106, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L3 / WI-3.9 — Apply-with-preview pattern",
+    ds: "No Apply button changes headline numbers without showing the consequence first: a shared modal that previews the before/after delta (years sustained, balance at 90) and commits only on confirm.",
+    dt: "New src/horizon/ApplyPreviewModal.jsx wrapping ConfirmModal: given an override, computes before/after via calcWhatIfDelta/calcWhatIfChart and renders the delta. Used by every Apply in #103/#104 and by commitPlan call sites. Done when all Strategies Apply buttons route through it (review checklist) and a cancel leaves state untouched (smoke test asserts no setter called). See docs/ROADMAP.md WI-3.9.",
+    cx: "Low", im: "High", af: ["ApplyPreviewModal.jsx (new)", "ConfirmModal.jsx (wrapped)", "what-if.js (consumed, unchanged)"], sv: "none"
+  },
+  {
+    id: 107, pr: 3, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L4 / WI-4.1 — Classic→Horizon parity audit checklist",
+    ds: "Before Classic can be retired, every Classic input and output must be dispositioned: ported to a Horizon home, merged into an existing view, or deliberately dropped with a documented reason. Nothing disappears silently.",
+    dt: "Complete the seed table in docs/ROADMAP.md (Parity audit checklist section): every row gets a Horizon home (WI reference) or an explicit port/merge/drop disposition; owner reviews each drop. Done when 100% of rows are dispositioned with zero TBD. See docs/ROADMAP.md WI-4.1.",
+    cx: "Low", im: "High", af: ["docs/ROADMAP.md (checklist table)"], sv: "none (docs only)"
+  },
+  {
+    id: 108, pr: 3, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L4 / WI-4.2 — Demote Classic to a Settings link",
+    ds: "Once Levels 1–3 ship and the parity checklist is complete, the 'Classic view' button moves from Horizon's top nav into Settings → About as 'Legacy view', and the owner runs an agreed Horizon-only trial period.",
+    dt: "Move the onShowClassic button into SettingsScreen About section; Classic keeps its return button. Done when the trial period (e.g., 2 weeks) completes without needing Classic for anything — anything reached for gets a WI filed before proceeding. Gated on #107. See docs/ROADMAP.md WI-4.2.",
+    cx: "Low", im: "Medium", af: ["HorizonShell.jsx (remove nav button)", "SettingsScreen.jsx (Legacy view link)"], sv: "none"
+  },
+  {
+    id: 109, pr: 3, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L4 / WI-4.3 — Remove the Classic view",
+    ds: "The endgame: delete the Classic tab JSX and Classic-only components in one dedicated, cleanly revertible PR. The model layer is untouched — it was always UI-independent.",
+    dt: "Single PR: delete Classic tab JSX from App.jsx + Classic-only components; src/model/ untouched; archive docs/DESIGN.md with a header note. Done when npm test is green (golden master unmoved), the production build succeeds, and the PR reverts cleanly. Gated on #108. See docs/ROADMAP.md WI-4.3.",
+    cx: "Medium", im: "Medium", af: ["App.jsx (Classic JSX removal)", "src/components/ (Classic-only files)", "docs/DESIGN.md (archived)"], sv: "none (removal)"
   }
 ];
 

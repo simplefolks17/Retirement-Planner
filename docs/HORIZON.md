@@ -335,6 +335,19 @@ Year by year tab replaced with a full grid table from `retirementWalk.rows`. Col
 
 ---
 
+## Depth Ladder Roadmap
+
+With the original 12 open items (#69–#80) all shipped, Horizon's next phase is the **Depth Ladder** — the owner-approved plan (Jun 12 2026) to close the depth gap with the Classic view level by level, then retire Classic:
+
+- **Level 1 Glance** — tappable stat cards, signals strip, arc event markers
+- **Level 2 Understand** — new **Journey** screen (Flow-Down port), Numbers grows 3→6 tabs (Budget / Accounts / Taxes), arc tap-to-scrub
+- **Level 3 Control** — new **Strategies** screen (conversion planner, RMD, SS timing, withdrawal order, surplus, mega backdoor), Settings → "My details" input cards, Ideas events editor + affordability
+- **Level 4 Retire Classic** — parity audit, demotion, removal
+
+Full plan with per-work-item targets, actions, and done-metrics: **`docs/ROADMAP.md`**. Tracker entries: `feature-tracker.html` IDs **88–109**, section "Horizon Depth Ladder". Binding rule for all of it: zero math in `src/horizon/` — screens render `horizonProps` fields only.
+
+---
+
 ## Extension Guide
 
 ### Adding a new palette
@@ -357,4 +370,4 @@ The SVG coordinate space is fixed: VW=1200, PAD `{l:62, r:92, t:38, b:46}`. Age 
 
 ---
 
-*Last updated: 2026-06-11. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding), #18 Batch D (Sankey, vivid arc, yearly table), #19 Batch E (mobile layout, activity in Settings, photo upload). All 12 Horizon open items shipped (#69–#80).*
+*Last updated: 2026-06-12. PRs: #15 Horizon shell, #16 Batch B (Ideas + Plan confirm), #17 Batch C (onboarding), #18 Batch D (Sankey, vivid arc, yearly table), #19 Batch E (mobile layout, activity in Settings, photo upload). All 12 Horizon open items shipped (#69–#80). Next phase: the Depth Ladder roadmap (`docs/ROADMAP.md`, tracker IDs 88–109).*
