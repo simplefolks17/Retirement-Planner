@@ -1,7 +1,7 @@
 # Horizon Depth Ladder — Roadmap
 
 **Status:** approved Jun 12 2026 (owner). This is the build plan for closing the depth gap between the Classic (Legacy) dashboard and the Horizon shell, level by level, until Classic can be retired.
-**Tracker:** every work item (WI) below has a `feature-tracker.html` entry — IDs **88–109**, section "Horizon Depth Ladder".
+**Tracker:** every work item (WI) below has a `feature-tracker.html` entry — IDs **88–111**, section "Horizon Depth Ladder".
 **Related docs:** `docs/HORIZON.md` (Horizon design system & shipped batches) · `docs/ARCHITECTURE.md` (model layer) · `docs/DESIGN.md` (Classic UI only).
 
 ---
@@ -21,11 +21,30 @@ The ladder: **Level 1 Glance** (am I on track?) → **Level 2 Understand** (wher
 
 ## Design principles (binding on every WI)
 
+Expanded Jun 12 2026 after a code audit of real Horizon incidents (wrong functions called, numbers shown that didn't apply to the situation). Each rule in group B is grounded in a specific incident — see the **Violations register** at the end of this doc for the live findings and WI-0.1/WI-0.2 for the cleanup.
+
+### A. Product direction
 1. **Every number is a door.** Any glance-level stat opens the screen that explains it. Disclosure tiers: headline → expandable card → full screen.
 2. **Inputs live next to their outputs.** Controls sit on the screen showing their consequence (the SS claiming stepper lives on the SS timing screen, not in a settings wall).
 3. **Education inline.** Classic's explainer boxes return as collapsible "Why this matters" notes in Horizon's voice.
-4. **One source of truth — zero math in `src/horizon/`.** Screens only render fields passed through `horizonProps`; anything computed lives in `src/model/` (or an App.jsx memo that calls it). Never compute a residual/derived number in JSX — that is the BUG-31 "two implementations of one calc" class, the project's worst historical bug shape. Reviewers reject any WI that violates this.
-5. **Mobile parity is a ship gate**, not a follow-up (existing `isMobile = windowWidth < 640` pattern in `HorizonShell.jsx`).
+4. **Model first, UI second.** Every new capability lands as a pure `src/model/` function with tests *before* any screen renders it. Screens are the last mile. This is also how Horizon stays ready for future data: when a feature ships its model function, the bundle shape is already defined and the screen work is purely presentational.
+5. **Every Horizon PR advances a named work item.** Cite the WI / tracker ID in the PR description. No drive-by features that bypass the ladder — half-wired screens (inert steppers, fake overlays) came from exactly that.
+
+### B. Data integrity — the wrong-number rules
+6. **Screens format, never transform.** No `+ − × ÷` on model values in `src/horizon/`: no month↔year conversions, percentages, residuals, deltas, or age arithmetic. If a screen needs a derived number, it is added to the model (or an App.jsx memo calling the model) and passed **by name**. Formatting (`toLocaleString`, display rounding) and pure layout math (pixel positions, SVG scales) are fine. This sharpens the original "zero math in `src/horizon/`" rule — transformation is math even when it looks like display glue. *Incidents: the Statement waterfall residual, depletion age (`retirementAge + yearsSustained`), and the Plan progress % are all computed in JSX today, where no golden-master test can see them.*
+7. **Real data or no data.** Never scale, approximate, or invent a number to fill a gap — render a designed empty state instead. Decorative fakes are allowed only when isolated in `Ghost*`-named components that never share a code path with real data (`GhostArc` is the compliant example). *Incident: the Ideas scenario stats row still shows hardcoded multipliers (`totalAtRet × 0.92`) while the arc beside it shows a real `calcWhatIfChart` run — two different answers on one screen.*
+8. **Applicability travels with the data.** A number that only applies in some situations (SS after claim age, conversion window if one exists, spousal benefit if married, RMDs from age 73) is passed pre-gated by the model together with its applicability flag (the `hasConvWindow` / `ssAtRet` pattern). Screens never re-implement an eligibility condition — no age comparisons in JSX. *This is CLAUDE.md rule 5b's per-year-gating lesson applied to the UI; screen-side age gates exist today in the Numbers milestone logic.*
+9. **Constants come from config — even in copy.** IRS values (RMD age, FRA, contribution limits) are imported from `src/config/irs-2026.js` wherever they appear, including display text. *Incident: `rmdAge = 73` hardcoded in NumbersScreen — the exact class CLAUDE.md rule 1 exists to prevent.*
+10. **Missing data is not zero.** No bare `?? 0` / `?? 90` fallbacks that make absent data indistinguishable from real values. Every nullable/Infinity-capable field documents its edge values at the moment it's added to `horizonProps` (`yearsSustained: Infinity`, `depletionAge: null`, `ssBreakEven: null`, …), and screens render a designed state for them ("lasts beyond your plan", "not set up") rather than a defaulted number. A genuinely-zero value (no SS) is passed as an explicit 0 by the model, never synthesized by the screen.
+
+### C. Forward compatibility — ready for data that doesn't exist yet
+11. **Grow by named bundles; never repurpose a field.** `horizonProps` expands only as documented topic bundles (`ssView`, `rmdView`, `budget`, …) with shapes recorded in `docs/ARCHITECTURE.md` when added. Fields are added, never silently renamed or re-meant. One number = one prop: if a value appears on two screens it comes from the same field, so the screens can never disagree.
+12. **Degrade by absence.** Screens render what exists and show a "Not set up — see what this could be worth" affordance for what doesn't, instead of crashing or zeros. Future features (spouse accounts #30, Monte Carlo, new income sources) then light up automatically when their bundle appears — no screen restructuring.
+
+### D. Enforcement & ship gates — how the rules stay true without relying on memory
+13. **Referential stability is correctness.** `horizonProps` and every bundle inside it are memoized with complete dependency arrays, and `react-hooks/exhaustive-deps` lint makes it machine-checked. *Incidents: the `commitPlan` missing-deps bug (Batch A); `horizonProps` is still rebuilt inline on every render today, defeating screen memos.*
+14. **Tests gate the wiring.** Every new screen ships a render-smoke test at golden-master defaults; every displayed number that has a locked value gets a wiring assertion; hardcoded UI tables (`SCENARIOS`, `LIFE_EVENTS`) get value-locks so silent edits are caught. (Detailed in the Testing strategy section — listed here because it is the enforcement arm of principles 6–12.)
+15. **Mobile parity is a ship gate**, not a follow-up (existing `isMobile = windowWidth < 640` pattern in `HorizonShell.jsx`).
 
 ## Target navigation (end state)
 
@@ -33,6 +52,32 @@ The ladder: **Level 1 Glance** (am I on track?) → **Level 2 Understand** (wher
 - Mobile bottom bar (5): **Plan · Journey · Ideas · Numbers · More** — "More" opens a slide-up sheet (Strategies / Someday / Settings).
 - Implemented by extending the `SCREENS` array in `HorizonShell.jsx` and adding a `MoreSheet` for mobile once SCREENS > 5.
 - New top-level screens: **Journey** (Level 2) and **Strategies** (Level 3). Numbers grows from 3 tabs to 6.
+
+---
+
+# Level 0 — Foundations (make the principles true before building on them)
+
+A Jun 12 2026 code audit found the design principles above already violated in shipped Horizon code (full findings: **Violations register**, end of this doc). These two items clear the register and install the enforcement tooling, and run as the **first build batch** — building Levels 1–3 on top of unmemoized props and screen-side math would multiply the cleanup later.
+
+### WI-0.1 (#110) Principles compliance pass
+**Target:** the Violations register is empty; every number on a Horizon screen is a real, applicable model output.
+**Actions:**
+- Ideas scenario stats: replace the hardcoded multipliers (`SCENARIOS` `nestScale`/`incomeScale`, IdeasScreen.jsx:99–102) with the same real model run the arc already uses — derive the stat deltas from `calcWhatIfDelta`/`calcWhatIfChart` for the active scenario, so the stats row and the arc can never disagree (principle 7). **Owner note: the displayed scenario numbers will change** — they go from illustrative approximations to real model output. That is the point, but it is a visible change.
+- `NumbersScreen.jsx:229`: `const rmdAge = 73` → import `RMD_START_AGE` from `src/config/irs-2026.js` (principle 9).
+- Move screen-side math into App memos / model (principle 6): Statement waterfall residual + percentages + monthly conversions (NumbersScreen.jsx:158–174) → a `statementView` bundle; depletion age (`retirementAge + yearsSustained`, NumbersScreen.jsx:181) → pass `depletionAge` from `retirementWalk` (already computed); Plan progress % (PlanScreen.jsx:21) → a `planView` field with the Infinity guard in the model; Numbers milestone detection (NumbersScreen.jsx:216–230) → reuse `calcMilestones` (`accumulation.js`) instead of the screen's re-implementation.
+- Replace bare fallbacks (`lifeExpect ?? 90`, `?? 0` on tax/income fields, scenario `?? 1`) with explicit edge-state rendering per principle 10.
+- Name and document the ArcGraph uncertainty-cone asymmetry factor (`0.92`, ArcGraph.jsx:407) as a constant with a comment stating it is illustrative.
+**Done when:** a review grep of `src/horizon/` finds no arithmetic on model values outside layout code; scenario stats equal the arc's model run for the same scenario; `npm test` green (golden master untouched — display-path only; the scenario-stat change is UI-local and deliberate).
+
+### WI-0.2 (#111) Enforcement tooling
+**Target:** the principles are machine-checked, not memory-checked.
+**Actions:**
+- Memoize `horizonProps` and the `whatIfBundle` in App.jsx with complete dependency arrays (today both are rebuilt inline every render — App.jsx:611–638 — which defeats every screen `useMemo` that lists them as deps; same bug class as the fixed `commitPlan` missing-deps incident).
+- Add ESLint (flat config) with `react-hooks/rules-of-hooks` + `react-hooks/exhaustive-deps`; wire `npm run lint`; fix whatever it surfaces.
+- Value-lock tests for the `SCENARIOS` and `LIFE_EVENTS` arrays (IdeasScreen) so silent edits to preset amounts/ages are caught (principle 14).
+**Done when:** lint runs clean; a render-count smoke test shows `horizonProps` referentially stable across a no-op re-render; full suite green.
+
+**Level 0 exit gate:** Violations register fully dispositioned; lint in place; only then does the L1 batch start.
 
 ---
 
@@ -238,11 +283,12 @@ Rows not covered by a WI by the time Level 3 ships get an explicit *merge* or *d
 
 ## Sequencing → PR batches (one reviewable PR each; level exit gates between levels)
 
-1. **Docs batch** *(this one)*: `docs/ROADMAP.md` + `docs/HORIZON.md` link + tracker IDs 88–109.
-2. **L1:** WI-1.1, 1.2, 1.3.
-3. **L2a:** WI-2.1 (Journey + MoreSheet). **L2b:** WI-2.2–2.4 (Numbers tabs). **L2c:** WI-2.5–2.7.
-4. **L3a:** WI-3.1 + 3.2 (plumbing + My details). **L3b:** WI-3.3–3.5. **L3c:** WI-3.6 + 3.9. **L3d:** WI-3.7 + 3.8.
-5. **L4:** WI-4.1 → 4.2 → 4.3.
+1. **Docs batch** *(this one)*: `docs/ROADMAP.md` + `docs/HORIZON.md` link + tracker IDs 88–111.
+2. **L0 (foundations):** WI-0.1 + WI-0.2 — clear the Violations register and install lint/memoization before any new screens are built.
+3. **L1:** WI-1.1, 1.2, 1.3.
+4. **L2a:** WI-2.1 (Journey + MoreSheet). **L2b:** WI-2.2–2.4 (Numbers tabs). **L2c:** WI-2.5–2.7.
+5. **L3a:** WI-3.1 + 3.2 (plumbing + My details). **L3b:** WI-3.3–3.5. **L3c:** WI-3.6 + 3.9. **L3d:** WI-3.7 + 3.8.
+6. **L4:** WI-4.1 → 4.2 → 4.3.
 
 ## Creative options explored (disposition record)
 
@@ -260,3 +306,25 @@ Rows not covered by a WI by the time Level 3 ships get an explicit *merge* or *d
 | Account import (Plaid etc.) | **Defer** — per `docs/INTEGRATIONS.md`, post-launch |
 | Gamified badges/streaks | **Reject** — tone clash with Horizon's calm, premium voice; arc milestones give the same payoff |
 | AI chat advisor | **Reject for now** — scope and compliance risk; revisit post-launch |
+
+---
+
+## Violations register (audit Jun 12 2026)
+
+Findings from the code audit that motivated the expanded design principles. **WI-0.1 (#110)** clears the table; **WI-0.2 (#111)** installs the tooling that keeps it clear. Future audits append here rather than starting a new list. Past incidents already fixed before this audit, kept for the record: `calcWhatIfChart` dropped permanent `moneyEvents` from scenario runs (fixed, `what-if.js:180` merge); `commitPlan` had an incomplete `useCallback` deps array (fixed, `App.jsx:602–607`); the original Ideas arc overlay was a `chartData × scale` approximation (replaced by real `calcWhatIfChart` runs in Batch B).
+
+| # | Location | Finding | Principle | Owner |
+|---|---|---|---|---|
+| V1 | `IdeasScreen.jsx:99–102` + `SCENARIOS` config (lines 12–19) | Scenario stats row multiplies `totalAtRet`/`balAt90`/`effectiveExpenses` by hardcoded factors (0.92/0.82/1.10, 0.90/0.80) while the arc shows a real model run — two answers on one screen | 7 | WI-0.1 |
+| V2 | `NumbersScreen.jsx:229` | `const rmdAge = 73` hardcoded; must import `RMD_START_AGE` from `src/config/irs-2026.js` | 9 | WI-0.1 |
+| V3 | `NumbersScreen.jsx:158–174` | Statement waterfall residual, three percentages, and month conversions computed in JSX | 6 | WI-0.1 |
+| V4 | `NumbersScreen.jsx:181` | Depletion age derived in screen (`retirementAge + yearsSustained`); `retirementWalk.depletionAge` already exists | 6 | WI-0.1 |
+| V5 | `NumbersScreen.jsx:216–230` | Milestone detection (First $1M, peak, RMD age gates) re-implemented in screen; `calcMilestones` (`accumulation.js`) already exists | 6, 8 | WI-0.1 |
+| V6 | `PlanScreen.jsx:21` | Progress % computed in screen, dividing by `lifeExpect − retirementAge` with `yearsSustained` potentially `Infinity` | 6, 10 | WI-0.1 |
+| V7 | `NumbersScreen.jsx` (~10 sites), `IdeasScreen.jsx:100–102` | Bare fallbacks (`?? 0` on tax/income/balances, `lifeExpect ?? 90`, scenario scale `?? 1`) make missing data indistinguishable from real values; a broken scenario config silently renders as "no change" | 10 | WI-0.1 |
+| V8 | `ArcGraph.jsx:407` | Undocumented `0.92` asymmetry factor in the uncertainty cone | 7 (document as illustrative) | WI-0.1 |
+| V9 | `App.jsx:611–638` | `horizonProps` + `whatIfBundle` rebuilt inline every render — not memoized; defeats screen memos (same class as the fixed `commitPlan` bug) | 13 | WI-0.2 |
+| V10 | repo root | No ESLint config — `react-hooks/exhaustive-deps` never runs, so deps-array bugs are caught only by hand | 13 | WI-0.2 |
+| V11 | `IdeasScreen.jsx` (`SCENARIOS`, `LIFE_EVENTS`) | Hardcoded preset tables have no value-lock tests; silent edits go unnoticed | 14 | WI-0.2 |
+
+Compliant by design (no action): `GhostArc` (`ArcGraph.jsx:461–502`) — hardcoded decorative anchor data, but isolated in a `Ghost*`-named component that never touches real user data; this is the pattern principle 7 codifies.

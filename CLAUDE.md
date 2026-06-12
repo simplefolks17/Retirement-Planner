@@ -15,6 +15,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (307 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
+10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
 
 ## Git & PR Workflow
 - **Always use a feature branch.** Never commit directly to `main`.
@@ -42,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (109 items, 38 done, 71 planned)
+- Feature backlog: `feature-tracker.html` (111 items, 38 done, 73 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -284,6 +285,20 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   tracker's status map keys by ID, the shipped Horizon items #70–#74 displayed as "planned" and the
   header counts were wrong. Renumbered the colliding entries to 81–87 (cross-refs updated) — IDs are
   unique again and counts render correctly (109 items, 38 done, 71 planned).
+- Horizon design principles expanded (Jun 12 2026, docs-only — 307 tests unchanged): after real
+  incidents where Horizon screens used numbers that didn't apply (scenario stats row showing
+  hardcoded `totalAtRet × 0.92` approximations beside an arc showing the real model run), a code
+  audit inventoried all live violations and the ROADMAP principles grew 5 → 15 in four groups:
+  Product direction (model-first; every PR advances a named WI), Data integrity (screens format
+  never transform; real data or no data; applicability travels with the data; constants from
+  config even in copy; missing data is not zero), Forward compatibility (grow by named bundles,
+  never repurpose a field; degrade by absence), Enforcement (referential stability is correctness;
+  tests gate the wiring; mobile parity ship gate). New CLAUDE.md Critical Rule 10 is the compact
+  version. Findings filed as a Violations register in `docs/ROADMAP.md` (V1–V11) plus a new
+  **Level 0 — Foundations** build batch: WI-0.1/#110 compliance pass (fix V1–V8; note: scenario
+  stats will visibly change fake → real) and WI-0.2/#111 enforcement tooling (memoize
+  `horizonProps`/`whatIfBundle`, add ESLint `react-hooks/exhaustive-deps`, value-lock the
+  SCENARIOS/LIFE_EVENTS preset tables — V9–V11). Tracker 109 → 111 items (38 done, 73 planned).
 
 ## Commands
 - `npm run dev` — start dev server

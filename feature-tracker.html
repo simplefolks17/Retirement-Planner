@@ -896,6 +896,20 @@ var DATA = [
     ds: "The endgame: delete the Classic tab JSX and Classic-only components in one dedicated, cleanly revertible PR. The model layer is untouched — it was always UI-independent.",
     dt: "Single PR: delete Classic tab JSX from App.jsx + Classic-only components; src/model/ untouched; archive docs/DESIGN.md with a header note. Done when npm test is green (golden master unmoved), the production build succeeds, and the PR reverts cleanly. Gated on #108. See docs/ROADMAP.md WI-4.3.",
     cx: "Medium", im: "Medium", af: ["App.jsx (Classic JSX removal)", "src/components/ (Classic-only files)", "docs/DESIGN.md (archived)"], sv: "none (removal)"
+  },
+  {
+    id: 110, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L0 / WI-0.1 — Principles compliance pass (clear the violations register)",
+    ds: "A Jun 12 2026 audit found the Horizon design principles already violated in shipped code: the Ideas scenario stats row shows hardcoded multiplier approximations (totalAtRet × 0.92) while the arc beside it shows a real model run; rmdAge = 73 is hardcoded in NumbersScreen; depletion age, progress %, the Statement waterfall, and milestone detection are computed inline in JSX; ~10 bare ?? 0 / ?? 90 fallbacks make missing data indistinguishable from real values. This pass clears the register so Levels 1–3 build on clean foundations.",
+    dt: "Full findings table: docs/ROADMAP.md → Violations register (V1–V8). Fixes: scenario stats derive from the same calcWhatIfDelta/calcWhatIfChart run as the arc (NOTE: displayed scenario numbers will change, fake → real — deliberate and owner-flagged); import RMD_START_AGE from irs-2026.js; move waterfall/percentages/monthly conversions into a statementView App memo; pass retirementWalk.depletionAge instead of deriving it; progress % into a planView field with the Infinity guard in the model; reuse calcMilestones (accumulation.js) for Numbers milestones; replace bare fallbacks with designed edge states (principle 10); name + document the ArcGraph 0.92 cone asymmetry constant. Done when a review grep of src/horizon/ finds no arithmetic on model values outside layout code, scenario stats equal the arc's run, and npm test is green (golden master untouched). See docs/ROADMAP.md WI-0.1.",
+    cx: "Medium", im: "High", af: ["IdeasScreen.jsx (SCENARIOS stats)", "NumbersScreen.jsx (rmdAge, waterfall, milestones)", "PlanScreen.jsx (progress)", "ArcGraph.jsx (cone constant)", "App.jsx (statementView/planView memos)"], sv: "none (rewiring existing values)"
+  },
+  {
+    id: 111, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "L0 / WI-0.2 — Enforcement tooling (memoization + lint + value-locks)",
+    ds: "Make the design principles machine-checked instead of memory-checked: horizonProps is currently rebuilt on every render (defeating screen memos — the same bug class as the fixed commitPlan missing-deps incident), the repo has no ESLint config so exhaustive-deps violations go uncaught, and the hardcoded SCENARIOS/LIFE_EVENTS preset tables have no value-lock tests.",
+    dt: "Memoize horizonProps and whatIfBundle in App.jsx with complete dependency arrays (App.jsx:611–638). Add ESLint flat config with react-hooks/rules-of-hooks + react-hooks/exhaustive-deps; wire npm run lint; fix what it surfaces. Add value-lock tests for SCENARIOS and LIFE_EVENTS (IdeasScreen). Done when lint runs clean, a render-count smoke test shows horizonProps referentially stable across a no-op re-render, and the full suite is green. Covers register items V9–V11. See docs/ROADMAP.md WI-0.2.",
+    cx: "Low", im: "High", af: ["App.jsx (useMemo horizonProps/whatIfBundle)", "eslint.config.js (new)", "package.json (lint script)", "src/model/__tests__/ or src/horizon/__tests__/ (value-locks)"], sv: "none (tooling)"
   }
 ];
 
