@@ -161,13 +161,15 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
     setVals(v => ({ ...v, [field]: Math.max(lo, Math.min(hi, v[field] + dir * inc)) }));
   };
 
-  // Write the key retirement parameters back to App.jsx state
+  // Write the key retirement parameters back to App.jsx state.
+  // monthlySpend is passed as entered — the month→year conversion lives in
+  // commitPlan (App.jsx), not here (principle 6).
   const handleSave = () => {
     commitPlan({
       currentAge:    vals.currentAge,
       currentIncome: vals.currentIncome,
       retirementAge: vals.retirementAge,
-      annualExpenses: vals.monthlySpend * 12,
+      monthlySpend:  vals.monthlySpend,
     });
     onComplete();
   };

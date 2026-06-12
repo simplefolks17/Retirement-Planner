@@ -621,11 +621,15 @@ export default function App() {
 
   // Single entry point for Horizon-initiated mutations to App state.
   // Always called after user confirms in a modal — never fired directly by screens.
-  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, currentAge: ca, currentIncome: ci } = {}) => {
+  // Accepts monthlySpend as an alternative to annualExpenses so the month→year
+  // conversion happens HERE, not in screen JSX (principle 6); annualExpenses wins
+  // if both are passed.
+  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, monthlySpend: ms, currentAge: ca, currentIncome: ci } = {}) => {
     if (ca !== undefined) setCurrentAge(ca);
     if (ci !== undefined) setCurrentIncome(ci);
     if (ra !== undefined) setRetirementAge(ra);
     if (ae !== undefined) setAnnualExpenses(ae);
+    else if (ms !== undefined) setAnnualExpenses(ms * ASSUMPTIONS.MONTHS_PER_YEAR);
   }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
