@@ -391,7 +391,8 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} />}
-            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} />}
+            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity}
+              onResetOnboarding={() => { safeSet("hz-onboarded", ""); setShowOnboarding(true); }} />}
           </div>
 
           {/* bottom tab bar — mobile only */}
