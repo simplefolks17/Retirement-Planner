@@ -644,6 +644,7 @@ export default function App() {
     return (
       <HorizonThemeProvider>
         <HorizonShell {...horizonProps} onShowClassic={() => setShowHorizon(false)} />
+        <Analytics />
       </HorizonThemeProvider>
     );
   }
