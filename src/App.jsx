@@ -13,7 +13,8 @@ import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
-import { buildRetirementDrawdown, calcPlanProgress, buildYearlyRows } from "./model/retirement-drawdown.js";
+import { buildRetirementDrawdown, calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
+import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
 import { calcRMDProjection } from "./model/rmd.js";
@@ -211,7 +212,7 @@ export default function App() {
     ? (simData[phase2End - 1] ?? currentSnapshot)
     : currentSnapshot;
 
-  const { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus } =
+  const { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus, budgetDeficit } =
     calcSavingsCapacity({
       grossAfterTax, contrib401k, contribRoth, contribTaxable, contribHSA, livingExpenses,
     });
@@ -668,10 +669,35 @@ export default function App() {
   }), [totalChartData, currentAge, safeRetAge, safeLifeExp]);
 
   // Plan-screen progress (V6). progressPct: 100 when sustainable (incl. Infinity
-  // yearsSustained), else 0–99.
-  const planView = useMemo(() => calcPlanProgress({
-    yearsSustained, isSustainable, lifeExpect: safeLifeExp, retirementAge: safeRetAge,
-  }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge]);
+  // yearsSustained), else 0–99. Grown by a named field (principle 11) for
+  // WI-1.1: `drivers` — the on-track pill popover's 3 rows from calcPlanDrivers
+  // (withdrawal rate vs guideline, longevity vs horizon, savings rate), each
+  // render-ready with ok booleans so the screen never compares (rule 10).
+  // Edge states documented at calcPlanDrivers (sustainedYears null = never
+  // depletes; savingsRatePct/ok null = no take-home).
+  const planView = useMemo(() => ({
+    ...calcPlanProgress({
+      yearsSustained, isSustainable, lifeExpect: safeLifeExp, retirementAge: safeRetAge,
+    }),
+    drivers: calcPlanDrivers({
+      withdrawalRate, yearsSustained, isSustainable,
+      lifeExpect: safeLifeExp, retirementAge: safeRetAge,
+      currentContribTotal, takeHome,
+    }),
+  }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge,
+       withdrawalRate, currentContribTotal, takeHome]);
+
+  // Plan-screen signals strip (WI-1.2): calcSignals ranks nudges from values
+  // computed ABOVE (one definition per number — it never recomputes):
+  // extraMatch ← calcOptimizedAllocation, adjustedNetConversionBenefit ←
+  // evaluateConversionPlan, budgetDeficit ← calcSavingsCapacity. The strip's
+  // hard cap of 2 lives in calcSignals' default max. extraMatch is read as a
+  // scalar so the memo deps stay honest (optimizedAllocation itself is a
+  // fresh object per render).
+  const extraMatch = optimizedAllocation.extraMatch;
+  const signals = useMemo(() => calcSignals({
+    extraMatch, adjustedNetConversionBenefit, budgetDeficit,
+  }), [extraMatch, adjustedNetConversionBenefit, budgetDeficit]);
 
   // Year-by-year table rows: walk rows + calendar year (age→year math in the model).
   const yearlyRows = useMemo(() => buildYearlyRows({
@@ -703,8 +729,11 @@ export default function App() {
     // WI-0.1 display bundles (shapes documented at their model functions):
     statementView,    // calcStatementView — pcts null when no income
     chartMilestones,  // calcChartMilestones — { rows, peakTotal }
-    planView,         // calcPlanProgress — { progressPct }
+    planView,         // calcPlanProgress + drivers (calcPlanDrivers, WI-1.1)
     yearlyRows,       // buildYearlyRows — walk rows + calendar year
+    // WI-1.2: ranked Plan-screen signals (calcSignals — ≤2, dollars-desc,
+    // each with a {screen, subView} deep-link target). Empty array = no strip.
+    signals,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -713,7 +742,7 @@ export default function App() {
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA,
        moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
-       statementView, chartMilestones, planView, yearlyRows]);
+       statementView, chartMilestones, planView, yearlyRows, signals]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

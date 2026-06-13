@@ -140,7 +140,11 @@ function IncomeWaterfall({ t, view }) {
   );
 }
 
-export default function NumbersScreen({ t, props, isMobile = false }) {
+// initialTab (optional, WI-1.1): tab id to land on when another screen
+// deep-links here via navigate("numbers", tabId) — e.g. the Plan stat cards
+// and signals strip. The user's own tab clicks still control the state after
+// arrival; plain navigation passes null and leaves the default.
+export default function NumbersScreen({ t, props, isMobile = false, initialTab = null }) {
   const {
     currentIncome, fedTax, takeHome,
     totalAtRet, retVals, effectiveExpenses, balAt90,
@@ -154,8 +158,12 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
     statementView, chartMilestones, yearlyRows,
   } = props;
 
-  const [tab, setTab] = useState("statement");
+  const [tab, setTab] = useState(initialTab ?? "statement");
   const [showAllYears, setShowAllYears] = useState(false);
+
+  // Adopt a new deep-link target if one arrives while already mounted
+  // (re-navigation to the same screen with a different subView).
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
 
   // statementView percentages are null when there is no income — render "—",
   // never a synthesized 0 (principle 10).

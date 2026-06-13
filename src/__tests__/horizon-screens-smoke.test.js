@@ -46,6 +46,23 @@ function clickByText(root, label) {
   act(() => { target.props.onClick(); });
 }
 
+// Mount App and dismiss the first-run onboarding (non-browser env has no
+// persisted flag). Returns { renderer, root }.
+function mountApp() {
+  let renderer;
+  act(() => { renderer = create(React.createElement(App)); });
+  const root = renderer.root;
+  const skip = root.findAll(
+    n => typeof n.props?.onClick === "function" && /^skip/i.test(textOf(n).trim())
+  )[0];
+  if (skip) act(() => { skip.props.onClick(); });
+  return { renderer, root };
+}
+
+function hasText(root, fragment) {
+  return root.findAll(n => typeof n.type === "string" && textOf(n).includes(fragment)).length > 0;
+}
+
 describe("Horizon screens render smoke", () => {
   it("renders Plan, Ideas, Numbers (all three tabs), Someday, and Settings without throwing", () => {
     let renderer;

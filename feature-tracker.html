@@ -744,21 +744,21 @@ var DATA = [
   // every item here: ZERO math in src/horizon/ — screens render horizonProps fields
   // only; anything computed lives in src/model/ (BUG-31 class prevention).
   {
-    id: 88, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 88, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L1 / WI-1.1 — Tappable Plan stat cards + on-track explainer",
     ds: "Every number on the Plan screen becomes a door: the 4 stat cards navigate to the screen that explains them (Statement, Ideas dial, Year by year), and tapping the on-track pill opens a popover listing the 3 drivers (withdrawal rate vs 4%, years sustained vs horizon, savings rate) in plain language.",
     dt: "Lift navigation in HorizonShell into navigate(screenId, subView?) passed to all screens; NumbersScreen accepts initialTab. Wire PlanScreen cards: You keep/mo → Numbers/Statement; Retire at → Ideas; Income for life → Numbers/Statement; Left at 90 → Numbers/Year by year. Pill popover computes nothing new — withdrawalRate, yearsSustained, lifeExpect, retirementAge, currentContribTotal, takeHome are all in horizonProps. Done when all 4 cards + pill navigate/explain, tap targets ≥44px mobile, review confirms zero new math. See docs/ROADMAP.md WI-1.1.",
     cx: "Low", im: "High", af: ["HorizonShell.jsx (navigate callback)", "PlanScreen.jsx (card onClick)", "NumbersScreen.jsx (initialTab prop)"], sv: "none (navigation only)"
   },
   {
-    id: 89, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 89, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L1 / WI-1.2 — Signals strip on Plan",
     ds: "Up to 2 severity-ranked, dollar-quantified nudges on the Plan screen — unclaimed employer match, Roth conversion benefit > $5k, budget deficit — each deep-linking to the screen where the user can act. Classic's Flow-Down action cards reborn as the front door to depth.",
     dt: "New pure module src/model/signals.js: calcSignals({...}) → sorted [{id, title, body, dollars, target:{screen, subView}}]. Inputs all exist: extraMatch headroom (calcOptimizedAllocation), adjustedNetConversionBenefit (evaluateConversionPlan), availableSurplus (calcSavingsCapacity). App.jsx memo passes signals via horizonProps; PlanScreen renders SignalsStrip capped at 2; dismiss persisted via safeSet('hz-signal-dismissed-<id>'). Done when signals.test.js covers ranking/thresholds/cap and dismiss survives reload. See docs/ROADMAP.md WI-1.2.",
     cx: "Medium", im: "High", af: ["src/model/signals.js (new)", "App.jsx (signals memo + horizonProps)", "PlanScreen.jsx (SignalsStrip)", "ThemeContext safeGet/safeSet"], sv: "hz-signal-dismissed-<id> (localStorage)"
   },
   {
-    id: 90, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 90, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L1 / WI-1.3 — Money-event markers on the arc",
     ds: "Committed money events already bend the arc invisibly; render small dots at their ages (green inflow / warm outflow) with hover labels so life events are visible at a glance.",
     dt: "ArcGraph gains optional events prop [{age, label, isInflow}]; reuse the existing age→x scale (fixed 30–90 axis) and interpolate y from chartData; PlanScreen/IdeasScreen pass props.moneyEvents. Done when events=[] renders pixel-identical (default unaffected) and 2 events produce 2 dots at correct ages, at minimum in Arc view. See docs/ROADMAP.md WI-1.3.",

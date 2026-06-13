@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (338 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (355 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -342,10 +342,28 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   identity-stable across a no-op re-render); SCENARIOS/LIFE_EVENTS value-locks
   (`src/horizon/__tests__/presets.test.js`); full-nav screens render smoke. 307 → **338**
   tests; golden master untouched. Tracker: #110 + #111 done (40 done, 77 planned).
+- Level 1 — Glance shipped (Jun 13 2026, WI-1.1/#88, WI-1.2/#89, WI-1.3/#90):
+  Plan screen is now fully interactive — every number is tappable and navigates
+  to its explanation. WI-1.1: `navigate(screenId, subView)` wired through
+  HorizonShell; four stat cards deep-link (You keep → Numbers/Statement, Retire
+  at → Ideas/dials, Income for life → Numbers/Statement, Left at 90 →
+  Numbers/Year by year); OnTrackPill opens a popover with 3 model-provided
+  drivers (`calcPlanDrivers`, retirement-drawdown.js — withdrawal rate vs 4%
+  guideline, longevity vs horizon, savings rate vs 15% guideline; ok booleans
+  used for the trend badge — no comparisons in the screen). WI-1.2: new
+  `src/model/signals.js` — `calcSignals` ranks ≤2 dollar-weighted nudges
+  (unclaimed employer match, conversion benefit > $5k, budget deficit); signals
+  wire through App memo → horizonProps; `SignalsStrip` in PlanScreen dismisses
+  per-signal via localStorage and deep-links via navigate. WI-1.3: committed
+  `moneyEvents` shown as dots on the arc (good-token inflow / warm-token
+  outflow; events=[] renders pixel-identical to before). Named IRS constants
+  added: CONVERSION_STEP, SAFE_WITHDRAWAL_GUIDELINE_PCT, SAVINGS_RATE_GUIDELINE_PCT.
+  338 → **355** tests (+17: signals ×10, calcPlanDrivers ×6, budgetDeficit ×1);
+  golden master untouched. Tracker: #88 + #89 + #90 done (43 done, 74 planned).
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (338 tests)
+- `npm test` — run model + formatter + render-smoke tests (355 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

@@ -16,16 +16,28 @@ export function fmtMo(annual) {
   return `$${Math.round(annual / 12).toLocaleString()}`;
 }
 
-export function StatCard({ t, label, value, accent, warm, large }) {
+// onClick (optional, WI-1.1): makes the card a door to the screen that explains
+// its number. The card's natural size (~70px tall) already exceeds the 44px
+// minimum touch target; minHeight guards it if padding ever shrinks.
+export function StatCard({ t, label, value, accent, warm, large, onClick }) {
   return (
-    <div style={{
-      flex: 1,
-      background: warm ? `${t.warm}12` : t.surf,
-      border: `1px solid ${warm ? `${t.warm}40` : t.line}`,
-      borderRadius: 13, padding: 15
-    }}>
-      <div style={{ font: `500 11px ${HF}`, color: warm ? t.warm : t.mut, marginBottom: 9 }}>
-        {label}
+    <div
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      style={{
+        flex: 1,
+        background: warm ? `${t.warm}12` : t.surf,
+        border: `1px solid ${warm ? `${t.warm}40` : t.line}`,
+        borderRadius: 13, padding: 15,
+        cursor: onClick ? "pointer" : "default",
+        minHeight: onClick ? 44 : undefined,
+      }}>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "baseline",
+        font: `500 11px ${HF}`, color: warm ? t.warm : t.mut, marginBottom: 9
+      }}>
+        <span>{label}</span>
+        {onClick && <span style={{ font: `400 13px ${HF}`, color: t.faint }}>›</span>}
       </div>
       <div style={{
         font: `500 ${large ? 26 : 23}px ${HM}`,

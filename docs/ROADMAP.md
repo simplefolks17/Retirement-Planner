@@ -164,6 +164,8 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 
 # Level 1 — Glance (close the loop on Plan)
 
+**Shipped Jun 13 2026 (WI-1.1–1.3 all done).** Every Plan number is now a door; the on-track pill explains its verdict; the signals strip surfaces the top 2 ranked nudges; committed money events appear as dots on the arc.
+
 ### WI-1.1 (#88) Tappable stat cards + on-track explainer
 **Target:** every number on PlanScreen navigates to or explains its source.
 **Actions:**
