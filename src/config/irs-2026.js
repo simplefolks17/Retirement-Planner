@@ -294,4 +294,16 @@ export const ASSUMPTIONS = {
   PIA_FACTOR_3:         0.15, // above second bend point
 
   MONTHS_PER_YEAR:      12,
+
+  // The Roth-conversion optimizer's coarse search step ($5k). Also the
+  // materiality threshold for the Plan-screen conversion signal — a net benefit
+  // smaller than one search step isn't a meaningful nudge (WI-1.2).
+  CONVERSION_STEP:      5_000,
+
+  // Glance-level guidelines for the Plan on-track explainer (WI-1.1).
+  // Heuristics for plain-language framing, not advice and not IRS rules:
+  // the "4% rule" safe-withdrawal guideline, and the common "save 15% of
+  // take-home" savings-rate rule of thumb. Both are percents (4 = 4%).
+  SAFE_WITHDRAWAL_GUIDELINE_PCT: 4,
+  SAVINGS_RATE_GUIDELINE_PCT:    15,
 };

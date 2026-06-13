@@ -1,10 +1,12 @@
 import { stackedIncomeTax } from "./taxes.js";
+import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 // Optimizer: finds the scalar annual conversion that maximizes net benefit
-// accounting for IRMAA and ACA subsidy costs. Coarse $5k search up to $300k.
+// accounting for IRMAA and ACA subsidy costs. Coarse search (ASSUMPTIONS.
+// CONVERSION_STEP, $5k) up to $300k.
 // getNetBenefit(amount) → { rmdTaxSaved, totalTax, irmaaCost, acaLoss? }
 // is provided by the caller (App.jsx) to avoid circular deps with rmd.js.
-export function findOptimalConversion({ maxSearch = 300_000, step = 5_000, getNetBenefit }) {
+export function findOptimalConversion({ maxSearch = 300_000, step = ASSUMPTIONS.CONVERSION_STEP, getNetBenefit }) {
   const netOf = (r) => r.rmdTaxSaved - r.totalTax - r.irmaaCost - (r.acaLoss ?? 0);
   let bestAmount = 0;
   let bestNet = netOf(getNetBenefit(0));

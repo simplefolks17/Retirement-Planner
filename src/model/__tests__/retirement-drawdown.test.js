@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildRetirementDrawdown, calcPlanProgress, buildYearlyRows } from "../retirement-drawdown.js";
+import { buildRetirementDrawdown, calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "../retirement-drawdown.js";
 import { calcDrawdownYears, calcYearsSustained } from "../drawdown.js";
+import { ASSUMPTIONS } from "../../config/irs-2026.js";
 
 // A representative retirement scenario (numbers chosen to deplete within the
 // horizon so depletion/fractional logic is exercised).
@@ -151,6 +152,65 @@ describe("calcPlanProgress", () => {
     expect(Number.isFinite(r.progressPct)).toBe(true);
     expect(r.progressPct).toBeGreaterThanOrEqual(0);
     expect(r.progressPct).toBeLessThanOrEqual(99);
+  });
+});
+
+describe("calcPlanDrivers (WI-1.1 — the on-track pill's 3 drivers)", () => {
+  const base = {
+    withdrawalRate: 3.2,
+    yearsSustained: 30,
+    isSustainable: true,
+    lifeExpect: 90,
+    retirementAge: 65,
+    currentContribTotal: 24_850,
+    takeHome: 80_000,
+  };
+
+  it("returns the 3 drivers in fixed order with render-ready fields", () => {
+    const d = calcPlanDrivers(base);
+    expect(d.map(r => r.id)).toEqual(["withdrawal", "longevity", "savings"]);
+  });
+
+  it("withdrawal driver: ok gates on the ASSUMPTIONS guideline (4%), rate rounded to 1 decimal", () => {
+    const ok = calcPlanDrivers({ ...base, withdrawalRate: ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT })[0];
+    expect(ok.ok).toBe(true); // at the guideline is still ok
+    expect(ok.guidelinePct).toBe(ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT);
+    const high = calcPlanDrivers({ ...base, withdrawalRate: 4.06 })[0];
+    expect(high.ok).toBe(false);
+    expect(high.withdrawalRatePct).toBe(4.1);
+  });
+
+  it("longevity driver: compares sustained years to the lifeExpect horizon", () => {
+    const short = calcPlanDrivers({ ...base, isSustainable: false, yearsSustained: 18.27 })[1];
+    expect(short.ok).toBe(false);
+    expect(short.sustainedYears).toBe(18.3);
+    expect(short.horizonYears).toBe(25);
+    const covers = calcPlanDrivers({ ...base, isSustainable: false, yearsSustained: 25 })[1];
+    expect(covers.ok).toBe(true);
+  });
+
+  it("longevity driver: Infinity yearsSustained → sustainedYears null (never depletes), ok true", () => {
+    const d = calcPlanDrivers({ ...base, yearsSustained: Infinity })[1];
+    expect(d.sustainedYears).toBeNull();
+    expect(d.ok).toBe(true);
+  });
+
+  it("savings driver: rate = contributions / take-home as a whole %, ok gates on the 15% guideline", () => {
+    const d = calcPlanDrivers(base)[2];
+    expect(d.savingsRatePct).toBe(Math.round((24_850 / 80_000) * 100)); // 31
+    expect(d.ok).toBe(true);
+    expect(d.guidelinePct).toBe(ASSUMPTIONS.SAVINGS_RATE_GUIDELINE_PCT);
+    const low = calcPlanDrivers({ ...base, currentContribTotal: 8_000 })[2];
+    expect(low.savingsRatePct).toBe(10);
+    expect(low.ok).toBe(false);
+  });
+
+  it("savings driver: missing/zero take-home → rate null AND ok null (not knowable, never false)", () => {
+    for (const takeHome of [0, null, undefined]) {
+      const d = calcPlanDrivers({ ...base, takeHome })[2];
+      expect(d.savingsRatePct).toBeNull();
+      expect(d.ok).toBeNull();
+    }
   });
 });
 
