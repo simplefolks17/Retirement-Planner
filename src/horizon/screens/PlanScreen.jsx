@@ -7,22 +7,25 @@ import ConfirmModal from "../ConfirmModal.jsx";
 export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile = false }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
-    totalAtRet, yearsSustained, isSustainable,
+    totalAtRet, isSustainable,
     takeHome, effectiveExpenses, balAt90,
     withdrawalRate, contribSeries, activity,
     commitPlan,
+    // WI-0.1 (V6): progress % computed by calcPlanProgress in the model
+    // (Infinity / zero-horizon guards live there) — the screen only picks
+    // labels and colors from the provided number.
+    planView,
   } = props;
 
   const [arcView, setArcView]       = useState("arc");
   const [showConfirm, setShowConfirm] = useState(false);
   const [saved, setSaved]           = useState(false);
 
-  const progressPct = isSustainable ? 100
-    : Math.min(99, Math.round((yearsSustained / Math.max(1, lifeExpect - retirementAge)) * 100));
+  const { progressPct } = planView;
 
   const progressLabel = isSustainable
     ? "self-sustaining ↗"
-    : `${Math.round(progressPct)}% there`;
+    : `${progressPct}% there`;
 
   const progressColor = isSustainable ? t.good : progressPct >= 75 ? t.good : t.warm;
 

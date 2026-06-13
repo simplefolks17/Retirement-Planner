@@ -15,6 +15,24 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ---
 
+### ~~BUG-34~~ — What-if "retire earlier/later" re-sims dropped permanent accumulation-phase money events
+
+**Reported:** 2026-06-12 · **Fixed:** 2026-06-12 (during WI-0.1 / #110)  
+**Files:** `src/model/what-if.js` (`calcWhatIfScenario`, consumed by `calcWhatIfChart`), `src/model/__tests__/what-if.test.js`.
+
+**Symptom:**  
+With a permanent money event in the accumulation phase (e.g. the Ideas life-event pill "Buy a home · $60k at 40" committed to the plan), any scenario that shifts the retirement age (Ideas scenario cards, the retire-at dial) showed an arc/stat starting balance that ignored the event — the scenario pretended the $60k was never spent.
+
+**Root cause:**  
+When the scenario retirement age differed from the base plan, `calcWhatIfChart` re-ran the accumulation simulation with `moneyEvents: []` — overriding the permanent plan events carried in `simInputs.moneyEvents` with an empty list. (Batch A had fixed the same class of omission for the **retirement**-phase walk via the `retDrawShared.moneyEvents` merge, but the accumulation re-sim kept the hardcoded `[]`.)
+
+**Fix:**  
+The shared scenario runner (`calcWhatIfScenario`) re-sims with `simInputs.moneyEvents.filter(ev => ev.age < scenarioRetAge)` and additionally moves permanent events that fall **between** the scenario retirement age and the base retirement age into the retirement walk (they leave the accumulation window when retiring earlier). Inert when there are no money events → default state and golden master unchanged.
+
+**Tests:** regression in `what-if.test.js` — a permanent $100k outflow at 40 must reduce a retire-2-years-earlier scenario's starting balance vs. the same scenario without the event.
+
+---
+
 ### ~~BUG-33~~ — Projected retirement bracket label read one bracket too high (skipped the standard deduction)
 
 **Reported:** 2026-06-06 · **Fixed:** 2026-06-06  

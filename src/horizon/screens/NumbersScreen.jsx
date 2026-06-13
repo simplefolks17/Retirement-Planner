@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 
@@ -53,13 +53,13 @@ function StmtCol({ t, title, items, bar }) {
 // what's left is your take-home. Drawn in measured pixel space so the SVG text
 // labels stay crisp at any width.
 //
-// Take-home is computed here as the RESIDUAL (gross − tax − savings) so the
-// waterfall always reconciles cleanly to 100% of gross. We deliberately don't
-// use the model's `takeHome` value for the bar height: pre-tax savings lowers
-// taxable income, so `takeHome` isn't a literal subtraction off gross and the
-// three pieces wouldn't close. The residual is the honest "cash in your pocket
-// after tax and saving" figure for an allocation view.
-function IncomeWaterfall({ t, income, tax, save }) {
+// PIXEL/LAYOUT GEOMETRY ONLY (V3/principle 6): every money level comes from the
+// model's statementView bundle — `flowKeep` is the model-computed RESIDUAL
+// (gross − tax − savings) so the waterfall reconciles to 100% of gross (the
+// residual semantics are documented at calcStatementView in src/model/budget.js).
+// Per-bar percentages come from the statementView flow* set; this component only
+// converts values to pixels.
+function IncomeWaterfall({ t, view }) {
   const wrapRef = useRef(null);
   const [w, setW] = useState(520);
 
@@ -74,8 +74,8 @@ function IncomeWaterfall({ t, income, tax, save }) {
 
   const H = 300, PADT = 30, PADB = 48;
   const plotH = H - PADT - PADB;
-  const gross = Math.max(income, 1);
-  const y = v => PADT + plotH * (1 - v / gross);   // value → pixel (axis = gross)
+  const axisMax = Math.max(view.gross, 1);              // pixel scale only
+  const y = v => PADT + plotH * (1 - v / axisMax);      // value → pixel (axis = gross)
 
   const COLS = 4;
   const slot = w / COLS;
@@ -83,14 +83,15 @@ function IncomeWaterfall({ t, income, tax, save }) {
   const cx = i => slot * i + slot / 2;             // column centre
   const bx = i => cx(i) - barW / 2;                // column left edge
 
-  const afterTax  = gross - tax;
-  const keep      = Math.max(afterTax - save, 0);  // residual take-home
+  // Money levels straight from the model (no arithmetic here)
+  const { gross, taxTotal: tax, saveTotal: save, afterTaxLevel: afterTax, flowKeep: keep } = view;
+  const pctLabel = p => p == null ? "—" : `${p}%`;
 
   const bars = [
-    { i: 0, label: "Gross income", val: gross, top: gross,    bot: 0,        color: t.accent,  full: true },
-    { i: 1, label: "Tax",          val: tax,   top: gross,    bot: afterTax, color: "#b09070" },
-    { i: 2, label: "Savings",      val: save,  top: afterTax, bot: keep,     color: t.warm },
-    { i: 3, label: "Take-home",    val: keep,  top: keep,     bot: 0,        color: t.good,    full: true },
+    { i: 0, label: "Gross income", val: gross, top: gross,    bot: 0,        color: t.accent,  full: true,  pct: pctLabel(view.gross > 0 ? 100 : null) },
+    { i: 1, label: "Tax",          val: tax,   top: gross,    bot: afterTax, color: "#b09070",              pct: pctLabel(view.flowTaxPct) },
+    { i: 2, label: "Savings",      val: save,  top: afterTax, bot: keep,     color: t.warm,                 pct: pctLabel(view.flowSavePct) },
+    { i: 3, label: "Take-home",    val: keep,  top: keep,     bot: 0,        color: t.good,    full: true,  pct: pctLabel(view.flowKeepPct) },
   ];
 
   // dashed connectors link each running-balance level across the gap
@@ -100,8 +101,7 @@ function IncomeWaterfall({ t, income, tax, save }) {
     { yv: keep,     from: 2 },
   ];
 
-  const fmtK  = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
-  const pctOf = n => `${Math.round((n / Math.max(income, 1)) * 100)}%`;
+  const fmtK = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
 
   return (
     <div ref={wrapRef} style={{ width: "100%" }}>
@@ -131,7 +131,7 @@ function IncomeWaterfall({ t, income, tax, save }) {
               <text x={cx(b.i)} y={H - 26} textAnchor="middle"
                 style={{ font: `600 12px ${HF}` }} fill={t.mut}>{b.label}</text>
               <text x={cx(b.i)} y={H - 10} textAnchor="middle"
-                style={{ font: `400 11px ${HM}` }} fill={t.faint}>{pctOf(b.val)}</text>
+                style={{ font: `400 11px ${HM}` }} fill={t.faint}>{b.pct}</text>
             </g>
           );
         })}
@@ -142,109 +142,48 @@ function IncomeWaterfall({ t, income, tax, save }) {
 
 export default function NumbersScreen({ t, props, isMobile = false }) {
   const {
-    currentIncome, fedTax, ficaTotal, stateTaxAmt, takeHome, currentContribTotal,
+    currentIncome, fedTax, takeHome,
     totalAtRet, retVals, effectiveExpenses, balAt90,
-    householdSS, yearsSustained, isSustainable, withdrawalRate,
-    retirementAge, currentAge, lifeExpect, simData, chartData,
+    householdSS, isSustainable, withdrawalRate,
+    retirementAge,
     netConversionBenefit, yr1TaxSavings,
     retirementWalk,
+    // WI-0.1 display bundles — all derived numbers come from the model
+    // (percentages/residuals: calcStatementView; milestones: calcChartMilestones;
+    // calendar years: buildYearlyRows). The screen only formats.
+    statementView, chartMilestones, yearlyRows,
   } = props;
 
   const [tab, setTab] = useState("statement");
   const [showAllYears, setShowAllYears] = useState(false);
 
-  // Keep / year totals
-  const taxTotal = (fedTax ?? 0) + (ficaTotal ?? 0) + (stateTaxAmt ?? 0);
-  const keepPct  = currentIncome > 0 ? Math.round((takeHome / currentIncome) * 100) : 0;
-  const taxPct   = currentIncome > 0 ? Math.round((taxTotal / currentIncome) * 100) : 0;
-  const savePct  = currentIncome > 0 ? Math.round((currentContribTotal / currentIncome) * 100) : 0;
+  // statementView percentages are null when there is no income — render "—",
+  // never a synthesized 0 (principle 10).
+  const sv = statementView;
+  const pctLabel = p => p == null ? "—" : `${p}%`;
 
-  // Reconciled allocation for the Money-flow waterfall: take-home is the
-  // residual (gross − tax − savings) so the three pieces sum to exactly 100%
-  // of gross. (keepPct above is the model's take-home over gross, which can
-  // exceed 100% combined with savings because pre-tax saving lowers taxable
-  // income — fine for the statement, but a waterfall must reconcile.)
-  const flowKeep    = Math.max((currentIncome ?? 0) - taxTotal - (currentContribTotal ?? 0), 0);
-  const flowTaxPct  = currentIncome > 0 ? Math.round((taxTotal / currentIncome) * 100) : 0;
-  const flowSavePct = currentIncome > 0 ? Math.round((currentContribTotal / currentIncome) * 100) : 0;
-  const flowKeepPct = currentIncome > 0 ? Math.round((flowKeep / currentIncome) * 100) : 0;
+  // retVals always carries all four account keys (App.jsx builds it over the
+  // static ACCOUNTS dataKeys) — no ?? 0 fallbacks (principle 10).
+  const trad401  = retVals["Trad 401k"];
+  const roth     = retVals["Roth IRA"];
+  const taxable  = retVals["Taxable"];
+  const hsa      = retVals["HSA"];
 
-  const monthlyHHSS     = Math.round((householdSS ?? 0) / 12);
-  const monthlyPortDraw = Math.round(Math.max(0, effectiveExpenses - (householdSS ?? 0)) / 12);
-  const monthlyTotal    = Math.round(effectiveExpenses / 12);
+  // Depletion age comes straight from the shared retirement walk (V4) —
+  // never re-derived as retirementAge + yearsSustained in the screen.
+  const runsOutLabel = isSustainable
+    ? "never"
+    : retirementWalk.depletionAge != null ? `age ${retirementWalk.depletionAge}` : "—";
 
-  const trad401  = retVals?.["Trad 401k"] ?? 0;
-  const roth     = retVals?.["Roth IRA"]  ?? 0;
-  const taxable  = retVals?.["Taxable"]   ?? 0;
-  const hsa      = retVals?.["HSA"]       ?? 0;
+  // Lifetime milestones (V2/V5): rows + peakTotal from calcChartMilestones.
+  const milestoneRows = chartMilestones.rows;
+  const peakTotal     = chartMilestones.peakTotal;
 
-  const runsOutLabel = isSustainable ? "never" : `age ${Math.round(retirementAge + yearsSustained)}`;
-
-  // Compute milestone rows for Yearly tab
-  const milestoneRows = useMemo(() => {
-    if (!chartData?.length) return [];
-    const rows = [];
-
-    const balAtAge = (age) => {
-      const exact = chartData.find(d => d.age === age);
-      if (exact) return exact.total;
-      for (let i = 0; i < chartData.length - 1; i++) {
-        const a0 = chartData[i], a1 = chartData[i + 1];
-        if (age >= a0.age && age <= a1.age)
-          return a0.total + (a1.total - a0.total) * (age - a0.age) / (a1.age - a0.age);
-      }
-      return 0;
-    };
-
-    // Find First $1M crossing
-    let firstMilAge = null;
-    for (let i = 0; i < chartData.length - 1; i++) {
-      if (chartData[i].total < 1e6 && chartData[i + 1].total >= 1e6) {
-        firstMilAge = Math.round(chartData[i].age +
-          (1e6 - chartData[i].total) / (chartData[i + 1].total - chartData[i].total));
-        break;
-      }
-    }
-
-    // Peak balance age
-    const peakRow = chartData.reduce((best, d) => d.total > (best?.total ?? 0) ? d : best, null);
-
-    // Today
-    rows.push({ age: currentAge, total: balAtAge(currentAge), tag: "Today", tc: "good" });
-
-    // First $1M
-    if (firstMilAge && firstMilAge > currentAge && firstMilAge < retirementAge) {
-      rows.push({ age: firstMilAge, total: 1e6, tag: "First $1M", tc: "accent" });
-    }
-
-    // Retire
-    rows.push({ age: retirementAge, total: balAtAge(retirementAge), tag: "Retire", tc: "accent" });
-
-    // Peak (if after retirement and not same as retire)
-    if (peakRow && peakRow.age > retirementAge) {
-      rows.push({ age: peakRow.age, total: peakRow.total, tag: "Peak", tc: "warm" });
-    }
-
-    // RMDs start at 73
-    const rmdAge = 73;
-    if (rmdAge > retirementAge && rmdAge < (lifeExpect ?? 90)) {
-      rows.push({ age: rmdAge, total: balAtAge(rmdAge), tag: "RMDs start", tc: "warm" });
-    }
-
-    // For life
-    const safeEnd = lifeExpect ?? 90;
-    rows.push({ age: safeEnd, total: balAtAge(safeEnd), tag: "For life", tc: "warm" });
-
-    return rows.sort((a, b) => a.age - b.age).filter(r => r.total != null);
-  }, [chartData, currentAge, retirementAge, lifeExpect]);
-
-  const peakTotal = milestoneRows.reduce((m, r) => Math.max(m, r.total), 1);
-
-  // Full age-by-age retirement rows for #80 yearly table
-  const allRetirementRows = retirementWalk?.rows ?? [];
+  // Full age-by-age retirement rows for #80 yearly table (model-provided,
+  // each row already carries its calendar year)
+  const allRetirementRows = yearlyRows;
   const YEAR_CAP = 50;
   const displayedRows = showAllYears ? allRetirementRows : allRetirementRows.slice(0, YEAR_CAP);
-  const currentYear = new Date().getFullYear();
 
   return (
     <div style={{
@@ -332,15 +271,15 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
             <div style={{ flex: 1, display: "flex", gap: 28, minHeight: 0, flexWrap: "wrap" }}>
               <StmtCol t={t} title="Income & tax" items={[
                 ["Gross income",    `$${Math.round(currentIncome).toLocaleString()}`, null, false],
-                ["Federal tax",     `−$${Math.round(fedTax ?? 0).toLocaleString()}`,  "1",  false],
-                ["FICA + state",    `−$${Math.round((ficaTotal ?? 0) + (stateTaxAmt ?? 0)).toLocaleString()}`, null, false],
-                ["Pre-tax savings", `−$${Math.round(currentContribTotal).toLocaleString()}`, null, false],
+                ["Federal tax",     `−$${Math.round(fedTax).toLocaleString()}`,  "1",  false],
+                ["FICA + state",    `−$${Math.round(sv.ficaPlusState).toLocaleString()}`, null, false],
+                ["Pre-tax savings", `−$${Math.round(sv.saveTotal).toLocaleString()}`, null, false],
                 ["Take-home",       `$${Math.round(takeHome).toLocaleString()}`,       null, true],
-              ]} bar={{
+              ]} bar={sv.keepPct == null ? null : {
                 segs: [
-                  { f: keepPct, c: t.good, l: `Keep ${keepPct}%` },
-                  { f: taxPct,  c: t.line2, l: `Tax ${taxPct}%` },
-                  { f: savePct, c: t.warm,  l: `Save ${savePct}%` },
+                  { f: sv.keepPct, c: t.good, l: `Keep ${sv.keepPct}%` },
+                  { f: sv.taxPct,  c: t.line2, l: `Tax ${sv.taxPct}%` },
+                  { f: sv.savePct, c: t.warm,  l: `Save ${sv.savePct}%` },
                 ],
                 cap: "of every dollar earned"
               }} />
@@ -363,14 +302,14 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
               <StmtCol t={t} title="Income for life" items={[
                 ["Social Security",   `${fmtMo(householdSS)}/mo`, "3",  false],
-                ["Portfolio draw",    `$${monthlyPortDraw.toLocaleString()}/mo`, null, false],
+                ["Portfolio draw",    `$${sv.monthlyPortDraw.toLocaleString()}/mo`, null, false],
                 ["Safe rate",         `${(Math.round(withdrawalRate * 10) / 10).toFixed(1)}%`, null, false],
                 ["Runs dry at",       runsOutLabel,  null, false],
-                ["Total monthly",     `$${monthlyTotal.toLocaleString()}/mo`, null, true],
+                ["Total monthly",     `$${sv.monthlyTotal.toLocaleString()}/mo`, null, true],
               ]} bar={{
                 segs: [
-                  { f: monthlyHHSS,     c: t.warm, l: "Soc Sec" },
-                  { f: monthlyPortDraw, c: t.good,  l: "Portfolio" },
+                  { f: sv.monthlyHHSS,     c: t.warm, l: "Soc Sec" },
+                  { f: sv.monthlyPortDraw, c: t.good,  l: "Portfolio" },
                 ],
                 cap: "blended monthly income"
               }} />
@@ -381,7 +320,7 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
               display: "flex", gap: 20, flexWrap: "wrap"
             }}>
               {[
-                `1 Eff. federal rate ${currentIncome > 0 ? Math.round((fedTax ?? 0) / currentIncome * 1000) / 10 : 0}%.`,
+                `1 Eff. federal rate ${sv.effFedRatePct == null ? "—" : `${sv.effFedRatePct}%`}.`,
                 "2 5% real return, contributions to retirement.",
                 "3 Claimed at Social Security age."
               ].map((f, i) => (
@@ -394,6 +333,34 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
         {/* ── Year by year ── */}
         {tab === "yearly" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+            {/* lifetime milestones strip (from calcChartMilestones — V2/V5);
+                bar widths are pure layout proportion against peakTotal */}
+            {milestoneRows.length > 0 && (
+              <div style={{
+                display: "flex", gap: 10, flexWrap: "wrap",
+                padding: "2px 2px 12px", flexShrink: 0,
+              }}>
+                {milestoneRows.map(r => (
+                  <div key={`${r.tag}-${r.age}`} style={{
+                    flex: "1 1 110px", minWidth: 104,
+                    border: `1px solid ${t.line}`, borderRadius: 10, padding: "8px 10px",
+                    background: t.surf2,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <span style={{ font: `600 11px ${HF}`, color: t[r.tc] }}>{r.tag}</span>
+                      <span style={{ font: `400 11px ${HM}`, color: t.faint }}>{r.age}</span>
+                    </div>
+                    <div style={{ font: `600 14px ${HM}`, color: t.ink, margin: "4px 0 5px" }}>{fmt(r.total)}</div>
+                    <div style={{ height: 4, borderRadius: 4, background: t.line, overflow: "hidden" }}>
+                      <div style={{
+                        height: "100%", width: `${(r.total / peakTotal) * 100}%`,
+                        background: t[r.tc], opacity: 0.75,
+                      }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {/* column headers */}
             <div style={{
               display: "grid",
@@ -424,7 +391,7 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
                   background: i % 2 === 0 ? "transparent" : `${t.ink}05`,
                 }}>
                   <span style={{ font: `600 13px ${HM}`, color: t.warm }}>{row.age}</span>
-                  <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{currentYear + (row.age - currentAge)}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{row.year}</span>
                   <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
                   <span style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
                     {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
@@ -468,22 +435,19 @@ export default function NumbersScreen({ t, props, isMobile = false }) {
               Where your paycheck goes
             </div>
             <div style={{ maxWidth: 620, width: "100%", alignSelf: "center" }}>
-              <IncomeWaterfall
-                t={t}
-                income={currentIncome ?? 0}
-                tax={taxTotal}
-                save={currentContribTotal ?? 0}
-              />
+              <IncomeWaterfall t={t} view={sv} />
             </div>
             <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", textAlign: "center" }}>
-              Of every dollar you earn, {flowKeepPct}% comes home, {flowSavePct}% builds your future, {flowTaxPct}% goes to tax.
+              {sv.flowKeepPct == null
+                ? "Add your income to see where each dollar goes."
+                : `Of every dollar you earn, ${sv.flowKeepPct}% comes home, ${sv.flowSavePct}% builds your future, ${sv.flowTaxPct}% goes to tax.`}
             </div>
             {/* legend chips */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, justifyContent: "center" }}>
               {[
-                ["Tax",       "#b09070", `${flowTaxPct}%`],
-                ["Savings",   t.warm,   `${flowSavePct}%`],
-                ["Take-home", t.good,   `${flowKeepPct}%`],
+                ["Tax",       "#b09070", pctLabel(sv.flowTaxPct)],
+                ["Savings",   t.warm,   pctLabel(sv.flowSavePct)],
+                ["Take-home", t.good,   pctLabel(sv.flowKeepPct)],
               ].map(([label, c, pct]) => (
                 <span key={label} style={{
                   display: "flex", alignItems: "center", gap: 6,

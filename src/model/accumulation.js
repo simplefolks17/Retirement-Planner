@@ -1,6 +1,9 @@
 // Accumulation-phase projections derived from the simulation rows (simData).
-// All pure: simData rows in, plain values out. No React, no IRS constants here
-// (the rows already carry computed balances).
+// All pure: simData rows in, plain values out. No React. The only IRS constant
+// used is RMD_START_AGE (for the lifetime-chart milestone gate); balances come
+// pre-computed on the rows.
+
+import { RMD_START_AGE } from "../config/irs-2026.js";
 
 // Sum the four account balances on a single chart/sim row. The rows consumed here
 // are App-augmented simData rows that carry a "Trad 401k" key (added after
@@ -33,6 +36,72 @@ export function calcMilestones({ simData, currentAge, safeRetAge, retirementTarg
     return [...cards, { age: crossRow.age, total: sumAccountRow(crossRow), isRetirement: false }];
   }
   return cards;
+}
+
+// Lifetime-chart milestones for the Horizon Numbers screen (V2/V5 fix — this
+// logic used to live, with a hardcoded `rmdAge = 73` and a `lifeExpect ?? 90`
+// fallback, inside NumbersScreen.jsx; screens render, never compute).
+//
+// chartData: the full lifetime series [{age, total}] (accumulation + retirement).
+// lifeExpect is REQUIRED — no `?? 90` fallback; absent data is the caller's bug,
+// not a number to invent (principle 10).
+//
+// Returns:
+//   rows      — [{age, total, tag, tc}] sorted by age:
+//               Today / First $1M crossing (interpolated, accumulation only) /
+//               Retire / Peak (only if after retirement) /
+//               RMDs start (only if RMD_START_AGE falls inside the retirement window) /
+//               For life (at lifeExpect)
+//   peakTotal — max total across the milestone rows (min 1), for proportional bars.
+export function calcChartMilestones({ chartData, currentAge, retirementAge, lifeExpect }) {
+  if (!chartData?.length) return { rows: [], peakTotal: 1 };
+  const rows = [];
+
+  const balAtAge = (age) => {
+    const exact = chartData.find(d => d.age === age);
+    if (exact) return exact.total;
+    for (let i = 0; i < chartData.length - 1; i++) {
+      const a0 = chartData[i], a1 = chartData[i + 1];
+      if (age >= a0.age && age <= a1.age)
+        return a0.total + (a1.total - a0.total) * (age - a0.age) / (a1.age - a0.age);
+    }
+    return 0;
+  };
+
+  // First $1M crossing (linear interpolation between the bracketing rows)
+  let firstMilAge = null;
+  for (let i = 0; i < chartData.length - 1; i++) {
+    if (chartData[i].total < 1e6 && chartData[i + 1].total >= 1e6) {
+      firstMilAge = Math.round(chartData[i].age +
+        (1e6 - chartData[i].total) / (chartData[i + 1].total - chartData[i].total));
+      break;
+    }
+  }
+
+  // Peak balance row
+  const peakRow = chartData.reduce((best, d) => d.total > (best?.total ?? 0) ? d : best, null);
+
+  rows.push({ age: currentAge, total: balAtAge(currentAge), tag: "Today", tc: "good" });
+
+  if (firstMilAge && firstMilAge > currentAge && firstMilAge < retirementAge) {
+    rows.push({ age: firstMilAge, total: 1e6, tag: "First $1M", tc: "accent" });
+  }
+
+  rows.push({ age: retirementAge, total: balAtAge(retirementAge), tag: "Retire", tc: "accent" });
+
+  if (peakRow && peakRow.age > retirementAge) {
+    rows.push({ age: peakRow.age, total: peakRow.total, tag: "Peak", tc: "warm" });
+  }
+
+  if (RMD_START_AGE > retirementAge && RMD_START_AGE < lifeExpect) {
+    rows.push({ age: RMD_START_AGE, total: balAtAge(RMD_START_AGE), tag: "RMDs start", tc: "warm" });
+  }
+
+  rows.push({ age: lifeExpect, total: balAtAge(lifeExpect), tag: "For life", tc: "warm" });
+
+  const sorted = rows.sort((a, b) => a.age - b.age).filter(r => r.total != null);
+  const peakTotal = sorted.reduce((m, r) => Math.max(m, r.total), 1);
+  return { rows: sorted, peakTotal };
 }
 
 // Accumulation chart rows ({age, total}) from current age through retirement — the

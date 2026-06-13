@@ -138,7 +138,7 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 
 # Level 0 — Foundations (make the principles true before building on them)
 
-A Jun 12 2026 code audit found the design principles above already violated in shipped Horizon code (full findings: **Violations register**, end of this doc). These two items clear the register and install the enforcement tooling, and run as the **first build batch** — building Levels 1–3 on top of unmemoized props and screen-side math would multiply the cleanup later.
+**Shipped Jun 12 2026 (WI-0.1 + WI-0.2 both done; register fully resolved — see per-row resolutions).** A Jun 12 2026 code audit found the design principles above already violated in shipped Horizon code (full findings: **Violations register**, end of this doc). These two items clear the register and install the enforcement tooling, and ran as the **first build batch** — building Levels 1–3 on top of unmemoized props and screen-side math would multiply the cleanup later.
 
 ### WI-0.1 (#110) Principles compliance pass
 **Target:** the Violations register is empty; every number on a Horizon screen is a real, applicable model output.
@@ -430,20 +430,20 @@ Rows not covered by a WI by the time Level 3 ships get an explicit *merge* or *d
 
 ## Violations register (audit Jun 12 2026)
 
-Findings from the code audit that motivated the expanded design principles. **WI-0.1 (#110)** clears the table; **WI-0.2 (#111)** installs the tooling that keeps it clear. Future audits append here rather than starting a new list. Past incidents already fixed before this audit, kept for the record: `calcWhatIfChart` dropped permanent `moneyEvents` from scenario runs (fixed, `what-if.js:180` merge); `commitPlan` had an incomplete `useCallback` deps array (fixed, `App.jsx:602–607`); the original Ideas arc overlay was a `chartData × scale` approximation (replaced by real `calcWhatIfChart` runs in Batch B).
+Findings from the code audit that motivated the expanded design principles. **WI-0.1 (#110)** cleared the table and **WI-0.2 (#111)** installed the tooling that keeps it clear — both shipped Jun 12 2026; per-row resolutions below. Future audits append here rather than starting a new list. Past incidents already fixed before this audit, kept for the record: `calcWhatIfChart` dropped permanent `moneyEvents` from scenario runs (fixed, `what-if.js:180` merge); `commitPlan` had an incomplete `useCallback` deps array (fixed, `App.jsx:602–607`); the original Ideas arc overlay was a `chartData × scale` approximation (replaced by real `calcWhatIfChart` runs in Batch B).
 
-| # | Location | Finding | Principle | Owner |
-|---|---|---|---|---|
-| V1 | `IdeasScreen.jsx:99–102` + `SCENARIOS` config (lines 12–19) | Scenario stats row multiplies `totalAtRet`/`balAt90`/`effectiveExpenses` by hardcoded factors (0.92/0.82/1.10, 0.90/0.80) while the arc shows a real model run — two answers on one screen | 7 | WI-0.1 |
-| V2 | `NumbersScreen.jsx:229` | `const rmdAge = 73` hardcoded; must import `RMD_START_AGE` from `src/config/irs-2026.js` | 9 | WI-0.1 |
-| V3 | `NumbersScreen.jsx:158–174` | Statement waterfall residual, three percentages, and month conversions computed in JSX | 6 | WI-0.1 |
-| V4 | `NumbersScreen.jsx:181` | Depletion age derived in screen (`retirementAge + yearsSustained`); `retirementWalk.depletionAge` already exists | 6 | WI-0.1 |
-| V5 | `NumbersScreen.jsx:216–230` | Milestone detection (First $1M, peak, RMD age gates) re-implemented in screen; `calcMilestones` (`accumulation.js`) already exists | 6, 8 | WI-0.1 |
-| V6 | `PlanScreen.jsx:21` | Progress % computed in screen, dividing by `lifeExpect − retirementAge` with `yearsSustained` potentially `Infinity` | 6, 10 | WI-0.1 |
-| V7 | `NumbersScreen.jsx` (~10 sites), `IdeasScreen.jsx:100–102` | Bare fallbacks (`?? 0` on tax/income/balances, `lifeExpect ?? 90`, scenario scale `?? 1`) make missing data indistinguishable from real values; a broken scenario config silently renders as "no change" | 10 | WI-0.1 |
-| V8 | `ArcGraph.jsx:407` | Undocumented `0.92` asymmetry factor in the uncertainty cone | 7 (document as illustrative) | WI-0.1 |
-| V9 | `App.jsx:611–638` | `horizonProps` + `whatIfBundle` rebuilt inline every render — not memoized; defeats screen memos (same class as the fixed `commitPlan` bug) | 13 | WI-0.2 |
-| V10 | repo root | No ESLint config — `react-hooks/exhaustive-deps` never runs, so deps-array bugs are caught only by hand | 13 | WI-0.2 |
-| V11 | `IdeasScreen.jsx` (`SCENARIOS`, `LIFE_EVENTS`) | Hardcoded preset tables have no value-lock tests; silent edits go unnoticed | 14 | WI-0.2 |
+| # | Location | Finding | Principle | Owner | Resolution (Jun 12 2026) |
+|---|---|---|---|---|---|
+| V1 | `IdeasScreen.jsx:99–102` + `SCENARIOS` config (lines 12–19) | Scenario stats row multiplies `totalAtRet`/`balAt90`/`effectiveExpenses` by hardcoded factors (0.92/0.82/1.10, 0.90/0.80) while the arc shows a real model run — two answers on one screen | 7 | WI-0.1 | Fixed — `calcWhatIfScenario` (`what-if.js`): ONE run returns chart + stat scalars; `calcWhatIfChart` now a thin wrapper; fake `stats` removed from `SCENARIOS` |
+| V2 | `NumbersScreen.jsx:229` | `const rmdAge = 73` hardcoded; must import `RMD_START_AGE` from `src/config/irs-2026.js` | 9 | WI-0.1 | Fixed — RMD gate lives in `calcChartMilestones` (`accumulation.js`), importing `RMD_START_AGE` from config; screen constant deleted |
+| V3 | `NumbersScreen.jsx:158–174` | Statement waterfall residual, three percentages, and month conversions computed in JSX | 6 | WI-0.1 | Fixed — `calcStatementView` (`budget.js`) → `horizonProps.statementView`; screen renders only |
+| V4 | `NumbersScreen.jsx:181` | Depletion age derived in screen (`retirementAge + yearsSustained`); `retirementWalk.depletionAge` already exists | 6 | WI-0.1 | Fixed — screen reads `retirementWalk.depletionAge` |
+| V5 | `NumbersScreen.jsx:216–230` | Milestone detection (First $1M, peak, RMD age gates) re-implemented in screen; `calcMilestones` (`accumulation.js`) already exists | 6, 8 | WI-0.1 | Fixed — `calcChartMilestones` (`accumulation.js`) → `horizonProps.chartMilestones`; screen copy deleted |
+| V6 | `PlanScreen.jsx:21` | Progress % computed in screen, dividing by `lifeExpect − retirementAge` with `yearsSustained` potentially `Infinity` | 6, 10 | WI-0.1 | Fixed — `calcPlanProgress` (`retirement-drawdown.js`) → `horizonProps.planView`, Infinity/zero-horizon guarded |
+| V7 | `NumbersScreen.jsx` (~10 sites), `IdeasScreen.jsx:100–102` | Bare fallbacks (`?? 0` on tax/income/balances, `lifeExpect ?? 90`, scenario scale `?? 1`) make missing data indistinguishable from real values; a broken scenario config silently renders as "no change" | 10 | WI-0.1 | Fixed — bundles return `null` for inapplicable values; screens render a designed “—” state; no bare fallbacks remain |
+| V8 | `ArcGraph.jsx:407` | Undocumented `0.92` asymmetry factor in the uncertainty cone | 7 (document as illustrative) | WI-0.1 | Fixed — named `CONE_LOWER_ASYMMETRY` (`ArcGraph.jsx`), documented as illustrative/decorative |
+| V9 | `App.jsx:611–638` | `horizonProps` + `whatIfBundle` rebuilt inline every render — not memoized; defeats screen memos (same class as the fixed `commitPlan` bug) | 13 | WI-0.2 | Fixed — `whatIfSimInputs`/`whatIfBundle`/`horizonProps` (and `retDrawShared`) memoized with complete deps; locked by `horizon-props-stability.test.js` |
+| V10 | repo root | No ESLint config — `react-hooks/exhaustive-deps` never runs, so deps-array bugs are caught only by hand | 13 | WI-0.2 | Fixed — `eslint.config.js` (flat) with react-hooks rules as errors; `npm run lint` wired and clean (11 findings fixed) |
+| V11 | `IdeasScreen.jsx` (`SCENARIOS`, `LIFE_EVENTS`) | Hardcoded preset tables have no value-lock tests; silent edits go unnoticed | 14 | WI-0.2 | Fixed — value-locks in `src/horizon/__tests__/presets.test.js` |
 
 Compliant by design (no action): `GhostArc` (`ArcGraph.jsx:461–502`) — hardcoded decorative anchor data, but isolated in a `Ghost*`-named component that never touches real user data; this is the pattern principle 7 codifies.

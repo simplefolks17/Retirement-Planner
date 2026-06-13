@@ -400,11 +400,16 @@ function DecadesLabels({ t, H, chartData, currentAge, retirementAge, s }) {
 // ════════════════════════════════════════════════════════════════════════════
 //  SCENARIOS / BAND VIEW
 // ════════════════════════════════════════════════════════════════════════════
+// ILLUSTRATIVE shading only — the uncertainty cone is decorative, not a model
+// output (no Monte Carlo behind it yet; see roadmap WI-5.3). The lower band is
+// drawn slightly narrower than the upper band purely for visual balance.
+const CONE_LOWER_ASYMMETRY = 0.92;
+
 function bandModel({ chartData, currentAge, vmax, s }) {
   const spread = (age) => Math.min(0.28, (age - currentAge) / 60 * 0.30);
   const midPts = chartData.map(d => [s.xOf(d.age), +s.yOf(d.total).toFixed(1)]);
   const upPts = chartData.map(d => [s.xOf(d.age), +s.yOf(Math.min(d.total * (1 + spread(d.age)), vmax * 0.97)).toFixed(1)]);
-  const loPts = chartData.map(d => [s.xOf(d.age), +s.yOf(Math.max(d.total * (1 - spread(d.age) * 0.92), 0)).toFixed(1)]);
+  const loPts = chartData.map(d => [s.xOf(d.age), +s.yOf(Math.max(d.total * (1 - spread(d.age) * CONE_LOWER_ASYMMETRY), 0)).toFixed(1)]);
   return { spread, midPts, upPts, loPts };
 }
 
@@ -526,9 +531,11 @@ export default function ArcGraph({
   compact = false,
   scenarioData = null,
 }) {
-  const pad = compact
+  // Memoized so the scales memo below can list `pad` honestly in its deps
+  // (a fresh object each render would defeat the memo — principle 13).
+  const pad = useMemo(() => compact
     ? { l: 46, r: 60, t: 30, b: 40 }
-    : { l: 62, r: 92, t: 38, b: 46 };
+    : { l: 62, r: 92, t: 38, b: 46 }, [compact]);
 
   const [boxRef, { w, h }] = useSize();
 
@@ -553,7 +560,7 @@ export default function ArcGraph({
   }, [w, h]);
 
   const s = useMemo(() => makeScales(vbH, pad, ageMin, ageMax, vmax),
-    [vbH, pad.l, pad.r, pad.t, pad.b, ageMin, ageMax, vmax]);
+    [vbH, pad, ageMin, ageMax, vmax]);
 
   const gid = `arc-${activeView}`;
 

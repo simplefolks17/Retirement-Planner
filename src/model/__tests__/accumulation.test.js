@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sumAccountRow, calcMilestones, buildAccumChart } from "../accumulation.js";
+import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones } from "../accumulation.js";
+import { RMD_START_AGE } from "../../config/irs-2026.js";
 
 describe("sumAccountRow", () => {
   it("sums the four account keys on a full row", () => {
@@ -61,5 +62,74 @@ describe("buildAccumChart", () => {
     const rows = buildAccumChart({ simData: [], safeRetAge: 60, currentAge: 60,
       bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000 });
     expect(rows).toEqual([{ age: 60, total: 165_000 }]);
+  });
+});
+
+describe("calcChartMilestones", () => {
+  // Simple lifetime series: linear growth 30→65, then decline 65→90.
+  const mkChart = ({ peakAt = 65, growTo = 2_000_000 } = {}) => {
+    const rows = [];
+    for (let age = 30; age <= 90; age++) {
+      const total = age <= peakAt
+        ? Math.round(growTo * (age - 30) / (peakAt - 30))
+        : Math.round(growTo * (1 - (age - peakAt) / 50));
+      rows.push({ age, total });
+    }
+    return rows;
+  };
+
+  it("interpolates the First $1M crossing between the bracketing rows", () => {
+    // growTo 2M over 35 yrs → crosses 1M halfway (age 47.5 → rounds to 48)
+    const { rows } = calcChartMilestones({
+      chartData: mkChart(), currentAge: 30, retirementAge: 65, lifeExpect: 90,
+    });
+    const mil = rows.find(r => r.tag === "First $1M");
+    expect(mil).toBeDefined();
+    expect(mil.age).toBe(48);
+    expect(mil.total).toBe(1e6);
+  });
+
+  it("includes Peak only when it falls after retirement", () => {
+    // Peak at 65 (the retirement age itself) → no Peak row
+    const noPeak = calcChartMilestones({
+      chartData: mkChart({ peakAt: 65 }), currentAge: 30, retirementAge: 65, lifeExpect: 90,
+    });
+    expect(noPeak.rows.find(r => r.tag === "Peak")).toBeUndefined();
+    // Peak at 75 (after retirement) → Peak row at 75
+    const withPeak = calcChartMilestones({
+      chartData: mkChart({ peakAt: 75 }), currentAge: 30, retirementAge: 65, lifeExpect: 90,
+    });
+    expect(withPeak.rows.find(r => r.tag === "Peak")?.age).toBe(75);
+  });
+
+  it("RMDs-start gate uses the config constant (RMD_START_AGE), not a hardcoded 73", () => {
+    const { rows } = calcChartMilestones({
+      chartData: mkChart(), currentAge: 30, retirementAge: 65, lifeExpect: 90,
+    });
+    const rmd = rows.find(r => r.tag === "RMDs start");
+    expect(rmd).toBeDefined();
+    expect(rmd.age).toBe(RMD_START_AGE);
+    // Retiring at/after the RMD start age → no RMDs-start milestone inside the window
+    const lateRet = calcChartMilestones({
+      chartData: mkChart(), currentAge: 30, retirementAge: RMD_START_AGE, lifeExpect: 90,
+    });
+    expect(lateRet.rows.find(r => r.tag === "RMDs start")).toBeUndefined();
+  });
+
+  it("always carries Today / Retire / For-life anchors, sorted by age, with peakTotal ≥ 1", () => {
+    const { rows, peakTotal } = calcChartMilestones({
+      chartData: mkChart(), currentAge: 30, retirementAge: 65, lifeExpect: 90,
+    });
+    expect(rows.find(r => r.tag === "Today")?.age).toBe(30);
+    expect(rows.find(r => r.tag === "Retire")?.age).toBe(65);
+    expect(rows.find(r => r.tag === "For life")?.age).toBe(90);
+    const ages = rows.map(r => r.age);
+    expect(ages).toEqual([...ages].sort((a, b) => a - b));
+    expect(peakTotal).toBe(Math.max(...rows.map(r => r.total), 1));
+  });
+
+  it("empty chart data → designed empty state ({ rows: [], peakTotal: 1 })", () => {
+    expect(calcChartMilestones({ chartData: [], currentAge: 30, retirementAge: 65, lifeExpect: 90 }))
+      .toEqual({ rows: [], peakTotal: 1 });
   });
 });

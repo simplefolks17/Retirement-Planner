@@ -10,10 +10,10 @@ import { fmt, fmtPct } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
-import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth } from "./model/budget.js";
+import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
-import { buildRetirementDrawdown } from "./model/retirement-drawdown.js";
+import { buildRetirementDrawdown, calcPlanProgress, buildYearlyRows } from "./model/retirement-drawdown.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
 import { calcRMDProjection } from "./model/rmd.js";
@@ -23,7 +23,7 @@ import { findOptimalConversion } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { calcMilestones, buildAccumChart } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart, calcChartMilestones } from "./model/accumulation.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
@@ -46,6 +46,10 @@ import { calcWhatIfDelta }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
+
+// The four account display keys (static — module level so memos that map over
+// them can keep honest, complete dependency arrays).
+const ACCOUNT_DATA_KEYS = ["Trad 401k", "Roth IRA", "Taxable", "HSA"];
 
 export default function App() {
 
@@ -140,10 +144,12 @@ export default function App() {
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
 
-  const employerMatch = (salary, employeeContrib) =>
+  // useCallback so memos that depend on it (simData, whatIfSimInputs) can list it
+  // honestly in their deps without re-running every render (V9 / principle 13).
+  const employerMatch = useCallback((salary, employeeContrib) =>
     calcEmployerMatch(salary, employeeContrib, {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
-    });
+    }), [matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct]);
 
   // Working-year tax basis (agi, fed/state/FICA, Roth phase-out, grossAfterTax),
   // extracted to src/model/tax-basis.js. Computed here as ONE call — before
@@ -185,7 +191,7 @@ export default function App() {
     bal401k, balRoth, balTaxable, balHSA,
     contrib401k, contribRoth, contribTaxable, contribHSA,
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-    employerMatchPct, matchMode, matchFormulaRate, matchFormulaCap,
+    employerMatch,
     moneyEvents,
   ]);
 
@@ -241,17 +247,27 @@ export default function App() {
   ];
 
   // Memoized on atRetirement (a stable reference: either a memoized simData row or
-  // the memoized currentSnapshot). ACCOUNTS' dataKeys are static, so atRetirement is
-  // the only varying input — keeping retVals stable lets conversionSim/optimizer skip
+  // the memoized currentSnapshot). Built over the static ACCOUNT_DATA_KEYS (not the
+  // per-render ACCOUNTS array, which carries setters) so the deps array is honest
+  // and complete — keeping retVals stable lets conversionSim/optimizer skip
   // re-running unless the retirement balances actually change.
   const retVals = useMemo(() => Object.fromEntries(
-    ACCOUNTS.map(a => [a.dataKey, atRetirement[a.dataKey] ?? 0])
+    ACCOUNT_DATA_KEYS.map(k => [k, atRetirement[k] ?? 0])
   ), [atRetirement]);
   const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
 
   const totalAtRet        = Object.values(retVals).reduce((s, v) => s + v, 0);
   const effectiveExpenses = annualExpenses ?? Math.round(totalAtRet * ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE);
   const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
+
+  // Per-account retirement balances as plain scalars, extracted once so the
+  // conversion-plan and optimizer memos can list them in their deps arrays
+  // (exhaustive-deps forbids `retVals["…"]` expressions in deps).
+  const retTaxable     = retVals["Taxable"]   ?? 0;
+  const retTrad        = retVals["Trad 401k"] ?? 0;
+  const retRoth        = retVals["Roth IRA"]  ?? 0;
+  // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
+  const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
   // Household retirement income (SS + pension), extracted to
   // src/model/retirement-income.js. ssAtRet / effectivePension carry the
@@ -307,10 +323,13 @@ export default function App() {
     includeSS, ssClaimingAge, ssTaxableRet,
     pensionMonthly, pensionStartAge, effectivePension, rmdStartAge: RMD_START_AGE,
   });
-  const { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate } = calcRMDTaxSchedule({
+  // Memoized (V9): rmdDataWithTax feeds rmdTaxByAge → retDrawShared → the shared
+  // retirement walk; an unmemoized fresh array here would re-reference the whole
+  // chain (chartData, retirementWalk, horizonProps) on every render.
+  const { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate } = useMemo(() => calcRMDTaxSchedule({
     rmdData, rmdIncomeFloor, filingStatus, retStateRate,
     fedMarginal, maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
-  });
+  }), [rmdData, rmdIncomeFloor, filingStatus, retStateRate, fedMarginal]);
 
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
 
@@ -361,8 +380,8 @@ export default function App() {
       returnRate, retIncomeFloor, retIncomeFloors: convFloors,
       filingStatus, conversionTaxSource, retStateRate,
       tradGrossAtRetirement: (retRow?.tradGross ?? 0) + addlPreTaxBal,
-      rothBalAtRet: retVals["Roth IRA"] ?? 0,
-      taxableBalAtRet: retVals["Taxable"] ?? 0,
+      rothBalAtRet: retRoth,
+      taxableBalAtRet: retTaxable,
       safeRetAge,
       rmdData, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
       rmdTaxBite, rmdIncomeFloor,
@@ -370,7 +389,7 @@ export default function App() {
       personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
     });
   }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion,
-      conversionMode, bracketFillConversions, retVals["Roth IRA"], retVals["Taxable"], returnRate,
+      conversionMode, bracketFillConversions, retRoth, retTaxable, returnRate,
       retIncomeFloor, convFloors, filingStatus, conversionTaxSource, retStateRate, addlPreTaxBal,
       rmdData, safeLifeExp, useTable2, spouseCurrentAge, rmdTaxBite, rmdIncomeFloor,
       convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, personOnMedicare,
@@ -396,7 +415,9 @@ export default function App() {
   // The chart, the headline longevity, and the Flow-Down waterfall all consume
   // this so they can never diverge (the BUG-31 root cause). SS/pension gate
   // per-year inside the walk (rule 5b); the tax maps make it tax-honest.
-  const retDrawShared = {
+  // Memoized (V9 / principle 13): retirementWalk, whatIfBundle, and horizonProps
+  // all depend on this object, so its reference must only change when an input does.
+  const retDrawShared = useMemo(() => ({
     rReal, effectiveExpenses,
     ssAmount: householdSS,
     ssClaimAge: includeSS ? ssClaimingAge : Infinity,
@@ -404,7 +425,9 @@ export default function App() {
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     rmdTaxByAge, conversionTaxByAge,
     moneyEvents: moneyEvents.filter(ev => ev.age >= safeRetAge),
-  };
+  }), [rReal, effectiveExpenses, householdSS, includeSS, ssClaimingAge,
+       pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
+       moneyEvents, safeRetAge]);
 
   // Headline longevity: walk to a far horizon so "years sustained" is meaningful
   // even past life expectancy (matching the old closed-form semantics), but now
@@ -429,9 +452,7 @@ export default function App() {
     ...retDrawShared,
     startBal: accumChart[accumChart.length - 1]?.total ?? 0,
     startAge: safeRetAge, endAge: safeLifeExp,
-  }), [accumChart, safeRetAge, safeLifeExp, rReal, effectiveExpenses,
-       includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
-       rmdTaxByAge, conversionTaxByAge]);
+  }), [retDrawShared, accumChart, safeRetAge, safeLifeExp]);
 
   const totalChartData = useMemo(
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
@@ -471,8 +492,8 @@ export default function App() {
     const retRow = simData.find(d => d.age === safeRetAge)
       ?? (safeRetAge === currentAge ? currentSnapshot : null);
     const tradGross = (retRow?.tradGross ?? 0) + addlPreTaxBal;
-    const rothBal   = retVals["Roth IRA"] ?? 0;
-    const taxableBal = retVals["Taxable"] ?? 0;
+    const rothBal   = retRoth;
+    const taxableBal = retTaxable;
     // Capture loop vars for closure (avoids stale deps)
     const _convFloors = convFloors;
     const _convMAGIFloors = convMAGIFloors;
@@ -499,7 +520,7 @@ export default function App() {
 
     return findOptimalConversion({ getNetBenefit });
   }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, retStateRate,
-      retVals["Roth IRA"], retVals["Taxable"], returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
+      retRoth, retTaxable, returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
       addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
       hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot,
       hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
@@ -508,12 +529,6 @@ export default function App() {
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
   const megaCapacity     = Math.max(0, limit415c - contrib401k - employerMatchAmt);
   const megaGrowth       = calcMegaBackdoorGrowth({ megaCapacity, returnRate });
-
-  const retTaxable     = retVals["Taxable"]   ?? 0;
-  const retTrad        = retVals["Trad 401k"] ?? 0;
-  const retRoth        = retVals["Roth IRA"]  ?? 0;
-  // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
-  const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
   // Year-1 withdrawal-order tax (tax-optimal taxable→trad→Roth vs worst-case
   // all-pre-tax) — extracted to src/model/retirement-tax.js. Drives the
@@ -586,9 +601,10 @@ export default function App() {
   ]);
 
 
-  // Inputs needed for what-if re-simulation. Collected once here so WhatIfPanel
-  // receives a stable reference and its useMemo only fires on genuine input changes.
-  const whatIfSimInputs = {
+  // Inputs needed for what-if re-simulation. Memoized (V9) so WhatIfPanel and the
+  // whatIfBundle below receive a stable reference and their useMemos only fire on
+  // genuine input changes.
+  const whatIfSimInputs = useMemo(() => ({
     totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
     spouseIncome, spouseIncomeGrowth, returnRate,
     bal401k, balRoth, balTaxable, balHSA,
@@ -596,30 +612,76 @@ export default function App() {
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
     calcEmployerMatchFn: employerMatch,
     moneyEvents,
-  };
+  }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
+       spouseIncome, spouseIncomeGrowth, returnRate,
+       bal401k, balRoth, balTaxable, balHSA,
+       contrib401k, contribRoth, contribTaxable, contribHSA,
+       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+       employerMatch, moneyEvents]);
 
   // Single entry point for Horizon-initiated mutations to App state.
   // Always called after user confirms in a modal — never fired directly by screens.
-  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, currentAge: ca, currentIncome: ci } = {}) => {
+  // Accepts monthlySpend as an alternative to annualExpenses so the month→year
+  // conversion happens HERE, not in screen JSX (principle 6); annualExpenses wins
+  // if both are passed.
+  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, monthlySpend: ms, currentAge: ca, currentIncome: ci } = {}) => {
     if (ca !== undefined) setCurrentAge(ca);
     if (ci !== undefined) setCurrentIncome(ci);
     if (ra !== undefined) setRetirementAge(ra);
     if (ae !== undefined) setAnnualExpenses(ae);
+    else if (ms !== undefined) setAnnualExpenses(ms * ASSUMPTIONS.MONTHS_PER_YEAR);
   }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses]);
 
-  // Extended what-if bundle: includes everything calcWhatIfChart needs so
-  // IdeasScreen can call calcWhatIfChart(whatIfSimInputs, { retireAdj }) directly.
-  const whatIfBundle = {
+  // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
+  // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
+  // memoized whatIfSimInputs + retDrawShared as deps. Grown by named fields only —
+  // baseYearsSustained added for calcWhatIfScenario's deltaYears (never repurpose).
+  const whatIfBundle = useMemo(() => ({
     simInputs: whatIfSimInputs,
     fedMarginal,
     retDrawShared,
     safeRetAge,
     safeLifeExp,
     baseTotalAtRet: totalAtRet,
-  };
+    baseYearsSustained: yearsSustained,
+  }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
+       totalAtRet, yearsSustained]);
 
-  // Props bundle for HorizonShell — display values only (plus the two write-back hooks)
-  const horizonProps = {
+  // ── Horizon display bundles (WI-0.1) — derived numbers come from the model, ──
+  // pre-gated and display-ready, so screens only format (principle 6).
+  // Edge states are documented at the model functions; none use ?? 0 fallbacks.
+
+  // Statement / Money-flow tab numbers (percentages, waterfall residual set,
+  // monthly conversions, eff-fed-rate footnote). Percentages are null when
+  // currentIncome ≤ 0 — screens render "—".
+  const statementView = useMemo(() => calcStatementView({
+    currentIncome, fedTax, fica, stateTax, takeHome,
+    currentContribTotal, householdSS, effectiveExpenses,
+  }), [currentIncome, fedTax, fica, stateTax, takeHome,
+       currentContribTotal, householdSS, effectiveExpenses]);
+
+  // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
+  // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE
+  // from config inside the model (V2).
+  const chartMilestones = useMemo(() => calcChartMilestones({
+    chartData: totalChartData, currentAge, retirementAge: safeRetAge, lifeExpect: safeLifeExp,
+  }), [totalChartData, currentAge, safeRetAge, safeLifeExp]);
+
+  // Plan-screen progress (V6). progressPct: 100 when sustainable (incl. Infinity
+  // yearsSustained), else 0–99.
+  const planView = useMemo(() => calcPlanProgress({
+    yearsSustained, isSustainable, lifeExpect: safeLifeExp, retirementAge: safeRetAge,
+  }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge]);
+
+  // Year-by-year table rows: walk rows + calendar year (age→year math in the model).
+  const yearlyRows = useMemo(() => buildYearlyRows({
+    rows: retirementWalk.rows, currentAge, currentYear: new Date().getFullYear(),
+  }), [retirementWalk, currentAge]);
+
+  // Props bundle for HorizonShell — display values only (plus the two write-back
+  // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
+  // so the bundle reference only changes when an input actually changes.
+  const horizonProps = useMemo(() => ({
     chartData: totalChartData,
     currentAge, retirementAge, lifeExpect,
     totalAtRet, yearsSustained, isSustainable,
@@ -638,12 +700,29 @@ export default function App() {
     whatIfSimInputs: whatIfBundle,
     commitPlan,
     retirementWalk,
-  };
+    // WI-0.1 display bundles (shapes documented at their model functions):
+    statementView,    // calcStatementView — pcts null when no income
+    chartMilestones,  // calcChartMilestones — { rows, peakTotal }
+    planView,         // calcPlanProgress — { progressPct }
+    yearlyRows,       // buildYearlyRows — walk rows + calendar year
+  }), [totalChartData, currentAge, retirementAge, lifeExpect,
+       totalAtRet, yearsSustained, isSustainable,
+       takeHome, effectiveExpenses, withdrawalRate,
+       balAt90, contribSeries, householdSS, activity, setActivity,
+       currentIncome, fedTax, fica, stateTax, currentContribTotal,
+       retVals, simData, netConversionBenefit, yr1TaxSavings,
+       bal401k, balRoth, balTaxable, balHSA,
+       moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
+       statementView, chartMilestones, planView, yearlyRows]);
+
+  // Stable handler (V9): keeps HorizonShell's props identity-stable across
+  // no-op re-renders so the referential-stability smoke test can assert it.
+  const onShowClassic = useCallback(() => setShowHorizon(false), [setShowHorizon]);
 
   if (showHorizon) {
     return (
       <HorizonThemeProvider>
-        <HorizonShell {...horizonProps} onShowClassic={() => setShowHorizon(false)} />
+        <HorizonShell {...horizonProps} onShowClassic={onShowClassic} />
         <Analytics />
       </HorizonThemeProvider>
     );

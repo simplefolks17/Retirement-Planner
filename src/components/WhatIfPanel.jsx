@@ -64,11 +64,14 @@ export function WhatIfPanel({
   const [affAge,   setAffAge]   = useState(currentAge + 5);
   const [targetAge,setTargetAge]= useState(safeLifeExp);
 
-  const sharedArgs = {
+  // Memoized so deltaResult/affordResult can list it honestly in their deps
+  // (a fresh object each render would re-run them every render — principle 13).
+  const sharedArgs = useMemo(() => ({
     simInputs, fedMarginal, retDrawShared,
     safeRetAge, safeLifeExp,
     baseTotalAtRet, baseYearsSustained,
-  };
+  }), [simInputs, fedMarginal, retDrawShared,
+       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained]);
 
   const deltaResult = useMemo(() => {
     if (mode !== "delta") return null;
@@ -91,7 +94,8 @@ export function WhatIfPanel({
     if (events.length === 0 && retirementAgeOverride === null && annualExpensesOverride === null) return null;
 
     return calcWhatIfDelta({ ...sharedArgs, moneyEvents: events, retirementAgeOverride, annualExpensesOverride });
-  }, [mode, amount, eventAge, isInflow, label, retAgeOff, preset, expenseDelta, sharedArgs]);
+  }, [mode, amount, eventAge, isInflow, label, retAgeOff, preset, expenseDelta, sharedArgs,
+      safeRetAge, retDrawShared.effectiveExpenses]);
 
   const affordResult = useMemo(() => {
     if (mode !== "affordability") return null;

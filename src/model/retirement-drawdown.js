@@ -82,3 +82,26 @@ export function buildRetirementDrawdown({
   const endVal = rows.length ? rows[rows.length - 1].total : Math.max(0, Math.round(startBal));
   return { rows, depletionAge, yearsSustained, endVal };
 }
+
+// ── Plan progress (Horizon Plan screen) ──────────────────────────────────────
+// V6 fix — this percentage used to be computed in PlanScreen.jsx JSX, dividing
+// by (lifeExpect − retirementAge) with yearsSustained potentially Infinity.
+//
+// progressPct: how far the portfolio's longevity gets toward covering the
+// retirement horizon. 100 when sustainable (incl. yearsSustained === Infinity);
+// otherwise capped at 99 so an unsustainable plan never reads as "done".
+// The Math.max(1, …) guards the zero/negative-horizon edge (retiring at or past
+// life expectancy).
+export function calcPlanProgress({ yearsSustained, isSustainable, lifeExpect, retirementAge }) {
+  if (isSustainable || yearsSustained === Infinity) return { progressPct: 100 };
+  const horizon = Math.max(1, lifeExpect - retirementAge);
+  return { progressPct: Math.min(99, Math.round((yearsSustained / horizon) * 100)) };
+}
+
+// ── Year-by-year display rows ────────────────────────────────────────────────
+// Walk rows plus their calendar year, display-ready for the Numbers screen's
+// Year-by-year table — the age→year arithmetic lives HERE, not in JSX
+// (principle 6). currentYear is the caller's clock (e.g. new Date().getFullYear()).
+export function buildYearlyRows({ rows, currentAge, currentYear }) {
+  return (rows ?? []).map(r => ({ ...r, year: currentYear + (r.age - currentAge) }));
+}
