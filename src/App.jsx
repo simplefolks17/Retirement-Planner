@@ -217,12 +217,17 @@ export default function App() {
       grossAfterTax, contrib401k, contribRoth, contribTaxable, contribHSA, livingExpenses,
     });
 
-  const optimizedAllocation = calcOptimizedAllocation({
+  // Memoized so budgetView (→ horizonProps.budget) stays identity-stable (V9):
+  // optimizedAllocation is a fresh object from calcOptimizedAllocation, so without
+  // this memo every re-render would produce a new budgetView even when inputs haven't
+  // changed. Deps mirror the calcOptimizedAllocation call exactly.
+  const optimizedAllocation = useMemo(() => calcOptimizedAllocation({
     availableSurplus, savingsSurplusPct,
     contrib401k, contribRoth, contribHSA, contribTaxable,
     rothFullyPhased, matchMode, matchFormulaCap, matchFormulaRate,
     employerMatchPct, currentIncome,
-  });
+  }), [availableSurplus, savingsSurplusPct, contrib401k, contribRoth, contribHSA, contribTaxable,
+       rothFullyPhased, matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct, currentIncome]);
 
   const ACCOUNTS = [
     { key: "Traditional 401k", dataKey: "Trad 401k", color: C.gold,   note: "Pre-tax",
@@ -704,6 +709,34 @@ export default function App() {
     rows: retirementWalk.rows, currentAge, currentYear: new Date().getFullYear(),
   }), [retirementWalk, currentAge]);
 
+  // WI-2.2 (#92): Budget tab bundle — savings waterfall + allocation stack.
+  // All values already computed above; memoized so horizonProps stays identity-stable (V9).
+  const budgetView = useMemo(() => ({
+    grossAfterTax,
+    effectiveLiving,
+    savingsCapacity,
+    currentContribTotal,
+    availableSurplus,
+    optimizedAllocation,
+  }), [grossAfterTax, effectiveLiving, savingsCapacity, currentContribTotal,
+       availableSurplus, optimizedAllocation]);
+
+  // WI-2.4 (#94): Taxes tab bundle — phase rates + lifetime composition.
+  // fedEffRate (calcTaxBasis) = effective federal rate.
+  // projRetBracketPct (projectRetirementBracket) = projected retirement bracket.
+  // rmdTaxBite + effectiveRMDTaxRate from calcRMDTaxSchedule.
+  // conversionSim.totalTax from evaluateConversionPlan.
+  // Memoized so horizonProps stays identity-stable (V9).
+  const taxViewBundle = useMemo(() => ({
+    fedMarginal,
+    fedEffective: fedEffRate,
+    effectiveRMDTaxRate,
+    projectedRetBracket: projRetBracketPct,
+    rmdTaxBite,
+    convTaxTotal: conversionSim.totalTax,
+  }), [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
+       rmdTaxBite, conversionSim]);
+
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
   // so the bundle reference only changes when an input actually changes.
@@ -741,6 +774,12 @@ export default function App() {
     flowDown: flowData,            // calcFlowDown — all ~20 waterfall fields
     conversionWindowYrs,           // scalar — > 0 when a Roth window exists
     rmdStartAge: RMD_START_AGE,    // from irs-2026.js — never hardcode in screens
+    // WI-2.2 (#92): Budget tab — savings waterfall + allocation stack.
+    // Memoized separately as budgetView (V9) so this object reference is stable.
+    budget: budgetView,
+    // WI-2.4 (#94): Taxes tab — phase rates + lifetime composition.
+    // Memoized separately as taxViewBundle (V9) so this object reference is stable.
+    taxView: taxViewBundle,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -750,7 +789,9 @@ export default function App() {
        bal401k, balRoth, balTaxable, balHSA,
        moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
        statementView, chartMilestones, planView, yearlyRows, signals,
-       flowData, conversionWindowYrs]);
+       flowData, conversionWindowYrs,
+       // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
+       budgetView, taxViewBundle]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

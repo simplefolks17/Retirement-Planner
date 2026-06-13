@@ -75,7 +75,7 @@
 <body>
 
 <h1>Retirement Calculator — Feature Tracker</h1>
-<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-12</p>
+<p class="subtitle">Planned improvements, organized by section and priority — last updated 2026-06-13</p>
 
 <div class="summary" id="summary"></div>
 <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
@@ -772,21 +772,21 @@ var DATA = [
     cx: "High", im: "High", af: ["HorizonShell.jsx (SCREENS, MoreSheet)", "JourneyScreen.jsx (new)", "App.jsx (horizonProps.flowDown)", "flow-down.js (consumed, unchanged)"], sv: "none (flowDown already computed)"
   },
   {
-    id: 92, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 92, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L2 / WI-2.2 — Numbers → Budget tab (savings waterfall)",
     ds: "Classic's budget story in Horizon: income after tax → living expenses → savings capacity → current contributions → available surplus, with a deficit warning and a read-only view of the optimized allocation suggestion.",
     dt: "Pass horizonProps.budget = { grossAfterTax, effectiveLiving, savingsCapacity, currentContribTotal, availableSurplus, optimizedAllocation } from calcSavingsCapacity + calcOptimizedAllocation (budget.js, already called in App). New NumbersScreen tab in Statement editorial style. Apply button is deferred to WI-3.7 (#104). Done when every figure equals Classic's Budget panel at the same state + smoke test. See docs/ROADMAP.md WI-2.2.",
     cx: "Low", im: "High", af: ["NumbersScreen.jsx (new tab)", "App.jsx (horizonProps.budget)", "budget.js (consumed, unchanged)"], sv: "none"
   },
   {
-    id: 93, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 93, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L2 / WI-2.3 — Numbers → Accounts tab (4-bucket comparison + milestones)",
     ds: "Where the money lives at retirement: ranked bars for the 4 account buckets with % of total, per-account contribution notes, and milestone pills ($100k/$500k/$1M/goal) with progress coloring.",
     dt: "Pass horizonProps.milestones (calcMilestones, accumulation.js) and retirementTarget. Render from retVals (already in props). Done when bars sum to totalAtRet and milestones equal Classic's; smoke test. See docs/ROADMAP.md WI-2.3.",
     cx: "Low", im: "Medium", af: ["NumbersScreen.jsx (new tab)", "App.jsx (horizonProps.milestones)", "accumulation.js (consumed, unchanged)"], sv: "none"
   },
   {
-    id: 94, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 94, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L2 / WI-2.4 — Numbers → Taxes tab (phase rates + lifetime composition)",
     ds: "Working vs retirement tax phases (Classic's TaxTimeline restyled), the user's current bracket position, and a lifetime composition bar: working-years tax vs RMD tax vs conversion tax.",
     dt: "Pass horizonProps.taxView = { fedMarginal, fedEffective, effectiveRMDTaxRate, projectedRetBracket, rmdTaxBite, convTaxTotal } — all computed today (tax-basis.js, calcRMDTaxSchedule, projectRetirementBracket, conversion sim totals). Done when rates equal Classic's phase cards at the same state; review confirms no new math. See docs/ROADMAP.md WI-2.4.",
