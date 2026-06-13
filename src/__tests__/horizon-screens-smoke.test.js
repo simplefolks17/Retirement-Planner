@@ -130,10 +130,10 @@ describe("Horizon screens render smoke", () => {
 
   // Deep-path coverage that a single per-screen marker can't reach:
 
-  it("Numbers renders all three sub-tabs (Statement / Year by year / Money flow)", () => {
+  it("Numbers renders all six sub-tabs (Statement / Budget / Accounts / Taxes / Year by year / Money flow)", () => {
     const { renderer, root } = mountApp();
     clickByText(root, "The numbers");
-    for (const tab of ["Statement", "Year by year", "Money flow"]) {
+    for (const tab of ["Statement", "Budget", "Accounts", "Taxes", "Year by year", "Money flow"]) {
       clickByText(root, tab);
       expect(renderer.toJSON(), `Numbers/${tab}: render tree is empty`).toBeTruthy();
       expect(visibleTextLength(renderer), `Numbers/${tab}: content looks empty`).toBeGreaterThan(80);

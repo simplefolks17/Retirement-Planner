@@ -193,6 +193,9 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 # Level 2 — Understand (Journey screen + Numbers 3→6 tabs, read-only)
 
 **WI-2.1 shipped Jun 13 2026.** Journey screen live; MoreSheet added for 6-screen mobile nav.
+**WI-2.2 shipped Jun 13 2026.** Numbers → Budget tab: savings waterfall + allocation stack; `horizonProps.budget` bundle; `optimizedAllocation` memoized for V9 stability.
+**WI-2.3 shipped Jun 13 2026.** Numbers → Accounts tab: 4-bucket bars + milestone pills from `chartMilestones`.
+**WI-2.4 shipped Jun 13 2026.** Numbers → Taxes tab: working/retirement timeline + lifetime composition bar; `horizonProps.taxView` bundle.
 
 ### WI-2.1 (#91) Journey screen — the Flow-Down port
 **Target:** all ~20 Flow-Down metrics visible in Horizon as a 3-chapter story.
