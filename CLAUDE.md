@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (307 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (338 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (117 items, 38 done, 79 planned)
+- Feature backlog: `feature-tracker.html` (117 items, 40 done, 77 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -320,10 +320,33 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   `readOnly` in the entitlements design), three disposition upgrades (PDF, A/B compare, Monte
   Carlo: Defer → Adopt), and a new **Level 5 — End-state build-out** batch WI-5.1…5.6.
   Tracker 111 → 117 items (38 done, 79 planned; IDs 112–117).
+- Level 0 — Foundations shipped (Jun 12 2026, WI-0.1/#110 + WI-0.2/#111): the Violations
+  register (V1–V11) is fully resolved and the enforcement tooling is installed.
+  WI-0.1: Ideas scenario stats now come from ONE `calcWhatIfScenario` run (new pure export in
+  `what-if.js` returning chart + real stat scalars; `calcWhatIfChart` is a thin wrapper, so the
+  stats row and the arc overlay can never diverge) — the fake `stats` multipliers are gone and
+  the displayed scenario numbers changed fake → real (owner-approved; e.g. Income/mo now
+  honestly shows "no change" for scenarios that don't override expenses). New display bundles
+  wired via `horizonProps`: `statementView` (`calcStatementView`, budget.js — percentages,
+  waterfall residual set, monthly conversions; null pcts when no income), `chartMilestones`
+  (`calcChartMilestones`, accumulation.js — RMD gate from `RMD_START_AGE`, no `?? 90`),
+  `planView` (`calcPlanProgress`, retirement-drawdown.js — Infinity/zero-horizon guards),
+  `yearlyRows` (`buildYearlyRows` — age→calendar-year in the model). NumbersScreen's
+  depletion label reads `retirementWalk.depletionAge`; ArcGraph's cone factor is the named
+  `CONE_LOWER_ASYMMETRY` (documented illustrative). Side fix BUG-34 (what-if re-sims dropped
+  permanent accumulation-phase money events) logged in `docs/BUGS.md`.
+  WI-0.2: `whatIfSimInputs` / `whatIfBundle` / `retDrawShared` / `horizonProps` (and
+  `calcRMDTaxSchedule`) memoized with complete deps; ESLint flat config with
+  `react-hooks/rules-of-hooks` + `exhaustive-deps` as errors (`npm run lint`, clean — 11
+  findings fixed); referential-stability test (mocks HorizonShell, asserts every prop
+  identity-stable across a no-op re-render); SCENARIOS/LIFE_EVENTS value-locks
+  (`src/horizon/__tests__/presets.test.js`); full-nav screens render smoke. 307 → **338**
+  tests; golden master untouched. Tracker: #110 + #111 done (40 done, 77 planned).
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (307 tests)
+- `npm test` — run model + formatter + render-smoke tests (338 tests)
+- `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)
