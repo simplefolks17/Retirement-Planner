@@ -1,6 +1,6 @@
-// HorizonShell — Horizon UI shell (5-screen navigation).
+// HorizonShell — Horizon UI shell (6-screen navigation).
 // Additive: does not replace App.jsx — receives all computed values as props.
-// Screens: Plan · Ideas · The numbers · Settings · Someday
+// Screens: Plan · Journey · Ideas · The numbers · Settings · Someday
 // LAYOUT/STYLING ONLY — no calculation logic lives here.
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -8,6 +8,7 @@ import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
 import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
+import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
 import IdeasScreen   from "../horizon/screens/IdeasScreen.jsx";
 import NumbersScreen from "../horizon/screens/NumbersScreen.jsx";
 import SomedayScreen from "../horizon/screens/SomedayScreen.jsx";
@@ -404,13 +405,74 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 }
 
 // ── MAIN SHELL ────────────────────────────────────────────────────────────────
+// WI-2.1 (#91): Journey added at position 2 (after Plan, before Ideas).
+// With 6 screens the mobile bar shows the first 4 (Plan/Journey/Ideas/Numbers)
+// plus a More tab; tapping More opens a MoreSheet for the remaining screens.
+// Desktop tab bar shows all 6 — the TabBar wraps naturally.
 const SCREENS = [
-  { id: "plan",    label: "Plan",     short: "Plan",    icon: "◎" },
-  { id: "ideas",   label: "Ideas",    short: "Ideas",   icon: "✦" },
-  { id: "numbers", label: "The numbers", short: "Numbers", icon: "▦" },
-  { id: "someday", label: "Someday",  short: "Someday", icon: "☀" },
-  { id: "settings",label: "Settings", short: "Settings",icon: "⚙" },
+  { id: "plan",    label: "Plan",        short: "Plan",    emoji: "◎",  icon: "◎" },
+  { id: "journey", label: "Journey",     short: "Journey", emoji: "🗺", icon: "🗺" },
+  { id: "ideas",   label: "Ideas",       short: "Ideas",   emoji: "✦",  icon: "✦" },
+  { id: "numbers", label: "The numbers", short: "Numbers", emoji: "▦",  icon: "▦" },
+  { id: "someday", label: "Someday",     short: "Someday", emoji: "☀",  icon: "☀" },
+  { id: "settings",label: "Settings",    short: "Settings",emoji: "⚙",  icon: "⚙" },
 ];
+
+// The first 4 screens occupy the mobile bar; the rest live in the More sheet.
+const MOBILE_BAR_SCREENS = SCREENS.slice(0, 4);
+const MORE_SCREENS        = SCREENS.slice(4);
+
+// ── MoreSheet — mobile bottom sheet for overflow screens ──────────────────────
+// Shown when the user taps the "More" tab in the mobile bottom bar.
+// Renders a slide-up overlay listing MORE_SCREENS; tap any to navigate.
+function MoreSheet({ t, active, onNavigate, onClose }) {
+  return (
+    <>
+      {/* backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0, zIndex: 110,
+          background: "rgba(0,0,0,.32)",
+        }}
+      />
+      {/* sheet */}
+      <div style={{
+        position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 120,
+        background: t.surf, borderTop: `1px solid ${t.line2}`,
+        borderRadius: "16px 16px 0 0",
+        padding: "12px 0 8px",
+        boxShadow: "0 -8px 32px rgba(0,0,0,.18)",
+      }}>
+        <div style={{
+          width: 36, height: 4, borderRadius: 999, background: t.line2,
+          margin: "0 auto 12px",
+        }} />
+        {MORE_SCREENS.map(({ id, label, emoji }) => {
+          const on = active === id;
+          return (
+            <div
+              key={id}
+              onClick={() => { onNavigate(id); onClose(); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 14,
+                padding: "14px 24px",
+                background: on ? `${t.accent}10` : "transparent",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ font: `400 20px/1 ${HF}`, color: on ? t.accent : t.mut }}>{emoji}</span>
+              <span style={{
+                font: `${on ? 600 : 400} 15px ${HF}`,
+                color: on ? t.accent : t.ink,
+              }}>{label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
 
 export default function HorizonShell({ onShowClassic, ...props }) {
   const { t, arcStyle } = useTheme();
@@ -422,6 +484,8 @@ export default function HorizonShell({ onShowClassic, ...props }) {
   const [showOnboarding, setShowOnboarding] = useState(
     () => safeGet("hz-onboarded") !== "1"
   );
+  // WI-2.1: MoreSheet state — controls the mobile overflow sheet (Someday / Settings)
+  const [showMore, setShowMore] = useState(false);
 
   // Single navigation entry point, passed to every screen alongside t/props.
   // Stat cards, the signals strip, and future deep-links all route through it.
@@ -504,6 +568,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             paddingBottom: isMobile ? 60 : 0,
           }}>
             {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} />}
+            {screen === "journey"  && <JourneyScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
             {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} initialMode={subView} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialTab={subView} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} navigate={navigate} />}
@@ -511,14 +576,14 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               onResetOnboarding={() => { safeSet("hz-onboarded", ""); setShowOnboarding(true); }} />}
           </div>
 
-          {/* bottom tab bar — mobile only */}
+          {/* bottom tab bar — mobile only; first 4 screens + More tab */}
           {isMobile && (
             <div style={{
               position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
               background: t.bg, borderTop: `1px solid ${t.line}`,
               display: "flex",
             }}>
-              {SCREENS.map(({ id, short, icon }) => {
+              {MOBILE_BAR_SCREENS.map(({ id, short, icon }) => {
                 const on = screen === id;
                 return (
                   <div key={id} onClick={() => navigate(id)} style={{
@@ -536,7 +601,33 @@ export default function HorizonShell({ onShowClassic, ...props }) {
                   </div>
                 );
               })}
+              {/* More tab — opens the MoreSheet for overflow screens */}
+              <div
+                onClick={() => setShowMore(true)}
+                style={{
+                  flex: 1, display: "flex", flexDirection: "column",
+                  alignItems: "center", justifyContent: "center", gap: 3,
+                  padding: "7px 0 9px", cursor: "pointer",
+                  borderTop: `2px solid ${MORE_SCREENS.some(s => s.id === screen) ? t.accent : "transparent"}`,
+                }}
+              >
+                <span style={{ font: `400 16px/1 ${HF}`, color: MORE_SCREENS.some(s => s.id === screen) ? t.accent : t.mut }}>⋯</span>
+                <span style={{
+                  font: `${MORE_SCREENS.some(s => s.id === screen) ? 600 : 400} 10.5px/1 ${HF}`,
+                  color: MORE_SCREENS.some(s => s.id === screen) ? t.accent : t.mut,
+                  textAlign: "center",
+                }}>More</span>
+              </div>
             </div>
+          )}
+          {/* MoreSheet — slide-up overlay for mobile overflow screens */}
+          {isMobile && showMore && (
+            <MoreSheet
+              t={t}
+              active={screen}
+              onNavigate={navigate}
+              onClose={() => setShowMore(false)}
+            />
           )}
         </>
       )}

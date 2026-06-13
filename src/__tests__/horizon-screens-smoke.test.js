@@ -78,6 +78,13 @@ describe("Horizon screens render smoke", () => {
     // Plan (default)
     expect(renderer.toJSON()).toBeTruthy();
 
+    // Journey (WI-2.1) — 3-chapter Flow-Down port; all numbers from flowDown.
+    // clickByText navigates by tab label; render without crash is the gate.
+    clickByText(root, "Journey");
+    expect(renderer.toJSON()).toBeTruthy();
+    // At least one flowDown-sourced number is present (totalAtRet > 0)
+    expect(root.findAll(n => textOf(n).includes("Building years")).length).toBeGreaterThan(0);
+
     // Ideas — open the suggestions mode and activate a scenario card so the
     // calcWhatIfScenario path (stats + arc from one run) executes.
     clickByText(root, "Ideas");

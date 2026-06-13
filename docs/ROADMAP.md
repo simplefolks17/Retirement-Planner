@@ -192,6 +192,8 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 
 # Level 2 — Understand (Journey screen + Numbers 3→6 tabs, read-only)
 
+**WI-2.1 shipped Jun 13 2026.** Journey screen live; MoreSheet added for 6-screen mobile nav.
+
 ### WI-2.1 (#91) Journey screen — the Flow-Down port
 **Target:** all ~20 Flow-Down metrics visible in Horizon as a 3-chapter story.
 **Actions:**

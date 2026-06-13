@@ -713,7 +713,7 @@ export default function App() {
     totalAtRet, yearsSustained, isSustainable,
     takeHome, effectiveExpenses, withdrawalRate,
     balAt90, contribSeries,
-    householdSS, activity, setActivity,
+    householdSS, effectivePension, activity, setActivity,
     currentIncome,
     fedTax, ficaTotal: fica, stateTaxAmt: stateTax,
     currentContribTotal,
@@ -734,15 +734,23 @@ export default function App() {
     // WI-1.2: ranked Plan-screen signals (calcSignals — ≤2, dollars-desc,
     // each with a {screen, subView} deep-link target). Empty array = no strip.
     signals,
+    // WI-2.1 (#91): Journey screen fields.
+    // flowDown: full calcFlowDown result — raw object, no picking here (rule 10).
+    // conversionWindowYrs / rmdStartAge are scalars already computed above.
+    // effectivePension already added above (also used in Journey ch. 3).
+    flowDown: flowData,            // calcFlowDown — all ~20 waterfall fields
+    conversionWindowYrs,           // scalar — > 0 when a Roth window exists
+    rmdStartAge: RMD_START_AGE,    // from irs-2026.js — never hardcode in screens
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
-       balAt90, contribSeries, householdSS, activity, setActivity,
+       balAt90, contribSeries, householdSS, effectivePension, activity, setActivity,
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA,
        moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
-       statementView, chartMilestones, planView, yearlyRows, signals]);
+       statementView, chartMilestones, planView, yearlyRows, signals,
+       flowData, conversionWindowYrs]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.
