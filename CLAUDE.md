@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (355 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (362 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -360,10 +360,36 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   added: CONVERSION_STEP, SAFE_WITHDRAWAL_GUIDELINE_PCT, SAVINGS_RATE_GUIDELINE_PCT.
   338 → **355** tests (+17: signals ×10, calcPlanDrivers ×6, budgetDeficit ×1);
   golden master untouched. Tracker: #88 + #89 + #90 done (43 done, 74 planned).
+- Horizon Batch A shipped (Jun 11 2026, PRs #16): foundation work for iterative Horizon delivery.
+  HorizonShell.jsx split into per-screen files (`src/horizon/screens/`). New pure model export
+  `calcWhatIfChart` in `what-if.js` returns `[{age,total}]` series for a scenario override.
+  `safeGet`/`safeSet` exported from ThemeContext for onboarding detection. `horizonProps` extended
+  with `moneyEvents`, `setMoneyEvents`, `whatIfSimInputs` bundle, `commitPlan` (confirm-commit
+  wrapper), and `retirementWalk`. Two bugs fixed: `commitPlan` missing deps; `calcWhatIfChart`
+  silently dropping permanent `moneyEvents` from the retirement walk. 303 → **307** tests.
+- Horizon Batch B shipped (Jun 11 2026, PR #16): Ideas screen fully functional.
+  #70 — Scenario cards use `calcWhatIfChart` for real model arc overlays; `bigTrip` passes a
+  `scenarioEvents` override ($40k outflow at 70). #69 — Dial your future ± buttons live-update
+  offsets and "Show on arc →" calls `calcWhatIfChart`. #71 — Life event pills show a
+  ConfirmModal before writing to `moneyEvents` (arc + longevity update immediately). #75 —
+  "Make this my plan" in both IdeasScreen (saves scenario's retire age) and PlanScreen (saves
+  current values) uses confirm modal → `commitPlan` → 2-second toast. New shared component:
+  `src/horizon/ConfirmModal.jsx`.
+- Level 2a — Journey screen shipped (Jun 13 2026, WI-2.1/#91): new top-level Horizon screen
+  porting all 20 Flow-Down metrics (`calcFlowDown`) as a 3-chapter narrative (Today /
+  Building years / Retirement years). Chapter 2 shows the optional Roth conversion window
+  callout (`conversionWindowYrs > 0`). Chapter 3 shows the income floor strip (SS + pension)
+  and the depletion verdict. All numbers from `horizonProps.flowDown` — zero recomputation.
+  Mobile MoreSheet added to HorizonShell (SCREENS now 6; first 4 in the mobile bar, remaining
+  2 in a slide-up sheet). Journey wired in screen render switch. New test file
+  `src/horizon/__tests__/journey-screen.test.js` (+7 tests: render smoke, chapter
+  headings, totalAtRet wiring, sustainable verdict, conversion window callout,
+  no-window case, null-flowDown guard). 355 → **362** tests; golden master untouched.
+  Tracker: #91 done (44 done, 73 planned).
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (355 tests)
+- `npm test` — run model + formatter + render-smoke tests (362 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

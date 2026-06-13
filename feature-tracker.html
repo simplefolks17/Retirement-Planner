@@ -765,7 +765,7 @@ var DATA = [
     cx: "Low", im: "Medium", af: ["ArcGraph.jsx (events prop)", "PlanScreen.jsx", "IdeasScreen.jsx"], sv: "none (display only)"
   },
   {
-    id: 91, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 91, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L2 / WI-2.1 — Journey screen (Flow-Down port) + mobile More sheet",
     ds: "New top-level screen telling the money story in three chapters — Today, Building years, Retirement years — porting all ~20 Flow-Down waterfall metrics into Horizon's editorial style, with handoff numbers between chapters and swipeable chapters on mobile. Adding a 6th screen also triggers the mobile 'More' overflow sheet.",
     dt: "Add {id:'journey'} to SCREENS (position 2); new src/horizon/screens/JourneyScreen.jsx. Pass the full calcFlowDown result (already computed in App for Classic) as horizonProps.flowDown + conversionWindowYrs + rmdStartAge. Chapters render startPortfolio/totalContrib/totalGrowth/peakPortfolio/totalAtRet; conversion-window callout when hasConvWindow (portPreRMD, convWindowDraws/Tax/Growth, totalConverted); retirement chapter renders distStartVal/distDraws/distRMDTax/distGrowth/distEndVal/depletionAge + income-floor strip. Mobile bottom bar becomes Plan·Journey·Ideas·Numbers·More (slide-up sheet: Strategies/Someday/Settings). Done when every calcFlowDown field is rendered, a render-smoke test mounts the screen with golden-master props, and review confirms zero recomputation. See docs/ROADMAP.md WI-2.1.",
