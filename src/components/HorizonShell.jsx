@@ -409,7 +409,10 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 // With 6 screens the mobile bar shows the first 4 (Plan/Journey/Ideas/Numbers)
 // plus a More tab; tapping More opens a MoreSheet for the remaining screens.
 // Desktop tab bar shows all 6 — the TabBar wraps naturally.
-const SCREENS = [
+// Exported so the render-smoke test can drive navigation from the single source
+// of truth — adding a screen here automatically pulls it into that test's
+// coverage loop (and trips the "every screen has a marker" guard if untested).
+export const SCREENS = [
   { id: "plan",    label: "Plan",        short: "Plan",    emoji: "◎",  icon: "◎" },
   { id: "journey", label: "Journey",     short: "Journey", emoji: "🗺", icon: "🗺" },
   { id: "ideas",   label: "Ideas",       short: "Ideas",   emoji: "✦",  icon: "✦" },
