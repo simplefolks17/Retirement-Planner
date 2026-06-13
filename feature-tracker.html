@@ -793,21 +793,21 @@ var DATA = [
     cx: "Low", im: "Medium", af: ["NumbersScreen.jsx (new tab)", "App.jsx (horizonProps.taxView)"], sv: "none"
   },
   {
-    id: 95, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 95, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L2 / WI-2.5 — Year by year: accumulation rows + RMD/Conversion columns",
     ds: "Extend the yearly table to cover the whole life: accumulation-phase rows from the simulation, plus RMD and Conversion columns in the retirement years they apply, with milestone rows highlighted.",
     dt: "Prepend rows from simData (age, year, total via sumAccountRow, contributions). Do NOT derive a growth residual in the UI — if per-year growth is wanted, add it to runSimulation rows in src/model/simulation.js first and lock with a test (anti-plug rule). Join RMD column from horizonProps.rmdDataWithTax (calcRMDTaxSchedule) and Conversion column from evaluateConversionPlan().conversionSim by age. Done when existing retirement rows are unchanged and the RMD column matches Classic's RMD table (first 10 rows). See docs/ROADMAP.md WI-2.5.",
     cx: "Medium", im: "Medium", af: ["NumbersScreen.jsx (Year by year tab)", "App.jsx (horizonProps.rmdDataWithTax, conversion rows)", "simulation.js (only if growth column added)"], sv: "none"
   },
   {
-    id: 96, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 96, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L2 / WI-2.6 — Retirement-phase money flow (income sources Sankey)",
     ds: "A second money-flow view answering 'where does retirement income come from?': Expenses ← Social Security + Pension + Portfolio draw, in the same band style as the paycheck Sankey, behind a Working years / Retirement years toggle.",
     dt: "Pass horizonProps.effectivePension and netPortfolioNeed (calcNetPortfolioNeed, drawdown.js). Done when the bands sum exactly to effectiveExpenses and match Classic's 'Portfolio Needs Breakdown' at the same state. See docs/ROADMAP.md WI-2.6.",
     cx: "Low", im: "Medium", af: ["NumbersScreen.jsx (Money flow tab toggle)", "App.jsx (horizonProps.effectivePension, netPortfolioNeed)"], sv: "none"
   },
   {
-    id: 97, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 97, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L2 / WI-2.7 — Arc tap-to-scrub",
     ds: "Touch or hover a year on the arc to see that year's numbers in a floating chip — age, balance, and (in retirement years) draw, growth, and tax. Turns the hero visual into the yearly table's friendly twin.",
     dt: "Pointer/touch handlers on the ArcGraph SVG; inverse-scale x→age; nearest chartData point; chip enriches from retirementWalk.rows when a matching age exists (pass walkRows as optional prop). Desktop hover, mobile touch-drag. Done when chip values equal the Year-by-year table for the same age (spot-check 3 ages); uses only existing series. See docs/ROADMAP.md WI-2.7.",

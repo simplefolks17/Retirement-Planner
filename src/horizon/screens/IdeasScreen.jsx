@@ -75,6 +75,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     statementView,
     // WI-1.3: committed money events shown as dots on the arc
     moneyEvents,
+    // WI-2.7: retirement walk rows feed the arc tap-to-scrub chip
+    retirementWalk,
   } = props;
 
   const [mode, setMode] = useState(initialMode ?? null);
@@ -206,6 +208,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
           showToggle={false}
           scenarioData={activeOverlay}
           events={moneyEvents ?? []}
+          walkRows={retirementWalk?.rows ?? []}
         />
       </div>
 

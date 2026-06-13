@@ -196,6 +196,10 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 **WI-2.2 shipped Jun 13 2026.** Numbers → Budget tab: savings waterfall + allocation stack; `horizonProps.budget` bundle; `optimizedAllocation` memoized for V9 stability.
 **WI-2.3 shipped Jun 13 2026.** Numbers → Accounts tab: 4-bucket bars + milestone pills from `chartMilestones`.
 **WI-2.4 shipped Jun 13 2026.** Numbers → Taxes tab: working/retirement timeline + lifetime composition bar; `horizonProps.taxView` bundle.
+**WI-2.5 shipped Jun 13 2026.** Year-by-year is now the whole life (accumulation + retirement) with Contrib./RMD/Conversion columns. `runSimulation` emits per-year `growth`/`tradGrowth`; `buildAccumulationRows` builds working-year rows on a reconciling after-tax basis (owner decision); `buildYearlyRows` joins the RMD/conversion schedules by age. Reconciliation + value-lock tests added.
+**WI-2.6 shipped Jun 13 2026.** Money-flow tab gains a Working/Retirement toggle; retirement view shows Expenses ← SS + Pension + Portfolio draw. New `calcRetIncomeFlow` (drawdown.js) guarantees the bands sum to `effectiveExpenses`; `horizonProps.retIncomeFlow` bundle.
+**WI-2.7 shipped Jun 13 2026.** Arc tap-to-scrub: pointer/touch handlers + floating chip (age/total, plus draw/growth/tax in retirement) via the pure exported `scrubPointForAge`; optional `walkRows` prop passed by Plan + Ideas.
+**Level 2 exit gate met (Jun 13 2026):** every dollar is traceable through every life stage in Horizon without opening Classic.
 
 ### WI-2.1 (#91) Journey screen — the Flow-Down port
 **Target:** all ~20 Flow-Down metrics visible in Horizon as a 3-chapter story.

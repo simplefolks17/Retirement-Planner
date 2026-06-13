@@ -6,6 +6,37 @@ export function calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePe
   return Math.max(0, effectiveExpenses - householdSS - effectivePension);
 }
 
+// Retirement-phase money-flow bands (WI-2.6): where each dollar of retirement
+// spending comes from — Social Security + pension + portfolio draw. Returned
+// pre-split by the model so the Money-flow tab only formats (rule 10), and the
+// three bands are GUARANTEED to sum to effectiveExpenses (the screen asserts
+// nothing — the invariant lives here, locked by a test).
+//
+// Normal case (income < expenses): ss + pension + portfolioDraw = expenses with
+// portfolioDraw = netPortfolioNeed. Over-funded edge (ss + pension ≥ expenses):
+// netPortfolioNeed is 0, so the income bands are scaled down proportionally to
+// fill exactly expenses (the surplus isn't "funding expenses"); documented so the
+// rare scaled value isn't mistaken for a bug.
+//
+// ss is the SS actually active at retirement (ssAtRet — already age-gated, rule
+// 5b), pension is effectivePension; both are explicit values from the model.
+export function calcRetIncomeFlow({ effectiveExpenses, ss, pension }) {
+  const exp = Math.max(0, effectiveExpenses);
+  const ssRaw = Math.max(0, ss);
+  const penRaw = Math.max(0, pension);
+  const incomeTotal = ssRaw + penRaw;
+  const portfolioDraw = Math.max(0, exp - incomeTotal);
+  // Income covers whatever the portfolio doesn't (== min(incomeTotal, exp)).
+  const covered = exp - portfolioDraw;
+  const scale = incomeTotal > 0 ? covered / incomeTotal : 0;
+  return {
+    expenses: exp,
+    ss: ssRaw * scale,
+    pension: penRaw * scale,
+    portfolioDraw,
+  };
+}
+
 // Returns the withdrawal rate as a percentage.
 export function calcWithdrawalRate(netPortfolioNeed, totalAtRet) {
   return totalAtRet > 0 ? (netPortfolioNeed / totalAtRet) * 100 : 0;

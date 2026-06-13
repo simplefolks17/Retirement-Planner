@@ -104,6 +104,49 @@ export function calcChartMilestones({ chartData, currentAge, retirementAge, life
   return { rows: sorted, peakTotal };
 }
 
+// ── Accumulation display rows for the Year-by-year table (WI-2.5) ────────────
+// Working-year rows on the SAME after-tax basis as the rest of Horizon (the
+// Trad 401k is shown × (1 − marginal); Roth/HSA full; Taxable already net of
+// LTCG drag). Both `contrib` and `growth` carry the same after-tax factor so the
+// row reconciles exactly:  prevTotal + contrib + growth = total  (locked by a
+// test). `growth` here is the gross simulation growth minus the tax wedge on the
+// Trad 401k's share (growth − marginal × tradGrowth); `contrib` is the gross
+// contribution minus the wedge on the 401k deferral (contrib − marginal × c401k).
+//
+// Returns rows for ages currentAge+1 … safeRetAge (the building years up to and
+// including the nest-egg year). Retirement-phase rows come from the walk
+// (buildYearlyRows) and start the year after. When already retired
+// (safeRetAge === currentAge) there are no rows and this returns [].
+//
+// Each row: { age, year, total, contrib, growth, draw: 0, tax: 0,
+//             rmd: null, conversion: null, phase: "accum" }.
+// draw/tax are an explicit 0 (no withdrawals/tax paid while accumulating);
+// rmd/conversion are null (not applicable) so the screen renders "—".
+export function buildAccumulationRows({ simData, fedMarginal, currentAge, currentYear, safeRetAge }) {
+  const m = fedMarginal ?? 0;
+  return (simData ?? [])
+    .filter(d => d.age <= safeRetAge)
+    .map(d => {
+      const grossContrib = (d.c401k ?? 0) + (d.cRoth ?? 0) + (d.cTaxable ?? 0) + (d.cHSA ?? 0);
+      // After-tax basis: the Trad 401k share of both contributions and growth is
+      // discounted by the same marginal factor used for the displayed balance.
+      const contrib = Math.round(grossContrib - m * (d.c401k ?? 0));
+      const growth  = Math.round((d.growth ?? 0) - m * (d.tradGrowth ?? 0));
+      return {
+        age: d.age,
+        year: currentYear + (d.age - currentAge),
+        total: sumAccountRow(d),
+        contrib,
+        growth,
+        draw: 0,
+        tax: 0,
+        rmd: null,
+        conversion: null,
+        phase: "accum",
+      };
+    });
+}
+
 // Accumulation chart rows ({age, total}) from current age through retirement — the
 // portfolio's growth phase, and the starting balance for the retirement walk.
 // When already retired (safeRetAge === currentAge there are no accumulation years),

@@ -83,6 +83,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     signals,
     // WI-1.3: committed money events shown as dots on the arc
     moneyEvents,
+    // WI-2.7: retirement walk rows feed the arc tap-to-scrub chip
+    retirementWalk,
   } = props;
 
   const [arcView, setArcView]       = useState("arc");
@@ -169,6 +171,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           onViewChange={setArcView}
           showToggle={!isMobile}
           events={moneyEvents ?? []}
+          walkRows={retirementWalk?.rows ?? []}
         />
       </div>
 

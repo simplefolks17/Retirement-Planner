@@ -209,6 +209,57 @@ describe("runSimulation — contribution before growth order", () => {
   });
 });
 
+describe("runSimulation — per-year growth fields (WI-2.5)", () => {
+  it("year-1 tradGrowth = (bal401k + c401k) * r; growth sums all accounts (gross)", () => {
+    const r = 0.07;
+    const rows = runSimulation({
+      totalYears: 1, currentAge: 30, currentIncome: 100_000, incomeGrowth: 0,
+      filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0,
+      returnRate: r * 100,
+      bal401k: 100_000, balRoth: 20_000, balTaxable: 0, balHSA: 5_000,
+      contrib401k: 10_000, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+      contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+      calcEmployerMatchFn: () => 0,
+    });
+    const tradGrowth = (100_000 + 10_000) * r;   // 7,700
+    const rothGrowth = 20_000 * r;               // 1,400
+    const hsaGrowth  = 5_000 * r;                // 350
+    expect(rows[0].tradGrowth).toBe(Math.round(tradGrowth));
+    // taxable is 0 here → growth = trad + roth + hsa (gross, no tax factor)
+    expect(rows[0].growth).toBe(Math.round(tradGrowth + rothGrowth + hsaGrowth));
+  });
+
+  it("each gross balance reconciles: prevBalance + contrib + accountGrowth = nextBalance", () => {
+    const rows = defaultSim();
+    // Trad 401k gross reconciliation across the first 5 years.
+    for (let i = 1; i < 5; i++) {
+      const prev = rows[i - 1].tradGross;
+      const next = rows[i].tradGross;
+      const contrib = rows[i].c401k;
+      const growth = rows[i].tradGrowth;
+      // prev + contrib + growth == next (within rounding)
+      expect(Math.abs((prev + contrib + growth) - next)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("after-tax basis reconciles: prevTotal + (contrib − m·c401k) + (growth − m·tradGrowth) = nextTotal", () => {
+    const m = 0.24; // a representative marginal rate
+    const rows = defaultSim();
+    const afterTaxTotal = (row) =>
+      Math.round(row.tradGross * (1 - m)) + row["Roth IRA"] + row["Taxable"] + row["HSA"];
+    for (let i = 1; i < 6; i++) {
+      const prev = afterTaxTotal(rows[i - 1]);
+      const next = afterTaxTotal(rows[i]);
+      const r = rows[i];
+      const contribAT = (r.c401k + r.cRoth + r.cTaxable + r.cHSA) - m * r.c401k;
+      const growthAT  = r.growth - m * r.tradGrowth;
+      // The displayed Year-by-year row must add up on the after-tax basis.
+      // Small tolerance covers per-account vs summed rounding (values are 6-figure).
+      expect(Math.abs((prev + contribAT + growthAT) - next)).toBeLessThan(10);
+    }
+  });
+});
+
 describe("runSimulation — income compounding", () => {
   it("employee deferral in year 2 = contrib * (1 + incomeGrowth/100)", () => {
     const rows = runSimulation({

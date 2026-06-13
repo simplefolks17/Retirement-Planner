@@ -12,7 +12,7 @@ import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { buildRetirementDrawdown, calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
@@ -24,7 +24,7 @@ import { findOptimalConversion } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { calcMilestones, buildAccumChart, calcChartMilestones } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
@@ -417,6 +417,14 @@ export default function App() {
     () => Object.fromEntries(conversionSim.years.map(y => [y.age, y.tax])),
     [conversionSim]);
 
+  // WI-2.5: amount maps (not tax) for the Year-by-year RMD / Conversion columns.
+  const rmdAmountByAge = useMemo(
+    () => Object.fromEntries(rmdDataWithTax.map(d => [d.age, d.rmd])),
+    [rmdDataWithTax]);
+  const conversionAmountByAge = useMemo(
+    () => Object.fromEntries(conversionSim.years.map(y => [y.age, y.conversion])),
+    [conversionSim]);
+
   // Shared inputs for the ONE retirement-phase walk (buildRetirementDrawdown).
   // The chart, the headline longevity, and the Flow-Down waterfall all consume
   // this so they can never diverge (the BUG-31 root cause). SS/pension gate
@@ -704,10 +712,22 @@ export default function App() {
     extraMatch, adjustedNetConversionBenefit, budgetDeficit,
   }), [extraMatch, adjustedNetConversionBenefit, budgetDeficit]);
 
-  // Year-by-year table rows: walk rows + calendar year (age→year math in the model).
-  const yearlyRows = useMemo(() => buildYearlyRows({
-    rows: retirementWalk.rows, currentAge, currentYear: new Date().getFullYear(),
-  }), [retirementWalk, currentAge]);
+  // Year-by-year table rows (WI-2.5): the WHOLE life, accumulation + retirement.
+  // Accumulation rows (buildAccumulationRows) are on the after-tax basis with a
+  // reconciling contrib/growth split; retirement rows (buildYearlyRows) carry the
+  // walk's draw/tax/growth plus the RMD + conversion driver columns. age→year and
+  // all per-row math live in the model (rule 10); the screen only formats.
+  const currentYear = new Date().getFullYear();
+  const yearlyRows = useMemo(() => [
+    ...buildAccumulationRows({
+      simData, fedMarginal, currentAge, currentYear, safeRetAge,
+    }),
+    ...buildYearlyRows({
+      rows: retirementWalk.rows, currentAge, currentYear,
+      rmdByAge: rmdAmountByAge, conversionByAge: conversionAmountByAge,
+    }),
+  ], [simData, fedMarginal, currentAge, currentYear, safeRetAge,
+      retirementWalk, rmdAmountByAge, conversionAmountByAge]);
 
   // WI-2.2 (#92): Budget tab bundle — savings waterfall + allocation stack.
   // All values already computed above; memoized so horizonProps stays identity-stable (V9).
@@ -736,6 +756,14 @@ export default function App() {
     convTaxTotal: conversionSim.totalTax,
   }), [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
        rmdTaxBite, conversionSim]);
+
+  // WI-2.6 (#96): retirement-phase money-flow bands (SS + pension + portfolio draw).
+  // Pre-split by the model and guaranteed to sum to effectiveExpenses; memoized so
+  // horizonProps stays identity-stable (V9). Uses ssAtRet (the age-gated SS active
+  // at retirement) so the bands match the netPortfolioNeed basis (rule 5b).
+  const retIncomeFlow = useMemo(() => calcRetIncomeFlow({
+    effectiveExpenses, ss: ssAtRet, pension: effectivePension,
+  }), [effectiveExpenses, ssAtRet, effectivePension]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
@@ -780,6 +808,8 @@ export default function App() {
     // WI-2.4 (#94): Taxes tab — phase rates + lifetime composition.
     // Memoized separately as taxViewBundle (V9) so this object reference is stable.
     taxView: taxViewBundle,
+    // WI-2.6 (#96): retirement money-flow bands — sum exactly to effectiveExpenses.
+    retIncomeFlow,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -791,7 +821,9 @@ export default function App() {
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
-       budgetView, taxViewBundle]);
+       budgetView, taxViewBundle,
+       // WI-2.6 retirement money-flow bands (memoized separately):
+       retIncomeFlow]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

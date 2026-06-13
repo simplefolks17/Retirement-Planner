@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (390 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (412 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (117 items, 47 done, 70 planned)
+- Feature backlog: `feature-tracker.html` (117 items, 50 done, 67 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -423,10 +423,43 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   `src/horizon/__tests__/numbers-tabs.test.js` (+20 tests across 3 describes).
   Golden master untouched; no model logic changed.
   370 → **390** tests. Tracker: #92 + #93 + #94 done (47 done, 70 planned).
+- Level 2c — Year-by-year + money flow + arc scrub shipped (Jun 13 2026,
+  WI-2.5/#95, WI-2.6/#96, WI-2.7/#97): completes the Level 2 "Understand" exit gate —
+  a user can trace every dollar through every life stage without opening Classic. No
+  math added to `src/horizon/` (rule 10); golden master untouched.
+  - WI-2.5 (#95) — Year-by-year is now the **whole life** (accumulation + retirement),
+    9 columns (Age | Year | Portfolio | Contrib. | Growth | Draw | Tax | RMD | Conversion).
+    `runSimulation` now emits per-year **gross `growth` + `tradGrowth`** (locked by a
+    test); `buildAccumulationRows` (`accumulation.js`) builds the working-year rows on
+    the **after-tax basis** with a **reconciling** contrib/growth split — the Trad 401k
+    share of both is discounted by the same marginal factor as the displayed balance, so
+    `prevTotal + contrib + growth = total` holds (locked by a reconciliation test). This
+    was an owner decision after a trust review: a pre-tax growth figure beside an
+    after-tax Portfolio is a trust bug, so the table is one consistent ledger. RMD +
+    Conversion columns join `rmdDataWithTax.rmd` and `conversionSim.years.conversion` by
+    age via the extended `buildYearlyRows` (null → "—", never synthesized 0). A footer
+    note explains the after-tax growth.
+  - WI-2.6 (#96) — Money-flow tab gains a **Working / Retirement** toggle; the retirement
+    view shows Expenses ← Social Security + Pension + Portfolio draw. New model
+    `calcRetIncomeFlow` (`drawdown.js`) pre-splits the bands and **guarantees they sum to
+    `effectiveExpenses`** (uses ssAtRet, the age-gated SS — rule 5b); the over-funded edge
+    scales income bands down so the sum still equals expenses. `retIncomeFlow` bundle in
+    `horizonProps` (memoized, V9).
+  - WI-2.7 (#97) — Arc **tap-to-scrub**: pointer/touch handlers on `ArcGraph`'s SVG;
+    inverse x→age (layout math), nearest charted year via pure exported `scrubPointForAge`,
+    floating chip with age + total (plus draw/growth/tax when a `retirementWalk.rows` entry
+    exists). New optional `walkRows` prop, passed by Plan + Ideas. No-scrub renders
+    pixel-identical to before; uses only existing series.
+  - Cross-app reconciliation audit (owner request): the Year-by-year table was the only
+    "laid-out math" surface that didn't reconcile — now fixed. The Budget waterfall
+    (running balances) and the Statement waterfall (documented residual `flowKeep`) already
+    reconcile by model construction; Journey's growth is the independent `Σ(row.growth)`
+    (rule 2b). No further changes needed.
+  390 → **412** tests (+22). Tracker: #95 + #96 + #97 done (50 done, 67 planned).
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (390 tests)
+- `npm test` — run model + formatter + render-smoke tests (412 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

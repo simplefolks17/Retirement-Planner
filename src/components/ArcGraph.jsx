@@ -99,6 +99,29 @@ function totalAtAge(chartData, age) {
   return chartData[chartData.length - 1].total;
 }
 
+// ── Scrub lookup (WI-2.7) ─────────────────────────────────────────────────────
+// Given a raw (possibly fractional) age from a pointer position, snap to the
+// nearest charted year and return that year's numbers for the floating chip.
+// Pure (no pixel math) so it can be unit-tested against the Year-by-year table:
+//   { age, total, walk }  where walk = { draw, growth, tax } when a retirement
+//   walk row exists for that age, else null (accumulation years have no draw/tax).
+// total comes from the same chartData series the arc draws, so the chip can never
+// disagree with the curve. Returns null when there is no data.
+export function scrubPointForAge(chartData, walkRows, rawAge) {
+  if (!chartData?.length) return null;
+  // Snap to the nearest charted age (the series is yearly).
+  let nearest = chartData[0];
+  for (const d of chartData) {
+    if (Math.abs(d.age - rawAge) < Math.abs(nearest.age - rawAge)) nearest = d;
+  }
+  const wr = (walkRows ?? []).find(r => r.age === nearest.age);
+  return {
+    age: nearest.age,
+    total: nearest.total,
+    walk: wr ? { draw: Math.round(wr.draw), growth: Math.round(wr.growth), tax: Math.round(wr.tax) } : null,
+  };
+}
+
 // ── Shared scales ─────────────────────────────────────────────────────────────
 function makeScales(H, pad, ageMin, ageMax, vmax) {
   const top = pad.t;
@@ -525,6 +548,7 @@ export default function ArcGraph({
   lifeExpect = 90,
   events = [],
   contribSeries = null,
+  walkRows = [],
   height = 300,
   fillHeight = false,
   glow = true,
@@ -568,6 +592,31 @@ export default function ArcGraph({
 
   const gid = `arc-${activeView}`;
 
+  // ── Tap-to-scrub (WI-2.7) ───────────────────────────────────────────────────
+  // Touch/drag (mobile) or hover (desktop) over the chart → a floating chip with
+  // that year's age + total, plus draw/growth/tax when a retirement walk row
+  // exists. Inverse-scaling x→age is pure layout math; the displayed numbers come
+  // straight from chartData / walkRows via scrubPointForAge (no new model math).
+  const [scrub, setScrub] = useState(null);
+  const onScrubMove = (clientX) => {
+    const el = boxRef.current;
+    if (!el || !validData.length) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const xVB = ((clientX - rect.left) / rect.width) * VW;          // px → viewBox x
+    const plot = VW - pad.l - pad.r;
+    const rawAge = ageMin + ((xVB - pad.l) / plot) * (ageMax - ageMin);  // inverse xOf
+    const pt = scrubPointForAge(validData, walkRows, rawAge);
+    if (pt) setScrub(pt);
+  };
+  const scrubHandlers = {
+    onPointerMove: (e) => onScrubMove(e.clientX),
+    onPointerDown: (e) => onScrubMove(e.clientX),
+    onPointerLeave: () => setScrub(null),
+    onTouchMove: (e) => { if (e.touches[0]) onScrubMove(e.touches[0].clientX); },
+    onTouchEnd: () => setScrub(null),
+  };
+
   const overlayLayer = (
     <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
       {activeView === "arc" && validData.length >= 2 && (
@@ -604,10 +653,11 @@ export default function ArcGraph({
         </div>
       )}
 
-      <div ref={boxRef} style={{
+      <div ref={boxRef} {...scrubHandlers} style={{
         position: "relative", width: "100%",
         height: fillHeight ? "auto" : height, flex: fillHeight ? 1 : "none", minHeight: fillHeight ? 200 : height,
-        borderRadius: 16, overflow: "hidden", border: `1px solid ${t.line}`, background: t.surf
+        borderRadius: 16, overflow: "hidden", border: `1px solid ${t.line}`, background: t.surf,
+        touchAction: "pan-y", cursor: validData.length ? "crosshair" : "default",
       }}>
         <svg width="100%" height="100%" viewBox={`0 0 ${VW} ${vbH}`} preserveAspectRatio="none"
           style={{ display: "block", position: "absolute", inset: 0 }}>
@@ -654,8 +704,40 @@ export default function ArcGraph({
               </g>
             );
           })}
+          {/* WI-2.7: scrub indicator — vertical line + dot at the touched year */}
+          {scrub && (
+            <g pointerEvents="none">
+              <line x1={s.xOf(scrub.age)} x2={s.xOf(scrub.age)} y1={s.top} y2={s.bot}
+                stroke={t.ink} strokeWidth="1" opacity="0.28" strokeDasharray="3 3"
+                vectorEffect="non-scaling-stroke" />
+              <circle cx={s.xOf(scrub.age)} cy={s.yOf(scrub.total)} r="5.5"
+                fill={t.accent} stroke={t.surf} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            </g>
+          )}
         </svg>
         {overlayLayer}
+        {/* WI-2.7: floating chip — age + total, plus draw/growth/tax in retirement.
+            Clamped horizontally so it stays on-screen near either edge. */}
+        {scrub && (
+          <div style={{
+            position: "absolute",
+            left: px(Math.min(Math.max(s.xOf(scrub.age), s.pad.l + 60), VW - s.pad.r - 60)),
+            top: py(s.yOf(scrub.total), vbH),
+            transform: "translate(-50%,-130%)", pointerEvents: "none", zIndex: 3,
+            background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 10,
+            padding: "6px 11px", boxShadow: "0 4px 16px rgba(0,0,0,.13)", whiteSpace: "nowrap",
+          }}>
+            <div style={{ font: `500 9.5px ${HF}`, color: t.mut }}>Age {scrub.age}</div>
+            <div style={{ font: `700 13px ${HM}`, color: t.ink }}>{fmtMoney(scrub.total)}</div>
+            {scrub.walk && (
+              <div style={{ font: `500 9.5px ${HM}`, color: t.faint, marginTop: 2 }}>
+                {scrub.walk.draw > 0 ? `−${fmtMoney(scrub.walk.draw)} draw` : "no draw"}
+                {scrub.walk.growth > 0 ? ` · +${fmtMoney(scrub.walk.growth)} growth` : ""}
+                {scrub.walk.tax > 0 ? ` · −${fmtMoney(scrub.walk.tax)} tax` : ""}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
