@@ -7,7 +7,43 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-*None — all tracked bugs are currently resolved (see below). Add new entries here, at the top, when found.*
+### BUG-35 — Traditional 401k is taxed twice: after-tax retirement seed **and** RMD/conversion tax on the gross balance
+
+**Reported:** 2026-06-13 (found while verifying Year-by-year reconciliation during Level 2c / WI-2.5) · **Status:** OPEN — not fixed (any fix moves locked golden-master headline numbers and touches the single shared retirement walk that everything consumes; needs an owner-approved, dedicated change).
+
+**Severity:** Correctness — likely **understates the retirement portfolio and overstates lifetime tax** (the plan reads more conservatively / shorter-lived than it should). Not a display-reconciliation bug: every laid-out row still adds up. The double-count hides *inside* an internally-consistent ledger.
+
+**Symptom:**
+The Traditional 401k has its tax taken out **twice** along the timeline:
+1. **Once at the retirement seam** — the per-year "Trad 401k" balance is displayed (and, crucially, *carried into retirement*) as an after-tax figure: `tradGross × (1 − fedMarginal)` (App.jsx:187). At the default state that shrinks the Trad bucket by the working marginal rate.
+2. **Again, year by year in retirement** — the retirement walk then charges per-year **RMD tax** (and Roth-**conversion** tax) computed on the **gross** Trad balance (`rmdTaxBite` = $683,974 at default), draining the pool a second time for the same dollars.
+
+So the same pre-tax 401k dollars are discounted once up front *and* taxed again as they come out.
+
+**Root cause:**
+The single retirement-phase walk (`buildRetirementDrawdown`, the one place the portfolio is walked — BUG-31 consolidation) is **seeded from the after-tax total** but **pays tax computed on the gross total**:
+
+- `totalAtRet` / the walk's `startBal` come from `accumChart` → `buildAccumChart` → `sumAccountRow`, which sums the **after-tax** `"Trad 401k"` key (App.jsx:187, `accumulation.js`). So the seed is net of a `fedMarginal` haircut on the Trad bucket. (App.jsx:265, 457, 465–467.)
+- The RMD schedule is built from `tradGrossAtRetirement = retRow.tradGross + addlPreTaxBal` — the **gross** Trad balance (App.jsx:315, `calcRMDProjection`) — and `calcRMDTaxSchedule` (App.jsx:335, `retirement-tax.js`) computes the per-year RMD tax on that gross amount. The Roth-conversion sim is likewise driven by the gross `tradBal` (App.jsx:388, `conversion-evaluation.js` → `calcConversionSim`).
+- That tax is fed to the walk via `rmdTaxByAge` / `conversionTaxByAge` and leaks from the (already-shrunk) pool: `balEnd = balStart·(1+rReal) − draw − tax`.
+
+This collides with **CLAUDE.md rule 2b**, whose tax-honest premise is that *"only the tax leaks from the single pool"* — which is correct only if that pool is the **gross** (pre-tax) balance. Because the pool is seeded after-tax, rule 2b's single tax leak becomes a *second* taxation. The two taxations aren't even the same rate: the seam haircut uses `fedMarginal` (the **working** marginal rate), while the RMD/conversion tax uses bracket-accurate **retirement** rates.
+
+**Why this is hard to fix (the owner's "very complex" concern — confirmed):**
+The after-tax `"Trad 401k"` value and the single retirement walk fan out into nearly every headline and screen, so a fix can't be local. Surfaces that consume the affected numbers:
+- **`retVals` / `totalAtRet`** (after-tax) → Plan "nest egg", Numbers Statement + Accounts tabs, the arc, `withdrawalRate`, `balAt90`.
+- **`retirementWalk`** (seeded after-tax, taxed on gross) → `yearsSustained` / `isSustainable` (headline longevity), `totalChartData` (the whole arc), `calcFlowDown` (Journey), `calcPlanProgress` / `calcPlanDrivers`, `calcSignals`, the Year-by-year ledger, `calcRetIncomeFlow`.
+- **RMD/conversion gross basis** → `rmdTaxBite`, `effectiveRMDTaxRate`, `netConversionBenefit`, the optimizer, IRMAA/ACA exposure.
+
+Candidate directions (for review — **do not assume one is correct**):
+- **(A) Seed the walk from the gross portfolio** and let the per-year RMD/conversion tax be the *single* place tax leaks (most consistent with rule 2b's "one tax-honest walk"). The after-tax `"Trad 401k"` becomes purely an accumulation-phase comparability device for the chart/Statement/Accounts and **must not** seed the walk. Largest golden-master move (plan looks healthier — less double-tax).
+- **(B) Keep the after-tax seed** but stop charging gross RMD/conversion tax against it (e.g. tax only the *incremental* gain, or treat the Trad as already-taxed). Smaller conceptual change but muddies the "tax-honest" model and the bracket-accurate RMD work (BUG-29).
+- Either way: a deliberate, dated golden-master update across many locked values, with before/after longevity quantified at the default state, in a **dedicated PR** (not bundled with display work).
+
+**Affected files (for the eventual fix):**
+`src/App.jsx` (187 — the after-tax `"Trad 401k"` normalization; 265/457/465–467 — `totalAtRet` / `accumChart` / `retirementWalk` seed; 310–319/388 — gross `tradGrossAtRetirement` RMD/conversion basis; 335 — `calcRMDTaxSchedule`), `src/model/accumulation.js` (`sumAccountRow`, `buildAccumChart`), `src/model/retirement-drawdown.js` (`buildRetirementDrawdown`), `src/model/retirement-tax.js` (`calcRMDTaxSchedule`), `src/model/conversion-evaluation.js` / `roth-conversion.js` (`calcConversionSim`), and `src/model/__tests__/golden-master.test.js` plus the walk/longevity/flow-down tests.
+
+**Not a regression of Level 2c:** the Year-by-year table shipped in WI-2.5 reconciles correctly (accumulation rows add up on the after-tax basis; retirement rows add up via the explicit Tax column). This bug is the *pre-existing* model basis mismatch the reconciliation review surfaced, not something the new table introduced.
 
 ---
 
