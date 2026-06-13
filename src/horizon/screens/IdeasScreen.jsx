@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
@@ -58,7 +58,11 @@ function ScenStatCard({ t, label, baseVal, scenVal, warm }) {
   );
 }
 
-export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, isMobile = false }) {
+// initialMode (optional, WI-1.1): mode panel to open on arrival when another
+// screen deep-links here via navigate("ideas", modeId) — e.g. the Plan
+// "Retire at" stat card opens the "dials" panel. Mode buttons still control
+// the state after arrival.
+export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, isMobile = false, initialMode = null }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, effectiveExpenses, balAt90,
@@ -69,10 +73,15 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     setMoneyEvents,
     // WI-0.1: model-provided monthly figure for the spend dial seed
     statementView,
+    // WI-1.3: committed money events shown as dots on the arc
+    moneyEvents,
   } = props;
 
-  const [mode, setMode] = useState(null);
+  const [mode, setMode] = useState(initialMode ?? null);
   const [activeScen, setActiveScen] = useState(null);
+
+  // Adopt a new deep-link target if one arrives while already mounted.
+  useEffect(() => { if (initialMode) setMode(initialMode); }, [initialMode]);
   const [placedEvents, setPlacedEvents] = useState([]);
 
   // Dial offsets (relative to current props so they stay useful after a commitPlan)
@@ -196,6 +205,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
           activeView="arc"
           showToggle={false}
           scenarioData={activeOverlay}
+          events={moneyEvents ?? []}
         />
       </div>
 

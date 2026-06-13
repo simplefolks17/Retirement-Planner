@@ -26,6 +26,11 @@ export function calcMegaBackdoorGrowth({ megaCapacity, returnRate, years = [5, 1
 // Returns the annual savings capacity and related budget metrics.
 // grossAfterTax: from calcGrossAfterTax (income minus all taxes)
 // livingExpenses: null → auto-derived as grossAfterTax - currentContribTotal
+// budgetDeficit: how far expenses + contributions overshoot after-tax income
+// (the unclamped negative side of availableSurplus, as a positive dollar
+// amount; 0 when the budget balances). ONE definition — consumed by the
+// Plan-screen deficit signal (signals.js, WI-1.2) and by Classic's deficit
+// warning copy; the WI-2.2 Budget tab will reuse it.
 export function calcSavingsCapacity({
   grossAfterTax,
   contrib401k,
@@ -38,7 +43,8 @@ export function calcSavingsCapacity({
   const effectiveLiving     = livingExpenses ?? Math.max(0, grossAfterTax - currentContribTotal);
   const savingsCapacity     = Math.max(0, grossAfterTax - effectiveLiving);
   const availableSurplus    = Math.max(0, savingsCapacity - currentContribTotal);
-  return { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus };
+  const budgetDeficit       = Math.max(0, Math.round(effectiveLiving + currentContribTotal - grossAfterTax));
+  return { currentContribTotal, effectiveLiving, savingsCapacity, availableSurplus, budgetDeficit };
 }
 
 // Returns the optimized allocation of surplus across accounts in IRS-priority order.

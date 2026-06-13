@@ -45,6 +45,17 @@ describe("calcSavingsCapacity", () => {
     // grossAfterTax (80K) - effectiveLiving (60K) = 20K = currentContribTotal
     expect(savingsCapacity).toBe(currentContribTotal);
   });
+
+  it("budgetDeficit (WI-1.2): 0 when the budget balances; the true overshoot otherwise", () => {
+    // Auto-derived expenses, income covers contribs → no deficit
+    expect(calcSavingsCapacity(base).budgetDeficit).toBe(0);
+    // Explicit expenses 70K + contribs 20K vs 80K after-tax → $10K deficit.
+    // Note this is the UNCLAMPED shortfall — availableSurplus reads 0 here
+    // (clamped), which is why the deficit is its own named field.
+    const d = calcSavingsCapacity({ ...base, livingExpenses: 70_000 });
+    expect(d.availableSurplus).toBe(0);
+    expect(d.budgetDeficit).toBe(10_000);
+  });
 });
 
 describe("calcOptimizedAllocation — priority order", () => {

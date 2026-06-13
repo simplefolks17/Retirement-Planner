@@ -15,7 +15,10 @@
 //   fillHeight (bool — grow to fill parent instead of fixed height),
 //   glow (bool), strokeWidth (number), activeView, onViewChange, showToggle,
 //   compact (bool — fewer pills/ticks for small viewports),
-//   scenarioData [{age,total}] (optional dotted overlay on the arc view).
+//   scenarioData [{age,total}] (optional dotted overlay on the arc view),
+//   events [{age,label,isInflow}] (optional, WI-1.3/#90) — committed
+//     moneyEvents shown as dots on the arc; inflow = good token, outflow = warm.
+//     events=[] renders pixel-identical to no prop (no extra chrome).
 
 import React, { useMemo, useRef, useState, useLayoutEffect } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
@@ -520,6 +523,7 @@ export default function ArcGraph({
   currentAge = 30,
   retirementAge = 65,
   lifeExpect = 90,
+  events = [],
   contribSeries = null,
   height = 300,
   fillHeight = false,
@@ -632,6 +636,24 @@ export default function ArcGraph({
                 strokeDasharray="8 5" opacity="0.85" vectorEffect="non-scaling-stroke" />
             ) : null;
           })()}
+          {/* WI-1.3 (#90): money-event markers — small dot on the arc at each
+              committed event age. Inflow = good token (green), outflow = warm
+              (amber). A <title> child provides hover text. events=[] → nothing
+              rendered (pixel-identical to today — no prop needed). */}
+          {activeView === "arc" && events.map((ev) => {
+            const cx = s.xOf(ev.age);
+            const cy = s.yOf(totalAtAge(validData, ev.age));
+            if (cx < s.pad.l || cx > VW - s.pad.r) return null;
+            const color = ev.isInflow ? t.good : t.warm;
+            return (
+              <g key={`ev-${ev.age}-${ev.label}`}>
+                <circle cx={cx} cy={cy} r="5" fill={color} stroke={t.surf} strokeWidth="1.5"
+                  opacity="0.9" vectorEffect="non-scaling-stroke">
+                  <title>{ev.label} · age {ev.age}</title>
+                </circle>
+              </g>
+            );
+          })}
         </svg>
         {overlayLayer}
       </div>

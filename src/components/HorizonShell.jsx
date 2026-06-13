@@ -3,7 +3,7 @@
 // Screens: Plan · Ideas · The numbers · Settings · Someday
 // LAYOUT/STYLING ONLY — no calculation logic lives here.
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
@@ -30,17 +30,96 @@ function Logo({ t }) {
   );
 }
 
-function OnTrackPill({ t, isSustainable }) {
+// WI-1.1 (#88): tapping the pill opens a popover explaining the verdict via the
+// 3 drivers from calcPlanDrivers (passed in as `drivers` — planView.drivers).
+// COPY + FORMATTING ONLY here: every number, comparison, and ok flag comes from
+// the model rows (rule 10); null edge states (sustainedYears, savingsRatePct,
+// ok) are rendered as designed text, never synthesized numbers.
+function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
+  const [open, setOpen] = useState(false);
   const color = isSustainable ? t.good : t.warm;
   const label = isSustainable ? "On track" : "Needs attention";
+
+  const rows = (drivers ?? []).map(d => {
+    if (d.id === "withdrawal") return {
+      ...d,
+      name: "Withdrawal rate",
+      value: `${d.withdrawalRatePct}%`,
+      note: `you draw ${d.withdrawalRatePct}% of savings a year · guideline ${d.guidelinePct}%`,
+    };
+    if (d.id === "longevity") return {
+      ...d,
+      name: "Money lasts",
+      value: d.sustainedYears == null ? "beyond your plan" : `${d.sustainedYears} yrs`,
+      note: `your retirement needs ${d.horizonYears} yrs of income`,
+    };
+    return {
+      ...d,
+      name: "Savings rate",
+      value: d.savingsRatePct == null ? "—" : `${d.savingsRatePct}%`,
+      note: d.savingsRatePct == null
+        ? "add your income to see this"
+        : `of take-home saved · guideline ${d.guidelinePct}%`,
+    };
+  });
+
   return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 8,
-      padding: "6px 12px", borderRadius: 999,
-      border: `1px solid ${color}55`, background: `${color}18`
-    }}>
-      <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
-      <span style={{ font: `600 12px ${HF}`, color }}>{label}</span>
+    <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      {/* clickable hit area — minHeight keeps the touch target ≥ 44px on mobile
+          while the visual pill inside stays compact */}
+      <span
+        onClick={() => setOpen(o => !o)}
+        role="button"
+        aria-expanded={open}
+        style={{
+          display: "inline-flex", alignItems: "center", cursor: "pointer",
+          minHeight: isMobile ? 44 : undefined,
+        }}>
+        <span style={{
+          display: "inline-flex", alignItems: "center", gap: 8,
+          padding: "6px 12px", borderRadius: 999,
+          border: `1px solid ${color}55`, background: `${color}18`
+        }}>
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
+          <span style={{ font: `600 12px ${HF}`, color }}>{label}</span>
+        </span>
+      </span>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", right: 0, marginTop: 8, zIndex: 140,
+          width: 300, background: t.surf, border: `1px solid ${t.line2}`,
+          borderRadius: 14, boxShadow: "0 14px 40px rgba(0,0,0,.16)",
+          padding: "12px 15px",
+        }}>
+          <div style={{
+            display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4,
+          }}>
+            <span style={{ font: `600 12.5px ${HF}`, color: t.ink }}>What drives this</span>
+            <span onClick={() => setOpen(false)} role="button" aria-label="close"
+              style={{ cursor: "pointer", color: t.faint, font: `400 13px ${HF}`, padding: "2px 4px" }}>✕</span>
+          </div>
+          {rows.map(r => (
+            <div key={r.id} style={{ padding: "9px 0", borderTop: `1px solid ${t.line}` }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span style={{
+                  width: 7, height: 7, borderRadius: 999, flexShrink: 0,
+                  background: r.ok == null ? t.faint : r.ok ? t.good : t.warm,
+                  alignSelf: "center",
+                }} />
+                <span style={{ flex: 1, font: `500 12.5px ${HF}`, color: t.ink }}>{r.name}</span>
+                <span style={{
+                  font: `600 13px ${HM}`,
+                  color: r.ok == null ? t.faint : r.ok ? t.good : t.warm,
+                }}>{r.value}</span>
+              </div>
+              <div style={{ font: `400 11.5px ${HF}`, color: t.mut, marginTop: 3, paddingLeft: 15 }}>
+                {r.note}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </span>
   );
 }
@@ -336,11 +415,22 @@ const SCREENS = [
 export default function HorizonShell({ onShowClassic, ...props }) {
   const { t, arcStyle } = useTheme();
   const [screen, setScreen] = useState("plan");
+  // WI-1.1: optional sub-destination within a screen (a Numbers tab id, or an
+  // Ideas mode id). Set by navigate(screenId, subView); cleared by plain
+  // navigation so manual tab choices aren't overridden on the next visit.
+  const [subView, setSubView] = useState(null);
   const [showOnboarding, setShowOnboarding] = useState(
     () => safeGet("hz-onboarded") !== "1"
   );
 
-  const { isSustainable, retirementAge } = props;
+  // Single navigation entry point, passed to every screen alongside t/props.
+  // Stat cards, the signals strip, and future deep-links all route through it.
+  const navigate = useCallback((screenId, sub) => {
+    setScreen(screenId);
+    setSubView(sub ?? null);
+  }, []);
+
+  const { isSustainable, retirementAge, planView } = props;
   const glow = arcStyle === "glow";
   const strokeWidth = arcStyle === "vivid" ? 5 : 3;
 
@@ -396,9 +486,10 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             background: t.bg, flexShrink: 0,
           }}>
             <Logo t={t} />
-            {!isMobile && <TabBar t={t} tabs={SCREENS} active={screen} onChange={setScreen} />}
+            {!isMobile && <TabBar t={t} tabs={SCREENS} active={screen} onChange={navigate} />}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {!isMobile && <OnTrackPill t={t} isSustainable={isSustainable} />}
+              <OnTrackPill t={t} isSustainable={isSustainable}
+                drivers={planView.drivers} isMobile={isMobile} />
               <button onClick={onShowClassic} style={{
                 font: `400 11px ${HF}`, color: t.faint,
                 background: "transparent", border: `1px solid ${t.line}`,
@@ -412,11 +503,11 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             flex: 1, display: "flex", flexDirection: "column", minHeight: 0,
             paddingBottom: isMobile ? 60 : 0,
           }}>
-            {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} />}
-            {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} />}
-            {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} />}
-            {screen === "someday"  && <SomedayScreen t={t} props={props} />}
-            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity}
+            {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} />}
+            {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} initialMode={subView} />}
+            {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialTab={subView} />}
+            {screen === "someday"  && <SomedayScreen t={t} props={props} navigate={navigate} />}
+            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} navigate={navigate}
               onResetOnboarding={() => { safeSet("hz-onboarded", ""); setShowOnboarding(true); }} />}
           </div>
 
@@ -430,7 +521,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               {SCREENS.map(({ id, short, icon }) => {
                 const on = screen === id;
                 return (
-                  <div key={id} onClick={() => setScreen(id)} style={{
+                  <div key={id} onClick={() => navigate(id)} style={{
                     flex: 1, display: "flex", flexDirection: "column",
                     alignItems: "center", justifyContent: "center", gap: 3,
                     padding: "7px 0 9px", cursor: "pointer",
