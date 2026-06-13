@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (117 items, 43 done, 74 planned)
+- Feature backlog: `feature-tracker.html` (117 items, 47 done, 70 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -422,7 +422,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   to drive all 6 Numbers sub-tabs. New test file
   `src/horizon/__tests__/numbers-tabs.test.js` (+20 tests across 3 describes).
   Golden master untouched; no model logic changed.
-  370 → **390** tests. Tracker: #92 + #93 + #94 done (43 done, 74 planned).
+  370 → **390** tests. Tracker: #92 + #93 + #94 done (47 done, 70 planned).
 
 ## Commands
 - `npm run dev` — start dev server
