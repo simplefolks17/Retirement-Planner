@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (362 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (370 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -386,10 +386,23 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   headings, totalAtRet wiring, sustainable verdict, conversion window callout,
   no-window case, null-flowDown guard). 355 → **362** tests; golden master untouched.
   Tracker: #91 done (44 done, 73 planned).
+- Render-smoke hardening (Jun 13 2026, test-only — no `src/` model or screen logic
+  changed; golden master untouched): the Horizon render-smoke was one monolithic `it()`
+  that walked all screens in sequence (stopping at the first failure) and accepted a
+  truthy `toJSON()` tree as proof a screen rendered — a blanked-out screen or an error-
+  boundary fallback could pass. Rewritten to (1) drive navigation from the now-EXPORTED
+  `SCREENS` source of truth in `HorizonShell.jsx` via `it.each`, so a newly added screen
+  is auto-covered; (2) a coverage-guard test that fails if `SCREENS` and the per-screen
+  marker map drift apart (you cannot add a screen and forget to test it); (3) per-screen
+  assertions of an always-visible, screen-specific text MARKER plus a min visible-text-
+  length check (blank/fallback no longer slips through); (4) isolated tests per screen
+  (fresh App mount each → failures pinpoint one screen, no state bleed). Deep paths kept:
+  Numbers' 3 sub-tabs and the Ideas `calcWhatIfScenario` one-run path. The stale `it()`
+  description ("Plan, Ideas, Numbers…" — omitted Journey) is gone. 362 → **370** tests.
 
 ## Commands
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (362 tests)
+- `npm test` — run model + formatter + render-smoke tests (370 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

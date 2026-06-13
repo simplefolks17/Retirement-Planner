@@ -7,6 +7,7 @@ import { act, create } from "react-test-renderer";
 vi.mock("@vercel/analytics/react", () => ({ Analytics: () => null }));
 
 import App from "../App.jsx";
+import { SCREENS } from "../components/HorizonShell.jsx";
 
 // Effects run under react-test-renderer (unlike renderToString) — stub the two
 // browser APIs the shell's layout effects touch in this node environment.
@@ -27,10 +28,35 @@ afterAll(() => {
   delete globalThis.ResizeObserver;
 });
 
-// WI-0.1/WI-0.2 wiring smoke: the existing render-smoke only reaches the default
-// Plan screen. This test drives the real HorizonShell navigation so the rewritten
-// IdeasScreen / NumbersScreen (and their new statementView / chartMilestones /
-// yearlyRows / planView consumption) actually render at golden-master defaults.
+// ── Why this test exists ──────────────────────────────────────────────────────
+// The plain render-smoke only reaches the default Plan screen. This drives the
+// real HorizonShell navigation so every screen actually mounts at golden-master
+// defaults (exercising statementView / chartMilestones / yearlyRows / planView /
+// flowDown consumption and the calcWhatIfScenario one-run path).
+//
+// Two anti-"slip-through" mechanisms here:
+//   1. The screen list is driven from the EXPORTED `SCREENS` (HorizonShell's own
+//      source of truth), not a hand-maintained copy — so a newly added screen is
+//      navigated to automatically by the per-screen loop below.
+//   2. A truthy render tree (`toJSON()`) is NOT accepted as proof a screen
+//      worked: a blanked-out screen or an error-boundary fallback still yields a
+//      truthy tree. Each screen asserts an always-visible, screen-specific text
+//      MARKER, and the coverage guard fails if a screen lacks one.
+
+// Per-screen proof-of-render markers, keyed by screen id. Each is an
+// always-visible text fragment that ONLY that screen renders — never behind a
+// collapsed toggle or a non-default sub-tab — so finding it proves the screen's
+// own body mounted (not a fallback). See the coverage guard below.
+const SCREEN_MARKERS = {
+  plan:     "Income for life",        // PlanScreen stat-card label
+  journey:  "Building years",         // JourneyScreen Chapter 2 headline
+  ideas:    "Your future, explored.", // IdeasScreen page title
+  numbers:  "Year by year",           // NumbersScreen tab label (always rendered)
+  someday:  "work optional.",         // SomedayScreen display copy
+  settings: "Theme",                  // SettingsScreen section header
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 // Collect the visible text of a test-renderer instance.
 function textOf(node) {
@@ -46,6 +72,17 @@ function clickByText(root, label) {
   act(() => { target.props.onClick(); });
 }
 
+function hasText(root, fragment) {
+  return root.findAll(n => textOf(n).includes(fragment)).length > 0;
+}
+
+// Total visible text length of the mounted app — a blank / collapsed screen
+// renders a near-empty content area even when the chrome is present.
+function visibleTextLength(renderer) {
+  const json = renderer.toJSON();
+  return textOf(Array.isArray(json) ? { children: json } : json).trim().length;
+}
+
 // Mount App and dismiss the first-run onboarding (non-browser env has no
 // persisted flag). Returns { renderer, root }.
 function mountApp() {
@@ -59,57 +96,61 @@ function mountApp() {
   return { renderer, root };
 }
 
-function hasText(root, fragment) {
-  return root.findAll(n => typeof n.type === "string" && textOf(n).includes(fragment)).length > 0;
-}
-
 describe("Horizon screens render smoke", () => {
-  it("renders Plan, Ideas, Numbers (all three tabs), Someday, and Settings without throwing", () => {
-    let renderer;
-    act(() => { renderer = create(React.createElement(App)); });
-    const root = renderer.root;
+  // Coverage guard: every screen the shell knows about must have a marker, and
+  // every marker must map to a real screen. This is what stops a newly added
+  // screen from silently going untested — adding to SCREENS without a marker
+  // (or vice-versa) fails here loudly instead of slipping through.
+  it("has a render marker for every screen in SCREENS (and no orphan markers)", () => {
+    const screenIds = SCREENS.map(s => s.id).sort();
+    const markerIds = Object.keys(SCREEN_MARKERS).sort();
+    expect(markerIds, "SCREEN_MARKERS must cover exactly the screens in SCREENS").toEqual(screenIds);
+  });
 
-    // First run shows onboarding in a non-browser env (no persisted flag) — skip it.
-    const skip = root.findAll(
-      n => typeof n.props?.onClick === "function" && /^skip/i.test(textOf(n).trim())
-    )[0];
-    if (skip) act(() => { skip.props.onClick(); });
+  // One isolated test per screen, driven from the exported SCREENS list. A fresh
+  // App per screen avoids cross-screen state bleed, and each failure points at
+  // exactly one screen instead of halting a monolithic walk at the first break.
+  it.each(SCREENS.map(s => [s.id, s.label]))(
+    "renders the %s screen with its own content (not a blank/fallback tree)",
+    (id, label) => {
+      const { renderer, root } = mountApp();
+      // Plan is the default screen; the rest need a tab click.
+      if (id !== "plan") clickByText(root, label);
 
-    // Plan (default)
-    expect(renderer.toJSON()).toBeTruthy();
+      // 1. tree exists
+      expect(renderer.toJSON(), `${id}: render tree is empty`).toBeTruthy();
+      // 2. screen-specific marker present (proves the right body mounted)
+      expect(hasText(root, SCREEN_MARKERS[id]), `${id}: marker "${SCREEN_MARKERS[id]}" not found`).toBe(true);
+      // 3. substantial visible text (guards against a blanked content area)
+      expect(visibleTextLength(renderer), `${id}: content area looks empty`).toBeGreaterThan(80);
 
-    // Journey (WI-2.1) — 3-chapter Flow-Down port; all numbers from flowDown.
-    // clickByText navigates by tab label; render without crash is the gate.
-    clickByText(root, "Journey");
-    expect(renderer.toJSON()).toBeTruthy();
-    // At least one flowDown-sourced number is present (totalAtRet > 0)
-    expect(root.findAll(n => textOf(n).includes("Building years")).length).toBeGreaterThan(0);
+      act(() => renderer.unmount());
+    }
+  );
 
-    // Ideas — open the suggestions mode and activate a scenario card so the
-    // calcWhatIfScenario path (stats + arc from one run) executes.
+  // Deep-path coverage that a single per-screen marker can't reach:
+
+  it("Numbers renders all three sub-tabs (Statement / Year by year / Money flow)", () => {
+    const { renderer, root } = mountApp();
+    clickByText(root, "The numbers");
+    for (const tab of ["Statement", "Year by year", "Money flow"]) {
+      clickByText(root, tab);
+      expect(renderer.toJSON(), `Numbers/${tab}: render tree is empty`).toBeTruthy();
+      expect(visibleTextLength(renderer), `Numbers/${tab}: content looks empty`).toBeGreaterThan(80);
+    }
+    act(() => renderer.unmount());
+  });
+
+  it("Ideas runs the calcWhatIfScenario one-run path when a scenario card is activated", () => {
+    const { renderer, root } = mountApp();
     clickByText(root, "Ideas");
     clickByText(root, "Horizon suggestions");
     const scenarioCard = root.findAll(
       n => typeof n.props?.onClick === "function" && textOf(n).includes("Retire 2 yrs earlier")
     )[0];
-    expect(scenarioCard).toBeTruthy();
+    expect(scenarioCard, "Ideas scenario card not found").toBeTruthy();
     act(() => { scenarioCard.props.onClick(); });
     expect(renderer.toJSON()).toBeTruthy();
-
-    // Numbers — all three tabs (Statement / Year by year incl. milestones strip / Money flow)
-    clickByText(root, "The numbers");
-    expect(renderer.toJSON()).toBeTruthy();
-    clickByText(root, "Year by year");
-    expect(renderer.toJSON()).toBeTruthy();
-    clickByText(root, "Money flow");
-    expect(renderer.toJSON()).toBeTruthy();
-
-    // Someday + Settings
-    clickByText(root, "Someday");
-    expect(renderer.toJSON()).toBeTruthy();
-    clickByText(root, "Settings");
-    expect(renderer.toJSON()).toBeTruthy();
-
     act(() => renderer.unmount());
   });
 });
