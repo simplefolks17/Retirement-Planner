@@ -162,9 +162,32 @@ export function calcPlanDrivers({
 }
 
 // ── Year-by-year display rows ────────────────────────────────────────────────
-// Walk rows plus their calendar year, display-ready for the Numbers screen's
-// Year-by-year table — the age→year arithmetic lives HERE, not in JSX
-// (principle 6). currentYear is the caller's clock (e.g. new Date().getFullYear()).
-export function buildYearlyRows({ rows, currentAge, currentYear }) {
-  return (rows ?? []).map(r => ({ ...r, year: currentYear + (r.age - currentAge) }));
+// Retirement-phase walk rows plus their calendar year, display-ready for the
+// Numbers screen's Year-by-year table — the age→year arithmetic lives HERE, not
+// in JSX (principle 6). currentYear is the caller's clock (new Date().getFullYear()).
+//
+// WI-2.5: each row is also joined (by age) to the RMD and Roth-conversion
+// schedules so the table can show those driver columns:
+//   rmdByAge        { [age]: rmd amount }        — gross RMD withdrawal that year
+//   conversionByAge { [age]: conversion amount } — Roth conversion that year
+// Absent ages yield null (→ "—" in the screen), never a synthesized 0 (principle 10).
+// `tax` on the walk row is the income tax that actually left the pool that year
+// (RMD tax + conversion tax); the rmd/conversion columns are the underlying
+// amounts and are informational — they are NOT part of the ledger identity
+//   prevTotal + growth − draw − tax = nextTotal
+// which the walk already satisfies. phase:"ret" tags these as retirement rows;
+// contrib is null (no contributions in retirement).
+export function buildYearlyRows({ rows, currentAge, currentYear, rmdByAge = {}, conversionByAge = {} }) {
+  return (rows ?? []).map(r => ({
+    age: r.age,
+    year: currentYear + (r.age - currentAge),
+    total: r.total,
+    contrib: null,
+    growth: Math.round(r.growth ?? 0),
+    draw: Math.round(r.draw ?? 0),
+    tax: Math.round(r.tax ?? 0),
+    rmd: rmdByAge[r.age] != null ? Math.round(rmdByAge[r.age]) : null,
+    conversion: conversionByAge[r.age] != null ? Math.round(conversionByAge[r.age]) : null,
+    phase: "ret",
+  }));
 }

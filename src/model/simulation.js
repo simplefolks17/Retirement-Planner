@@ -85,9 +85,22 @@ export function runSimulation({
     const cTaxable = age <= contribEndTaxable ? contribTaxable * growFactor : 0;
     const cHSA     = age <= contribEndHSA     ? Math.min(contribHSA, HSA_LIMIT_2026) : 0;
 
-    trad = (trad + c401k) * (1 + r);
-    roth = (roth + cRoth) * (1 + r);
-    hsa  = (hsa  + cHSA)  * (1 + r);
+    // Per-account growth = investment earnings this year = base × rate, where the
+    // base is the prior balance PLUS this year's contribution (contributions are
+    // added before growth compounds — see the contribution-before-growth tests).
+    // Captured here so the Year-by-year table can show a real per-year growth figure
+    // instead of a JSX residual (WI-2.5). `tradGrowth` is exposed separately because
+    // the Trad 401k is displayed after-tax (× (1 − marginal)); the display layer
+    // applies that same factor to its growth so the table reconciles
+    //   prevPortfolio + contributions + growth = nextPortfolio
+    // on the after-tax basis. All growth here is GROSS (no tax factor applied).
+    const tradBase = trad + c401k;
+    const rothBase = roth + cRoth;
+    const hsaBase  = hsa  + cHSA;
+    const tradGrowth = tradBase * r;
+    trad = tradBase * (1 + r);
+    roth = rothBase * (1 + r);
+    hsa  = hsaBase  * (1 + r);
 
     // One-time money events applied to the taxable account before growth compounds.
     // Outflows (purchases) reduce the base; inflows (windfalls) increase it.
@@ -98,7 +111,13 @@ export function runSimulation({
     const yearOrdinaryIncome = primaryMAGI - employeeDeferral - cHSA
                              + (filingStatus === "mfj" ? spouseGrown : 0);
     const capGainsRate       = ltcgRate(yearOrdinaryIncome, filingStatus);
-    taxable = (Math.max(0, taxable + cTaxable + eventAdj)) * (1 + r * (1 - capGainsRate));
+    const taxableBase        = Math.max(0, taxable + cTaxable + eventAdj);
+    const taxableRate        = r * (1 - capGainsRate);
+    const taxableGrowth      = taxableBase * taxableRate;
+    taxable = taxableBase * (1 + taxableRate);
+
+    // Total gross growth across the four accounts (Taxable already net of LTCG drag).
+    const growth = tradGrowth + rothBase * r + hsaBase * r + taxableGrowth;
 
     arr.push({
       age,
@@ -110,6 +129,8 @@ export function runSimulation({
       cRoth:    Math.round(cRoth),
       cTaxable: Math.round(cTaxable),
       cHSA:     Math.round(cHSA),
+      growth:     Math.round(growth),      // gross investment earnings this year
+      tradGrowth: Math.round(tradGrowth),  // trad's share (for the after-tax display factor)
     });
   }
 

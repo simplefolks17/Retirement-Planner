@@ -1,6 +1,66 @@
 import { describe, it, expect } from "vitest";
-import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones } from "../accumulation.js";
+import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "../accumulation.js";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
+
+describe("buildAccumulationRows (WI-2.5)", () => {
+  // Minimal augmented simData rows (as App builds them: balances + contributions
+  // + per-year gross growth/tradGrowth from runSimulation, plus the after-tax
+  // "Trad 401k" key). Two consecutive years so we can check reconciliation.
+  const m = 0.24;
+  const mkRow = (age, trad, roth, taxable, hsa, c401k, growth, tradGrowth) => ({
+    age,
+    "Trad 401k": Math.round(trad * (1 - m)),
+    "Roth IRA": roth, "Taxable": taxable, "HSA": hsa, tradGross: trad,
+    c401k, cRoth: 7_000, cTaxable: 4_000, cHSA: 3_000,
+    growth, tradGrowth,
+  });
+  // Year 1 → Year 2 with a 5% return for a hand-checked reconciliation.
+  const r = 0.05;
+  const y1Trad = (100_000 + 10_000) * (1 + r);          // 115,500
+  const y1Roth = (20_000 + 7_000) * (1 + r);            // 28,350
+  const y1Tax  = (30_000 + 4_000) * (1 + r);            // 35,700
+  const y1Hsa  = (5_000 + 3_000) * (1 + r);             // 8,400
+  const simData = [
+    mkRow(31, Math.round(y1Trad), Math.round(y1Roth), Math.round(y1Tax), Math.round(y1Hsa),
+      10_000,
+      Math.round((100_000 + 10_000) * r + (20_000 + 7_000) * r + (30_000 + 4_000) * r + (5_000 + 3_000) * r),
+      Math.round((100_000 + 10_000) * r)),
+    mkRow(32,
+      Math.round((y1Trad + 10_000) * (1 + r)),
+      Math.round((y1Roth + 7_000) * (1 + r)),
+      Math.round((y1Tax + 4_000) * (1 + r)),
+      Math.round((y1Hsa + 3_000) * (1 + r)),
+      10_000,
+      Math.round((y1Trad + 10_000) * r + (y1Roth + 7_000) * r + (y1Tax + 4_000) * r + (y1Hsa + 3_000) * r),
+      Math.round((y1Trad + 10_000) * r)),
+  ];
+
+  it("only includes building years (age ≤ safeRetAge)", () => {
+    const rows = buildAccumulationRows({ simData, fedMarginal: m, currentAge: 30, currentYear: 2026, safeRetAge: 31 });
+    expect(rows.map(r => r.age)).toEqual([31]);
+  });
+
+  it("returns [] when already retired (safeRetAge === currentAge)", () => {
+    expect(buildAccumulationRows({ simData, fedMarginal: m, currentAge: 30, currentYear: 2026, safeRetAge: 30 })).toEqual([]);
+  });
+
+  it("attaches calendar year and tags rows accum (draw/tax 0, rmd/conversion null)", () => {
+    const [row] = buildAccumulationRows({ simData, fedMarginal: m, currentAge: 30, currentYear: 2026, safeRetAge: 35 });
+    expect(row.year).toBe(2027);       // 2026 + (31 − 30)
+    expect(row.phase).toBe("accum");
+    expect(row.draw).toBe(0);
+    expect(row.tax).toBe(0);
+    expect(row.rmd).toBeNull();
+    expect(row.conversion).toBeNull();
+  });
+
+  it("reconciles on the after-tax basis: prevTotal + contrib + growth = total", () => {
+    const rows = buildAccumulationRows({ simData, fedMarginal: m, currentAge: 30, currentYear: 2026, safeRetAge: 40 });
+    const r2 = rows[1];
+    // prev displayed total + this year's contrib + this year's growth == this total
+    expect(Math.abs((rows[0].total + r2.contrib + r2.growth) - r2.total)).toBeLessThan(5);
+  });
+});
 
 describe("sumAccountRow", () => {
   it("sums the four account keys on a full row", () => {

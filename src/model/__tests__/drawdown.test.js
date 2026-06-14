@@ -5,7 +5,33 @@ import {
   calcYearsSustained,
   calcDrawdownYears,
   calcSSDelayGain,
+  calcRetIncomeFlow,
 } from "../drawdown.js";
+
+describe("calcRetIncomeFlow (WI-2.6)", () => {
+  it("normal case: ss + pension + portfolioDraw == expenses, portfolioDraw = net need", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: 10_000 });
+    expect(f.ss).toBe(30_000);
+    expect(f.pension).toBe(10_000);
+    expect(f.portfolioDraw).toBe(40_000);
+    expect(f.ss + f.pension + f.portfolioDraw).toBeCloseTo(80_000, 6);
+  });
+
+  it("no income: portfolio funds the whole expense, bands still sum to expenses", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 60_000, ss: 0, pension: 0 });
+    expect(f.portfolioDraw).toBe(60_000);
+    expect(f.ss).toBe(0);
+    expect(f.ss + f.pension + f.portfolioDraw).toBeCloseTo(60_000, 6);
+  });
+
+  it("over-funded edge: income exceeds expenses → scaled down to sum exactly to expenses", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 40_000, ss: 30_000, pension: 30_000 });
+    expect(f.portfolioDraw).toBe(0);
+    expect(f.ss + f.pension).toBeCloseTo(40_000, 6);     // scaled, not 60k
+    expect(f.ss).toBeCloseTo(20_000, 6);                 // proportional (equal sources)
+    expect(f.ss + f.pension + f.portfolioDraw).toBeCloseTo(40_000, 6);
+  });
+});
 
 describe("calcNetPortfolioNeed", () => {
   it("subtracts SS and pension from expenses", () => {

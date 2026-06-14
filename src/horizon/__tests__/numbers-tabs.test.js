@@ -138,9 +138,17 @@ const minimalProps = {
   retirementWalk,
   statementView,
   chartMilestones,
-  yearlyRows: retirementWalk.rows.map((r, i) => ({ ...r, year: 2026 + i })),
+  // WI-2.5: whole-life ledger — one accumulation row + retirement rows with
+  // RMD/conversion driver columns (matching the App-built yearlyRows shape).
+  yearlyRows: [
+    { age: 64, year: 2025, total: 3_000_000, contrib: 30_000, growth: 150_000, draw: 0, tax: 0, rmd: null, conversion: null, phase: "accum" },
+    { age: 65, year: 2026, total: 3_484_197, contrib: null, growth: 174_210, draw: 120_000, tax: 5_000, rmd: null, conversion: 50_000, phase: "ret" },
+    { age: 73, year: 2034, total: 3_550_000, contrib: null, growth: 185_803, draw: 120_000, tax: 5_000, rmd: 80_000, conversion: null, phase: "ret" },
+  ],
   budget,
   taxView,
+  // WI-2.6: retirement money-flow bands (sum to effectiveExpenses).
+  retIncomeFlow: { expenses: 120_000, ss: 45_924, pension: 0, portfolioDraw: 74_076 },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -319,6 +327,82 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     expect(renderer.toJSON()).toBeTruthy();
     const allText = textOf(renderer.root);
     expect(allText).toContain("Add your income");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── WI-2.5: Year-by-year (whole-life ledger + RMD/Conversion columns) ─────────
+describe("NumbersScreen — Year by year (WI-2.5 / #95)", () => {
+  it("renders the new column headers including Contrib., RMD and Conversion", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Contrib.");
+    expect(allText).toContain("RMD");
+    expect(allText).toContain("Conversion");
+    act(() => renderer.unmount());
+  });
+
+  it("renders an accumulation row (age 64) with its contribution", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // accumulation row age 64 present, contrib +$30k shown
+    expect(allText).toContain("64");
+    expect(allText).toContain("+$30k");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring: RMD column shows the joined RMD amount at age 73", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // rmd 80_000 → "$80k"
+    expect(allText).toContain("$80k");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring: Conversion column shows the joined conversion amount at age 65", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // conversion 50_000 → "$50k"
+    expect(allText).toContain("$50k");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── WI-2.6: Money flow (Working / Retirement toggle) ─────────────────────────
+describe("NumbersScreen — Money flow retirement view (WI-2.6 / #96)", () => {
+  it("renders the Working / Retirement toggle", () => {
+    const renderer = mountTab("flow");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Working years");
+    expect(allText).toContain("Retirement years");
+    act(() => renderer.unmount());
+  });
+
+  it("retirement view shows the income sources and total covered = expenses", () => {
+    const renderer = mountTab("flow");
+    // click the Retirement years toggle
+    const toggle = renderer.root.findAll(
+      n => typeof n.props?.onClick === "function" && textOf(n) === "Retirement years"
+    )[0];
+    expect(toggle).toBeTruthy();
+    act(() => { toggle.props.onClick(); });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Social Security");
+    expect(allText).toContain("Portfolio draw");
+    // expenses 120_000 → "$120k" appears (headline + total covered)
+    expect(allText).toContain("$120k");
+    act(() => renderer.unmount());
+  });
+
+  it("null retIncomeFlow renders graceful empty state in retirement view", () => {
+    const renderer = mountTab("flow", { retIncomeFlow: null });
+    const toggle = renderer.root.findAll(
+      n => typeof n.props?.onClick === "function" && textOf(n) === "Retirement years"
+    )[0];
+    act(() => { toggle.props.onClick(); });
+    expect(renderer.toJSON()).toBeTruthy();
+    const allText = textOf(renderer.root);
+    expect(allText.toLowerCase()).toContain("appear");
     act(() => renderer.unmount());
   });
 });

@@ -4,6 +4,11 @@ import { fmt, fmtMo } from "../shared.jsx";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
 
+// Year-by-year ledger grid (WI-2.5): 9 columns. GRID_MIN_W keeps each column
+// readable; the table scrolls horizontally below that width (pure layout).
+const GRID_COLS = "44px 52px 1.1fr 1fr 1fr 1fr 0.9fr 1fr 1fr";
+const GRID_MIN_W = 720;
+
 function StmtCol({ t, title, items, bar }) {
   return (
     <div style={{ flex: 1 }}>
@@ -140,6 +145,82 @@ function IncomeWaterfall({ t, view }) {
   );
 }
 
+// ── Retirement money flow (WI-2.6) ────────────────────────────────────────────
+// The mirror of the paycheck waterfall for the retirement phase: every dollar of
+// spending traced back to its source — Social Security + Pension + Portfolio draw.
+// All dollar values come from the model's retIncomeFlow bundle, which guarantees
+// the three sources sum to `expenses` (calcRetIncomeFlow, drawdown.js). This
+// component only converts those values to band widths (pixel/layout math).
+function RetirementFlow({ t, flow }) {
+  const { expenses, ss, pension, portfolioDraw } = flow;
+  const segs = [
+    { label: "Social Security", val: ss,            color: t.warm },
+    { label: "Pension",         val: pension,       color: t.accent },
+    { label: "Portfolio draw",  val: portfolioDraw, color: t.good },
+  ].filter(s => s.val > 0);
+
+  if (expenses <= 0 || segs.length === 0) {
+    return (
+      <div style={{ font: `400 13px ${HF}`, color: t.faint }}>
+        Set a retirement age and expenses to see where your income comes from.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Total expenses headline */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ font: `400 11px ${HF}`, color: t.accent, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>
+          Annual spending in retirement
+        </div>
+        <div style={{ font: `700 28px/1 ${SERIF}`, color: t.ink }}>{fmt(expenses)}<span style={{ font: `400 14px ${SERIF}`, color: t.mut }}> / year</span></div>
+      </div>
+
+      {/* Stacked source band — widths are pure layout proportion of expenses */}
+      <div style={{
+        display: "flex", height: 40, borderRadius: 9, overflow: "hidden",
+        border: `1px solid ${t.line2}`, marginBottom: 14,
+      }}>
+        {segs.map((seg, i) => (
+          <div key={seg.label} style={{
+            flex: seg.val / expenses, background: seg.color, opacity: 0.72,
+            borderRight: i < segs.length - 1 ? `1px solid ${t.surf}` : "none",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            font: `600 11px ${HF}`, color: t.surf, minWidth: 0, overflow: "hidden", whiteSpace: "nowrap",
+          }}>
+            {Math.round((seg.val / expenses) * 100) >= 12 ? `${Math.round((seg.val / expenses) * 100)}%` : ""}
+          </div>
+        ))}
+      </div>
+
+      {/* Source rows */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+        {segs.map(seg => (
+          <div key={seg.label} style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+            borderBottom: `1px solid ${t.line}`, paddingBottom: 8,
+          }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, background: seg.color, flexShrink: 0 }} />
+              <span style={{ font: `400 14px ${SERIF}`, color: t.mut }}>{seg.label}</span>
+            </span>
+            <span style={{ font: `600 14px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>{fmt(seg.val)}/yr</span>
+          </div>
+        ))}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, paddingTop: 4 }}>
+          <span style={{ font: `600 14px ${SERIF}`, color: t.ink }}>Total covered</span>
+          <span style={{ font: `700 15px ${HM}`, color: t.ink }}>{fmt(expenses)}/yr</span>
+        </div>
+      </div>
+
+      <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", marginTop: 14, textAlign: "center" }}>
+        Social Security and pension cover what they can; your portfolio funds the rest.
+      </div>
+    </>
+  );
+}
+
 // initialTab (optional, WI-1.1): tab id to land on when another screen
 // deep-links here via navigate("numbers", tabId) — e.g. the Plan stat cards
 // and signals strip. The user's own tab clicks still control the state after
@@ -159,10 +240,14 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
     // WI-2.2 / WI-2.3 / WI-2.4 — new Numbers tabs bundles.
     // All derived numbers come from the model via these bundles; screens only format.
     budget, taxView,
+    // WI-2.6 — retirement money-flow bands (sum exactly to effectiveExpenses).
+    retIncomeFlow,
   } = props;
 
   const [tab, setTab] = useState(initialTab ?? "statement");
   const [showAllYears, setShowAllYears] = useState(false);
+  // WI-2.6: Money-flow tab sub-mode — "working" (paycheck) vs "retirement" (sources).
+  const [flowMode, setFlowMode] = useState("working");
 
   // Adopt a new deep-link target if one arrives while already mounted
   // (re-navigation to the same screen with a different subView).
@@ -729,65 +814,81 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ))}
               </div>
             )}
-            {/* column headers */}
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "44px 52px 1fr 1fr 1fr 1fr",
-              gap: 4, padding: "8px 14px",
-              borderBottom: `1.5px solid ${t.ink}`,
-              background: t.surf2, flexShrink: 0,
-            }}>
-              {["Age", "Year", "Portfolio", "Draw", "Growth", "Tax"].map(c => (
-                <span key={c} style={{ font: `600 11px ${HF}`, color: t.ink }}>{c}</span>
-              ))}
-            </div>
-
-            {/* scrollable rows */}
-            <div style={{ flex: 1, overflow: "auto" }}>
-              {displayedRows.length === 0 && (
-                <div style={{ padding: "32px 14px", font: `400 13px ${HF}`, color: t.faint }}>
-                  Retirement data will appear here once you set a retirement age.
-                </div>
-              )}
-              {displayedRows.map((row, i) => (
-                <div key={row.age} style={{
-                  display: "grid",
-                  gridTemplateColumns: "44px 52px 1fr 1fr 1fr 1fr",
-                  gap: 4, alignItems: "center",
-                  padding: "7px 14px",
-                  borderBottom: `1px solid ${t.line}`,
-                  background: i % 2 === 0 ? "transparent" : `${t.ink}05`,
+            {/* whole-life ledger (WI-2.5): accumulation + retirement rows.
+                9 columns → the table scrolls horizontally so each stays readable
+                on desktop and mobile (rule 15 — renders + usable on small screens).
+                signed and null cells are formatted only; all values come from yearlyRows. */}
+            <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+              <div style={{ minWidth: GRID_MIN_W }}>
+                {/* column headers */}
+                <div style={{
+                  display: "grid", gridTemplateColumns: GRID_COLS,
+                  gap: 4, padding: "8px 14px",
+                  borderBottom: `1.5px solid ${t.ink}`,
+                  background: t.surf2, position: "sticky", top: 0, zIndex: 1,
                 }}>
-                  <span style={{ font: `600 13px ${HM}`, color: t.warm }}>{row.age}</span>
-                  <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{row.year}</span>
-                  <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
-                  <span style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
-                    {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
-                  </span>
-                  <span style={{ font: `400 12px ${HM}`, color: t.good }}>
-                    {row.growth > 0 ? `+${fmt(row.growth)}` : "—"}
-                  </span>
-                  <span style={{ font: `400 12px ${HM}`, color: row.tax > 0 ? t.mut : t.faint }}>
-                    {row.tax > 0 ? `−${fmt(row.tax)}` : "—"}
-                  </span>
+                  {["Age", "Year", "Portfolio", "Contrib.", "Growth", "Draw", "Tax", "RMD", "Conversion"].map(c => (
+                    <span key={c} style={{ font: `600 11px ${HF}`, color: t.ink }}>{c}</span>
+                  ))}
                 </div>
-              ))}
+
+                {displayedRows.length === 0 && (
+                  <div style={{ padding: "32px 14px", font: `400 13px ${HF}`, color: t.faint }}>
+                    Your year-by-year projection will appear here once your plan is set up.
+                  </div>
+                )}
+                {displayedRows.map((row, i) => {
+                  const isRetStart = row.phase === "ret" && displayedRows[i - 1]?.phase === "accum";
+                  return (
+                    <div key={row.age} style={{
+                      display: "grid", gridTemplateColumns: GRID_COLS,
+                      gap: 4, alignItems: "center",
+                      padding: "7px 14px",
+                      borderBottom: `1px solid ${t.line}`,
+                      borderTop: isRetStart ? `1.5px solid ${t.warm}88` : "none",
+                      background: i % 2 === 0 ? "transparent" : `${t.ink}05`,
+                    }}>
+                      <span style={{ font: `600 13px ${HM}`, color: row.phase === "ret" ? t.warm : t.good }}>{row.age}</span>
+                      <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{row.year}</span>
+                      <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
+                      <span style={{ font: `400 12px ${HM}`, color: row.contrib > 0 ? t.accent : t.faint }}>
+                        {row.contrib != null && row.contrib > 0 ? `+${fmt(row.contrib)}` : "—"}
+                      </span>
+                      <span style={{ font: `400 12px ${HM}`, color: row.growth > 0 ? t.good : t.faint }}>
+                        {row.growth > 0 ? `+${fmt(row.growth)}` : "—"}
+                      </span>
+                      <span style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
+                        {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
+                      </span>
+                      <span style={{ font: `400 12px ${HM}`, color: row.tax > 0 ? t.mut : t.faint }}>
+                        {row.tax > 0 ? `−${fmt(row.tax)}` : "—"}
+                      </span>
+                      <span style={{ font: `400 12px ${HM}`, color: row.rmd > 0 ? t.mut : t.faint }}>
+                        {row.rmd != null && row.rmd > 0 ? fmt(row.rmd) : "—"}
+                      </span>
+                      <span style={{ font: `400 12px ${HM}`, color: row.conversion > 0 ? t.mut : t.faint }}>
+                        {row.conversion != null && row.conversion > 0 ? fmt(row.conversion) : "—"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* footer / show-all toggle */}
+            {/* footer / show-all toggle + reconciliation note */}
             <div style={{
               padding: "9px 14px", borderTop: `1px solid ${t.line}`,
               background: t.surf2, flexShrink: 0,
-              display: "flex", justifyContent: "space-between", alignItems: "center",
+              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
             }}>
               <span style={{ font: `400 11px ${HF}`, color: t.faint }}>
-                retirement phase · {allRetirementRows.length} years total
+                whole life · {allRetirementRows.length} years · growth shown after the tax you'll owe on pre-tax accounts
               </span>
               {allRetirementRows.length > YEAR_CAP && (
                 <button onClick={() => setShowAllYears(v => !v)} style={{
                   font: `500 12px ${HF}`, color: t.accent,
                   background: "transparent", border: `1px solid ${t.accent}55`,
-                  borderRadius: 7, padding: "4px 12px", cursor: "pointer",
+                  borderRadius: 7, padding: "4px 12px", cursor: "pointer", flexShrink: 0,
                 }}>
                   {showAllYears ? "Show first 50" : `Show all ${allRetirementRows.length} years`}
                 </button>
@@ -798,36 +899,70 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
         {/* ── Money flow ── */}
         {tab === "flow" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, justifyContent: "center" }}>
-            <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase" }}>
-              Where your paycheck goes
-            </div>
-            <div style={{ maxWidth: 620, width: "100%", alignSelf: "center" }}>
-              <IncomeWaterfall t={t} view={sv} />
-            </div>
-            <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", textAlign: "center" }}>
-              {sv.flowKeepPct == null
-                ? "Add your income to see where each dollar goes."
-                : `Of every dollar you earn, ${sv.flowKeepPct}% comes home, ${sv.flowSavePct}% builds your future, ${sv.flowTaxPct}% goes to tax.`}
-            </div>
-            {/* legend chips */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, justifyContent: "center" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* WI-2.6: Working years / Retirement years toggle */}
+            <div style={{
+              display: "flex", gap: 3, padding: 3, borderRadius: 10,
+              background: t.line, alignSelf: "center", flexShrink: 0,
+            }}>
               {[
-                ["Tax",       "#b09070", pctLabel(sv.flowTaxPct)],
-                ["Savings",   t.warm,   pctLabel(sv.flowSavePct)],
-                ["Take-home", t.good,   pctLabel(sv.flowKeepPct)],
-              ].map(([label, c, pct]) => (
-                <span key={label} style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  padding: "5px 12px", borderRadius: 999,
-                  border: `1px solid ${c}55`, background: `${c}14`,
-                  font: `500 12px ${HF}`, color: t.ink,
-                }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 999, background: c }} />
-                  {label} · {pct}
-                </span>
-              ))}
+                ["working", "Working years"],
+                ["retirement", "Retirement years"],
+              ].map(([k, l]) => {
+                const on = flowMode === k;
+                return (
+                  <div key={k} onClick={() => setFlowMode(k)} style={{
+                    padding: "5px 16px", borderRadius: 8, cursor: "pointer",
+                    background: on ? t.surf2 : "transparent",
+                    font: `${on ? 600 : 400} 12.5px ${HF}`, color: on ? t.ink : t.mut,
+                    boxShadow: on ? "0 1px 4px rgba(0,0,0,.09)" : "none",
+                  }}>{l}</div>
+                );
+              })}
             </div>
+
+            {flowMode === "working" ? (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, justifyContent: "center" }}>
+                <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase" }}>
+                  Where your paycheck goes
+                </div>
+                <div style={{ maxWidth: 620, width: "100%", alignSelf: "center" }}>
+                  <IncomeWaterfall t={t} view={sv} />
+                </div>
+                <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", textAlign: "center" }}>
+                  {sv.flowKeepPct == null
+                    ? "Add your income to see where each dollar goes."
+                    : `Of every dollar you earn, ${sv.flowKeepPct}% comes home, ${sv.flowSavePct}% builds your future, ${sv.flowTaxPct}% goes to tax.`}
+                </div>
+                {/* legend chips */}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, justifyContent: "center" }}>
+                  {[
+                    ["Tax",       "#b09070", pctLabel(sv.flowTaxPct)],
+                    ["Savings",   t.warm,   pctLabel(sv.flowSavePct)],
+                    ["Take-home", t.good,   pctLabel(sv.flowKeepPct)],
+                  ].map(([label, c, pct]) => (
+                    <span key={label} style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "5px 12px", borderRadius: 999,
+                      border: `1px solid ${c}55`, background: `${c}14`,
+                      font: `500 12px ${HF}`, color: t.ink,
+                    }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: c }} />
+                      {label} · {pct}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ maxWidth: 560, width: "100%", alignSelf: "center", marginTop: 8 }}>
+                <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 14 }}>
+                  Where your retirement income comes from
+                </div>
+                {retIncomeFlow == null
+                  ? <div style={{ font: `400 13px ${HF}`, color: t.faint }}>Retirement income breakdown will appear once your plan is set up.</div>
+                  : <RetirementFlow t={t} flow={retIncomeFlow} />}
+              </div>
+            )}
           </div>
         )}
       </div>

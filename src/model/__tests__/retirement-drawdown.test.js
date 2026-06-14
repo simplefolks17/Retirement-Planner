@@ -227,4 +227,25 @@ describe("buildYearlyRows", () => {
     expect(buildYearlyRows({ rows: [], currentAge: 30, currentYear: 2026 })).toEqual([]);
     expect(buildYearlyRows({ rows: undefined, currentAge: 30, currentYear: 2026 })).toEqual([]);
   });
+
+  it("joins RMD and conversion amounts by age; absent ages → null (WI-2.5)", () => {
+    const rows = [
+      { age: 70, total: 100, growth: 5, draw: 4, tax: 0 },
+      { age: 73, total: 120, growth: 6, draw: 4, tax: 2 },
+    ];
+    const out = buildYearlyRows({
+      rows, currentAge: 65, currentYear: 2026,
+      rmdByAge: { 73: 8_000 },
+      conversionByAge: { 70: 50_000 },
+    });
+    // age 70: conversion present, no RMD
+    expect(out[0].conversion).toBe(50_000);
+    expect(out[0].rmd).toBeNull();
+    expect(out[0].phase).toBe("ret");
+    expect(out[0].contrib).toBeNull();
+    // age 73: RMD present, no conversion
+    expect(out[1].rmd).toBe(8_000);
+    expect(out[1].conversion).toBeNull();
+    expect(out[1].tax).toBe(2);
+  });
 });
