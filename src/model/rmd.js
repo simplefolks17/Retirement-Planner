@@ -1,7 +1,10 @@
 import { RMD_START_AGE, RMD_TABLE3, RMD_TABLE2 } from "../config/irs-2026.js";
 
 // Helper: returns the RMD divisor for a given owner age and optional spouse age.
-function getDivisor(ownerAge, useTable2, spouseAge) {
+// Exported so the per-account retirement engine (retirement-engine.js, BUG-35)
+// computes RMDs on the LIVE 401k balance using the same IRS tables, rather than
+// a parallel standalone projection that ignores withdrawals.
+export function getDivisor(ownerAge, useTable2, spouseAge) {
   let divisor = null;
   if (useTable2) {
     divisor = RMD_TABLE2[ownerAge]?.[spouseAge] ?? null;
