@@ -22,7 +22,7 @@ const contribRows = [
   { age: 65, c401k: 10_000, cRoth: 7_000, cTaxable: 4_000, cHSA: 3_850 },
 ];
 const fd = calcFlowDown({
-  bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000, fedMarginal: 0.22,
+  bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
   contribRows, totalAtRet: 3_000_000,
   walkRows: walk.rows, depletionAge: walk.depletionAge,
   accumChart: [{ age: 65, total: 3_000_000 }],
@@ -47,7 +47,7 @@ describe("calcFlowDown — growth is a true sum, not a plug (BUG-31)", () => {
     // totalAtRet below start + contributions means the portfolio lost real value.
     // The old Math.max(0,…) clamp would zero the growth and break the bridge.
     const shrunk = calcFlowDown({
-      bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000, fedMarginal: 0.22,
+      bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
       contribRows, totalAtRet: 150_000,
       walkRows: walk.rows, depletionAge: walk.depletionAge,
       accumChart: [{ age: 65, total: 150_000 }],

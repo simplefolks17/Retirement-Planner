@@ -271,13 +271,14 @@ export default function App() {
   // conversion-plan and optimizer memos can list them in their deps arrays
   // (exhaustive-deps forbids `retVals["…"]` expressions in deps).
   const retTaxable     = retVals["Taxable"]   ?? 0;
-  // retTrad is the tax-calc scalar — the BARE gross 401k, EXCLUDING addlPreTaxBal
-  // (which tradGrossAtRet adds separately); kept independent of the display value above.
-  const retTrad        = atRetirement["Trad 401k"] ?? 0;
   const retRoth        = retVals["Roth IRA"]  ?? 0;
   const retHsa         = retVals["HSA"]        ?? 0;
   // Pre-tax GROSS 401k at retirement, INCLUDING additional pre-tax balances.
   const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
+  // retTrad is the tax-calc scalar — the GROSS 401k INCLUDING addlPreTaxBal, so the
+  // optimal withdrawal strategy (calcWithdrawalOrderTax) draws from the SAME full
+  // pre-tax pool the worst-case path caps at (tradGrossAtRet). [review fix — Gemini]
+  const retTrad        = tradGrossAtRet;
 
   // BUG-35: the model now tracks GROSS balances and the engine taxes withdrawals
   // per-year, so every FORMULA (and the headline) uses the gross portfolio.
