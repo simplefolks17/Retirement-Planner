@@ -1,8 +1,11 @@
 # verifier-browser — Retirement Planner visual verifier
 
-Launches the Vite dev server, drives all three tabs with Playwright, and
-captures screenshots + structured output. Run this any time you need to
-confirm the app renders correctly after a code change.
+Drives the **real browser** (what the jsdom render-smoke can't): runtime
+console / page errors, real failed network requests, actual paint, and
+screenshots. Walks every Horizon screen, the six Numbers sub-tabs, and a
+Classic-view round-trip — asserting a screen-specific marker and a non-blank
+content area for each. Run it after any UI or model change that could affect
+what the screens display.
 
 ## How to run
 
@@ -12,27 +15,50 @@ sleep 4
 node .claude/skills/verifier-browser.cjs
 ```
 
-The script prints a structured report and saves screenshots to `/tmp/`.
+Prints a structured report, saves screenshots to `/tmp/ss_<screen>.png`, and
+**exits non-zero** if any screen fails to render, a marker is missing, a real
+4xx fires, or an unexpected console/page error is seen — so it can gate a change.
+
+## What it checks
+
+- **Horizon screens:** Plan · Journey · Ideas · The numbers · Someday · Settings
+  (driven by the same labels + markers as `src/__tests__/horizon-screens-smoke.test.js`).
+- **Numbers sub-tabs:** Statement · Budget · Accounts · Taxes · Year by year · Money flow.
+- **Classic view:** toggles to the original dashboard (3 tabs) and back to Horizon.
+- **Runtime health:** console errors, page errors (uncaught exceptions), and 4xx
+  responses across the whole walk.
+
+This is the **visual companion** to the jsdom smoke. The jsdom test enforces the
+screen↔marker pairing at the logic level (its coverage guard fails if a screen is
+added without a marker); this verifies the same screens actually paint in a real
+browser. **If you add a Horizon screen, add it to the `SCREENS` array in BOTH files.**
 
 ## Known environment notes
 
-- Chromium binary: `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`
-- Playwright package: `/home/user/Retirement-Planner/node_modules/playwright`
-- Google Fonts will fail with `ERR_CERT_AUTHORITY_INVALID` in this sandbox
-  — expected, not a bug. Font falls back to system monospace.
-- `fmt()` outputs abbreviated currency: `$3.57M`, `$118K`, `$47` — never
-  `$3,570,000`. Regexes must match `\$[\d.]+[MK]?` not `\$[\d,]+`.
-- RMD table cells render age as a bare number span (`73`), not "Age 73".
-  Query by the gold-coloured age spans, not by text content.
-- Conversion table rows are rendered as flat span arrays inside a CSS grid,
-  not `<tr>/<td>`. Query `.conv-row` or by the age span + sibling values.
+- **Chromium is auto-resolved.** The script scans `PLAYWRIGHT_BROWSERS_PATH`
+  (`/opt/pw-browsers`) for the newest full `chromium-<build>` on disk and launches
+  it via `executablePath`, which bypasses Playwright's bundled-version check. This
+  is deliberate: the sandbox's pre-provisioned build drifts from whatever the
+  installed `playwright` package wants, and `cdn.playwright.dev` is **blocked by the
+  network egress policy** (`Host not in allowlist`), so `playwright install` can't
+  fetch the matching build. Auto-resolving the on-disk binary means a `playwright`
+  package bump no longer silently disables this verifier. (History: the old script
+  hardcoded `chromium-1194`; a bump to playwright 1.60 made it demand build 1223,
+  which couldn't be downloaded — the verifier looked "unavailable" but was a path/
+  version mismatch, not a real Playwright failure.)
+- **First-run onboarding is pre-seeded.** The shell shows a multi-step onboarding
+  stepper unless `localStorage["hz-onboarded"] === "1"` (and its Skip button only
+  appears on the last step). The script sets that flag via `addInitScript` before
+  load, so it lands straight on Plan.
+- **Google Fonts fail with `ERR_CERT_AUTHORITY_INVALID`** in this sandbox — expected,
+  not a bug. Fonts fall back to system fonts. Font SSL errors + transient favicon
+  404s are filtered from the error report.
 
-## False alarms to avoid
+## If it ever stops launching
 
-| Symptom | Root cause | Correct approach |
-|---|---|---|
-| Flow-Down shows `$3`, `$12` | regex `\$[\d,]+` splits `$3.57M` at the dot | Use `\$[\d.]+[MK]?` |
-| "Numbers changed" returns false | Same bad regex misses M/K suffix | Compare with correct pattern |
-| `text=/Age 73/` finds nothing | RMD table renders `73` as a bare span, not "Age 73" | Use `page.locator('[style*="gold"]').filter({ hasText: '73' })` or check `allTextContents()` on the grid |
-| Conversion table text match fails | Rows are flat spans in a CSS grid, no row wrapper | Use `page.locator('text=/^\\d+$/')` for age cells, or grab the full grid text |
-| 404 on first load (transient) | Browser races for favicon.ico on cold start | Only flag 404s that reproduce on second navigation; ignore transient first-load ones |
+1. Check what builds exist: `ls /opt/pw-browsers/` — you want a `chromium-<n>` dir
+   containing `chrome-linux/chrome`. The script picks the highest `<n>` automatically.
+2. If only `chromium_headless_shell-<n>` exists (no full `chromium-<n>`), the headed
+   binary is missing — that's the one needed; flag the sandbox image.
+3. `cdn.playwright.dev` is **not** in the egress allowlist, so `npx playwright install`
+   will 403. Don't rely on it; rely on the pre-provisioned binary.
