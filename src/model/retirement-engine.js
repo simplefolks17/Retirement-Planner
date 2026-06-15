@@ -31,6 +31,7 @@
 
 import { calcTax } from "./taxes.js";
 import { getDivisor } from "./rmd.js";
+import { applyMoneyEvents } from "./money-events.js";
 
 export function buildRetirementWalkByAccount({
   startAge,                 // safeRetAge
@@ -115,15 +116,18 @@ export function buildRetirementWalkByAccount({
     const ssCash  = age >= ssClaimAge ? ssGross : 0;
     const penCash = age >= pensionStartAge ? pension : 0;
 
-    // One-time money events (windfall / purchase) for THIS year, applied BEFORE the
-    //   tax solve (review fix — Gemini): an inflow lands in Taxable so it can fund the
-    //   year, and an outflow is folded into `needed` so the 401k dollars that fund it
-    //   are taxed + grossed up like any other draw (a purchase paid from a pre-tax
-    //   account is ordinary income — it must not escape the taxed-once invariant).
-    const eventAdj = moneyEvents.reduce((s, ev) =>
-      ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
-    const eventInflow  = eventAdj > 0 ?  eventAdj : 0;
-    const eventOutflow = eventAdj < 0 ? -eventAdj : 0;
+    // One-time money events (windfall / purchase) for THIS year, via the shared
+    //   applyMoneyEvents helper (ONE source — the engine no longer re-implements the
+    //   sign logic inline). Applied BEFORE the tax solve (review fix — Gemini): an
+    //   inflow lands in Taxable so it can fund the year; an outflow is folded into
+    //   `needed` so the 401k dollars that fund it are taxed + grossed up like any draw.
+    //   `taxableIncomeAdjustment` is the ordinary-income portion of an inflow (a flagged
+    //   taxable windfall — e.g. an inherited pre-tax IRA), taxed on the floor below so
+    //   a taxable inflow can't enter the pool tax-free (was dropped: the helper was
+    //   orphaned and each walk inlined only the portfolio sign).
+    const { portfolioAdjustment, taxableIncomeAdjustment } = applyMoneyEvents(moneyEvents, age);
+    const eventInflow  = Math.max(0,  portfolioAdjustment);
+    const eventOutflow = Math.max(0, -portfolioAdjustment);
     rTax += eventInflow;
     const needed = Math.max(0, effectiveExpenses - ssCash - penCash) + eventOutflow;
 
@@ -140,17 +144,22 @@ export function buildRetirementWalkByAccount({
     const ORDER = ["taxable", "trad", "roth", "hsa"];
     // 401k dollars consumed to fund an outflow X drawn in ORDER (Taxable absorbs first).
     const tradPortionOf = (X) => Math.min(Math.max(0, X - rTax), Math.max(0, trad));
-    const tFloor = calcTax(floor, filingStatus).tax;
-    const tConv  = calcTax(floor + conversion, filingStatus).tax;
-    const tRmd   = calcTax(floor + conversion + rmd, filingStatus).tax;
-    const convTax = (tConv - tFloor) + conversion * retStateRate;
-    const rmdTax  = (tRmd  - tConv)  + rmd        * retStateRate;
-    let tradDraw = 0, drawTax = 0, tax = Math.round(convTax + rmdTax);
+    // A taxable inflow is ordinary income this year — it stacks at the BOTTOM (it fills
+    //   low brackets before conversion/RMD/draw) and is taxed once via inflowTax.
+    const incFloor = floor + taxableIncomeAdjustment;
+    const tFloor  = calcTax(floor, filingStatus).tax;
+    const tInflow = calcTax(incFloor, filingStatus).tax;
+    const tConv   = calcTax(incFloor + conversion, filingStatus).tax;
+    const tRmd    = calcTax(incFloor + conversion + rmd, filingStatus).tax;
+    const inflowTax = (tInflow - tFloor) + taxableIncomeAdjustment * retStateRate;
+    const convTax   = (tConv - tInflow)  + conversion * retStateRate;
+    const rmdTax    = (tRmd  - tConv)    + rmd        * retStateRate;
+    let tradDraw = 0, drawTax = 0, tax = Math.round(inflowTax + convTax + rmdTax);
     for (let i = 0; i < 8; i++) {
       tradDraw   = tradPortionOf(needed + tax);   // 401k funding spending + tax
-      const tDraw = calcTax(floor + conversion + rmd + tradDraw, filingStatus).tax;
+      const tDraw = calcTax(incFloor + conversion + rmd + tradDraw, filingStatus).tax;
       drawTax = (tDraw - tRmd) + tradDraw * retStateRate;
-      const nt = Math.round(convTax + rmdTax + drawTax);
+      const nt = Math.round(inflowTax + convTax + rmdTax + drawTax);
       if (nt === tax) break;
       tax = nt;
     }
@@ -165,9 +174,10 @@ export function buildRetirementWalkByAccount({
       growth,
       draw: needed,
       tax,
-      convTax,            // raw component taxes (sum to `tax` before rounding);
-      rmdTax,             // rmdTax feeds the displayed rmdTaxBite, convTax the
-      drawTax,            // conversion-benefit calc — one walk, no second source.
+      inflowTax,          // raw component taxes (sum to `tax` before rounding);
+      convTax,            // rmdTax feeds the displayed rmdTaxBite, convTax the
+      rmdTax,             // conversion-benefit calc; inflowTax is the ordinary-income
+      drawTax,            // tax on a flagged taxable inflow — one walk, no second source.
       conversion,
       rmd,
       rmdDivisor,         // IRS divisor used this year (null when no RMD) — for the RMD table

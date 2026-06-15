@@ -13,8 +13,8 @@ import { ltcgRate } from "./taxes.js";
 
 // Runs the accumulation simulation.
 // Returns an array of yearly rows from year 1 through totalYears.
-// "Trad 401k" display normalization is computed in App.jsx using bracket-accurate rates;
-// this function outputs tradGross (pre-tax balance) only.
+// Outputs tradGross (the pre-tax 401k balance) — displayed as-is now (BUG-35: the
+// "Trad 401k" line shows the gross balance, no after-tax normalization).
 // calcEmployerMatchFn: bound function (salary, employeeContrib) → match amount
 export function runSimulation({
   totalYears,
@@ -89,11 +89,10 @@ export function runSimulation({
     // base is the prior balance PLUS this year's contribution (contributions are
     // added before growth compounds — see the contribution-before-growth tests).
     // Captured here so the Year-by-year table can show a real per-year growth figure
-    // instead of a JSX residual (WI-2.5). `tradGrowth` is exposed separately because
-    // the Trad 401k is displayed after-tax (× (1 − marginal)); the display layer
-    // applies that same factor to its growth so the table reconciles
-    //   prevPortfolio + contributions + growth = nextPortfolio
-    // on the after-tax basis. All growth here is GROSS (no tax factor applied).
+    // instead of a JSX residual (WI-2.5). All balances/growth are GROSS now (BUG-35):
+    // the Trad 401k line and Year-by-year table display the pre-tax balance, and the
+    // table reconciles prevPortfolio + contributions + growth = nextPortfolio on the
+    // gross basis. `tradGrowth` is exposed separately as the 401k's share of growth.
     const tradBase = trad + c401k;
     const rothBase = roth + cRoth;
     const hsaBase  = hsa  + cHSA;
@@ -130,7 +129,7 @@ export function runSimulation({
       cTaxable: Math.round(cTaxable),
       cHSA:     Math.round(cHSA),
       growth:     Math.round(growth),      // gross investment earnings this year
-      tradGrowth: Math.round(tradGrowth),  // trad's share (for the after-tax display factor)
+      tradGrowth: Math.round(tradGrowth),  // 401k's share of gross growth (per-account detail)
     });
   }
 

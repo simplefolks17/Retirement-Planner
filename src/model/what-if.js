@@ -34,7 +34,7 @@ export function calcWhatIfDelta({
                           //   contrib401k, contribRoth, contribTaxable, contribHSA,
                           //   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
                           //   calcEmployerMatchFn }
-  fedMarginal,            // to normalize tradGross → after-tax Trad 401k
+  fedMarginal,            // accepted for signature parity; unused now (balances are gross, BUG-35)
   // ── retirement walk inputs ──
   retDrawShared,          // { rReal, effectiveExpenses, ssAmount, ssClaimAge,
                           //   pensionAmount, pensionStartAge, rmdTaxByAge, conversionTaxByAge }

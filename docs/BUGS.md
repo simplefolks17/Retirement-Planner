@@ -18,6 +18,12 @@ candidate scoring are slightly less tax-honest than the headline they sit next t
 **Why it's accepted, not blocking:** the headline (`yearsSustained`, chart, Flow-Down, RMD,
 conversion benefit) is fully on the engine; only the *comparative* overlays lag, and the gap is the
 spending-draw tax, which is small relative to the deltas being compared.
+**Related (same root — inline event handling off the shared helper):** `runSimulation`
+(accumulation) and the blended what-if walk still inline only the money-event portfolio sign and do
+**not** charge income tax on a flagged *taxable inflow* (`applyMoneyEvents.taxableIncomeAdjustment`).
+The retirement **engine** (the headline source) now does charge it — fixed 2026-06-15. Accumulation's
+working-year tax basis is computed once on regular income, so per-year event income tax there is a
+separate, deliberate extension.
 **Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
 work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
 

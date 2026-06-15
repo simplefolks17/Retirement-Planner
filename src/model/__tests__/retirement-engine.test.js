@@ -91,15 +91,15 @@ describe("buildRetirementWalkByAccount — RMDs and conversions", () => {
 });
 
 describe("buildRetirementWalkByAccount — tax breakdown (one walk, attributable)", () => {
-  it("convTax + rmdTax + drawTax rounds to the row's total tax every year", () => {
-    // Mixed portfolio with a conversion window and RMDs so all three components fire.
+  it("inflowTax + convTax + rmdTax + drawTax rounds to the row's total tax every year", () => {
+    // Mixed portfolio with a conversion window and RMDs so all components fire.
     const { rows } = base({
       tradGross: 2_000_000, roth: 0, taxable: 100_000, hsa: 0,
       effectiveExpenses: 80_000, conversionByAge: { 66: 40_000, 67: 40_000 },
       retStateRate: 0.04,
     });
     for (const r of rows) {
-      expect(Math.round(r.convTax + r.rmdTax + r.drawTax)).toBe(r.tax);
+      expect(Math.round(r.inflowTax + r.convTax + r.rmdTax + r.drawTax)).toBe(r.tax);
     }
   });
 
@@ -152,6 +152,20 @@ describe("buildRetirementWalkByAccount — review fixes (PR #32)", () => {
     expect(b.draw).toBeCloseTo(a.draw + 100_000, 5);   // event folded into the draw
     expect(b.tax).toBeGreaterThan(a.tax);              // and taxed (was 0 before the fix)
     expect(b.tradDraw).toBeGreaterThan(b.draw);        // 401k funds spending + the tax on it
+  });
+
+  it("taxes a flagged taxable inflow as ordinary income (and leaves a non-taxable one untaxed)", () => {
+    // A taxable windfall (e.g. inherited pre-tax IRA) is ordinary income the year it
+    // lands; a non-taxable one (Roth inheritance, gift) is not. Both add to the pool.
+    const common = { tradGross: 0, roth: 0, taxable: 200_000, hsa: 0, effectiveExpenses: 0 };
+    const taxableIn    = base({ ...common, moneyEvents: [{ age: 68, amount: 100_000, isInflow: true, isTaxable: true  }] });
+    const nonTaxableIn = base({ ...common, moneyEvents: [{ age: 68, amount: 100_000, isInflow: true, isTaxable: false }] });
+    const t = taxableIn.rows.find(r => r.age === 68);
+    const n = nonTaxableIn.rows.find(r => r.age === 68);
+    expect(t.inflowTax).toBeGreaterThan(0);                 // taxable inflow is taxed
+    expect(n.inflowTax).toBe(0);                            // non-taxable inflow is not
+    expect(t.tax).toBeGreaterThan(n.tax);                   // and it shows up in the year's tax
+    expect(t.balEnd).toBeLessThan(n.balEnd);                // net pool is lower by the tax paid
   });
 
   it("computes the RMD BEFORE any same-year conversion (IRS sequencing)", () => {
