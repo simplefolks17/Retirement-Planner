@@ -493,8 +493,8 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   growth no longer clamped at 0 (negative real growth reconciles the bridge); (9) per-account cards
   reconcile to gross `totalAtRet` when `addlPreTaxBal > 0` (Trad card includes it; `retTrad` tax
   scalar decoupled). +2 regression tests. Follow-up tracked as BUG-36 (what-if/optimized deltas +
-  accumulation event income tax not yet on the engine); `conversionTaxSource` honoring in the engine
-  is a deliberate open decision (would move the golden master).
+  accumulation event income tax not yet on the engine) and BUG-37 (engine ignores
+  `conversionTaxSource` — owner-deferred, would move the golden master).
 
 ## Commands
 

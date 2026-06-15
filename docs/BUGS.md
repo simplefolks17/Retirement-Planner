@@ -27,6 +27,20 @@ separate, deliberate extension.
 **Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
 work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
 
+### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
+
+**Owner:** me_theguy. **What:** the per-account engine always funds Roth-conversion tax from the
+pool (Taxable first) and moves the **full** converted amount to Roth — i.e. it behaves as
+`conversionTaxSource === "taxable"`. The UI toggle defaults to **"converted"** (pay the tax out of
+the converted amount, so less lands in Roth), so at the default setting the engine and the toggle
+disagree. The old `calcConversionSim` (still used for the conversion *schedule* display) does honor
+the toggle. **Why deferred:** honoring "converted" in the engine would move the golden master at
+default (yearsSustained, netConversionBenefit) and is a deliberate modeling change; the current
+full-to-Roth/tax-from-taxable behavior is a defensible default. **Fix path:** thread
+`conversionTaxSource` into `buildRetirementWalkByAccount` and, for "converted", credit Roth with
+`conversion − convTax` instead of pulling the tax from the pool. Owner-approved to defer so PR #32
+can close.
+
 ---
 
 ## Resolved Issues
