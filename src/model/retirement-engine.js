@@ -101,9 +101,10 @@ export function buildRetirementWalkByAccount({
 
     // 3. RMD (forced): 401k → Taxable; principal stays in the pool, only tax leaks.
     let rmd = 0;
+    let rmdDivisor = null;
     if (age >= rmdStartAge) {
-      const divisor = getDivisor(age, useTable2, spouseAgeAt(age));
-      if (divisor) { rmd = trad / divisor; trad -= rmd; rTax += rmd; }
+      rmdDivisor = getDivisor(age, useTable2, spouseAgeAt(age));
+      if (rmdDivisor) { rmd = trad / rmdDivisor; trad -= rmd; rTax += rmd; }
     }
 
     // Income floor + cash income for THIS year (age-gated, rule 5b).
@@ -161,6 +162,7 @@ export function buildRetirementWalkByAccount({
       drawTax,            // conversion-benefit calc — one walk, no second source.
       conversion,
       rmd,
+      rmdDivisor,         // IRS divisor used this year (null when no RMD) — for the RMD table
       tradDraw,
       trad, roth: rRoth, taxable: rTax, hsa: rHsa,
       balEnd,

@@ -9,28 +9,38 @@
  *   bal401k=50_000, balRoth=25_000, balTaxable=80_000, balHSA=10_000
  *   contrib401k=10_000, contribRoth=7_000, contribTaxable=4_000, contribHSA=3_850
  *   contribEnd*=65, otherPreTaxDeduc=0, stateRateOverride=null
- *   rate1=22, rate2=24, rate3=18, showPhase2=false, phase2Start=2
  *   retirementState="TX", employerMatchPct=3, matchMode="flat"
  *   matchFormulaRate=50, matchFormulaCap=6
  *   ssClaimingAge=67, includeSS=true, ssOverride=null
  *   isMarried=false, spouseIsSoleBenef=false, spouseCurrentAge=18
- *   spouseIncome=0, spouseIncomeGrowth=3, spouseSsEstimate=0
  *   pensionMonthly=0, pensionStartAge=65
  *   conversionMode="bracket", conversionBracketTarget=22
- *   annualConversionAmt=20_000, conversionTaxSource="converted"
+ *   conversionTaxSource="converted"
  *   annualExpenses=null, livingExpenses=null
- *   savingsSurplusPct=50
+ *
+ * BUG-35 (2026-06-15): rewritten to the single per-account retirement ENGINE
+ * (buildRetirementPhase) — the same path App now uses. Headline numbers moved
+ * deliberately and are re-locked here:
+ *   • balances are GROSS (the 401k is no longer shrunk by the marginal rate);
+ *     totalAtRet is the gross portfolio; spendableAtRet is the after-tax reference.
+ *   • the default retirement expense is the user's CURRENT living spend
+ *     (effectiveLiving), not 3% of the portfolio.
+ *   • RMDs are computed on the LIVE 401k (real $, after conversions/draws), so
+ *     firstRMD / rmdTaxBite drop sharply; the conversion benefit and longevity
+ *     come from the same walk.
  */
 
 import { describe, it, expect } from "vitest";
 import { calcTax, marginalRate } from "../taxes.js";
-import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "../social-security.js";
+import { calcAIME, calcPIA, calcBenefit } from "../social-security.js";
 import { runSimulation } from "../simulation.js";
 import { calcEmployerMatch } from "../employer-match.js";
+import { calcTaxBasis } from "../tax-basis.js";
+import { calcSavingsCapacity } from "../budget.js";
+import { calcRetirementIncome } from "../retirement-income.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate } from "../drawdown.js";
-import { buildRetirementDrawdown } from "../retirement-drawdown.js";
-import { calcRMDProjection, calcRMDPostConversion } from "../rmd.js";
-import { calcConversionSim } from "../roth-conversion.js";
+import { buildIncomeFloors, calcBracketFillTargets } from "../conversion-planning.js";
+import { buildRetirementPhase, buildConversionByAge } from "../retirement-phase.js";
 import { TAX_DATA_2026, RETIREMENT_STATE_TAX, RMD_START_AGE } from "../../config/irs-2026.js";
 
 // ── Shared setup (mirrors App.jsx logic at default state) ────────────────────
@@ -58,53 +68,64 @@ const sim = runSimulation({
   calcEmployerMatchFn: em,
 });
 const at = sim[phase2End - 1];
-// "Trad 401k" display is computed in App.jsx using fedMarginal — mirror that here.
-const retTrad401k = Math.round(at.tradGross * (1 - fedMarginal));
-const totalAtRet = retTrad401k + at["Roth IRA"] + at["Taxable"] + at["HSA"];
-const effectiveExpenses = Math.round(totalAtRet * 0.03);
+
+// BUG-35: balances are gross; the 401k is displayed at its full pre-tax value.
+const retTrad401k = at.tradGross;
+const totalAtRet  = at.tradGross + at["Roth IRA"] + at["Taxable"] + at["HSA"];
+const rReal       = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
+
+// Default retirement expense = current living spend (effectiveLiving).
+const taxBasis = calcTaxBasis({
+  currentIncome, spouseIncome: 0, filingStatus, contrib401k, contribHSA,
+  otherPreTaxDeduc: 0, selectedState: "TX", stateRateOverride: null, isMarried: false,
+});
+const { effectiveLiving } = calcSavingsCapacity({
+  grossAfterTax: taxBasis.grossAfterTax, contrib401k, contribRoth, contribTaxable, contribHSA,
+  livingExpenses: null,
+});
+const effectiveExpenses = Math.round(effectiveLiving);
+
 const ssAIME = calcAIME(currentIncome, incomeGrowth, Math.max(1, safeRetAge - currentAge));
 const ssPIA  = calcPIA(ssAIME);
-const householdSS = calcBenefit(ssPIA, 67) * 12; // default state is single — no spousal term
-const rReal  = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
-const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, householdSS, 0);
-const rmd = calcRMDProjection({ tradGrossAtRetirement: at.tradGross, safeRetAge, safeLifeExp, returnRate, useTable2: false, spouseCurrentAge: 18, currentAge });
-const totalRMDs = rmd.reduce((s, d) => s + d.rmd, 0);
-const retStateRate  = RETIREMENT_STATE_TAX["TX"]?.rate ?? 0;
-const ssTaxableRet  = householdSS * 0.85;
-// Bracket-accurate RMD tax: SS active at RMD start (claiming age 67 ≤ 73), no pension.
-const rmdIncomeFloor  = ssTaxableRet; // SS taxable fraction, pension = 0
-const { tax: rmdBaseFedTax } = calcTax(rmdIncomeFloor, filingStatus);
-const rmdTaxBite = rmd.reduce((sum, { rmd: r }) => {
-  const { tax } = calcTax(rmdIncomeFloor + r, filingStatus);
-  return sum + Math.round((tax - rmdBaseFedTax) + r * retStateRate);
-}, 0);
-const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
-const retIncomeFloor = ssTaxableRet;
+const ri = calcRetirementIncome({
+  currentIncome, incomeGrowth, incomeGrowthEndAge: null, safeRetAge, currentAge,
+  ssClaimingAge: 67, includeSS: true, ssOverride: null, spouseSsEstimate: 0,
+  pensionMonthly: 0, pensionStartAge: 65, isMarried: false, spouseClaimingAge: 67, spouseBenefitBasis: "own",
+});
+const householdSS = ri.householdSS;
+const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ri.ssAtRet, ri.effectivePension);
+
+// Conversion schedule (bracket-fill to 22%) → engine.
 const retTaxData = TAX_DATA_2026[filingStatus];
-const annualConversion = Math.max(0, Math.round(retTaxData.brackets[2].max + retTaxData.deduction - ssTaxableRet));
-const conv = calcConversionSim({ conversionWindowYrs, annualConversion, returnRate, retIncomeFloor, filingStatus, conversionTaxSource: "converted", tradGrossAtRetirement: at.tradGross, rothBalAtRet: at["Roth IRA"], taxableBalAtRet: at["Taxable"], retStateRate });
-const rmdPost = calcRMDPostConversion({ conversionWindowYrs, rmdData: rmd, tradBal73: conv.tradBal73, safeLifeExp, returnRate, useTable2: false, spouseCurrentAge: 18, currentAge });
-const rmdTaxBitePost = rmdPost.reduce((sum, { rmd: r }) => {
-  const { tax } = calcTax(rmdIncomeFloor + r, filingStatus);
-  return sum + Math.round((tax - rmdBaseFedTax) + r * retStateRate);
-}, 0);
-const rmdTaxSaved = Math.max(0, rmdTaxBite - rmdTaxBitePost);
-const netConversionBenefit = rmdTaxSaved - conv.totalTax;
+const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
+const convFloors = buildIncomeFloors({
+  conversionWindowYrs, safeRetAge, includeSS: true, ssClaimingAge: 67, ssAmount: ri.ssTaxableRet,
+  pensionMonthly: 0, pensionStartAge: 65, monthsPerYear: 12,
+});
+const retIncomeFloor = ri.ssTaxableRet;
+const { bracketFillConversions, bracketFillConversion } =
+  calcBracketFillTargets({ retTaxData, conversionBracketTarget: 22, convFloors, retIncomeFloor });
+const conversionByAge = buildConversionByAge({
+  conversionWindowYrs, safeRetAge, annualConversions: bracketFillConversions, annualConversion: bracketFillConversion,
+});
+const retStateRate = RETIREMENT_STATE_TAX["TX"]?.rate ?? 0;
 
-// Headline longevity now comes from the tax-honest shared walk (BUG-31 Path A),
-// not the closed-form calcYearsSustained — mirrors App.jsx. The portfolio pays
-// its per-year RMD tax (ages 73+) and Roth-conversion tax (conversion window),
-// and SS is gated at the claiming age (67), so the number is lower and honest.
-const rmdTaxByAge = Object.fromEntries(rmd.map(({ age, rmd: r }) =>
-  [age, Math.round((calcTax(rmdIncomeFloor + r, filingStatus).tax - rmdBaseFedTax) + r * retStateRate)]));
-const conversionTaxByAge = Object.fromEntries(conv.years.map(y => [safeRetAge + y.age, y.tax]));
-const headlineYearsSustained = buildRetirementDrawdown({
-  startBal: totalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130, rReal,
-  effectiveExpenses, ssAmount: householdSS, ssClaimAge: 67,
-  rmdTaxByAge, conversionTaxByAge,
-}).yearsSustained;
+// THE single retirement-phase walk — the source for longevity + RMD + conversion.
+const retPhase = buildRetirementPhase({
+  tradGross: at.tradGross, roth: at["Roth IRA"], taxable: at["Taxable"], hsa: at["HSA"],
+  startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+  rReal, effectiveExpenses,
+  ssGross: householdSS, ssTaxable: ri.ssTaxableRet, ssClaimAge: 67,
+  pension: 0, pensionStartAge: Infinity,
+  filingStatus, retStateRate, conversionByAge, rmdStartAge: RMD_START_AGE,
+  useTable2: false, spouseCurrentAge: 18, currentAge,
+});
 
-// ── Expected values (updated 2026-06-03: bracket-accurate RMD tax replaces flat rate3Combined) ───
+const effectiveRMDTaxRate = retPhase.rmdTaxBite / retPhase.totalRMDs;
+const spendableAtRet = Math.round(
+  at.tradGross * (1 - effectiveRMDTaxRate) + at["Roth IRA"] + at["Taxable"] + at["HSA"]);
+
+// ── Expected values (BUG-35, 2026-06-15) ─────────────────────────────────────
 
 const E = {
   fedTax:               10_123,
@@ -114,26 +135,22 @@ const E = {
   ssPIA:                3827.422691952266,
   ssMonthlyBenefit:     3827,
   ssAnnualBenefit:      45_924,
-  retTrad401k:          1_653_620,   // tradGross × (1 − fedMarginal 22%), was tradGross × 82% with rate3=18%
+  retTrad401k:          2_120_026,   // GROSS (BUG-35; was 1_653_620 after-tax)
   retTradGross:         2_120_026,
   retRoth:              573_820,
   retTaxable:           836_477,
   retHSA:               420_280,
-  totalAtRet:           3_484_197,
-  netPortfolioNeed:     58_602,
-  withdrawalRate:       1.6819370431694878,
-  // updated 2026-06-06 (BUG-29): conversion tax now bracket-accurate (was flat top-marginal);
-  // conversion cost drops so net benefit rises and the tax-honest walk pays less conversion tax →
-  // longevity ticks up. (Prior: 61.99935122020162 from BUG-31 Path A.)
-  yearsSustained:       62.92429188816821,
-  firstRMD:             118_198,
-  totalRMDs:            3_106_334,
-  rmdTaxBite:           683_974,   // bracket-accurate (was 559_140 at flat 18%)
+  totalAtRet:           3_950_603,   // gross (was 3_484_197 after-tax)
+  spendableAtRet:       3_575_746,   // after-tax reference chip
+  effectiveExpenses:    57_377,      // current living spend (was ~104_525 = 3% of portfolio)
+  netPortfolioNeed:     57_377,      // ssAtRet = 0 (claims at 67, retires at 65)
+  withdrawalRate:       1.4523605636911632,
+  yearsSustained:       Infinity,    // trivially sustainable at this spend (was 62.9)
+  firstRMD:             62_071,      // live-balance, real-$, post-conversion (was 118_198)
+  totalRMDs:            1_144_815,   // (was 3_106_334)
+  rmdTaxBite:           202_423,     // with-conversion lifetime RMD tax to 90 (was 683_974)
   conversionWindowYrs:  7,
-  // updated 2026-06-06 (BUG-29): conversion tax now bracket-accurate (was flat top-marginal);
-  // bracket-accurate cost is lower than flat marginal, so net benefit rises.
-  // (Prior: 47_047 from BUG-27.)
-  netConversionBenefit: 77_861,
+  netConversionBenefit: -10_096,     // bracket-fill is net-negative at this spend (was +77_861)
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -153,7 +170,7 @@ describe("golden master — default state", () => {
     expect(calcBenefit(ssPIA, 67) * 12).toBe(E.ssAnnualBenefit);
   });
 
-  it("simulation retirement snapshot", () => {
+  it("simulation retirement snapshot (gross balances)", () => {
     expect(retTrad401k).toBe(E.retTrad401k);
     expect(at.tradGross).toBe(E.retTradGross);
     expect(at["Roth IRA"]).toBe(E.retRoth);
@@ -162,20 +179,25 @@ describe("golden master — default state", () => {
     expect(totalAtRet).toBe(E.totalAtRet);
   });
 
+  it("spendable reference + default expense", () => {
+    expect(spendableAtRet).toBe(E.spendableAtRet);
+    expect(effectiveExpenses).toBe(E.effectiveExpenses);
+  });
+
   it("drawdown metrics", () => {
     expect(netPortfolioNeed).toBe(E.netPortfolioNeed);
     expect(calcWithdrawalRate(netPortfolioNeed, totalAtRet)).toBeCloseTo(E.withdrawalRate, 8);
-    expect(headlineYearsSustained).toBeCloseTo(E.yearsSustained, 6);
+    expect(retPhase.yearsSustained).toBe(E.yearsSustained);
   });
 
-  it("RMD projection", () => {
-    expect(rmd[0].rmd).toBe(E.firstRMD);
-    expect(totalRMDs).toBe(E.totalRMDs);
-    expect(rmdTaxBite).toBe(E.rmdTaxBite);
+  it("RMD schedule (from the engine)", () => {
+    expect(retPhase.firstRMD).toBe(E.firstRMD);
+    expect(retPhase.totalRMDs).toBe(E.totalRMDs);
+    expect(retPhase.rmdTaxBite).toBe(E.rmdTaxBite);
   });
 
   it("Roth conversion window", () => {
     expect(conversionWindowYrs).toBe(E.conversionWindowYrs);
-    expect(netConversionBenefit).toBe(E.netConversionBenefit);
+    expect(retPhase.grossNetBenefit).toBe(E.netConversionBenefit);
   });
 });

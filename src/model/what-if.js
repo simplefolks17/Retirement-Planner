@@ -64,8 +64,9 @@ export function calcWhatIfDelta({
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
     const at = raw[retIdx];
     if (at) {
-      const retTrad = Math.round((at.tradGross ?? 0) * (1 - fedMarginal));
-      scenarioTotalAtRet = retTrad
+      // BUG-35: gross basis (the 401k is no longer haircut) — matches the gross
+      // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples.
+      scenarioTotalAtRet = (at.tradGross ?? 0)
         + (at["Roth IRA"] ?? 0)
         + (at["Taxable"]  ?? 0)
         + (at["HSA"]      ?? 0);
@@ -191,7 +192,8 @@ export function calcWhatIfScenario({
       const retIdx = scenarioRetAge - simInputs.currentAge - 1;
       const at     = raw[retIdx];
       if (!at) return null;
-      startBal = Math.round((at.tradGross ?? 0) * (1 - (fedMarginal ?? 0)))
+      // BUG-35: gross basis (no 401k haircut) — consistent with baseTotalAtRet.
+      startBal = (at.tradGross ?? 0)
         + (at["Roth IRA"] ?? 0) + (at["Taxable"] ?? 0) + (at["HSA"] ?? 0);
     } catch {
       return null;

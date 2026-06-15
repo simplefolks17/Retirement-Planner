@@ -9,27 +9,25 @@
 // subtracts the same taxes, the bars reconcile by the walk's conservation law
 // (start + growth − draws − tax = end).
 //
-// Accumulation bridge (Facet A): the start balance and contributions are put in
-// the SAME after-tax units as totalAtRet (which normalizes the 401k by
-// (1 − fedMarginal)), so "Investment Growth" isn't distorted by a tax haircut
-// applied only to the endpoint.
+// Accumulation bridge (Facet A): BUG-35 — balances are now GROSS everywhere (the
+// engine taxes withdrawals year-by-year), so the start balance, contributions, and
+// totalAtRet are all gross. "Investment Growth" = the true gross residual; no tax
+// haircut is applied to any node, so the bridge reconciles in one consistent unit.
 export function calcFlowDown({
-  bal401k, balRoth, balTaxable, balHSA, fedMarginal,
+  bal401k, balRoth, balTaxable, balHSA,
   contribRows,                  // simData rows with c401k/cRoth/cTaxable/cHSA (age <= safeRetAge)
   totalAtRet,
-  walkRows,                     // buildRetirementDrawdown(...).rows  (the shared source of truth)
-  depletionAge,                 // buildRetirementDrawdown(...).depletionAge
+  walkRows,                     // buildRetirementPhase(...).rows  (the shared source of truth)
+  depletionAge,                 // buildRetirementPhase(...).depletionAge
   accumChart = [],              // [{age,total}] accumulation rows (for the peak)
   conversionWindowYrs,
   totalConverted = 0,
   safeRetAge, safeLifeExp, rmdStartAge,
 }) {
-  const afterTax401k = (gross) => Math.round(gross * (1 - fedMarginal));
-
-  // Accumulation bridge — all three nodes in after-tax (spendable) units.
-  const startPortfolio = afterTax401k(bal401k) + balRoth + balTaxable + balHSA;
+  // Accumulation bridge — all three nodes in GROSS units.
+  const startPortfolio = bal401k + balRoth + balTaxable + balHSA;
   const totalContrib = contribRows.reduce((s, d) =>
-    s + afterTax401k(d.c401k || 0) + (d.cRoth || 0) + (d.cTaxable || 0) + (d.cHSA || 0), 0);
+    s + (d.c401k || 0) + (d.cRoth || 0) + (d.cTaxable || 0) + (d.cHSA || 0), 0);
   const totalGrowth = Math.max(0, totalAtRet - startPortfolio - totalContrib);
 
   // Retirement phases — split the shared walk rows at RMD start.

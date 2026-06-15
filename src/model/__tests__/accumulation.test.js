@@ -6,10 +6,10 @@ describe("buildAccumulationRows (WI-2.5)", () => {
   // Minimal augmented simData rows (as App builds them: balances + contributions
   // + per-year gross growth/tradGrowth from runSimulation, plus the after-tax
   // "Trad 401k" key). Two consecutive years so we can check reconciliation.
-  const m = 0.24;
+  const m = 0.24;   // passed as fedMarginal but ignored now (gross basis, BUG-35)
   const mkRow = (age, trad, roth, taxable, hsa, c401k, growth, tradGrowth) => ({
     age,
-    "Trad 401k": Math.round(trad * (1 - m)),
+    "Trad 401k": trad,   // GROSS (BUG-35)
     "Roth IRA": roth, "Taxable": taxable, "HSA": hsa, tradGross: trad,
     c401k, cRoth: 7_000, cTaxable: 4_000, cHSA: 3_000,
     growth, tradGrowth,
@@ -54,7 +54,7 @@ describe("buildAccumulationRows (WI-2.5)", () => {
     expect(row.conversion).toBeNull();
   });
 
-  it("reconciles on the after-tax basis: prevTotal + contrib + growth = total", () => {
+  it("reconciles on the gross basis: prevTotal + contrib + growth = total", () => {
     const rows = buildAccumulationRows({ simData, fedMarginal: m, currentAge: 30, currentYear: 2026, safeRetAge: 40 });
     const r2 = rows[1];
     // prev displayed total + this year's contrib + this year's growth == this total

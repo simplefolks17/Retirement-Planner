@@ -70,13 +70,13 @@ describe("calcFlowDown — growth is a true sum, not a plug (BUG-31)", () => {
   });
 });
 
-describe("calcFlowDown — accumulation bridge units (BUG-31 Facet A)", () => {
-  it("start balance & contributions are after-tax (401k haircut), matching totalAtRet", () => {
-    // bal401k 50k at 22% → 39k after-tax, NOT 50k gross.
-    expect(fd.startPortfolio).toBe(Math.round(50_000 * 0.78) + 25_000 + 80_000 + 10_000);
-    // c401k contributions are haircut too; Roth/taxable/HSA at face.
+describe("calcFlowDown — accumulation bridge units (BUG-35: gross)", () => {
+  it("start balance & contributions are GROSS (no 401k haircut), matching the gross totalAtRet", () => {
+    // bal401k 50k at full pre-tax value, NOT haircut.
+    expect(fd.startPortfolio).toBe(50_000 + 25_000 + 80_000 + 10_000);
+    // all contributions at face (gross); the engine taxes withdrawals, not the bridge.
     const expectedContrib = contribRows.reduce(
-      (s, d) => s + Math.round(d.c401k * 0.78) + d.cRoth + d.cTaxable + d.cHSA, 0);
+      (s, d) => s + d.c401k + d.cRoth + d.cTaxable + d.cHSA, 0);
     expect(fd.totalContrib).toBe(expectedContrib);
   });
 

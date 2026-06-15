@@ -1,5 +1,21 @@
 import { buildRetirementWalkByAccount } from "./retirement-engine.js";
 
+// Build the engine's { [age]: amount } Roth-conversion schedule from the plan's
+// per-year (bracket-fill) or flat conversion targets. Conversions occur at ages
+// safeRetAge+1 .. safeRetAge+conversionWindowYrs (the sim grows one year before
+// the first conversion, so the window starts the year AFTER retirement). Shared
+// by the display path and the optimizer so they feed the engine the same schedule.
+export function buildConversionByAge({
+  conversionWindowYrs, safeRetAge, annualConversions = null, annualConversion = 0,
+}) {
+  const out = {};
+  for (let yr = 0; yr < conversionWindowYrs; yr++) {
+    const amt = annualConversions ? (annualConversions[yr] ?? annualConversion) : annualConversion;
+    if (amt > 0) out[safeRetAge + yr + 1] = amt;
+  }
+  return out;
+}
+
 // ── Single source of truth for the ENTIRE retirement phase (BUG-35 / BUG-31) ──
 //
 // One per-account engine walk drives BOTH the headline longevity AND the
@@ -55,22 +71,37 @@ export function buildRetirementPhase({
   const sumRmdTax  = rows => rows.reduce((s, r) => s + (r.rmdTax  ?? 0), 0);
   const sumConvTax = rows => rows.reduce((s, r) => s + (r.convTax ?? 0), 0);
 
-  // Chart/Flow-Down rows: the plan walk sliced to the display horizon.
-  const rows = plan.rows.filter(r => r.age <= lifeExp);
+  // Chart/Flow-Down rows + all lifetime tax sums are bounded to the display life
+  // expectancy: RMDs past the planning horizon (death) don't happen, and the prior
+  // model (calcRMDProjection → safeLifeExp) measured the bite the same way. The
+  // FAR walk is used only for the headline "years sustained" (longevity past 90).
+  const rows      = plan.rows.filter(r => r.age <= lifeExp);
+  const noConvRows = noConv.rows.filter(r => r.age <= lifeExp);
 
-  // RMD schedule (display) from the plan walk — 73+, withdrawal-aware, real $.
-  // Absent/zero-RMD years are dropped (the RMD section lists required ones only).
-  const rmdSchedule = plan.rows
+  // RMD schedule (display) — 73+, withdrawal-aware, real $. Zero-RMD years dropped
+  // (the section lists required ones only). Each row carries divisor + per-year RMD
+  // tax so it feeds the RMD table directly (this IS rmdDataWithTax — one source, no
+  // separate calcRMDTaxSchedule pass).
+  const rmdSchedule = rows
+    .filter(r => r.age >= rmdStartAge && r.rmd > 0)
+    .map(r => ({
+      age: r.age, rmd: Math.round(r.rmd), bal: r.total,
+      divisor: r.rmdDivisor, tax: Math.round(r.rmdTax),
+    }));
+  const firstRMD  = rmdSchedule[0]?.rmd ?? 0;
+  const totalRMDs = Math.round(rows.reduce((s, r) => s + r.rmd, 0));
+
+  // No-conversion RMD schedule (same shape) for the pre/post-conversion comparison
+  // table — the counterfactual "what your RMDs would be without converting".
+  const rmdScheduleNoConv = noConvRows
     .filter(r => r.age >= rmdStartAge && r.rmd > 0)
     .map(r => ({ age: r.age, rmd: Math.round(r.rmd), bal: r.total }));
-  const firstRMD  = rmdSchedule[0]?.rmd ?? 0;
-  const totalRMDs = Math.round(plan.rows.reduce((s, r) => s + r.rmd, 0));
 
-  // Lifetime taxes over the far horizon so every RMD year is counted regardless
-  // of the display life expectancy. rmdTaxBite is the ACTUAL plan (post-conversion).
-  const rmdTaxBite       = Math.round(sumRmdTax(plan.rows));
-  const conversionCost   = Math.round(sumConvTax(plan.rows));
-  const rmdTaxBiteNoConv = Math.round(sumRmdTax(noConv.rows));
+  // Lifetime taxes (to life expectancy). rmdTaxBite is the ACTUAL plan (post-conversion);
+  // rmdTaxBiteNoConv is the counterfactual that values the conversion's RMD-tax saving.
+  const rmdTaxBite       = Math.round(sumRmdTax(rows));
+  const conversionCost   = Math.round(sumConvTax(rows));
+  const rmdTaxBiteNoConv = Math.round(sumRmdTax(noConvRows));
   const rmdTaxSaved      = Math.max(0, rmdTaxBiteNoConv - rmdTaxBite);
   const grossNetBenefit  = rmdTaxSaved - conversionCost;
 
@@ -81,7 +112,7 @@ export function buildRetirementPhase({
     yearsSustained: plan.yearsSustained,
     endVal: plan.endVal,
     // RMD display
-    rmdSchedule, firstRMD, totalRMDs, rmdTaxBite,
+    rmdSchedule, rmdScheduleNoConv, firstRMD, totalRMDs, rmdTaxBite,
     // conversion benefit (before IRMAA/ACA — those layer on in conversion-evaluation)
     conversionCost, rmdTaxBiteNoConv, rmdTaxSaved, grossNetBenefit,
     // full far-horizon walks for any consumer that needs the tail

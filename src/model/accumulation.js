@@ -105,13 +105,10 @@ export function calcChartMilestones({ chartData, currentAge, retirementAge, life
 }
 
 // ── Accumulation display rows for the Year-by-year table (WI-2.5) ────────────
-// Working-year rows on the SAME after-tax basis as the rest of Horizon (the
-// Trad 401k is shown × (1 − marginal); Roth/HSA full; Taxable already net of
-// LTCG drag). Both `contrib` and `growth` carry the same after-tax factor so the
-// row reconciles exactly:  prevTotal + contrib + growth = total  (locked by a
-// test). `growth` here is the gross simulation growth minus the tax wedge on the
-// Trad 401k's share (growth − marginal × tradGrowth); `contrib` is the gross
-// contribution minus the wedge on the 401k deferral (contrib − marginal × c401k).
+// BUG-35: working-year rows on the GROSS basis, matching the rest of the app now
+// (the 401k is shown at its full pre-tax value; Roth/HSA full; Taxable net of LTCG
+// drag). `contrib` and `growth` are the gross simulation figures, so the row
+// reconciles exactly:  prevTotal + contrib + growth = total  (locked by a test).
 //
 // Returns rows for ages currentAge+1 … safeRetAge (the building years up to and
 // including the nest-egg year). Retirement-phase rows come from the walk
@@ -122,16 +119,13 @@ export function calcChartMilestones({ chartData, currentAge, retirementAge, life
 //             rmd: null, conversion: null, phase: "accum" }.
 // draw/tax are an explicit 0 (no withdrawals/tax paid while accumulating);
 // rmd/conversion are null (not applicable) so the screen renders "—".
-export function buildAccumulationRows({ simData, fedMarginal, currentAge, currentYear, safeRetAge }) {
-  const m = fedMarginal ?? 0;
+// (fedMarginal is accepted for signature compatibility but no longer used.)
+export function buildAccumulationRows({ simData, currentAge, currentYear, safeRetAge }) {
   return (simData ?? [])
     .filter(d => d.age <= safeRetAge)
     .map(d => {
-      const grossContrib = (d.c401k ?? 0) + (d.cRoth ?? 0) + (d.cTaxable ?? 0) + (d.cHSA ?? 0);
-      // After-tax basis: the Trad 401k share of both contributions and growth is
-      // discounted by the same marginal factor used for the displayed balance.
-      const contrib = Math.round(grossContrib - m * (d.c401k ?? 0));
-      const growth  = Math.round((d.growth ?? 0) - m * (d.tradGrowth ?? 0));
+      const contrib = Math.round((d.c401k ?? 0) + (d.cRoth ?? 0) + (d.cTaxable ?? 0) + (d.cHSA ?? 0));
+      const growth  = Math.round(d.growth ?? 0);
       return {
         age: d.age,
         year: currentYear + (d.age - currentAge),
