@@ -90,6 +90,33 @@ describe("buildRetirementWalkByAccount — RMDs and conversions", () => {
   });
 });
 
+describe("buildRetirementWalkByAccount — tax breakdown (one walk, attributable)", () => {
+  it("convTax + rmdTax + drawTax rounds to the row's total tax every year", () => {
+    // Mixed portfolio with a conversion window and RMDs so all three components fire.
+    const { rows } = base({
+      tradGross: 2_000_000, roth: 0, taxable: 100_000, hsa: 0,
+      effectiveExpenses: 80_000, conversionByAge: { 66: 40_000, 67: 40_000 },
+      retStateRate: 0.04,
+    });
+    for (const r of rows) {
+      expect(Math.round(r.convTax + r.rmdTax + r.drawTax)).toBe(r.tax);
+    }
+  });
+
+  it("attributes tax to the right source: conversion tax in the window, RMD tax at 73+", () => {
+    const { rows } = base({
+      tradGross: 2_000_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 0, conversionByAge: { 66: 50_000 },
+    });
+    const at66 = rows.find(r => r.age === 66);
+    expect(at66.convTax).toBeGreaterThan(0);   // conversion taxed in its year
+    expect(at66.rmdTax).toBe(0);               // no RMD before 73
+    const at74 = rows.find(r => r.age === 74);
+    expect(at74.rmdTax).toBeGreaterThan(0);    // RMD taxed once started
+    expect(at74.convTax).toBe(0);              // no conversion outside the window
+  });
+});
+
 describe("buildRetirementWalkByAccount — income timing (rule 5b)", () => {
   it("SS reduces the draw only from its claim age", () => {
     const { rows } = base({ ssGross: 30_000, ssTaxable: 25_500, ssClaimAge: 70 });

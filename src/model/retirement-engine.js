@@ -29,7 +29,7 @@
 // row shape — now with correct, gross-seeded, taxed-once numbers, plus per-account
 // detail. This keeps the BUG-31 single-walk guarantee intact.
 
-import { stackedIncomeTax } from "./taxes.js";
+import { calcTax } from "./taxes.js";
 import { getDivisor } from "./rmd.js";
 
 export function buildRetirementWalkByAccount({
@@ -120,9 +120,26 @@ export function buildRetirementWalkByAccount({
     const { taken: spendTaken, shortfall: spendShort } = drawInOrder(needed, ORDER);
     const tradDraw = spendTaken.trad;   // ordinary-income portion of the draw
 
-    // 5. ONE bracket-accurate ordinary tax on conversion + RMD + extra 401k draw.
-    const ordinary = conversion + rmd + tradDraw;
-    const tax = ordinary > 0 ? stackedIncomeTax(ordinary, floor, filingStatus, retStateRate) : 0;
+    // 5. ONE bracket-accurate ordinary tax on conversion + RMD + extra 401k draw,
+    //    DECOMPOSED by source so each component's tax is attributable: the RMD
+    //    component feeds the displayed rmdTaxBite, the conversion component feeds
+    //    the conversion-benefit calc — all read out of this ONE walk (BUG-31), so
+    //    the headline RMD/conversion numbers can never diverge from longevity.
+    //    Stacking conversion → RMD → draw on the income floor and summing
+    //    telescopes to exactly calcTax(floor+ordinary) − calcTax(floor), so the
+    //    total `tax` equals a single stackedIncomeTax(ordinary, floor) call.
+    //    (In practice conversions (pre-RMD window) and RMDs (73+) don't co-occur,
+    //    so the split is unambiguous year to year.)
+    const tFloor = calcTax(floor, filingStatus).tax;
+    const tConv  = calcTax(floor + conversion, filingStatus).tax;
+    const tRmd   = calcTax(floor + conversion + rmd, filingStatus).tax;
+    const tDraw  = calcTax(floor + conversion + rmd + tradDraw, filingStatus).tax;
+    // Raw (unrounded) component taxes — sum across years then round ONCE so the
+    // displayed rmdTaxBite/conversion cost don't accumulate per-year rounding drift.
+    const convTax = (tConv - tFloor) + conversion * retStateRate;
+    const rmdTax  = (tRmd  - tConv)  + rmd        * retStateRate;
+    const drawTax = (tDraw - tRmd)   + tradDraw   * retStateRate;
+    const tax = Math.round(convTax + rmdTax + drawTax);
     // Tax leaks from the pool in the same order (taxed money first).
     const { shortfall: taxShort } = drawInOrder(tax, ORDER);
 
@@ -139,6 +156,9 @@ export function buildRetirementWalkByAccount({
       growth,
       draw: needed,
       tax,
+      convTax,            // raw component taxes (sum to `tax` before rounding);
+      rmdTax,             // rmdTax feeds the displayed rmdTaxBite, convTax the
+      drawTax,            // conversion-benefit calc — one walk, no second source.
       conversion,
       rmd,
       tradDraw,
