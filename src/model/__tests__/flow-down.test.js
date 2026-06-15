@@ -43,6 +43,22 @@ describe("calcFlowDown — growth is a true sum, not a plug (BUG-31)", () => {
     expect(fd.convWindowGrowth).toBe(Math.round(convRows.reduce((s, r) => s + r.growth, 0)));
   });
 
+  it("accumulation growth is NOT clamped — negative real growth still reconciles (review fix)", () => {
+    // totalAtRet below start + contributions means the portfolio lost real value.
+    // The old Math.max(0,…) clamp would zero the growth and break the bridge.
+    const shrunk = calcFlowDown({
+      bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000, fedMarginal: 0.22,
+      contribRows, totalAtRet: 150_000,
+      walkRows: walk.rows, depletionAge: walk.depletionAge,
+      accumChart: [{ age: 65, total: 150_000 }],
+      conversionWindowYrs: 7, totalConverted: 0,
+      safeRetAge, safeLifeExp, rmdStartAge,
+    });
+    expect(shrunk.totalGrowth).toBeLessThan(0);
+    expect(shrunk.startPortfolio + shrunk.totalContrib + shrunk.totalGrowth)
+      .toBe(shrunk.totalAtRet);
+  });
+
   it("the displayed RMD-tax bar equals the tax the walk actually charged", () => {
     const distRows = walk.rows.filter(r => r.age >= rmdStartAge);
     expect(fd.distRMDTax).toBe(Math.round(distRows.reduce((s, r) => s + r.tax, 0)));

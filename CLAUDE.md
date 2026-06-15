@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (439 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (441 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -473,9 +473,9 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   honest spend). `evaluateConversionPlan` now consumes the engine's benefit; the optimizer searches
   via the same engine (`retPhaseBase`). Follow-ups: `what-if.js` + `calcOptimizedScenario` still use
   the blended `buildRetirementDrawdown` for deltas (gross basis, engine-consistent tax maps), and a
-  dedicated **per-account detail screen** is the planned PR-B. 412 → **439** tests
-  (+15 engine breakdown/divisor, +6 phase orchestrator, +5 PR-#32 review fixes, rewritten golden
-  master / conversion-eval / accumulation / flow-down / what-if). `docs/BUGS.md` BUG-35 → Resolved.
+  dedicated **per-account detail screen** is the planned PR-B. 412 → **441** tests across the BUG-35
+  engine/phase build-out, the PR-#32 review fixes, and rewritten golden-master / conversion-eval /
+  accumulation / flow-down / what-if suites. `docs/BUGS.md` BUG-35 → Resolved.
   PR #32 review fixes (Gemini + CodeRabbit), all inert at the default state (golden master unchanged):
   (1) RMD computed **before** any same-year conversion (IRS sequencing); (2) **tax-on-tax gross-up** —
   when Taxable is exhausted and the 401k funds the income tax, that withdrawal is now itself taxed
@@ -486,12 +486,20 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   taxed** — the engine now routes events through the shared `applyMoneyEvents` helper (was orphaned)
   and taxes a flagged taxable inflow (e.g. inherited pre-tax IRA) as ordinary income on the floor
   (`inflowTax` component). Stale after-tax comments swept from simulation/what-if/retirement-tax.
-  Follow-up tracked as BUG-36 (what-if/optimized deltas + accumulation event income tax not yet on the engine).
+  Round-4 review fixes (Gemini + CodeRabbit + Copilot, all inert at default): (6) RMD-schedule
+  `bal` now the Traditional 401k balance (`r.trad`), not the whole portfolio, matching the
+  "Est. 401k Balance" column; (7) conversion-benefit `rmdTaxSaved` compared over the span BOTH
+  walks are active (apples-to-apples when conversions change longevity); (8) Flow-Down accumulation
+  growth no longer clamped at 0 (negative real growth reconciles the bridge); (9) per-account cards
+  reconcile to gross `totalAtRet` when `addlPreTaxBal > 0` (Trad card includes it; `retTrad` tax
+  scalar decoupled). +2 regression tests. Follow-up tracked as BUG-36 (what-if/optimized deltas +
+  accumulation event income tax not yet on the engine); `conversionTaxSource` honoring in the engine
+  is a deliberate open decision (would move the golden master).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (439 tests)
+- `npm test` — run model + formatter + render-smoke tests (441 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

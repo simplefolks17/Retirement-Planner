@@ -257,16 +257,23 @@ export default function App() {
   // per-render ACCOUNTS array, which carries setters) so the deps array is honest
   // and complete — keeping retVals stable lets conversionSim/optimizer skip
   // re-running unless the retirement balances actually change.
+  // Display values for the per-account cards/chart. The "Trad 401k" card shows the
+  // FULL pre-tax 401k INCLUDING additional pre-tax balances, so the cards reconcile to
+  // the gross `totalAtRet` (which also includes addlPreTaxBal) and the card's %-width is
+  // correct. [review fix] addlPreTaxBal is 0 by default → inert at the golden master.
   const retVals = useMemo(() => Object.fromEntries(
-    ACCOUNT_DATA_KEYS.map(k => [k, atRetirement[k] ?? 0])
-  ), [atRetirement]);
+    ACCOUNT_DATA_KEYS.map(k =>
+      [k, (atRetirement[k] ?? 0) + (k === "Trad 401k" ? addlPreTaxBal : 0)])
+  ), [atRetirement, addlPreTaxBal]);
   const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
 
   // Per-account retirement balances as plain scalars, extracted once so the
   // conversion-plan and optimizer memos can list them in their deps arrays
   // (exhaustive-deps forbids `retVals["…"]` expressions in deps).
   const retTaxable     = retVals["Taxable"]   ?? 0;
-  const retTrad        = retVals["Trad 401k"] ?? 0;   // gross 401k (BUG-35) — excludes addlPreTaxBal
+  // retTrad is the tax-calc scalar — the BARE gross 401k, EXCLUDING addlPreTaxBal
+  // (which tradGrossAtRet adds separately); kept independent of the display value above.
+  const retTrad        = atRetirement["Trad 401k"] ?? 0;
   const retRoth        = retVals["Roth IRA"]  ?? 0;
   const retHsa         = retVals["HSA"]        ?? 0;
   // Pre-tax GROSS 401k at retirement, INCLUDING additional pre-tax balances.

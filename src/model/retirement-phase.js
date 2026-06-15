@@ -85,7 +85,7 @@ export function buildRetirementPhase({
   const rmdSchedule = rows
     .filter(r => r.age >= rmdStartAge && r.rmd > 0)
     .map(r => ({
-      age: r.age, rmd: Math.round(r.rmd), bal: r.total,
+      age: r.age, rmd: Math.round(r.rmd), bal: Math.round(r.trad),
       divisor: r.rmdDivisor, tax: Math.round(r.rmdTax),
     }));
   const firstRMD  = rmdSchedule[0]?.rmd ?? 0;
@@ -93,16 +93,28 @@ export function buildRetirementPhase({
 
   // No-conversion RMD schedule (same shape) for the pre/post-conversion comparison
   // table — the counterfactual "what your RMDs would be without converting".
+  // bal is the Traditional 401k balance (r.trad), matching the "Est. 401k Balance"
+  // column — NOT r.total (which would include Roth/Taxable/HSA). [review fix]
   const rmdScheduleNoConv = noConvRows
     .filter(r => r.age >= rmdStartAge && r.rmd > 0)
-    .map(r => ({ age: r.age, rmd: Math.round(r.rmd), bal: r.total }));
+    .map(r => ({ age: r.age, rmd: Math.round(r.rmd), bal: Math.round(r.trad) }));
 
   // Lifetime taxes (to life expectancy). rmdTaxBite is the ACTUAL plan (post-conversion);
   // rmdTaxBiteNoConv is the counterfactual that values the conversion's RMD-tax saving.
   const rmdTaxBite       = Math.round(sumRmdTax(rows));
   const conversionCost   = Math.round(sumConvTax(rows));
   const rmdTaxBiteNoConv = Math.round(sumRmdTax(noConvRows));
-  const rmdTaxSaved      = Math.max(0, rmdTaxBiteNoConv - rmdTaxBite);
+  // Apples-to-apples saving: when conversions change longevity, the two walks can end at
+  // different ages (one depletes earlier → fewer RMD years → its bite drops spuriously).
+  // Compare RMD tax only over the span BOTH plans are still active so the saving isn't
+  // distorted by a longevity difference (which is already captured by yearsSustained).
+  // [review fix — Gemini] Inert at default (both walks reach lifeExp → common span = full).
+  const lastAge = rs => (rs.length ? rs[rs.length - 1].age : startAge);
+  const commonMaxAge = Math.min(lastAge(rows), lastAge(noConvRows));
+  const sumRmdTaxTo = (rs, maxAge) =>
+    rs.reduce((s, r) => s + (r.age <= maxAge ? (r.rmdTax ?? 0) : 0), 0);
+  const rmdTaxSaved = Math.max(0,
+    Math.round(sumRmdTaxTo(noConvRows, commonMaxAge) - sumRmdTaxTo(rows, commonMaxAge)));
   const grossNetBenefit  = rmdTaxSaved - conversionCost;
 
   return {

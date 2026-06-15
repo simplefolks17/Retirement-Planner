@@ -28,7 +28,10 @@ export function calcFlowDown({
   const startPortfolio = bal401k + balRoth + balTaxable + balHSA;
   const totalContrib = contribRows.reduce((s, d) =>
     s + (d.c401k || 0) + (d.cRoth || 0) + (d.cTaxable || 0) + (d.cHSA || 0), 0);
-  const totalGrowth = Math.max(0, totalAtRet - startPortfolio - totalContrib);
+  // Accumulation growth = the gross residual (start + contributions → totalAtRet).
+  // NOT clamped at 0: if real returns are negative (inflation > nominal) the portfolio
+  // can lose real value, and clamping would break the bridge's reconciliation. [review fix]
+  const totalGrowth = totalAtRet - startPortfolio - totalContrib;
 
   // Retirement phases — split the shared walk rows at RMD start.
   const hasConvWindow = conversionWindowYrs > 0;
