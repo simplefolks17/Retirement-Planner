@@ -7,7 +7,19 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-_None currently open._
+### BUG-36 — What-if / optimized deltas not yet on the taxed-once engine (accepted, low)
+
+**Found:** 2026-06-15 (BUG-35 follow-up, surfaced in PR #32 review). **Owner:** me_theguy.
+**What:** `what-if.js` (`calcWhatIfDelta` / `calcWhatIfScenario`) and `calcOptimizedScenario`
+still walk the retirement phase with the blended `buildRetirementDrawdown`, fed engine-consistent
+tax maps on the gross basis. They do **not** charge the per-year spending-draw tax the per-account
+engine (`buildRetirementWalkByAccount`) now does, so what-if **deltas** and the optimizer's
+candidate scoring are slightly less tax-honest than the headline they sit next to.
+**Why it's accepted, not blocking:** the headline (`yearsSustained`, chart, Flow-Down, RMD,
+conversion benefit) is fully on the engine; only the *comparative* overlays lag, and the gap is the
+spending-draw tax, which is small relative to the deltas being compared.
+**Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
+work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
 
 ---
 

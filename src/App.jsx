@@ -266,10 +266,10 @@ export default function App() {
   // conversion-plan and optimizer memos can list them in their deps arrays
   // (exhaustive-deps forbids `retVals["…"]` expressions in deps).
   const retTaxable     = retVals["Taxable"]   ?? 0;
-  const retTrad        = retVals["Trad 401k"] ?? 0;   // after-tax-normalized — DISPLAY only
+  const retTrad        = retVals["Trad 401k"] ?? 0;   // gross 401k (BUG-35) — excludes addlPreTaxBal
   const retRoth        = retVals["Roth IRA"]  ?? 0;
   const retHsa         = retVals["HSA"]        ?? 0;
-  // Pre-tax GROSS 401k at retirement (retTrad is the after-tax-normalized display value).
+  // Pre-tax GROSS 401k at retirement, INCLUDING additional pre-tax balances.
   const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
 
   // BUG-35: the model now tracks GROSS balances and the engine taxes withdrawals
@@ -1627,7 +1627,7 @@ export default function App() {
             })()}
           </div>
           <p style={{ margin: "8px 0 0", fontSize: 10, color: C.muted }}>
-            ★ = retirement age &nbsp;·&nbsp; Trad 401k shown after-tax &nbsp;·&nbsp; Taxable applies annual LTCG drag at income-based rate &nbsp;·&nbsp;
+            ★ = retirement age &nbsp;·&nbsp; Trad 401k shown gross (pre-tax) &nbsp;·&nbsp; Taxable applies annual LTCG drag at income-based rate &nbsp;·&nbsp;
             <span style={{ color: "#f85149" }}>0–25%</span> &nbsp;
             <span style={{ color: "#58a6ff" }}>26–50%</span> &nbsp;
             <span style={{ color: "#d4a843" }}>51–89%</span> &nbsp;
@@ -1683,7 +1683,7 @@ export default function App() {
           })}
         </div>
         <p style={{ margin: "12px 0 0", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
-          After-tax values at retirement age. Trad 401k taxed at retirement rate. Roth &amp; HSA tax-free. Taxable applies annual LTCG drag at your income-based rate (0%, 15%, or 20%).
+          Gross (pre-tax) values at retirement age. Trad 401k is the full pre-tax balance; the after-tax estimate is shown separately as spendable-at-retirement. Roth &amp; HSA tax-free. Taxable applies annual LTCG drag at your income-based rate (0%, 15%, or 20%).
         </p>
       </div>
 
@@ -1827,8 +1827,8 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Portfolio Growth Over Time</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
-          After-tax values year by year. Trad 401k normalized to current marginal rate ({actualMarginalPct}%)
-          for an apples-to-apples comparison with Roth and taxable accounts.
+          Gross (pre-tax) values year by year. Trad 401k is the full pre-tax balance;
+          its after-tax worth is lower because withdrawals are taxed as income.
           Dashed line marks retirement age.
         </p>
         <ResponsiveContainer width="100%" height={320}>

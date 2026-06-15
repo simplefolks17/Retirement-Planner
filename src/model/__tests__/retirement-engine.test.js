@@ -130,14 +130,28 @@ describe("buildRetirementWalkByAccount — review fixes (PR #32)", () => {
   });
 
   it("a large one-time purchase that drains the pool triggers depletion", () => {
-    // Previously the event shortfall was discarded (`void shortfall`), so a purchase
-    // that exhausted the pool left yearsSustained = Infinity.
+    // The event outflow is folded into `needed`, so a purchase that exhausts the pool
+    // surfaces as spendShort and triggers depletion (was previously discarded).
     const { depletionAge, yearsSustained } = base({
       tradGross: 0, roth: 300_000, taxable: 0, hsa: 0, effectiveExpenses: 0,
       moneyEvents: [{ age: 70, amount: 1_000_000, isInflow: false }],
     });
     expect(depletionAge).toBe(70);
     expect(Number.isFinite(yearsSustained)).toBe(true);
+  });
+
+  it("taxes a one-time purchase funded from the 401k (event is ordinary income)", () => {
+    // A purchase paid from a pre-tax account is a taxable distribution. With no Taxable
+    // buffer, the 401k funds the event, so its dollars are taxed + grossed up like any
+    // other draw — the year's tax must jump in the event year vs. an event-free run.
+    const common = { tradGross: 3_000_000, roth: 0, taxable: 0, hsa: 0, effectiveExpenses: 0 };
+    const noEvent   = base({ ...common });
+    const withEvent = base({ ...common, moneyEvents: [{ age: 68, amount: 100_000, isInflow: false }] });
+    const a = noEvent.rows.find(r => r.age === 68);
+    const b = withEvent.rows.find(r => r.age === 68);
+    expect(b.draw).toBeCloseTo(a.draw + 100_000, 5);   // event folded into the draw
+    expect(b.tax).toBeGreaterThan(a.tax);              // and taxed (was 0 before the fix)
+    expect(b.tradDraw).toBeGreaterThan(b.draw);        // 401k funds spending + the tax on it
   });
 
   it("computes the RMD BEFORE any same-year conversion (IRS sequencing)", () => {

@@ -119,8 +119,10 @@ export function calcChartMilestones({ chartData, currentAge, retirementAge, life
 //             rmd: null, conversion: null, phase: "accum" }.
 // draw/tax are an explicit 0 (no withdrawals/tax paid while accumulating);
 // rmd/conversion are null (not applicable) so the screen renders "—".
-// (fedMarginal is accepted for signature compatibility but no longer used.)
-export function buildAccumulationRows({ simData, currentAge, currentYear, safeRetAge }) {
+// fedMarginal is accepted for signature compatibility (callers/tests still pass it)
+// but no longer used — rows are gross now (BUG-35), so there's no marginal discount.
+export function buildAccumulationRows({ simData, fedMarginal, currentAge, currentYear, safeRetAge }) {
+  void fedMarginal; // intentionally unused; kept in the signature for callers
   return (simData ?? [])
     .filter(d => d.age <= safeRetAge)
     .map(d => {
