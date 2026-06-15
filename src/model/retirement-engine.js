@@ -95,17 +95,20 @@ export function buildRetirementWalkByAccount({
     trad += gTrad; rRoth += gRoth; rTax += gTax; rHsa += gHsa;
     const growth = gTrad + gRoth + gTax + gHsa;
 
-    // 2. Roth conversion (window): 401k → Roth principal (tax handled in step 5).
-    const conversion = Math.min(Math.max(0, conversionByAge[age] ?? 0), Math.max(0, trad));
-    trad -= conversion; rRoth += conversion;
-
-    // 3. RMD (forced): 401k → Taxable; principal stays in the pool, only tax leaks.
+    // 2. RMD (forced) BEFORE any conversion (IRS sequencing — review fix): the
+    //    first dollars out of a pre-tax account in an RMD year satisfy the RMD, and
+    //    RMD dollars can't be converted. So compute the RMD on the FULL balance, then
+    //    convert only what's left. 401k → Taxable; principal stays in the pool.
     let rmd = 0;
     let rmdDivisor = null;
     if (age >= rmdStartAge) {
       rmdDivisor = getDivisor(age, useTable2, spouseAgeAt(age));
       if (rmdDivisor) { rmd = trad / rmdDivisor; trad -= rmd; rTax += rmd; }
     }
+
+    // 3. Roth conversion (window): 401k → Roth principal, on the post-RMD balance.
+    const conversion = Math.min(Math.max(0, conversionByAge[age] ?? 0), Math.max(0, trad));
+    trad -= conversion; rRoth += conversion;
 
     // Income floor + cash income for THIS year (age-gated, rule 5b).
     const floor   = (age >= ssClaimAge ? ssTaxable : 0) + (age >= pensionStartAge ? pension : 0);
@@ -116,39 +119,42 @@ export function buildRetirementWalkByAccount({
     // Available to cover this year's outflow (spending + tax) before depletion check.
     const availableBeforeDraw = trad + rRoth + rTax + rHsa;
 
-    // 4. Fund the net spending need: Taxable → 401k → Roth → HSA.
+    // 4–5. Fund net spending AND the income tax it (plus conversion/RMD) triggers,
+    //   both from the pool in order Taxable → 401k → Roth → HSA. Pulling 401k dollars
+    //   to fund spending OR to PAY the tax is itself ordinary income, so the tax is
+    //   solved with a FIXED POINT (tax-on-tax gross-up) — the Stage-1 omission the
+    //   review flagged: once Taxable is exhausted, 401k-funded tax went untaxed.
+    //   The breakdown stacks conversion → RMD → (401k-funded draw+tax) on the floor
+    //   and telescopes to exactly calcTax(floor+ordinary) − calcTax(floor).
     const ORDER = ["taxable", "trad", "roth", "hsa"];
-    const { taken: spendTaken, shortfall: spendShort } = drawInOrder(needed, ORDER);
-    const tradDraw = spendTaken.trad;   // ordinary-income portion of the draw
-
-    // 5. ONE bracket-accurate ordinary tax on conversion + RMD + extra 401k draw,
-    //    DECOMPOSED by source so each component's tax is attributable: the RMD
-    //    component feeds the displayed rmdTaxBite, the conversion component feeds
-    //    the conversion-benefit calc — all read out of this ONE walk (BUG-31), so
-    //    the headline RMD/conversion numbers can never diverge from longevity.
-    //    Stacking conversion → RMD → draw on the income floor and summing
-    //    telescopes to exactly calcTax(floor+ordinary) − calcTax(floor), so the
-    //    total `tax` equals a single stackedIncomeTax(ordinary, floor) call.
-    //    (In practice conversions (pre-RMD window) and RMDs (73+) don't co-occur,
-    //    so the split is unambiguous year to year.)
+    // 401k dollars consumed to fund an outflow X drawn in ORDER (Taxable absorbs first).
+    const tradPortionOf = (X) => Math.min(Math.max(0, X - rTax), Math.max(0, trad));
     const tFloor = calcTax(floor, filingStatus).tax;
     const tConv  = calcTax(floor + conversion, filingStatus).tax;
     const tRmd   = calcTax(floor + conversion + rmd, filingStatus).tax;
-    const tDraw  = calcTax(floor + conversion + rmd + tradDraw, filingStatus).tax;
-    // Raw (unrounded) component taxes — sum across years then round ONCE so the
-    // displayed rmdTaxBite/conversion cost don't accumulate per-year rounding drift.
     const convTax = (tConv - tFloor) + conversion * retStateRate;
     const rmdTax  = (tRmd  - tConv)  + rmd        * retStateRate;
-    const drawTax = (tDraw - tRmd)   + tradDraw   * retStateRate;
-    const tax = Math.round(convTax + rmdTax + drawTax);
-    // Tax leaks from the pool in the same order (taxed money first).
-    const { shortfall: taxShort } = drawInOrder(tax, ORDER);
+    let tradDraw = 0, drawTax = 0, tax = Math.round(convTax + rmdTax);
+    for (let i = 0; i < 8; i++) {
+      tradDraw   = tradPortionOf(needed + tax);   // 401k funding spending + tax
+      const tDraw = calcTax(floor + conversion + rmd + tradDraw, filingStatus).tax;
+      drawTax = (tDraw - tRmd) + tradDraw * retStateRate;
+      const nt = Math.round(convTax + rmdTax + drawTax);
+      if (nt === tax) break;
+      tax = nt;
+    }
+    // Actually withdraw spending + tax from the pool.
+    const { shortfall: spendShort } = drawInOrder(needed, ORDER);
+    const { shortfall: taxShort }   = drawInOrder(tax, ORDER);
 
-    // 6. One-time money events (windfall/purchase) applied to taxable after the draw.
+    // 6. One-time money events (windfall/purchase). Track the outflow + any shortfall
+    //    so a large purchase that drains the pool is reflected in depletion (review fix).
     const eventAdj = moneyEvents.reduce((s, ev) =>
       ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
+    let eventShort = 0;
+    const eventOutflow = eventAdj < 0 ? -eventAdj : 0;
     if (eventAdj >= 0) rTax += eventAdj;
-    else { const { shortfall } = drawInOrder(-eventAdj, ORDER); void shortfall; }
+    else { const { shortfall } = drawInOrder(eventOutflow, ORDER); eventShort = shortfall; }
 
     const balEnd = trad + rRoth + rTax + rHsa;
     rows.push({
@@ -169,10 +175,10 @@ export function buildRetirementWalkByAccount({
       total: Math.max(0, Math.round(balEnd)),
     });
 
-    // Depletion: the pool couldn't fund this year's spending + tax.
-    if (spendShort > 0 || taxShort > 0 || balEnd <= 0) {
+    // Depletion: the pool couldn't fund this year's spending + tax + one-time events.
+    if (spendShort > 0 || taxShort > 0 || eventShort > 0 || balEnd <= 0) {
       depletionAge = age;
-      const outflow = needed + tax;
+      const outflow = needed + tax + eventOutflow;
       const frac = outflow > 0 ? Math.min(1, Math.max(0, availableBeforeDraw / outflow)) : 0;
       yearsSustained = (age - startAge - 1) + frac;
       break;

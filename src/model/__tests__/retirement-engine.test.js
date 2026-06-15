@@ -117,6 +117,41 @@ describe("buildRetirementWalkByAccount — tax breakdown (one walk, attributable
   });
 });
 
+describe("buildRetirementWalkByAccount — review fixes (PR #32)", () => {
+  it("grosses up tax when the 401k funds BOTH spending and the tax (no Taxable buffer)", () => {
+    // Taxable/Roth/HSA empty, so the 401k must fund the net spending AND the income
+    // tax on it — the tax is on a base that includes itself (tax-on-tax gross-up).
+    const { rows } = base({
+      tradGross: 3_000_000, roth: 0, taxable: 0, hsa: 0, effectiveExpenses: 120_000,
+    });
+    const r = rows.find(x => x.age === 67);
+    expect(r.tradDraw).toBeGreaterThan(r.draw);                       // funds more than net spending
+    expect(Math.abs(r.tradDraw - (r.draw + r.tax))).toBeLessThan(2);  // = spending + tax (grossed up)
+  });
+
+  it("a large one-time purchase that drains the pool triggers depletion", () => {
+    // Previously the event shortfall was discarded (`void shortfall`), so a purchase
+    // that exhausted the pool left yearsSustained = Infinity.
+    const { depletionAge, yearsSustained } = base({
+      tradGross: 0, roth: 300_000, taxable: 0, hsa: 0, effectiveExpenses: 0,
+      moneyEvents: [{ age: 70, amount: 1_000_000, isInflow: false }],
+    });
+    expect(depletionAge).toBe(70);
+    expect(Number.isFinite(yearsSustained)).toBe(true);
+  });
+
+  it("computes the RMD BEFORE any same-year conversion (IRS sequencing)", () => {
+    // A conversion in the same year as an RMD must NOT shrink the RMD base.
+    const noConv   = base({ tradGross: 2_000_000, roth: 0, taxable: 0, hsa: 0, effectiveExpenses: 0 });
+    const withConv = base({ tradGross: 2_000_000, roth: 0, taxable: 0, hsa: 0, effectiveExpenses: 0,
+      conversionByAge: { 73: 100_000 } });
+    const a = noConv.rows.find(r => r.age === 73);
+    const b = withConv.rows.find(r => r.age === 73);
+    expect(b.rmd).toBeCloseTo(a.rmd, 5);   // RMD identical — computed on the full pre-conversion balance
+    expect(b.conversion).toBe(100_000);    // the conversion still happens, on the post-RMD balance
+  });
+});
+
 describe("buildRetirementWalkByAccount — income timing (rule 5b)", () => {
   it("SS reduces the draw only from its claim age", () => {
     const { rows } = base({ ssGross: 30_000, ssTaxable: 25_500, ssClaimAge: 70 });
