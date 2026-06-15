@@ -41,6 +41,35 @@ full-to-Roth/tax-from-taxable behavior is a defensible default. **Fix path:** th
 `conversion − convTax` instead of pulling the tax from the pool. Owner-approved to defer so PR #32
 can close.
 
+### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
+
+**Owner:** me_theguy. **Found by:** Gemini. **What:** the engine charges only *incremental* tax
+above the SS/pension income floor — the per-year `tax` telescopes to `tDraw − tFloor` (+ state), so
+the federal tax on the taxable SS + pension itself (`tFloor`) is never charged. Because `needed` is
+reduced by **gross** SS/pension (`effectiveExpenses − ssCash − penCash`), the model effectively
+treats SS/pension as tax-free, understating lifetime tax and overstating chart longevity in stressed
+(under-funded) scenarios. **Why not a quick drop-in:** the *correct* fix isn't simply "always add
+`tFloor`" — in **over-funded** years (SS + pension > expenses) the income **surplus**, not the
+portfolio, should pay that floor tax, so a blind add would over-charge there. The clean form is to
+fund `max(0, expenses + totalTax − grossSS − grossPension)` from the portfolio (income surplus
+absorbs tax first). **Golden-master impact:** the locked headline scalars (`rmdTaxBite`,
+`netConversionBenefit`, `firstRMD`, `totalAtRet`, `yearsSustained`) are all incremental/pre-walk and
+do **not** move; only the chart trajectory / depletion in stressed cases shifts. **Status:**
+owner-deferred so PR #32 can close; pre-existing simplification (the old blended walk also used
+incremental tax maps). **Fix path:** restructure the per-year funding to net external income against
+total tax before drawing from the pool.
+
+### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit (cites CLAUDE.md rule 2b). **What:** `calcFlowDown`
+computes the accumulation-phase growth as `totalAtRet − startPortfolio − totalContrib` (a residual),
+whereas rule 2b requires Flow-Down growth to be the **independent sum `Σ(row.growth)`** so a forgotten
+flow can't hide in it. The retirement-phase growth (`distGrowth`/`convWindowGrowth`) already follows
+the rule; only the accumulation node lags. Pre-existing (predates BUG-35) and inert at the default
+state (no accumulation money events → residual ≈ Σ(growth)). **Fix path:** `totalGrowth =
+Σ(contribRows[].growth)` (the simData rows already carry per-year `growth`), and verify negative real
+growth + reconciliation as separate assertions. Deferred so PR #32 can close.
+
 ---
 
 ## Resolved Issues

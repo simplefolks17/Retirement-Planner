@@ -29,20 +29,29 @@ describe("buildRetirementPhase — single source", () => {
   });
 
   it("RMD schedule 'bal' is the Traditional 401k balance, not the whole portfolio (review fix)", () => {
-    const { rmdSchedule, planWalk } = base();
+    const { rmdSchedule, rmdScheduleNoConv, planWalk, noConvWalk } = base();
     const first = rmdSchedule[0];
     const row = planWalk.rows.find(r => r.age === first.age);
     expect(first.bal).toBe(Math.round(row.trad));            // the 401k balance…
     expect(first.bal).toBeLessThan(Math.round(row.total));   // …not the total (incl Roth/Taxable/HSA)
+    // Same guarantee for the no-conversion comparison schedule.
+    const firstNoConv = rmdScheduleNoConv[0];
+    const noConvRow = noConvWalk.rows.find(r => r.age === firstNoConv.age);
+    expect(firstNoConv.bal).toBe(Math.round(noConvRow.trad));
+    expect(firstNoConv.bal).toBeLessThan(Math.round(noConvRow.total));
   });
 
   it("conversions reduce lifetime RMD tax: rmdTaxBite ≤ rmdTaxBiteNoConv", () => {
     const withConv = base({ conversionByAge: { 65: 80_000, 66: 80_000, 67: 80_000, 68: 80_000 } });
     expect(withConv.rmdTaxBite).toBeLessThanOrEqual(withConv.rmdTaxBiteNoConv);
     expect(withConv.conversionCost).toBeGreaterThan(0);
-    // rmdTaxSaved is now the apples-to-apples saving over the span BOTH walks are active
-    // (clamped ≥ 0), so it no longer equals the raw full-life bite difference exactly.
-    expect(withConv.rmdTaxSaved).toBeGreaterThanOrEqual(0);
+    // rmdTaxSaved is the apples-to-apples saving over the span BOTH walks are active (clamped
+    // ≥ 0) — assert that exact common-span value, not just non-negativity.
+    const planRows   = withConv.planWalk.rows.filter(r => r.age <= 90);
+    const noConvRows = withConv.noConvWalk.rows.filter(r => r.age <= 90);
+    const commonMaxAge = Math.min(planRows[planRows.length - 1].age, noConvRows[noConvRows.length - 1].age);
+    const sumRmdTaxTo = rs => rs.reduce((s, r) => s + (r.age <= commonMaxAge ? (r.rmdTax ?? 0) : 0), 0);
+    expect(withConv.rmdTaxSaved).toBe(Math.max(0, Math.round(sumRmdTaxTo(noConvRows) - sumRmdTaxTo(planRows))));
     expect(withConv.grossNetBenefit).toBe(withConv.rmdTaxSaved - withConv.conversionCost);
   });
 

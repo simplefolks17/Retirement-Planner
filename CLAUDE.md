@@ -473,9 +473,8 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   honest spend). `evaluateConversionPlan` now consumes the engine's benefit; the optimizer searches
   via the same engine (`retPhaseBase`). Follow-ups: `what-if.js` + `calcOptimizedScenario` still use
   the blended `buildRetirementDrawdown` for deltas (gross basis, engine-consistent tax maps), and a
-  dedicated **per-account detail screen** is the planned PR-B. 412 → **441** tests across the BUG-35
-  engine/phase build-out, the PR-#32 review fixes, and rewritten golden-master / conversion-eval /
-  accumulation / flow-down / what-if suites. `docs/BUGS.md` BUG-35 → Resolved.
+  dedicated **per-account detail screen** is the planned PR-B. The suite is **441 tests** (was 412
+  before BUG-35). `docs/BUGS.md` BUG-35 → Resolved.
   PR #32 review fixes (Gemini + CodeRabbit), all inert at the default state (golden master unchanged):
   (1) RMD computed **before** any same-year conversion (IRS sequencing); (2) **tax-on-tax gross-up** —
   when Taxable is exhausted and the 401k funds the income tax, that withdrawal is now itself taxed
