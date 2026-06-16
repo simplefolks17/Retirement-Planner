@@ -62,6 +62,9 @@ export function calcChartMilestones({ chartData, currentAge, retirementAge, life
     if (exact) return exact.total;
     for (let i = 0; i < chartData.length - 1; i++) {
       const a0 = chartData[i], a1 = chartData[i + 1];
+      // Skip a zero-width interval (duplicate ages) — dividing by (a1.age -
+      // a0.age) === 0 would yield NaN.
+      if (a1.age === a0.age) continue;
       if (age >= a0.age && age <= a1.age)
         return a0.total + (a1.total - a0.total) * (age - a0.age) / (a1.age - a0.age);
     }

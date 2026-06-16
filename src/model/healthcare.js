@@ -36,7 +36,7 @@ export function calcHealthcareExposure({
     const magi = (convMAGIFloors[i] ?? 0) + yr.conversion;
 
     const aca = hasMarketplaceInsurance && age < MEDICARE_AGE
-      ? { magi, cliffMAGI, crossesCliff: magi >= cliffMAGI, margin: cliffMAGI - magi }
+      ? { magi, cliffMAGI, crossesCliff: magi > cliffMAGI, margin: cliffMAGI - magi }
       : null;
 
     const irmaaAge = age + 2; // 2-year lookback: conversion today affects premiums at age+2

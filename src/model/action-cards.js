@@ -4,7 +4,7 @@
 // requiring a COLOR_MAP translation layer.
 
 import { fmt } from "../formatters.js";
-import { TAX_DATA_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026, SS_MAX_CLAIM_AGE, SS_FRA } from "../config/irs-2026.js";
+import { TAX_DATA_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026, SS_MAX_CLAIM_AGE, SS_FRA, RMD_START_AGE } from "../config/irs-2026.js";
 import { C } from "../theme.js";
 
 // Returns { phase1Actions, phase2Actions, phase3Actions }.
@@ -69,7 +69,7 @@ export function generatePhaseActions({
     ? Math.round(currentIncome * matchFormulaCap / 100)
     : Math.round(currentIncome * employerMatchPct / 100);
   const hasMatch = matchMode === "formula" ? matchFormulaRate > 0 : employerMatchPct > 0;
-  if (hasMatch && contrib401k < fullMatchContrib && optimizedAllocation.extraMatch === 0) {
+  if (matchMode === "formula" && hasMatch && contrib401k < fullMatchContrib && optimizedAllocation.extraMatch === 0) {
     const matchDesc = matchMode === "formula"
       ? `Your employer matches ${matchFormulaRate}% of the first ${matchFormulaCap}% of your salary. Contribute at least ${fmt(fullMatchContrib)}/yr to your 401k to capture the full ${fmt(employerMatchAmt)}/yr match.`
       : `Your employer matches ${employerMatchPct}% of your salary. Contribute at least ${fmt(fullMatchContrib)}/yr to your 401k to capture the full match — this is an immediate 100% return on that money before it even gets invested.`;
@@ -137,7 +137,7 @@ export function generatePhaseActions({
       phase2Actions.push({
         mode: "prescriptive",
         title: "Execute the Roth Conversion Ladder",
-        body: `Convert ${convTargetVaries ? `up to ${fmt(convPeakTarget)}/yr in the earliest years (tapering to ${fmt(convSteadyTarget)}/yr once SS/pension begin)` : `${fmt(annualConversion)}/yr`} during your ${conversionWindowYrs}-year low-income window (ages ${safeRetAge + 1}–72). You'll pay ${fmt(conversionSim.totalTax)} in conversion tax now, but save ${fmt(rmdTaxSaved)} in RMD taxes later. Every dollar converted escapes future mandatory withdrawals and grows tax-free forever.`,
+        body: `Convert ${convTargetVaries ? `up to ${fmt(convPeakTarget)}/yr in the earliest years (tapering to ${fmt(convSteadyTarget)}/yr once SS/pension begin)` : `${fmt(annualConversion)}/yr`} during your ${conversionWindowYrs}-year low-income window (ages ${safeRetAge + 1}–${RMD_START_AGE - 1}). You'll pay ${fmt(conversionSim.totalTax)} in conversion tax now, but save ${fmt(rmdTaxSaved)} in RMD taxes later. Every dollar converted escapes future mandatory withdrawals and grows tax-free forever.`,
         impact: netConversionBenefit,
         impactColor: C.green,
         impactLabel: "net lifetime savings",
@@ -146,7 +146,7 @@ export function generatePhaseActions({
       phase2Actions.push({
         mode: "educational",
         title: "The Roth Conversion Window",
-        body: `Between retirement and age 73, your income drops (no W-2, no RMDs yet). This is the optimal window to move money from your 401k to Roth — paying tax at a lower rate now to avoid forced withdrawals at a higher rate later. Use the Detailed Planner to set your conversion strategy.`,
+        body: `Between retirement and age ${RMD_START_AGE}, your income drops (no W-2, no RMDs yet). This is the optimal window to move money from your 401k to Roth — paying tax at a lower rate now to avoid forced withdrawals at a higher rate later. Use the Detailed Planner to set your conversion strategy.`,
       });
     }
 
@@ -236,7 +236,7 @@ export function generatePhaseActions({
     phase3Actions.push({
       mode: "educational",
       title: "RMDs Will Be a Major Tax Event",
-      body: `Starting at 73, the IRS forces ${fmt(firstRMD?.rmd ?? 0)}/yr out of your 401k (growing each year). Over your lifetime, you'll pay an estimated ${fmt(rmdTaxBite)} in tax on these mandatory withdrawals (~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective, bracket-accurate). This is exactly why Roth conversions before age 73 are so valuable — every dollar converted is one fewer dollar the IRS can force out.`,
+      body: `Starting at ${RMD_START_AGE}, the IRS forces ${fmt(firstRMD?.rmd ?? 0)}/yr out of your 401k (growing each year). Over your lifetime, you'll pay an estimated ${fmt(rmdTaxBite)} in tax on these mandatory withdrawals (~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective, bracket-accurate). This is exactly why Roth conversions before age ${RMD_START_AGE} are so valuable — every dollar converted is one fewer dollar the IRS can force out.`,
       impact: rmdTaxBite,
       impactColor: C.orange,
       impactLabel: "lifetime RMD tax",

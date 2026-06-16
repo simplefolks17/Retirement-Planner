@@ -72,7 +72,10 @@ export function calcOptimizedAllocation({
   //    is paid unconditionally — directing surplus there just to "earn" it is wrong,
   //    so flat mode skips this step and lets HSA/Roth take priority.
   if (matchMode === "formula") {
-    const matchContribNeeded = Math.round(currentIncome * matchFormulaCap / 100);
+    const matchContribNeeded = Math.min(
+      Math.round(currentIncome * matchFormulaCap / 100),
+      TRAD_401K_LIMIT_2026,
+    );
     if (contrib401k < matchContribNeeded) {
       const matchGap = Math.min(remaining, matchContribNeeded - contrib401k);
       alloc.extraMatch = matchGap;

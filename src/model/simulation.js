@@ -48,7 +48,7 @@ export function runSimulation({
       : y - 1;
     const growFactor = Math.pow(1 + g, growthYears);
 
-    const isEligibleForCatchup = currentAge + (y - 1) >= CATCHUP_AGE;
+    const isEligibleForCatchup = age >= CATCHUP_AGE;
     const limit415cYr    = isEligibleForCatchup ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
     const electiveLimit  = isEligibleForCatchup
       ? TRAD_401K_LIMIT_2026 + CATCHUP_401K_2026
