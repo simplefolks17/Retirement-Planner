@@ -89,8 +89,12 @@ export function calcWithdrawalOrderTax({
     maxCombinedMarginalRate,
     marginalRate(rmdIncomeFloor + yr1FromTrad, filingStatus) + retStateRate,
   );
+  // The LTCG rate stacks on the ordinary-income floor (SS/pension + any trad
+  // draw), mirroring how the trad path stacks on rmdIncomeFloor — passing 0
+  // always picked the 0% bracket and overstated savings for higher-income
+  // retirees. Display-only year-1 figure.
   const yr1TaxOptimal = Math.round(
-    yr1FromTaxable * ltcgRate(0, filingStatus) +
+    yr1FromTaxable * ltcgRate(rmdIncomeFloor + yr1FromTrad, filingStatus) +
     yr1FromTrad    * yr1TradRate +
     yr1FromRoth    * 0
   );

@@ -11,6 +11,13 @@ export function findOptimalConversion({ maxSearch = 300_000, step = ASSUMPTIONS.
   let bestAmount = 0;
   let bestNet = netOf(getNetBenefit(0));
 
+  // Guard a non-positive / non-finite step: the search loop increments by
+  // `step`, so step <= 0 (or NaN) would never terminate. Fall back to the
+  // no-conversion result rather than spin forever.
+  if (!Number.isFinite(step) || step <= 0) {
+    return { optimalConversion: 0, optimalBenefit: Math.round(bestNet) };
+  }
+
   for (let amount = step; amount <= maxSearch; amount += step) {
     const net = netOf(getNetBenefit(amount));
     if (net > bestNet) { bestNet = net; bestAmount = amount; }
@@ -77,10 +84,16 @@ export function calcConversionSim({
     rothA += (conversion - taxOnConversion);
     totalTaxA += taxOnConversion;
 
-    // Scenario B: pay tax from taxable brokerage
+    // Scenario B: pay tax from taxable brokerage. Cap the amount drawn from
+    // taxable at the available balance — taxableB can't go negative (that would
+    // be implicit borrowing). Any tax the brokerage can't cover falls back to
+    // coming out of the converted amount (reducing what lands in Roth), so no
+    // dollar is conjured.
     tradB -= conversion;
-    rothB += conversion;
-    taxableB -= taxOnConversion;
+    const taxFromTaxableB = Math.min(taxOnConversion, Math.max(0, taxableB));
+    const taxFromConvertedB = taxOnConversion - taxFromTaxableB;
+    rothB += (conversion - taxFromConvertedB);
+    taxableB -= taxFromTaxableB;
     totalTaxB += taxOnConversion;
 
     years.push({

@@ -48,7 +48,7 @@ export function runSimulation({
       : y - 1;
     const growFactor = Math.pow(1 + g, growthYears);
 
-    const isEligibleForCatchup = currentAge + (y - 1) >= CATCHUP_AGE;
+    const isEligibleForCatchup = age >= CATCHUP_AGE;
     const limit415cYr    = isEligibleForCatchup ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
     const electiveLimit  = isEligibleForCatchup
       ? TRAD_401K_LIMIT_2026 + CATCHUP_401K_2026
@@ -78,8 +78,13 @@ export function runSimulation({
       const po = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
       if (yearMAGI >= po.end) return 0;
       if (yearMAGI <= po.start) return baseContrib;
-      const phasePct = (po.end - yearMAGI) / (po.end - po.start);
-      return Math.round(baseContrib * phasePct);
+      // Phase-out reduces the contribution LIMIT, then you contribute min(desired, reduced
+      // limit) — NOT the desired amount scaled down. Scaling the desired amount wrongly
+      // denied contributions to anyone in the band who wasn't already maxing out. (Review
+      // fix. IRS also rounds the reduced limit up to the nearest $10 / $200 floor — omitted.)
+      const phasePct   = (po.end - yearMAGI) / (po.end - po.start);
+      const reducedCap = rothCap * phasePct;
+      return Math.round(Math.min(contribRoth, reducedCap));
     })();
 
     const cTaxable = age <= contribEndTaxable ? contribTaxable * growFactor : 0;

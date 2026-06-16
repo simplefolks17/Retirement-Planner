@@ -58,7 +58,12 @@ export function calcWhatIfDelta({
   // ── Step 1: determine scenario starting balance at retirement ──────────────
   let scenarioTotalAtRet = baseTotalAtRet;
 
-  if (accumEvents.length > 0 || retirementAgeOverride !== null) {
+  // Guard a degenerate retirement-age override: retiring at or before the
+  // current age has no accumulation phase, so re-running the sim and indexing
+  // at a negative row would fabricate a $0 starting balance / depletion. Skip
+  // the sim and keep the baseline starting balance in that case.
+  if ((accumEvents.length > 0 || retirementAgeOverride !== null)
+      && scenarioRetAge > simInputs.currentAge) {
     const raw = runSimulation({ ...simInputs, moneyEvents: accumEvents });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
@@ -293,6 +298,13 @@ export function calcAffordabilityMax({
 }) {
   const { safeRetAge } = deltaArgs;
   const targetYears = targetLifeExpectancy - safeRetAge;
+
+  // Guard degenerate inputs: a non-positive step would loop forever in the
+  // binary search; a target life expectancy at or before retirement leaves no
+  // horizon to sustain. Return a safe zero result rather than spin / fabricate.
+  if (!(step > 0) || targetLifeExpectancy <= safeRetAge) {
+    return { maxAmount: 0, deltaYears: 0 };
+  }
 
   const isSustainable = (amount) => {
     const result = calcWhatIfDelta({
