@@ -58,6 +58,10 @@ do **not** move; only the chart trajectory / depletion in stressed cases shifts.
 owner-deferred so PR #32 can close; pre-existing simplification (the old blended walk also used
 incremental tax maps). **Fix path:** restructure the per-year funding to net external income against
 total tax before drawing from the pool.
+**Where:** `src/model/retirement-engine.js` — the tax fixed-point at ~L149–163 (`tFloor` computed at
+L150 then subtracted out by the telescoping components); `needed` at ~L132 (`effectiveExpenses −
+ssCash − penCash + eventOutflow`). A `floorTax = tFloor` component would be added to `tax`, gated so
+the income surplus absorbs it first.
 
 ### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
@@ -69,6 +73,11 @@ the rule; only the accumulation node lags. Pre-existing (predates BUG-35) and in
 state (no accumulation money events → residual ≈ Σ(growth)). **Fix path:** `totalGrowth =
 Σ(contribRows[].growth)` (the simData rows already carry per-year `growth`), and verify negative real
 growth + reconciliation as separate assertions. Deferred so PR #32 can close.
+**Where:** `src/model/flow-down.js:31` (`const totalGrowth = totalAtRet − startPortfolio −
+totalContrib`). Contrast with the in-file `sumGrowth(rows)` used for `convWindowGrowth`/`distGrowth`
+(the rule-2b-correct pattern). Test fixture in `flow-down.test.js` would need `growth` on its
+`contribRows` rows. **Note:** the round-4 "remove the `Math.max(0,…)` clamp" fix is *on top of* this
+residual — removing the clamp let negative real growth through, but the value is still a residual.
 
 ---
 
@@ -97,7 +106,14 @@ growth + reconciliation as separate assertions. Deferred so PR #32 can close.
 
 **Files:** `src/model/retirement-engine.js`, `src/model/retirement-phase.js` (new), `src/model/conversion-evaluation.js`, `src/model/flow-down.js`, `src/model/accumulation.js`, `src/model/what-if.js`, `src/App.jsx`, and the golden-master / accumulation / flow-down / conversion-evaluation / what-if / engine / phase tests.
 
-**Follow-ups (documented, not blocking):** `what-if.js` and `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` (fed engine-consistent tax maps, on the gross basis) — they don't charge the spending-draw tax the engine does, so those *deltas* are slightly less tax-honest than the headline; full migration to the engine is a follow-up. A dedicated **per-account detail screen** (each account's trajectory + tax treatment over life) is the planned PR-B.
+**PR #32 review rounds (6, CodeRabbit + Gemini; merged 2026-06-15):** the engine drew heavy review. Resolved in-PR: (1) **RMD before conversion** (IRS sequencing — RMD on the full pre-tax balance, then convert the remainder); (2) **tax-on-tax gross-up** (when Taxable is exhausted and the 401k funds the income tax, that withdrawal is itself taxed — fixed-point solve); (3) **money events folded into `needed`** before the tax solve (a 401k-funded purchase is taxed + grossed up; depletion sees it via `spendShort`); (4) **stale "after-tax" display copy** → gross; (5) **taxable inflows taxed** (engine routes events through the shared `applyMoneyEvents`; flagged taxable inflow → `inflowTax` ordinary-income component); (6) **RMD-schedule `bal` = `r.trad`** not `r.total` ("Est. 401k Balance" column); (7) **conversion-benefit `rmdTaxSaved`** compared over the common active span (apples-to-apples when conversions change longevity); (8) **Flow-Down accumulation clamp removed** (negative real growth reconciles); (9) **per-account cards reconcile** to gross `totalAtRet` when `addlPreTaxBal>0`, and `retTrad` = `tradGrossAtRet` so the optimal/worst-case withdrawal pools match. +11 regression tests over the rounds (412 → **441**).
+
+**Follow-ups (documented, not blocking — open in this file):**
+- **BUG-36** — `what-if.js` (`calcWhatIfDelta`/`calcWhatIfScenario`) + `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` for *deltas* (don't charge the spending-draw tax); accumulation event income tax also not on the engine.
+- **BUG-37** — engine ignores the `conversionTaxSource` toggle (always "taxable"-style); honoring "converted" would move the golden master (owner-deferred).
+- **BUG-38** — engine charges only *incremental* tax above the SS/pension floor, so SS/pension is effectively tax-free (`tFloor` never charged). Inert at default; needs income-surplus handling.
+- **BUG-39** — Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (rule 2b).
+- A dedicated **per-account detail screen** (each account's trajectory + tax treatment over life) is the planned **PR-B**, and is the display home for feature **#47** (withdrawal sequencing — the engine already does the math).
 
 ---
 
