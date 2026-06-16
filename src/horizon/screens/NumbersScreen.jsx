@@ -587,10 +587,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
             {/* Per-account bars — bar widths are pure layout math (style props only) */}
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {[
-                ["Traditional 401k", retVals["Trad 401k"] ?? 0, t.good],
-                ["Roth IRA",         retVals["Roth IRA"]  ?? 0, t.accent],
-                ["Taxable",          retVals["Taxable"]   ?? 0, t.warm],
-                ["HSA",              retVals["HSA"]       ?? 0, t.mut],
+                ["Traditional 401k", retVals["Trad 401k"], t.good],
+                ["Roth IRA",         retVals["Roth IRA"],  t.accent],
+                ["Taxable",          retVals["Taxable"],   t.warm],
+                ["HSA",              retVals["HSA"],        t.mut],
               ].map(([label, val, color]) => {
                 // Bar width is pure layout proportion — dividing a display value by
                 // totalAtRet to get a CSS width% is pixel/layout math (rule 1 clarification).
