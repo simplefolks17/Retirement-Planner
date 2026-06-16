@@ -20,7 +20,7 @@
 //     moneyEvents shown as dots on the arc; inflow = good token, outflow = warm.
 //     events=[] renders pixel-identical to no prop (no extra chrome).
 
-import React, { useMemo, useRef, useState, useLayoutEffect } from "react";
+import React, { useMemo, useRef, useState, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
 
 const VW = 1200;
@@ -472,7 +472,7 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax }) {
         transform: "translate(-50%,-125%)", font: `600 9.5px ${HF}`, color: t.mut
       }}>strong market</div>
       <div style={{
-        position: "absolute", left: px(s.xOf(labelAge)), top: py(s.yOf(labelData.total * (1 - sp * 0.92)), H),
+        position: "absolute", left: px(s.xOf(labelAge)), top: py(s.yOf(labelData.total * (1 - sp * CONE_LOWER_ASYMMETRY)), H),
         transform: "translate(-50%,44%)", font: `600 9.5px ${HF}`, color: t.mut
       }}>lean market</div>
       <div style={{
@@ -559,6 +559,9 @@ export default function ArcGraph({
   compact = false,
   scenarioData = null,
 }) {
+  // Per-instance id so multiple ArcGraphs on one page don't share SVG gradient/
+  // filter ids (which would cross-wire their fills). Combined with activeView below.
+  const uid = useId();
   // Memoized so the scales memo below can list `pad` honestly in its deps
   // (a fresh object each render would defeat the memo — principle 13).
   const pad = useMemo(() => compact
@@ -590,7 +593,7 @@ export default function ArcGraph({
   const s = useMemo(() => makeScales(vbH, pad, ageMin, ageMax, vmax),
     [vbH, pad, ageMin, ageMax, vmax]);
 
-  const gid = `arc-${activeView}`;
+  const gid = `arc-${uid}-${activeView}`;
 
   // ── Tap-to-scrub (WI-2.7) ───────────────────────────────────────────────────
   // Touch/drag (mobile) or hover (desktop) over the chart → a floating chip with
@@ -690,13 +693,13 @@ export default function ArcGraph({
               committed event age. Inflow = good token (green), outflow = warm
               (amber). A <title> child provides hover text. events=[] → nothing
               rendered (pixel-identical to today — no prop needed). */}
-          {activeView === "arc" && events.map((ev) => {
+          {activeView === "arc" && events.map((ev, evIdx) => {
             const cx = s.xOf(ev.age);
             const cy = s.yOf(totalAtAge(validData, ev.age));
             if (cx < s.pad.l || cx > VW - s.pad.r) return null;
             const color = ev.isInflow ? t.good : t.warm;
             return (
-              <g key={`ev-${ev.age}-${ev.label}`}>
+              <g key={`ev-${evIdx}-${ev.age}-${ev.label}`}>
                 <circle cx={cx} cy={cy} r="5" fill={color} stroke={t.surf} strokeWidth="1.5"
                   opacity="0.9" vectorEffect="non-scaling-stroke">
                   <title>{ev.label} · age {ev.age}</title>

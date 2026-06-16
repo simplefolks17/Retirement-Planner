@@ -85,6 +85,31 @@ residual — removing the clamp let negative real growth through, but the value 
 
 ---
 
+### Whole-codebase review fixes — P1 + P2 batch (2026-06-16)
+
+**Source:** the parallel Claude + CodeRabbit + Gemini whole-codebase review (see `docs/REVIEW-FINDINGS.md`).
+Two commits on `claude/ai-codebase-review-fpigu3`; golden master unchanged (all fixes value-preserving at the default state); 441 tests stay green, lint clean.
+
+**P1 (correctness):**
+1. **Catch-up contribution off-by-one** — `simulation.js:51`. `isEligibleForCatchup` tested *start-of-year* age (`currentAge + (y-1)`), excluding the year the user **turns 50** from 401k/415(c)/Roth catch-up limits. Now tests the year-end `age >= CATCHUP_AGE`. The test that locked the wrong behavior (`simulation.test.js`) was corrected. *(Flagged by Claude + CodeRabbit.)*
+2. **Tax-composition rule-10 leak** — `NumbersScreen.jsx` Taxes tab summed `fedTax + rmdTaxBite + convTaxTotal` and computed per-segment `%` inline. Moved into the model: `App.jsx` `taxViewBundle` now provides a `composition: { segments[{label,val,pct}], total }`; the screen formats only (bar widths stay as layout). Test fixture extended to match. *(Claude + CodeRabbit.)*
+
+**P2 (defensive / minor):**
+- `action-cards.js` — "Capture full employer match" card now gated to `matchMode === "formula"` (no-op for flat match); hardcoded RMD ages in copy now from config (rule 1).
+- `budget.js` — `matchContribNeeded` capped at `TRAD_401K_LIMIT_2026` (rule 4).
+- `healthcare.js` — ACA cliff boundary `>=` → `>` (income exactly at threshold doesn't cross).
+- `what-if.js` — guards for degenerate inputs (`step <= 0`, `targetLifeExpectancy <= safeRetAge`, `scenarioRetAge <= currentAge`) to avoid early-termination / fabricated depletion.
+- `accumulation.js` — `balAtAge` equal-age interpolation guard (NaN).
+- `roth-conversion.js` — `findOptimalConversion` non-positive/non-finite `step` guard (infinite-loop); Scenario-B conversion capped so `taxableB` can't go negative.
+- `retirement-tax.js` — `calcWithdrawalOrderTax` taxable-withdrawal LTCG rate now stacks on the ordinary floor instead of always `ltcgRate(0)`.
+- `JourneyScreen.jsx` — hardcoded "73+" → RMD start age from props/config.
+- `NumbersScreen.jsx` — dropped dead `retVals[...] ?? 0` fallbacks (keys always present).
+- React-correctness nits — `ChartTooltip` stable key; `ArcGraph` per-instance SVG ids via `useId()`, event-marker key includes index, literal `0.92` → `CONE_LOWER_ASYMMETRY`; `ThemeContext` listens for OS `prefers-color-scheme` changes in `auto`; `DeferredInput` default `min`/`max`; `TaxTimeline` zero-horizon guard.
+
+**Deliberately NOT changed (disputed — see `docs/REVIEW-FINDINGS.md`):** Gemini's Roth-phase-out and FICA-Medicare claims (Claude verified the phase-out direction correct and FICA per-earner per rule 9), the vite `node`→`jsdom` suggestion (react-test-renderer needs no DOM), and the screen-`useState`/formatter-division "rule-10" over-flags. Shell perf nits (P3) deferred.
+
+---
+
 ### ~~BUG-35~~ — Traditional 401k taxed twice (after-tax retirement seed **and** RMD/conversion tax on the gross balance)
 
 **Reported:** 2026-06-13 · **Fixed:** 2026-06-15 (dedicated change, owner-approved; direction **A** — gross seed + one tax-honest engine).

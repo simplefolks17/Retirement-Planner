@@ -13,6 +13,7 @@
 // trace it back to its model source.
 
 import React, { useState } from "react";
+import { RMD_START_AGE } from "../../config/irs-2026.js";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 
@@ -283,7 +284,7 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
           {/* flowDown.distDraws */}
           <DetailRow t={t} label="Total portfolio draws" value={fmt(flowDown.distDraws)} source="flowDown.distDraws" />
           {/* flowDown.distRMDTax */}
-          <DetailRow t={t} label="RMD tax (ages 73+)" value={fmt(flowDown.distRMDTax)} source="flowDown.distRMDTax" />
+          <DetailRow t={t} label={`RMD tax (ages ${RMD_START_AGE}+)`} value={fmt(flowDown.distRMDTax)} source="flowDown.distRMDTax" />
           {/* flowDown.distGrowth */}
           <DetailRow t={t} label="Market growth" value={fmt(flowDown.distGrowth)} source="flowDown.distGrowth" />
           {/* flowDown.distEndVal */}
