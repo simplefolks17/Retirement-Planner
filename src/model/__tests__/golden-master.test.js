@@ -131,26 +131,26 @@ const E = {
   fedTax:               10_123,
   fedEffRate:           0.11750435287289611,
   fedMarginal:          0.22,
-  ssAIME:               12399.151279681775,
-  ssPIA:                3827.422691952266,
-  ssMonthlyBenefit:     3827,
-  ssAnnualBenefit:      45_924,
+  ssAIME:               12977.734696107114,  // 2026 wage base 184,500 caps fewer high-income years (was 12399 @ stale 168,600)
+  ssPIA:                3914.210204416067,
+  ssMonthlyBenefit:     3914,
+  ssAnnualBenefit:      46_968,     // higher AIME → higher benefit (was 45_924)
   retTrad401k:          2_120_026,   // GROSS (BUG-35; was 1_653_620 after-tax)
   retTradGross:         2_120_026,
   retRoth:              576_295,     // +2_475: Roth phase-out review fix lifts band-year contributions (ages ~44–47)
   retTaxable:           836_477,
   retHSA:               420_280,
   totalAtRet:           3_953_078,   // gross (+2_475 from the Roth fix; was 3_950_603)
-  spendableAtRet:       3_578_221,   // after-tax reference chip (+2_475)
+  spendableAtRet:       3_574_967,   // higher SS floor → higher stacked retirement rate (was 3_578_221)
   effectiveExpenses:    57_377,      // current living spend (was ~104_525 = 3% of portfolio)
   netPortfolioNeed:     57_377,      // ssAtRet = 0 (claims at 67, retires at 65)
   withdrawalRate:       1.4514512488749274,  // slightly lower draw % on the larger portfolio (Roth fix)
   yearsSustained:       Infinity,    // trivially sustainable at this spend (was 62.9)
-  firstRMD:             62_071,      // live-balance, real-$, post-conversion (was 118_198)
-  totalRMDs:            1_144_815,   // (was 3_106_334)
-  rmdTaxBite:           202_423,     // with-conversion lifetime RMD tax to 90 (was 683_974)
+  firstRMD:             62_279,      // higher SS floor → less pre-RMD drawdown → higher trad bal at 73 (was 62_071)
+  totalRMDs:            1_148_650,   // higher trad bal at 73 → higher lifetime RMDs (was 1_144_815)
+  rmdTaxBite:           204_864,     // higher lifetime RMDs → higher RMD tax (was 202_423)
   conversionWindowYrs:  7,
-  netConversionBenefit: -10_096,     // bracket-fill is net-negative at this spend (was +77_861)
+  netConversionBenefit: -9_981,      // higher SS floor shifts conversion economics (was -10_096)
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────

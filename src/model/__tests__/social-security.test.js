@@ -2,18 +2,18 @@ import { describe, it, expect } from "vitest";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "../social-security.js";
 
 describe("calcAIME", () => {
-  it("caps earnings at FICA wage base ($168,600)", () => {
-    // $300K earner — each year capped at $168,600
+  it("caps earnings at FICA wage base ($184,500)", () => {
+    // $300K earner — each year capped at $184,500 (2026 SS wage base)
     const aime = calcAIME(300_000, 0, 35);
-    // max possible: 168,600 * 35 / 35 / 12 = 14,050
-    expect(aime).toBeCloseTo(168_600 / 12, 0);
+    // max possible: 184,500 * 35 / 35 / 12 = 15,375
+    expect(aime).toBeCloseTo(184_500 / 12, 0);
   });
 
-  it("SS benefit for $300K earner must be less than $50K/yr (wage-base cap)", () => {
+  it("SS benefit for $300K earner must be less than $60K/yr (wage-base cap)", () => {
     const aime = calcAIME(300_000, 0, 35);
     const pia  = calcPIA(aime);
     const annual = calcBenefit(pia, 67) * 12;
-    expect(annual).toBeLessThan(50_000);
+    expect(annual).toBeLessThan(60_000); // capped — far below what uncapped $300K would imply
   });
 
   it("divides by 35 minimum even with fewer work years", () => {

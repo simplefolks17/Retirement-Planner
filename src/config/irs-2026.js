@@ -91,7 +91,7 @@ export const CATCHUP_AGE             =     50; // age at which catch-up contribu
 //   • Additional Medicare 0.9% — on wages ABOVE a filing-status threshold (ACA, 2013).
 export const FICA_RATE       = 0.0765;    // legacy combined employee share (6.2% + 1.45%); below the
                                           // wage base only — kept for the under-base default path.
-export const FICA_WAGE_BASE  = 168_600;   // 2026 Social Security wage base
+export const FICA_WAGE_BASE  = 184_500;   // 2026 Social Security wage base (SSA; 2025 was 176,100, 2024 168,600)
 export const SS_TAX_RATE     = 0.062;     // Social Security employee share (capped at wage base)
 export const MEDICARE_RATE   = 0.0145;    // Medicare employee share (uncapped)
 export const ADDL_MEDICARE_RATE      = 0.009;   // Additional Medicare surtax above the threshold
