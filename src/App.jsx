@@ -774,15 +774,36 @@ export default function App() {
   // rmdTaxBite + effectiveRMDTaxRate + convTaxTotal all from the engine (retPhase) —
   // one source for the retirement-phase tax composition (BUG-35).
   // Memoized so horizonProps stays identity-stable (V9).
-  const taxViewBundle = useMemo(() => ({
-    fedMarginal,
-    fedEffective: fedEffRate,
-    effectiveRMDTaxRate,
-    projectedRetBracket: projRetBracketPct,
-    rmdTaxBite,
-    convTaxTotal: retPhase.conversionCost,
-  }), [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
-       rmdTaxBite, retPhase]);
+  const taxViewBundle = useMemo(() => {
+    // Lifetime tax composition — computed ONCE here (model), so the Taxes tab
+    // formats only (rule 10). Segments carry their own dollar val + integer pct;
+    // the screen keeps the bar widths (flex: val/total) as pure layout math.
+    const workingTax = fedTax ?? 0;
+    const rmdTax     = rmdTaxBite ?? 0;
+    const convTax    = retPhase.conversionCost ?? 0;
+    const total      = workingTax + rmdTax + convTax;
+    const rawSegs = [
+      { label: "Working tax",    val: workingTax, key: "working" },
+      { label: "RMD tax",        val: rmdTax,     key: "rmd" },
+      { label: "Conversion tax", val: convTax,    key: "conv" },
+    ];
+    const segments = total > 0
+      ? rawSegs.filter(s => s.val > 0).map(s => ({
+          label: s.label, val: s.val, key: s.key,
+          pct: Math.round((s.val / total) * 100),
+        }))
+      : [];
+    return {
+      fedMarginal,
+      fedEffective: fedEffRate,
+      effectiveRMDTaxRate,
+      projectedRetBracket: projRetBracketPct,
+      rmdTaxBite,
+      convTaxTotal: retPhase.conversionCost,
+      composition: { segments, total },
+    };
+  }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
+      rmdTaxBite, fedTax, retPhase]);
 
   // WI-2.6 (#96): retirement-phase money-flow bands (SS + pension + portfolio draw).
   // Pre-split by the model and guaranteed to sum to effectiveExpenses; memoized so
