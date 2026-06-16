@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit configuration — tuned for the whole-codebase review described in docs/REVIEW-GUIDE.md
+language: en-US
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+
+  # Keep the review on source. Tests, lockfile, generated HTML, docs, and the skill bundle
+  # are intentionally out of scope for these layer PRs (see docs/REVIEW-GUIDE.md).
+  path_filters:
+    - "!**/__tests__/**"
+    - "!**/*.test.js"
+    - "!package-lock.json"
+    - "!**/*.html"
+    - "!docs/**"
+    - "!.claude/**"
+    - "!dist/**"
+
+  # Layer-aware guidance so CodeRabbit respects the cross-layer contracts and known/intentional
+  # items, instead of re-filing them.
+  path_instructions:
+    - path: "src/model/**"
+      instructions: >
+        Pure-function financial model — review for correctness. Verify: IRS constants come only
+        from src/config/irs-2026.js (flag hardcoded limits/brackets elsewhere); retirement loops
+        use per-year netPortfolioNeed and gate SS by ssClaimingAge / pension by pensionStartAge;
+        the retirement walk is gross-seeded and taxes each pre-tax dollar exactly once. Hunt
+        off-by-ones in age/year loops, bracket boundaries, RMD divisors, sign errors, and
+        divide-by-zero / NaN / Infinity propagation. Do NOT re-file BUG-36/37/38/39 (see
+        docs/REVIEW-GUIDE.md "Known / intentional").
+    - path: "src/horizon/**"
+      instructions: >
+        Render-only layer (rule 10). FLAG any arithmetic on financial values, any '?? 0'-style
+        fabrication of a number, any scaling/approximation to fill a gap, and any raw age
+        comparison used for applicability instead of a model-provided boolean. Do NOT flag a
+        screen for "not validating/normalizing" a number it receives via horizonProps — that is
+        the model's job, reviewed in the model layer.
+    - path: "src/components/**"
+      instructions: >
+        Presentation components. Same render-only expectation as Horizon for any financial value.
+        Check React hook deps, list key props, controlled-input correctness, and stable props to
+        memoized children.
+    - path: "src/App.jsx"
+      instructions: >
+        State/layout shell. Priority: referential stability (BUG-22 / V9) — every object/array in
+        horizonProps and its sub-bundles must be memoized with complete, correct dependency
+        arrays. Flag missing/wrong useMemo/useCallback deps, inline literals breaking child
+        memoization, stale closures in callbacks, and any heavy financial computation inlined here
+        that belongs in src/model/. Do not review the internals of imported model functions.
+
+chat:
+  auto_reply: false
