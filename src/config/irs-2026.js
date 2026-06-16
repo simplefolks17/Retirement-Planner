@@ -85,8 +85,19 @@ export const LIMIT_415C_CATCHUP_2026 = 77_500; // 415(c) combined, age 50+ (with
 export const CATCHUP_AGE             =     50; // age at which catch-up contributions begin
 
 // ── FICA ──────────────────────────────────────────────────────────────────────
-export const FICA_RATE       = 0.0765;    // employee share: 6.2% SS + 1.45% Medicare
+// FICA has three pieces with DIFFERENT caps (do not lump them — see tax-basis.js):
+//   • Social Security 6.2% — capped at the SS wage base (benefits are also capped).
+//   • Medicare 1.45% — UNCAPPED (every dollar of wages; cap removed in 1994).
+//   • Additional Medicare 0.9% — on wages ABOVE a filing-status threshold (ACA, 2013).
+export const FICA_RATE       = 0.0765;    // legacy combined employee share (6.2% + 1.45%); below the
+                                          // wage base only — kept for the under-base default path.
 export const FICA_WAGE_BASE  = 168_600;   // 2026 Social Security wage base
+export const SS_TAX_RATE     = 0.062;     // Social Security employee share (capped at wage base)
+export const MEDICARE_RATE   = 0.0145;    // Medicare employee share (uncapped)
+export const ADDL_MEDICARE_RATE      = 0.009;   // Additional Medicare surtax above the threshold
+export const ADDL_MEDICARE_THRESHOLD = {        // wages above which the 0.9% surtax applies
+  single: 200_000, mfj: 250_000, mfs: 125_000, hoh: 200_000,
+};
 
 // ── RMD ───────────────────────────────────────────────────────────────────────
 export const RMD_START_AGE = 73; // SECURE 2.0: RMDs begin at 73

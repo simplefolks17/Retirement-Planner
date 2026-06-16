@@ -60,6 +60,18 @@ describe("runSimulation — IRS limits", () => {
     expect(year1.cRoth).toBeLessThan(7_500);
   });
 
+  it("in-band phase-out reduces the LIMIT, not the desired amount (review fix)", () => {
+    // MAGI $153K, single band $150K–$165K → phasePct 0.8 → reduced limit = 7,500 × 0.8 = 6,000.
+    // A contributor BELOW the reduced limit gets their FULL desired amount; one above it is
+    // capped AT the reduced limit. The old bug scaled the desired amount itself (× 0.8), so it
+    // would have returned 2,400 and 5,600 here — wrongly denying legal contributions.
+    const below = defaultSim({ currentIncome: 153_000, incomeGrowth: 0, contribRoth: 3_000 })[0];
+    expect(below.cRoth).toBe(3_000);   // under the 6,000 reduced limit → full desired (was 2,400)
+
+    const above = defaultSim({ currentIncome: 153_000, incomeGrowth: 0, contribRoth: 7_000 })[0];
+    expect(above.cRoth).toBe(6_000);   // capped at the reduced limit (was 5,600)
+  });
+
   it("non-MFJ filer is NOT phased out by spouse income (uses primary MAGI only)", () => {
     // Single filer, primary $100K (under the $150K start), spouse earns $200K.
     // Combined would be $300K (fully phased out) — but a single filer reports

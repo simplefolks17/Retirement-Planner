@@ -106,7 +106,38 @@ Two commits on `claude/ai-codebase-review-fpigu3`; golden master unchanged (all 
 - `NumbersScreen.jsx` — dropped dead `retVals[...] ?? 0` fallbacks (keys always present).
 - React-correctness nits — `ChartTooltip` stable key; `ArcGraph` per-instance SVG ids via `useId()`, event-marker key includes index, literal `0.92` → `CONE_LOWER_ASYMMETRY`; `ThemeContext` listens for OS `prefers-color-scheme` changes in `auto`; `DeferredInput` default `min`/`max`; `TaxTimeline` zero-horizon guard.
 
-**Deliberately NOT changed (disputed — see `docs/REVIEW-FINDINGS.md`):** Gemini's Roth-phase-out and FICA-Medicare claims (Claude verified the phase-out direction correct and FICA per-earner per rule 9), the vite `node`→`jsdom` suggestion (react-test-renderer needs no DOM), and the screen-`useState`/formatter-division "rule-10" over-flags. Shell perf nits (P3) deferred.
+**Disputed items — re-reviewed 2026-06-16 (owner asked to re-validate; 2 of 4 were real):**
+
+- **Roth phase-out (Gemini) — REAL, FIXED.** `simulation.js` scaled the *desired* contribution by the
+  phase-out fraction instead of reducing the *limit* and taking `min(desired, reduced limit)`. This
+  under-counted Roth contributions for anyone in the phase-out band not already maxing out (the
+  first re-review pass mistook "direction correct" for "formula correct"). Fixed: `reducedCap =
+  rothCap × phasePct; return Math.round(Math.min(contribRoth, reducedCap))`. Reachable at the default
+  (income grows into the $150–165k single band ~ages 44–47), so the **golden master moved
+  deliberately**: `retRoth` 573_820 → 576_295, `totalAtRet` 3_950_603 → 3_953_078, `spendableAtRet`
+  3_575_746 → 3_578_221, `withdrawalRate` 1.45236… → 1.45145…. +1 regression test (below-max
+  in-band contributor gets full desired; above-cap pinned to the reduced limit).
+- **FICA / Medicare cap (Gemini) — REAL, FIXED.** `tax-basis.js` applied the combined 7.65% to wages
+  *capped* at the SS wage base, but **Medicare (1.45%) is uncapped** and there's an additional **0.9%**
+  surtax above $200k single / $250k MFJ. Lumping understated FICA for high earners (overstating
+  take-home / `grossAfterTax`). Fixed: split into SS (6.2%, capped per-earner) + Medicare (1.45%,
+  uncapped) + Additional Medicare (0.9% above the filing-status threshold); new config constants
+  `SS_TAX_RATE` / `MEDICARE_RATE` / `ADDL_MEDICARE_RATE` / `ADDL_MEDICARE_THRESHOLD`. **Value-preserving
+  at the default** ($100k < wage base → 6.2%+1.45% = 7.65%, no surtax), so the golden master is
+  unaffected; two `tax-basis.test.js` cases that had locked the *capped* high-earner value were
+  corrected (they were locking the bug). +1 net regression test.
+- **SS factor out-of-range fallback (Gemini) — latent, HARDENED.** `calcBenefit` fell back to the FRA
+  factor (1.0) for any age outside the 62–70 table, which would understate a 71+ claim. Not reachable
+  today (the claiming-age slider clamps to 62–70), so changes no current output; now clamps the age to
+  the nearest 62/70 boundary before lookup (correct-by-construction). The test that asserted the FRA
+  fallback was corrected.
+- **MoneyEvents `ev.amount || ""` (CodeRabbit) — NOT a bug, dismissal stands.** For a money-event
+  amount, `0` means "nothing entered," so collapsing to the placeholder is the intended empty state;
+  `?? ""` would render a meaningless $0 row. The `onChange` already floors at `Math.max(0, …)`.
+
+**Still deliberately NOT changed:** the vite `node`→`jsdom` suggestion (react-test-renderer needs no
+DOM; 443 tests pass under `node`), the screen-`useState` / formatter-division "rule-10" over-flags
+(benign UI state / display formatting), and the Shell perf nits (P3, deferred).
 
 ---
 

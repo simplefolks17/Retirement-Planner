@@ -4,6 +4,8 @@ import {
   SS_BEND2,
   SS_FACTORS,
   SS_FRA,
+  SS_MIN_CLAIM_AGE,
+  SS_MAX_CLAIM_AGE,
   SS_AIME_YEARS,
   ASSUMPTIONS,
 } from "../config/irs-2026.js";
@@ -39,8 +41,14 @@ export function calcPIA(aime) {
 }
 
 // Returns the rounded monthly benefit at the given claiming age.
+// Clamp to the [62, 70] table range first: delayed credits stop at 70 and there is no
+// early-claim factor below 62, so an out-of-range age should pin to the nearest boundary
+// (the table ceiling/floor) — NOT silently fall back to the FRA factor (1.0), which would
+// understate a 71+ claim. In practice the claiming-age slider already stays within 62–70,
+// so this changes no current output; it makes the lookup correct-by-construction.
 export function calcBenefit(pia, claimingAge) {
-  return Math.round(pia * (SS_FACTORS[claimingAge] ?? SS_FACTORS[SS_FRA]));
+  const age = Math.max(SS_MIN_CLAIM_AGE, Math.min(SS_MAX_CLAIM_AGE, Math.round(claimingAge)));
+  return Math.round(pia * (SS_FACTORS[age] ?? SS_FACTORS[SS_FRA]));
 }
 
 // Returns the annual spousal floor benefit: 50% of the primary's PIA at FRA, reduced

@@ -65,13 +65,13 @@ These are the high-value reconciliations; **verify before acting** but Claude ga
 | CodeRabbit: `conversion-planning.js:50` bracket-rate keys `12/22/24` hardcoded | **Cleared** | Keys are rate labels; the dollar tops are read by rate from config brackets. No constant duplicated. |
 | CodeRabbit: `tax-basis.js:47` "FICA wrongly includes spouseIncome for non-MFJ" | **Likely false positive** | Contradicts rule 9 — FICA is **always** per-earner (`min(primary,base)+min(spouse,base)`), independent of filing status. CodeRabbit's "fix" would break the documented design. |
 
-## Disputed — genuine ambiguity, needs an owner/closer look
-| Finding | Status |
+## Disputed — RE-REVIEWED 2026-06-16 (owner asked to re-validate; 2 of 4 were real)
+| Finding | Outcome |
 |---|---|
-| Gemini: Roth IRA phase-out "penalizes contributions instead of capping the limit" (simulation.js) | Claude verified the *tax-basis* phase-out direction is **correct**; Gemini may be pointing at the simulation-side contribution reduction — worth a direct check of `simulation.js` Roth contribution path. |
-| Gemini: FICA understates Medicare for high earners (Medicare is uncapped) | Real *if* the model intends exact FICA; Claude treated the single-rate-on-capped-wage as an accepted simplification. Owner call — is FICA meant to be exact? |
-| Gemini: SS benefit boundary outside 62–70 | Gemini-only; the claiming-age slider is UI-bounded 62–70, so likely unreachable. Low priority. |
-| CodeRabbit: `MoneyEventsPanel:59` `ev.amount || ""` collapses a legit 0 | Claude judged 0 = the intended empty/placeholder state here. Cosmetic; confirm desired behavior. |
+| Gemini: Roth IRA phase-out "penalizes contributions instead of capping the limit" (`simulation.js`) | **REAL → FIXED.** The first pass checked the *direction* (correct) but not the in-band *formula*: it scaled the desired amount by the phase-out fraction instead of reducing the limit and taking `min(desired, reduced limit)`. Under-counted Roth for below-max contributors in the band. Fix applied + regression test; golden master moved deliberately (retRoth/totalAtRet/spendableAtRet/withdrawalRate). |
+| Gemini: FICA understates Medicare for high earners (Medicare is uncapped) | **REAL → FIXED.** Medicare (1.45%) is genuinely uncapped, plus a 0.9% surtax above $200k/$250k; the model capped the whole 7.65% at the SS wage base. Split into SS+Medicare+Additional Medicare with new config constants + high-earner test. Value-preserving at the default ($100k), so golden master unaffected; two tests that had locked the capped high-earner value were corrected. |
+| Gemini: SS benefit boundary outside 62–70 | **Dismissal holds → HARDENED anyway.** The `calcBenefit` FRA fallback is wrong logic but unreachable (slider clamps claiming age to 62–70, table covers 62–70). Changed no current output; now clamps to the nearest boundary so a future out-of-range call is correct-by-construction. |
+| CodeRabbit: `MoneyEventsPanel:59` `ev.amount \|\| ""` collapses a legit 0 | **Dismissal holds — not a bug.** For a money-event amount, `0` = "nothing entered," so the placeholder is the intended empty state; `?? ""` would render a meaningless $0 row. `onChange` already floors at `Math.max(0, …)`. |
 
 ## Known / intentional — correctly NOT re-filed
 Claude verified all four are present and accurately documented in `docs/BUGS.md`; **do not re-file**:

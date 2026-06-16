@@ -65,8 +65,11 @@ describe("calcBenefit", () => {
     expect(calcBenefit(2_000, 70)).toBe(Math.round(2_000 * 1.240));
   });
 
-  it("falls back to FRA factor for unknown age", () => {
-    expect(calcBenefit(2_000, 99)).toBe(2_000); // 100% of PIA
+  it("clamps an out-of-range claiming age to the nearest 62/70 boundary (review hardening)", () => {
+    // Above 70 → pin to the age-70 ceiling (1.24), NOT the FRA factor (the old fallback,
+    // which understated a 71+ claim). Below 62 → pin to the age-62 floor (0.70).
+    expect(calcBenefit(2_000, 99)).toBe(Math.round(2_000 * 1.240)); // clamps to 70
+    expect(calcBenefit(2_000, 55)).toBe(Math.round(2_000 * 0.700)); // clamps to 62
   });
 });
 
