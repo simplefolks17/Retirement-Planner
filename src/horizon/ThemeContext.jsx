@@ -98,6 +98,19 @@ export function HorizonThemeProvider({ children }) {
     safeSet("hz-arc-style", s);
   }, []);
 
+  // When following the OS ("auto"), re-resolve if the system theme changes mid-session
+  // (resolveMode only snapshots at render time, so we need a listener to force one).
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (modePref !== "auto" || !isBrowser) return;
+    let mq;
+    try { mq = window.matchMedia("(prefers-color-scheme: dark)"); } catch { return; }
+    if (!mq?.addEventListener) return;
+    const onChange = () => forceTick((n) => n + 1);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [modePref]);
+
   const resolvedMode = resolveMode(modePref);
   const pal = PALETTES[palKey] ?? PALETTES.apricot;
   const t = pal[resolvedMode];

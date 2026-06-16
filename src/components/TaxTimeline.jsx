@@ -1,8 +1,9 @@
 import { C } from "../theme.js";
 
 export function TaxTimeline({ phase2End, totalYears, fedMarginal, effectiveRMDTaxRate }) {
-  const workingPct   = (phase2End / totalYears) * 100;
-  const retirementPct = ((totalYears - phase2End) / totalYears) * 100;
+  // Guard a zero/negative horizon so the CSS widths never become NaN/Infinity.
+  const workingPct    = totalYears > 0 ? (phase2End / totalYears) * 100 : 0;
+  const retirementPct = totalYears > 0 ? ((totalYears - phase2End) / totalYears) * 100 : 0;
 
   const Seg = ({ pct, color, label, rate }) => {
     if (pct <= 0) return null;
