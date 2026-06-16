@@ -74,8 +74,9 @@ export function calcRMDTaxSchedule({
 //   Worst-case:  fund it all from the pre-tax trad balance first.
 // The trad marginal rate is stacked on the SS+pension floor and clamped at
 // `maxCombinedMarginalRate`. The worst-case draw is capped at the GROSS trad
-// balance (tradGrossAtRet), not the after-tax-normalized display value — this is
-// the BUG-26 worst-case-basis fix, preserved here.
+// balance (tradGrossAtRet) — the BUG-26 worst-case-basis fix, preserved here.
+// (Both retTrad and tradGrossAtRet are gross now, BUG-35; the cap uses the
+// addlPreTaxBal-inclusive tradGrossAtRet.)
 export function calcWithdrawalOrderTax({
   netPortfolioNeed, retTaxable, retTrad, retRoth, tradGrossAtRet,
   rmdIncomeFloor, filingStatus, retStateRate, maxCombinedMarginalRate,

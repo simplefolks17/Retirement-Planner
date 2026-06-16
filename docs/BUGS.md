@@ -7,47 +7,113 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-### BUG-35 — Traditional 401k is taxed twice: after-tax retirement seed **and** RMD/conversion tax on the gross balance
+### BUG-36 — What-if / optimized deltas not yet on the taxed-once engine (accepted, low)
 
-**Reported:** 2026-06-13 (found while verifying Year-by-year reconciliation during Level 2c / WI-2.5) · **Status:** OPEN — not fixed (any fix moves locked golden-master headline numbers and touches the single shared retirement walk that everything consumes; needs an owner-approved, dedicated change).
+**Found:** 2026-06-15 (BUG-35 follow-up, surfaced in PR #32 review). **Owner:** me_theguy.
+**What:** `what-if.js` (`calcWhatIfDelta` / `calcWhatIfScenario`) and `calcOptimizedScenario`
+still walk the retirement phase with the blended `buildRetirementDrawdown`, fed engine-consistent
+tax maps on the gross basis. They do **not** charge the per-year spending-draw tax the per-account
+engine (`buildRetirementWalkByAccount`) now does, so what-if **deltas** and the optimizer's
+candidate scoring are slightly less tax-honest than the headline they sit next to.
+**Why it's accepted, not blocking:** the headline (`yearsSustained`, chart, Flow-Down, RMD,
+conversion benefit) is fully on the engine; only the *comparative* overlays lag, and the gap is the
+spending-draw tax, which is small relative to the deltas being compared.
+**Related (same root — inline event handling off the shared helper):** `runSimulation`
+(accumulation) and the blended what-if walk still inline only the money-event portfolio sign and do
+**not** charge income tax on a flagged *taxable inflow* (`applyMoneyEvents.taxableIncomeAdjustment`).
+The retirement **engine** (the headline source) now does charge it — fixed 2026-06-15. Accumulation's
+working-year tax basis is computed once on regular income, so per-year event income tax there is a
+separate, deliberate extension.
+**Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
+work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
 
-**Severity:** Correctness — likely **understates the retirement portfolio and overstates lifetime tax** (the plan reads more conservatively / shorter-lived than it should). Not a display-reconciliation bug: every laid-out row still adds up. The double-count hides *inside* an internally-consistent ledger.
+### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
-**Symptom:**
-The Traditional 401k has its tax taken out **twice** along the timeline:
-1. **Once at the retirement seam** — the per-year "Trad 401k" balance is displayed (and, crucially, *carried into retirement*) as an after-tax figure: `tradGross × (1 − fedMarginal)` (App.jsx:187). At the default state that shrinks the Trad bucket by the working marginal rate.
-2. **Again, year by year in retirement** — the retirement walk then charges per-year **RMD tax** (and Roth-**conversion** tax) computed on the **gross** Trad balance (`rmdTaxBite` = $683,974 at default), draining the pool a second time for the same dollars.
+**Owner:** me_theguy. **What:** the per-account engine always funds Roth-conversion tax from the
+pool (Taxable first) and moves the **full** converted amount to Roth — i.e. it behaves as
+`conversionTaxSource === "taxable"`. The UI toggle defaults to **"converted"** (pay the tax out of
+the converted amount, so less lands in Roth), so at the default setting the engine and the toggle
+disagree. The old `calcConversionSim` (still used for the conversion *schedule* display) does honor
+the toggle. **Why deferred:** honoring "converted" in the engine would move the golden master at
+default (yearsSustained, netConversionBenefit) and is a deliberate modeling change; the current
+full-to-Roth/tax-from-taxable behavior is a defensible default. **Fix path:** thread
+`conversionTaxSource` into `buildRetirementWalkByAccount` and, for "converted", credit Roth with
+`conversion − convTax` instead of pulling the tax from the pool. Owner-approved to defer so PR #32
+can close.
 
-So the same pre-tax 401k dollars are discounted once up front *and* taxed again as they come out.
+### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
 
-**Root cause:**
-The single retirement-phase walk (`buildRetirementDrawdown`, the one place the portfolio is walked — BUG-31 consolidation) is **seeded from the after-tax total** but **pays tax computed on the gross total**:
+**Owner:** me_theguy. **Found by:** Gemini. **What:** the engine charges only *incremental* tax
+above the SS/pension income floor — the per-year `tax` telescopes to `tDraw − tFloor` (+ state), so
+the federal tax on the taxable SS + pension itself (`tFloor`) is never charged. Because `needed` is
+reduced by **gross** SS/pension (`effectiveExpenses − ssCash − penCash`), the model effectively
+treats SS/pension as tax-free, understating lifetime tax and overstating chart longevity in stressed
+(under-funded) scenarios. **Why not a quick drop-in:** the *correct* fix isn't simply "always add
+`tFloor`" — in **over-funded** years (SS + pension > expenses) the income **surplus**, not the
+portfolio, should pay that floor tax, so a blind add would over-charge there. The clean form is to
+fund `max(0, expenses + totalTax − grossSS − grossPension)` from the portfolio (income surplus
+absorbs tax first). **Golden-master impact:** the locked headline scalars (`rmdTaxBite`,
+`netConversionBenefit`, `firstRMD`, `totalAtRet`, `yearsSustained`) are all incremental/pre-walk and
+do **not** move; only the chart trajectory / depletion in stressed cases shifts. **Status:**
+owner-deferred so PR #32 can close; pre-existing simplification (the old blended walk also used
+incremental tax maps). **Fix path:** restructure the per-year funding to net external income against
+total tax before drawing from the pool.
+**Where:** `src/model/retirement-engine.js` — the tax fixed-point at ~L149–163 (`tFloor` computed at
+L150 then subtracted out by the telescoping components); `needed` at ~L132 (`effectiveExpenses −
+ssCash − penCash + eventOutflow`). A `floorTax = tFloor` component would be added to `tax`, gated so
+the income surplus absorbs it first.
 
-- `totalAtRet` / the walk's `startBal` come from `accumChart` → `buildAccumChart` → `sumAccountRow`, which sums the **after-tax** `"Trad 401k"` key (App.jsx:187, `accumulation.js`). So the seed is net of a `fedMarginal` haircut on the Trad bucket. (App.jsx:265, 457, 465–467.)
-- The RMD schedule is built from `tradGrossAtRetirement = retRow.tradGross + addlPreTaxBal` — the **gross** Trad balance (App.jsx:315, `calcRMDProjection`) — and `calcRMDTaxSchedule` (App.jsx:335, `retirement-tax.js`) computes the per-year RMD tax on that gross amount. The Roth-conversion sim is likewise driven by the gross `tradBal` (App.jsx:388, `conversion-evaluation.js` → `calcConversionSim`).
-- That tax is fed to the walk via `rmdTaxByAge` / `conversionTaxByAge` and leaks from the (already-shrunk) pool: `balEnd = balStart·(1+rReal) − draw − tax`.
+### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
-This collides with **CLAUDE.md rule 2b**, whose tax-honest premise is that *"only the tax leaks from the single pool"* — which is correct only if that pool is the **gross** (pre-tax) balance. Because the pool is seeded after-tax, rule 2b's single tax leak becomes a *second* taxation. The two taxations aren't even the same rate: the seam haircut uses `fedMarginal` (the **working** marginal rate), while the RMD/conversion tax uses bracket-accurate **retirement** rates.
-
-**Why this is hard to fix (the owner's "very complex" concern — confirmed):**
-The after-tax `"Trad 401k"` value and the single retirement walk fan out into nearly every headline and screen, so a fix can't be local. Surfaces that consume the affected numbers:
-- **`retVals` / `totalAtRet`** (after-tax) → Plan "nest egg", Numbers Statement + Accounts tabs, the arc, `withdrawalRate`, `balAt90`.
-- **`retirementWalk`** (seeded after-tax, taxed on gross) → `yearsSustained` / `isSustainable` (headline longevity), `totalChartData` (the whole arc), `calcFlowDown` (Journey), `calcPlanProgress` / `calcPlanDrivers`, `calcSignals`, the Year-by-year ledger, `calcRetIncomeFlow`.
-- **RMD/conversion gross basis** → `rmdTaxBite`, `effectiveRMDTaxRate`, `netConversionBenefit`, the optimizer, IRMAA/ACA exposure.
-
-Candidate directions (for review — **do not assume one is correct**):
-- **(A) Seed the walk from the gross portfolio** and let the per-year RMD/conversion tax be the *single* place tax leaks (most consistent with rule 2b's "one tax-honest walk"). The after-tax `"Trad 401k"` becomes purely an accumulation-phase comparability device for the chart/Statement/Accounts and **must not** seed the walk. Largest golden-master move (plan looks healthier — less double-tax).
-- **(B) Keep the after-tax seed** but stop charging gross RMD/conversion tax against it (e.g. tax only the *incremental* gain, or treat the Trad as already-taxed). Smaller conceptual change but muddies the "tax-honest" model and the bracket-accurate RMD work (BUG-29).
-- Either way: a deliberate, dated golden-master update across many locked values, with before/after longevity quantified at the default state, in a **dedicated PR** (not bundled with display work).
-
-**Affected files (for the eventual fix):**
-`src/App.jsx` (187 — the after-tax `"Trad 401k"` normalization; 265/457/465–467 — `totalAtRet` / `accumChart` / `retirementWalk` seed; 310–319/388 — gross `tradGrossAtRetirement` RMD/conversion basis; 335 — `calcRMDTaxSchedule`), `src/model/accumulation.js` (`sumAccountRow`, `buildAccumChart`), `src/model/retirement-drawdown.js` (`buildRetirementDrawdown`), `src/model/retirement-tax.js` (`calcRMDTaxSchedule`), `src/model/conversion-evaluation.js` / `roth-conversion.js` (`calcConversionSim`), and `src/model/__tests__/golden-master.test.js` plus the walk/longevity/flow-down tests.
-
-**Not a regression of Level 2c:** the Year-by-year table shipped in WI-2.5 reconciles correctly (accumulation rows add up on the after-tax basis; retirement rows add up via the explicit Tax column). This bug is the *pre-existing* model basis mismatch the reconciliation review surfaced, not something the new table introduced.
+**Owner:** me_theguy. **Found by:** CodeRabbit (cites CLAUDE.md rule 2b). **What:** `calcFlowDown`
+computes the accumulation-phase growth as `totalAtRet − startPortfolio − totalContrib` (a residual),
+whereas rule 2b requires Flow-Down growth to be the **independent sum `Σ(row.growth)`** so a forgotten
+flow can't hide in it. The retirement-phase growth (`distGrowth`/`convWindowGrowth`) already follows
+the rule; only the accumulation node lags. Pre-existing (predates BUG-35) and inert at the default
+state (no accumulation money events → residual ≈ Σ(growth)). **Fix path:** `totalGrowth =
+Σ(contribRows[].growth)` (the simData rows already carry per-year `growth`), and verify negative real
+growth + reconciliation as separate assertions. Deferred so PR #32 can close.
+**Where:** `src/model/flow-down.js:31` (`const totalGrowth = totalAtRet − startPortfolio −
+totalContrib`). Contrast with the in-file `sumGrowth(rows)` used for `convWindowGrowth`/`distGrowth`
+(the rule-2b-correct pattern). Test fixture in `flow-down.test.js` would need `growth` on its
+`contribRows` rows. **Note:** the round-4 "remove the `Math.max(0,…)` clamp" fix is *on top of* this
+residual — removing the clamp let negative real growth through, but the value is still a residual.
 
 ---
 
 ## Resolved Issues
+
+---
+
+### ~~BUG-35~~ — Traditional 401k taxed twice (after-tax retirement seed **and** RMD/conversion tax on the gross balance)
+
+**Reported:** 2026-06-13 · **Fixed:** 2026-06-15 (dedicated change, owner-approved; direction **A** — gross seed + one tax-honest engine).
+
+**Severity:** Correctness — understated the retirement portfolio and overstated lifetime tax (plan read more conservatively / shorter-lived than reality). The double-count hid *inside* an internally-consistent ledger.
+
+**Symptom:** the Traditional 401k had its tax taken out twice: once at the retirement seam (displayed/carried as `tradGross × (1 − fedMarginal)`, App.jsx:187) and again year-by-year in retirement (RMD + conversion tax on the gross balance). The two taxations weren't even the same rate — the seam used the **working** marginal rate, the walk used **retirement** brackets.
+
+**Root cause:** the single retirement walk was **seeded after-tax** but **paid tax computed on the gross** balance, so rule 2b's "only the tax leaks" became a *second* taxation. Separately, the displayed RMD schedule (`calcRMDProjection`) projected the 401k at the **nominal** return and **ignored every withdrawal** (conversions, draws), inflating RMDs vs. the real balance.
+
+**Fix (BUG-35 — per-account engine as the single retirement-phase source):**
+- New per-account engine `buildRetirementWalkByAccount` (`retirement-engine.js`) tracks the four accounts separately, **seeds from GROSS**, and taxes every dollar **exactly once** — when it leaves a pre-tax account (conversion, RMD, or extra 401k draw), stacked bracket-accurately on the SS/pension floor. Exposes a per-row tax breakdown (`convTax`/`rmdTax`/`drawTax`).
+- New orchestrator `buildRetirementPhase` (`retirement-phase.js`) makes that engine the **ONE source** for longevity, the displayed RMD schedule, `rmdTaxBite`, and the Roth-conversion benefit (with/without-conversion counterfactual). The old nominal-growth, withdrawal-ignoring `calcRMDProjection` / `calcRMDPostConversion` / `calcRMDTaxSchedule` are no longer on App's path.
+- **Gross everywhere:** `"Trad 401k"` is displayed gross (App.jsx:187), so the chart/Statement/Accounts/Flow-Down/accumulation rows/what-if all use the gross basis (no chart jump at retirement); `totalAtRet` is gross; `spendableAtRet` is an after-tax **reference chip** haircut at the **retirement** effective rate (fixes the working-rate haircut too).
+- **Default retirement expense** = the user's current living spend (`effectiveLiving`), not `3% × portfolio` — portfolio-independent, so it can't balloon when the headline goes gross.
+- `evaluateConversionPlan` now consumes the engine's `rmdTaxSaved`/`conversionCost` (keeps only the conversion-window display sim + IRMAA/ACA costs); the optimizer searches via the same engine (`retPhaseBase`), so it can never optimize a different model than the screen shows.
+
+**Headline moves (golden master re-locked, 2026-06-15):** balances gross (`totalAtRet` 3,484,197 → 3,950,603); default expense ~104,525 → 57,377 (current living spend); `firstRMD` 118,198 → 62,071; `rmdTaxBite` 683,974 → 202,423; `netConversionBenefit` 77,861 → −10,096 (aggressive bracket-fill is net-negative at this spend); `yearsSustained` 62.9 → Infinity (trivially sustainable at the lower, honest spend).
+
+**Files:** `src/model/retirement-engine.js`, `src/model/retirement-phase.js` (new), `src/model/conversion-evaluation.js`, `src/model/flow-down.js`, `src/model/accumulation.js`, `src/model/what-if.js`, `src/App.jsx`, and the golden-master / accumulation / flow-down / conversion-evaluation / what-if / engine / phase tests.
+
+**PR #32 review rounds (6, CodeRabbit + Gemini; merged 2026-06-15):** the engine drew heavy review. Resolved in-PR: (1) **RMD before conversion** (IRS sequencing — RMD on the full pre-tax balance, then convert the remainder); (2) **tax-on-tax gross-up** (when Taxable is exhausted and the 401k funds the income tax, that withdrawal is itself taxed — fixed-point solve); (3) **money events folded into `needed`** before the tax solve (a 401k-funded purchase is taxed + grossed up; depletion sees it via `spendShort`); (4) **stale "after-tax" display copy** → gross; (5) **taxable inflows taxed** (engine routes events through the shared `applyMoneyEvents`; flagged taxable inflow → `inflowTax` ordinary-income component); (6) **RMD-schedule `bal` = `r.trad`** not `r.total` ("Est. 401k Balance" column); (7) **conversion-benefit `rmdTaxSaved`** compared over the common active span (apples-to-apples when conversions change longevity); (8) **Flow-Down accumulation clamp removed** (negative real growth reconciles); (9) **per-account cards reconcile** to gross `totalAtRet` when `addlPreTaxBal>0`, and `retTrad` = `tradGrossAtRet` so the optimal/worst-case withdrawal pools match. +11 regression tests over the rounds (412 → **441**).
+
+**Follow-ups (documented, not blocking — open in this file):**
+- **BUG-36** — `what-if.js` (`calcWhatIfDelta`/`calcWhatIfScenario`) + `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` for *deltas* (don't charge the spending-draw tax); accumulation event income tax also not on the engine.
+- **BUG-37** — engine ignores the `conversionTaxSource` toggle (always "taxable"-style); honoring "converted" would move the golden master (owner-deferred).
+- **BUG-38** — engine charges only *incremental* tax above the SS/pension floor, so SS/pension is effectively tax-free (`tFloor` never charged). Inert at default; needs income-surplus handling.
+- **BUG-39** — Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (rule 2b).
+- A dedicated **per-account detail screen** (each account's trajectory + tax treatment over life) is the planned **PR-B**, and is the display home for feature **#47** (withdrawal sequencing — the engine already does the math).
 
 ---
 

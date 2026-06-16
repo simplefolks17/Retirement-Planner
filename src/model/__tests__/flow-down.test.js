@@ -22,7 +22,7 @@ const contribRows = [
   { age: 65, c401k: 10_000, cRoth: 7_000, cTaxable: 4_000, cHSA: 3_850 },
 ];
 const fd = calcFlowDown({
-  bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000, fedMarginal: 0.22,
+  bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
   contribRows, totalAtRet: 3_000_000,
   walkRows: walk.rows, depletionAge: walk.depletionAge,
   accumChart: [{ age: 65, total: 3_000_000 }],
@@ -41,6 +41,22 @@ describe("calcFlowDown — growth is a true sum, not a plug (BUG-31)", () => {
   it("convWindowGrowth equals Σ(conv-row growth)", () => {
     const convRows = walk.rows.filter(r => r.age < rmdStartAge);
     expect(fd.convWindowGrowth).toBe(Math.round(convRows.reduce((s, r) => s + r.growth, 0)));
+  });
+
+  it("accumulation growth is NOT clamped — negative real growth still reconciles (review fix)", () => {
+    // totalAtRet below start + contributions means the portfolio lost real value.
+    // The old Math.max(0,…) clamp would zero the growth and break the bridge.
+    const shrunk = calcFlowDown({
+      bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
+      contribRows, totalAtRet: 150_000,
+      walkRows: walk.rows, depletionAge: walk.depletionAge,
+      accumChart: [{ age: 65, total: 150_000 }],
+      conversionWindowYrs: 7, totalConverted: 0,
+      safeRetAge, safeLifeExp, rmdStartAge,
+    });
+    expect(shrunk.totalGrowth).toBeLessThan(0);
+    expect(shrunk.startPortfolio + shrunk.totalContrib + shrunk.totalGrowth)
+      .toBe(shrunk.totalAtRet);
   });
 
   it("the displayed RMD-tax bar equals the tax the walk actually charged", () => {
@@ -70,13 +86,13 @@ describe("calcFlowDown — growth is a true sum, not a plug (BUG-31)", () => {
   });
 });
 
-describe("calcFlowDown — accumulation bridge units (BUG-31 Facet A)", () => {
-  it("start balance & contributions are after-tax (401k haircut), matching totalAtRet", () => {
-    // bal401k 50k at 22% → 39k after-tax, NOT 50k gross.
-    expect(fd.startPortfolio).toBe(Math.round(50_000 * 0.78) + 25_000 + 80_000 + 10_000);
-    // c401k contributions are haircut too; Roth/taxable/HSA at face.
+describe("calcFlowDown — accumulation bridge units (BUG-35: gross)", () => {
+  it("start balance & contributions are GROSS (no 401k haircut), matching the gross totalAtRet", () => {
+    // bal401k 50k at full pre-tax value, NOT haircut.
+    expect(fd.startPortfolio).toBe(50_000 + 25_000 + 80_000 + 10_000);
+    // all contributions at face (gross); the engine taxes withdrawals, not the bridge.
     const expectedContrib = contribRows.reduce(
-      (s, d) => s + Math.round(d.c401k * 0.78) + d.cRoth + d.cTaxable + d.cHSA, 0);
+      (s, d) => s + d.c401k + d.cRoth + d.cTaxable + d.cHSA, 0);
     expect(fd.totalContrib).toBe(expectedContrib);
   });
 

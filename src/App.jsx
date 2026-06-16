@@ -13,12 +13,12 @@ import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
-import { buildRetirementDrawdown, calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
+import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
+import { buildRetirementPhase, buildConversionByAge } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
-import { calcRMDProjection } from "./model/rmd.js";
-import { calcRMDIncomeFloor, calcRMDTaxSchedule, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
+import { calcRMDIncomeFloor, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
 import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
 import { findOptimalConversion } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
@@ -178,17 +178,17 @@ export default function App() {
       calcEmployerMatchFn: employerMatch,
       moneyEvents,
     });
-    // "Trad 401k" display: normalize to after-tax equivalent using current marginal rate.
-    // fedMarginal is the bracket-accurate working-year rate; effectiveRMDTaxRate (retirement
-    // distribution rate) is computed from rmdData which depends on tradGross — using fedMarginal
-    // here for all years avoids circular dependency and is a close approximation at retirement too.
+    // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
+    // engine taxes withdrawals year-by-year, so the headline + chart + account cards
+    // all show what's actually in the account; the after-tax "spendable" value is a
+    // single derived reference chip (spendableAtRet), not the per-account display.
     return raw.map(d => ({
       ...d,
-      "Trad 401k": Math.round((d.tradGross ?? 0) * (1 - fedMarginal)),
+      "Trad 401k": Math.round(d.tradGross ?? 0),
     }));
   }, [
     returnRate, totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
-    spouseIncome, spouseIncomeGrowth, fedMarginal,
+    spouseIncome, spouseIncomeGrowth,
     bal401k, balRoth, balTaxable, balHSA,
     contrib401k, contribRoth, contribTaxable, contribHSA,
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
@@ -202,12 +202,12 @@ export default function App() {
   // stable reference and only re-run when an actual balance / rate input changes.
   const currentSnapshot = useMemo(() => ({
     age: currentAge,
-    "Trad 401k": Math.round(bal401k * (1 - fedMarginal)),
+    "Trad 401k": Math.round(bal401k),   // gross (BUG-35)
     tradGross: bal401k,
     "Roth IRA": balRoth,
     "Taxable": balTaxable,
     "HSA": balHSA,
-  }), [currentAge, fedMarginal, bal401k, balRoth, balTaxable, balHSA]);
+  }), [currentAge, bal401k, balRoth, balTaxable, balHSA]);
   const atRetirement = phase2End > 0
     ? (simData[phase2End - 1] ?? currentSnapshot)
     : currentSnapshot;
@@ -257,23 +257,42 @@ export default function App() {
   // per-render ACCOUNTS array, which carries setters) so the deps array is honest
   // and complete — keeping retVals stable lets conversionSim/optimizer skip
   // re-running unless the retirement balances actually change.
+  // Display values for the per-account cards/chart. The "Trad 401k" card shows the
+  // FULL pre-tax 401k INCLUDING additional pre-tax balances, so the cards reconcile to
+  // the gross `totalAtRet` (which also includes addlPreTaxBal) and the card's %-width is
+  // correct. [review fix] addlPreTaxBal is 0 by default → inert at the golden master.
   const retVals = useMemo(() => Object.fromEntries(
-    ACCOUNT_DATA_KEYS.map(k => [k, atRetirement[k] ?? 0])
-  ), [atRetirement]);
+    ACCOUNT_DATA_KEYS.map(k =>
+      [k, (atRetirement[k] ?? 0) + (k === "Trad 401k" ? addlPreTaxBal : 0)])
+  ), [atRetirement, addlPreTaxBal]);
   const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
-
-  const totalAtRet        = Object.values(retVals).reduce((s, v) => s + v, 0);
-  const effectiveExpenses = annualExpenses ?? Math.round(totalAtRet * ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE);
-  const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
 
   // Per-account retirement balances as plain scalars, extracted once so the
   // conversion-plan and optimizer memos can list them in their deps arrays
   // (exhaustive-deps forbids `retVals["…"]` expressions in deps).
   const retTaxable     = retVals["Taxable"]   ?? 0;
-  const retTrad        = retVals["Trad 401k"] ?? 0;
   const retRoth        = retVals["Roth IRA"]  ?? 0;
-  // Pre-tax gross balance used for worst-case tax calc (retTrad is after-tax normalized for display).
+  const retHsa         = retVals["HSA"]        ?? 0;
+  // Pre-tax GROSS 401k at retirement, INCLUDING additional pre-tax balances.
   const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
+  // retTrad is the tax-calc scalar — the GROSS 401k INCLUDING addlPreTaxBal, so the
+  // optimal withdrawal strategy (calcWithdrawalOrderTax) draws from the SAME full
+  // pre-tax pool the worst-case path caps at (tradGrossAtRet). [review fix — Gemini]
+  const retTrad        = tradGrossAtRet;
+
+  // BUG-35: the model now tracks GROSS balances and the engine taxes withdrawals
+  // per-year, so every FORMULA (and the headline) uses the gross portfolio.
+  // `totalAtRet` is gross. The after-tax "spendable" reference chip (spendableAtRet)
+  // is defined further below — once the RETIREMENT effective tax rate is known, so it
+  // haircuts the 401k at the retirement rate (not the working rate, the Point-2 fix).
+  const totalAtRet     = tradGrossAtRet + retRoth + retTaxable + retHsa;
+
+  // Default retirement spend = the user's CURRENT living expenses (take-home − what
+  // they save now), in today's dollars — portfolio-INDEPENDENT, so it can't balloon
+  // when the headline switches to gross (the old 3%-of-portfolio default was
+  // self-referential). effectiveLiving comes from calcSavingsCapacity above.
+  const effectiveExpenses = annualExpenses ?? effectiveLiving;
+  const rReal             = (1 + returnRate / 100) / (1 + inflationRate / 100) - 1;
 
   // Household retirement income (SS + pension), extracted to
   // src/model/retirement-income.js. ssAtRet / effectivePension carry the
@@ -307,47 +326,15 @@ export default function App() {
   const useTable2 = isMarried && spouseIsSoleBenef && (currentAge - spouseCurrentAge > 10);
   const activeTableLabel = useTable2 ? "Table II (Joint Life)" : "Table III (Uniform Lifetime)";
 
-  const rmdData = useMemo(() => {
-    const retRow = simData.find(d => d.age === safeRetAge)
-      ?? (safeRetAge === currentAge ? currentSnapshot : null);
-    if (!retRow) return [];
-    return calcRMDProjection({
-      tradGrossAtRetirement: (retRow.tradGross ?? 0) + addlPreTaxBal,
-      safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
-    });
-  }, [simData, safeRetAge, safeLifeExp, returnRate, useTable2, spouseCurrentAge, currentAge,
-      currentSnapshot, addlPreTaxBal]);
-
-  const firstRMD  = rmdData[0];
-  const totalRMDs = rmdData.reduce((s, d) => s + d.rmd, 0);
-
-  // Bracket-accurate RMD tax: each year's RMD stacked on the SS+pension floor.
-  // SS/pension count in the floor when claiming/start age ≤ RMD start (73).
-  // Extracted to src/model/retirement-tax.js so it is unit-tested and shared
-  // with the optimizer (one definition — no duplicated reduce; see BUG-25 #4).
-  const rmdIncomeFloor = calcRMDIncomeFloor({
-    includeSS, ssClaimingAge, ssTaxableRet,
-    pensionMonthly, pensionStartAge, effectivePension, rmdStartAge: RMD_START_AGE,
-  });
-  // Memoized (V9): rmdDataWithTax feeds rmdTaxByAge → retDrawShared → the shared
-  // retirement walk; an unmemoized fresh array here would re-reference the whole
-  // chain (chartData, retirementWalk, horizonProps) on every render.
-  const { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate } = useMemo(() => calcRMDTaxSchedule({
-    rmdData, rmdIncomeFloor, filingStatus, retStateRate,
-    fedMarginal, maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
-  }), [rmdData, rmdIncomeFloor, filingStatus, retStateRate, fedMarginal]);
-
+  // ── Roth-conversion plan inputs (amounts only) ────────────────────────────
+  // These feed the engine's conversion schedule and the IRMAA/ACA exposure. They do
+  // NOT depend on the RMD schedule — that now comes OUT of the engine — which is what
+  // lets the engine be the single source (no rmdData → conversion → rmdData cycle).
   const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
-
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
-  // Per-year conversion-window income floors + bracket-fill targets, extracted to
-  // src/model/conversion-planning.js (unit-tested; the per-year SS/pension gate is
-  // the BUG-25 #3 off-by-one). Each floor counts SS/pension only in years they've
-  // started; the only difference between the two arrays is the SS amount used:
-  //   convFloors      → ssTaxableRet (85% taxable, for marginal-rate math)
-  //   convMAGIFloors  → householdSS  (100% gross SS, for ACA/IRMAA MAGI)
-  // Both stay memoized so the conversion sim / optimizer (which take them as deps)
-  // re-run only when an input actually changes the floors (BUG-22).
+  // Per-year conversion-window income floors (BUG-25 #3 per-year SS/pension gate):
+  //   convFloors     → ssTaxableRet (85% taxable, marginal-rate math)
+  //   convMAGIFloors → householdSS  (100% gross SS, ACA/IRMAA MAGI)
   const convFloors = useMemo(() => buildIncomeFloors({
     conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
     pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
@@ -359,78 +346,130 @@ export default function App() {
   // Steady-state floor (all sources active) — used for display and bracket fill.
   const retIncomeFloor = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
 
-  // Bracket-fill targets. Memoized for the stable bracketFillConversions array that
-  // conversionSim / optimizer depend on (BUG-22).
+  // Bracket-fill targets. Memoized for the stable bracketFillConversions array.
   const { bracketFillConversions, bracketFillConversion, convPeakTarget, convSteadyTarget, targetsVary } =
     useMemo(() => calcBracketFillTargets({ retTaxData, conversionBracketTarget, convFloors, retIncomeFloor }),
       [retTaxData, conversionBracketTarget, convFloors, retIncomeFloor]);
   const annualConversion = conversionMode === "bracket" ? bracketFillConversion : annualConversionAmt;
   const convTargetVaries = conversionMode === "bracket" && targetsVary;
 
-  // The whole conversion-evaluation pipeline (sim → post-conversion RMD tax → net
-  // benefit → ACA/IRMAA costs) is ONE model function, evaluateConversionPlan, shared
-  // with the optimizer below so the two can never diverge. Collapsed into a single
-  // memo for referential stability: the destructured sub-objects (conversionSim, etc.)
-  // stay stable until an input changes, so downstream memos don't thrash (BUG-22).
-  // Trade-off: a healthcare-only input change (hasMedicare, householdSize, etc.)
-  // now gives conversionSim a fresh reference, which cascades through conversionTaxByAge
-  // into the retirement walk + chart (identical values, just extra recompute) —
-  // accepted vs. re-duplicating the pipeline across display and optimizer.
-  const conversionPlan = useMemo(() => {
-    const retRow = simData.find(d => d.age === safeRetAge)
-      ?? (safeRetAge === currentAge ? currentSnapshot : null);
-    return evaluateConversionPlan({
-      conversionWindowYrs: retRow ? conversionWindowYrs : 0,
-      annualConversion,
-      annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
-      returnRate, retIncomeFloor, retIncomeFloors: convFloors,
-      filingStatus, conversionTaxSource, retStateRate,
-      tradGrossAtRetirement: (retRow?.tradGross ?? 0) + addlPreTaxBal,
-      rothBalAtRet: retRoth,
-      taxableBalAtRet: retTaxable,
-      safeRetAge,
-      rmdData, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
-      rmdTaxBite, rmdIncomeFloor,
-      convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
-      personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-    });
-  }, [simData, safeRetAge, currentAge, currentSnapshot, conversionWindowYrs, annualConversion,
-      conversionMode, bracketFillConversions, retRoth, retTaxable, returnRate,
-      retIncomeFloor, convFloors, filingStatus, conversionTaxSource, retStateRate, addlPreTaxBal,
-      rmdData, safeLifeExp, useTable2, spouseCurrentAge, rmdTaxBite, rmdIncomeFloor,
+  // The income floor RMDs/withdrawals stack on (SS taxable + pension, gated to RMD
+  // start). Still used by the withdrawal-order strategy card (calcWithdrawalOrderTax).
+  const rmdIncomeFloor = calcRMDIncomeFloor({
+    includeSS, ssClaimingAge, ssTaxableRet,
+    pensionMonthly, pensionStartAge, effectivePension, rmdStartAge: RMD_START_AGE,
+  });
+
+  // The engine's conversion schedule ({ [age]: amount }). Empty when there's no
+  // retirement row to convert from (mirrors the old conversionWindowYrs:0 fallback).
+  const hasRetRow = !!(simData.find(d => d.age === safeRetAge)
+    ?? (safeRetAge === currentAge ? currentSnapshot : null));
+  const conversionByAge = useMemo(() => buildConversionByAge({
+    conversionWindowYrs: hasRetRow ? conversionWindowYrs : 0, safeRetAge,
+    annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
+    annualConversion,
+  }), [hasRetRow, conversionWindowYrs, safeRetAge, conversionMode, bracketFillConversions, annualConversion]);
+
+  // ── THE single retirement-phase walk (BUG-35 / BUG-31) ────────────────────
+  // One per-account, GROSS-seeded, taxed-once engine run drives longevity AND the
+  // displayed RMD schedule + conversion benefit, so they can never diverge. The
+  // RMD/conversion taxes come from the walk's own per-row breakdown — there is no
+  // second (nominal-growth, withdrawal-ignoring) projection. Memoized (V9):
+  // chart, Flow-Down, optimizer, and horizonProps all read it.
+  // Common engine inputs (everything EXCEPT the conversion schedule), memoized so
+  // the main run AND the optimizer's per-candidate search feed the engine the same
+  // model — the optimizer can never search a different plan than the screen shows.
+  const retPhaseBase = useMemo(() => ({
+    tradGross: tradGrossAtRet, roth: retRoth, taxable: retTaxable, hsa: retHsa,
+    startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+    rReal, effectiveExpenses,
+    ssGross: householdSS, ssTaxable: ssTaxableRet,
+    ssClaimAge: includeSS ? ssClaimingAge : Infinity,
+    pension: pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0,
+    pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
+    filingStatus, retStateRate, rmdStartAge: RMD_START_AGE,
+    useTable2, spouseCurrentAge, currentAge,
+    moneyEvents: moneyEvents.filter(ev => ev.age >= safeRetAge),
+  }), [tradGrossAtRet, retRoth, retTaxable, retHsa, safeRetAge, safeLifeExp, rReal,
+       effectiveExpenses, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
+       pensionMonthly, pensionStartAge, filingStatus, retStateRate,
+       useTable2, spouseCurrentAge, currentAge, moneyEvents]);
+
+  const retPhase = useMemo(
+    () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),
+    [retPhaseBase, conversionByAge]);
+
+  // RMD display + lifetime tax, all derived from the ONE walk (no second projection).
+  // rmdData rows already carry { age, rmd, bal, divisor, tax } — they ARE rmdDataWithTax.
+  const rmdData         = retPhase.rmdSchedule;
+  const rmdDataWithTax  = retPhase.rmdSchedule;
+  const firstRMD        = rmdData[0];
+  const totalRMDs       = retPhase.totalRMDs;
+  const rmdTaxBite      = retPhase.rmdTaxBite;
+  const effectiveRMDTaxRate = totalRMDs > 0
+    ? rmdTaxBite / totalRMDs
+    : Math.min(ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE, fedMarginal + retStateRate);
+
+  // After-tax "spendable" reference (DISPLAY ONLY — never a formula input). Haircuts
+  // the gross 401k at the RETIREMENT effective rate (fixes the old working-rate
+  // haircut); Roth/HSA are tax-free and Taxable is already net of LTCG drag. This is
+  // the "worth ~X to you / ≈ $Y/mo" anchor beside the gross headline.
+  const spendableAtRet = Math.round(
+    tradGrossAtRet * (1 - effectiveRMDTaxRate) + retRoth + retTaxable + retHsa);
+
+  // Amount maps for the Year-by-year RMD / Conversion columns (WI-2.5) — the ACTUAL
+  // amounts the walk applied (conversions capped at the live balance), one source.
+  const rmdAmountByAge = useMemo(
+    () => Object.fromEntries(retPhase.rmdSchedule.map(d => [d.age, d.rmd])),
+    [retPhase]);
+  const conversionAmountByAge = useMemo(
+    () => Object.fromEntries(retPhase.rows.filter(r => r.conversion > 0).map(r => [r.age, Math.round(r.conversion)])),
+    [retPhase]);
+
+  // The conversion-evaluation pipeline is ONE model function, evaluateConversionPlan,
+  // shared with the optimizer so the two can never diverge (BUG-31). BUG-35: the
+  // RMD-tax savings + conversion cost now come from the SINGLE retirement engine
+  // (retPhase) — passed in — not a separate RMD projection; this function only adds
+  // the conversion-window display sim + the ACA/IRMAA costs.
+  const conversionPlan = useMemo(() => evaluateConversionPlan({
+    conversionWindowYrs: hasRetRow ? conversionWindowYrs : 0,
+    annualConversion,
+    annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
+    returnRate, retIncomeFloor, retIncomeFloors: convFloors,
+    filingStatus, conversionTaxSource, retStateRate,
+    tradGrossAtRetirement: tradGrossAtRet,
+    rothBalAtRet: retRoth,
+    taxableBalAtRet: retTaxable,
+    safeRetAge,
+    rmdTaxSaved: retPhase.rmdTaxSaved, conversionCost: retPhase.conversionCost,
+    convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
+    personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+  }), [hasRetRow, conversionWindowYrs, annualConversion, conversionMode, bracketFillConversions,
+      returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource, retStateRate,
+      tradGrossAtRet, retRoth, retTaxable, safeRetAge, retPhase,
       convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, personOnMedicare,
       marketplaceMonthlyPremium]);
   const {
-    conversionSim, rmdDataPostConversion, rmdTaxSaved, netConversionBenefit,
+    conversionSim, rmdTaxSaved, netConversionBenefit,
     healthcareExposure, cliffYears: acaCliffYears, irmaaCost: totalIRMAACost,
     acaLoss: acaAnnualLoss, adjustedNetConversionBenefit,
   } = conversionPlan;
 
-  // ── Per-year retirement tax schedules (BUG-31 Path A) ─────────────────────
-  // The portfolio actually pays these taxes, so they must drain the SAME walk
-  // the chart and waterfall read. Built from the already-bracket-accurate
-  // rmdDataWithTax (ages 73+) and conversionSim.years (conversion window).
+  // ── Per-year tax maps for the SECONDARY blended walks (what-if delta, optimized
+  // scenario) which still use buildRetirementDrawdown. Derived from the engine
+  // (retPhase) so their RMD/conversion tax matches the main plan. NOTE: the blended
+  // walk doesn't charge the spending-draw tax the engine does, so those deltas are
+  // slightly less tax-honest than the headline — acceptable for relative comparisons;
+  // full migration of what-if/optimized to the engine is a documented follow-up.
   const rmdTaxByAge = useMemo(
-    () => Object.fromEntries(rmdDataWithTax.map(d => [d.age, d.tax])),
-    [rmdDataWithTax]);
+    () => Object.fromEntries(retPhase.rmdSchedule.map(d => [d.age, d.tax])),
+    [retPhase]);
   const conversionTaxByAge = useMemo(
-    () => Object.fromEntries(conversionSim.years.map(y => [y.age, y.tax])),
-    [conversionSim]);
+    () => Object.fromEntries(retPhase.rows.filter(r => r.conversion > 0).map(r => [r.age, Math.round(r.convTax)])),
+    [retPhase]);
 
-  // WI-2.5: amount maps (not tax) for the Year-by-year RMD / Conversion columns.
-  const rmdAmountByAge = useMemo(
-    () => Object.fromEntries(rmdDataWithTax.map(d => [d.age, d.rmd])),
-    [rmdDataWithTax]);
-  const conversionAmountByAge = useMemo(
-    () => Object.fromEntries(conversionSim.years.map(y => [y.age, y.conversion])),
-    [conversionSim]);
-
-  // Shared inputs for the ONE retirement-phase walk (buildRetirementDrawdown).
-  // The chart, the headline longevity, and the Flow-Down waterfall all consume
-  // this so they can never diverge (the BUG-31 root cause). SS/pension gate
-  // per-year inside the walk (rule 5b); the tax maps make it tax-honest.
-  // Memoized (V9 / principle 13): retirementWalk, whatIfBundle, and horizonProps
-  // all depend on this object, so its reference must only change when an input does.
+  // Shared inputs for the secondary blended walks (what-if + optimized scenario).
+  // Memoized (V9): whatIfBundle + the optimized scenario read this.
   const retDrawShared = useMemo(() => ({
     rReal, effectiveExpenses,
     ssAmount: householdSS,
@@ -443,30 +482,19 @@ export default function App() {
        pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
        moneyEvents, safeRetAge]);
 
-  // Headline longevity: walk to a far horizon so "years sustained" is meaningful
-  // even past life expectancy (matching the old closed-form semantics), but now
-  // tax-honest and with correct per-year SS/pension timing. Replaces the static
-  // closed-form calcYearsSustained, which netted SS for every year regardless of
-  // claiming age and ignored tax (overstated longevity — BUG-31 / BUG-26 family).
-  const yearsSustained = buildRetirementDrawdown({
-    ...retDrawShared, startBal: totalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130,
-  }).yearsSustained;
+  // Headline longevity + the ONE retirement walk come straight from the engine
+  // (retPhase) — no second projection (BUG-35 / BUG-31). retirementWalk exposes
+  // rows (to life expectancy), depletionAge, and yearsSustained.
+  const yearsSustained = retPhase.yearsSustained;
   const isSustainable = yearsSustained === Infinity || yearsSustained >= (safeLifeExp - safeRetAge);
 
-  // Accumulation rows (current → retirement) + the starting balance for the walk.
+  // Accumulation rows (current → retirement) — gross basis, so the chart joins the
+  // engine's gross retirement walk with no discontinuity at retirement.
   const accumChart = useMemo(
     () => buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }),
     [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA]);
 
-  // The ONE retirement-phase walk to life expectancy. Both the chart and the
-  // Flow-Down waterfall read its rows (each carries draw / tax / growth), so the
-  // two can never use different equations again (BUG-31 root cause). Tax-honest
-  // via retDrawShared's per-year RMD/conversion tax maps.
-  const retirementWalk = useMemo(() => buildRetirementDrawdown({
-    ...retDrawShared,
-    startBal: accumChart[accumChart.length - 1]?.total ?? 0,
-    startAge: safeRetAge, endAge: safeLifeExp,
-  }), [retDrawShared, accumChart, safeRetAge, safeLifeExp]);
+  const retirementWalk = retPhase;
 
   const totalChartData = useMemo(
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
@@ -502,41 +530,40 @@ export default function App() {
   // choice, not a searchable flat scalar; optimizing a flat amount there produces a different
   // model than what the display shows.
   const optimizerResult = useMemo(() => {
-    if (conversionMode === "bracket" || conversionWindowYrs === 0 || rmdData.length === 0) return null;
-    const retRow = simData.find(d => d.age === safeRetAge)
-      ?? (safeRetAge === currentAge ? currentSnapshot : null);
-    const tradGross = (retRow?.tradGross ?? 0) + addlPreTaxBal;
-    const rothBal   = retRoth;
-    const taxableBal = retTaxable;
-    // Capture loop vars for closure (avoids stale deps)
+    if (conversionMode === "bracket" || conversionWindowYrs === 0 || !hasRetRow) return null;
     const _convFloors = convFloors;
     const _convMAGIFloors = convMAGIFloors;
 
-    // Same evaluateConversionPlan as the display path — the optimizer can never
-    // search a different model than what the screen shows.
+    // For each candidate flat conversion amount: run the SAME engine (retPhaseBase)
+    // with that schedule for the RMD-tax saving + conversion cost, then the SAME
+    // evaluateConversionPlan for the IRMAA/ACA costs — so the optimizer can never
+    // search a different model than the screen shows (BUG-31 / BUG-35).
     const getNetBenefit = (amount) => {
+      const candidateByAge = buildConversionByAge({
+        conversionWindowYrs, safeRetAge, annualConversions: null, annualConversion: amount,
+      });
+      const rp = buildRetirementPhase({ ...retPhaseBase, conversionByAge: candidateByAge });
       const plan = evaluateConversionPlan({
         conversionWindowYrs, annualConversion: amount, annualConversions: null,
         returnRate, retIncomeFloor, retIncomeFloors: _convFloors,
         filingStatus, conversionTaxSource, retStateRate,
-        tradGrossAtRetirement: tradGross, rothBalAtRet: rothBal, taxableBalAtRet: taxableBal,
+        tradGrossAtRetirement: tradGrossAtRet, rothBalAtRet: retRoth, taxableBalAtRet: retTaxable,
         safeRetAge,
-        rmdData, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
-        rmdTaxBite, rmdIncomeFloor,
+        rmdTaxSaved: rp.rmdTaxSaved, conversionCost: rp.conversionCost,
         convMAGIFloors: _convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
         personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
       });
       return {
-        rmdTaxSaved: plan.rmdTaxSaved, totalTax: plan.conversionSim.totalTax,
+        rmdTaxSaved: rp.rmdTaxSaved, totalTax: rp.conversionCost,
         irmaaCost: plan.irmaaCost, acaLoss: plan.acaLoss,
       };
     };
 
     return findOptimalConversion({ getNetBenefit });
-  }, [conversionMode, conversionWindowYrs, rmdData, rmdTaxBite, rmdIncomeFloor, retStateRate,
+  }, [conversionMode, conversionWindowYrs, hasRetRow, retPhaseBase, retStateRate,
       retRoth, retTaxable, returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
-      addlPreTaxBal, safeLifeExp, useTable2, spouseCurrentAge, currentAge,
-      hasMedicare, convMAGIFloors, personOnMedicare, simData, safeRetAge, currentSnapshot,
+      tradGrossAtRet, safeRetAge,
+      hasMedicare, convMAGIFloors, personOnMedicare,
       hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
@@ -584,7 +611,7 @@ export default function App() {
     : 0;
 
   const flowData = useMemo(() => calcFlowDown({
-    bal401k, balRoth, balTaxable, balHSA, fedMarginal,
+    bal401k, balRoth, balTaxable, balHSA,
     contribRows: simData.filter(d => d.age <= safeRetAge),
     totalAtRet,
     walkRows: retirementWalk.rows,
@@ -595,7 +622,7 @@ export default function App() {
       ? conversionSim.years.reduce((s, y) => s + y.conversion, 0) : 0,
     safeRetAge, safeLifeExp, rmdStartAge: RMD_START_AGE,
   }), [
-    bal401k, balRoth, balTaxable, balHSA, fedMarginal, simData, safeRetAge, totalAtRet,
+    bal401k, balRoth, balTaxable, balHSA, simData, safeRetAge, totalAtRet,
     conversionWindowYrs, conversionSim, retirementWalk, accumChart, safeLifeExp,
   ]);
 
@@ -713,20 +740,20 @@ export default function App() {
   }), [extraMatch, adjustedNetConversionBenefit, budgetDeficit]);
 
   // Year-by-year table rows (WI-2.5): the WHOLE life, accumulation + retirement.
-  // Accumulation rows (buildAccumulationRows) are on the after-tax basis with a
+  // Accumulation rows (buildAccumulationRows) are on the GROSS basis (BUG-35) with a
   // reconciling contrib/growth split; retirement rows (buildYearlyRows) carry the
   // walk's draw/tax/growth plus the RMD + conversion driver columns. age→year and
   // all per-row math live in the model (rule 10); the screen only formats.
   const currentYear = new Date().getFullYear();
   const yearlyRows = useMemo(() => [
     ...buildAccumulationRows({
-      simData, fedMarginal, currentAge, currentYear, safeRetAge,
+      simData, currentAge, currentYear, safeRetAge,
     }),
     ...buildYearlyRows({
       rows: retirementWalk.rows, currentAge, currentYear,
       rmdByAge: rmdAmountByAge, conversionByAge: conversionAmountByAge,
     }),
-  ], [simData, fedMarginal, currentAge, currentYear, safeRetAge,
+  ], [simData, currentAge, currentYear, safeRetAge,
       retirementWalk, rmdAmountByAge, conversionAmountByAge]);
 
   // WI-2.2 (#92): Budget tab bundle — savings waterfall + allocation stack.
@@ -744,8 +771,8 @@ export default function App() {
   // WI-2.4 (#94): Taxes tab bundle — phase rates + lifetime composition.
   // fedEffRate (calcTaxBasis) = effective federal rate.
   // projRetBracketPct (projectRetirementBracket) = projected retirement bracket.
-  // rmdTaxBite + effectiveRMDTaxRate from calcRMDTaxSchedule.
-  // conversionSim.totalTax from evaluateConversionPlan.
+  // rmdTaxBite + effectiveRMDTaxRate + convTaxTotal all from the engine (retPhase) —
+  // one source for the retirement-phase tax composition (BUG-35).
   // Memoized so horizonProps stays identity-stable (V9).
   const taxViewBundle = useMemo(() => ({
     fedMarginal,
@@ -753,9 +780,9 @@ export default function App() {
     effectiveRMDTaxRate,
     projectedRetBracket: projRetBracketPct,
     rmdTaxBite,
-    convTaxTotal: conversionSim.totalTax,
+    convTaxTotal: retPhase.conversionCost,
   }), [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
-       rmdTaxBite, conversionSim]);
+       rmdTaxBite, retPhase]);
 
   // WI-2.6 (#96): retirement-phase money-flow bands (SS + pension + portfolio draw).
   // Pre-split by the model and guaranteed to sum to effectiveExpenses; memoized so
@@ -1403,8 +1430,8 @@ export default function App() {
             </p>
             <p style={{ margin: 0, fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
               Federal marginal rate computed from your income and deductions.
-              Pre-tax 401k balances are normalized to after-tax equivalent
-              using this rate for chart display.
+              Balances are shown GROSS (pre-tax); the engine taxes each
+              withdrawal in retirement at that year's actual bracket.
             </p>
           </div>
           {/* Retirement panel — bracket-accurate effective RMD rate, with state selector */}
@@ -1608,7 +1635,7 @@ export default function App() {
             })()}
           </div>
           <p style={{ margin: "8px 0 0", fontSize: 10, color: C.muted }}>
-            ★ = retirement age &nbsp;·&nbsp; Trad 401k shown after-tax &nbsp;·&nbsp; Taxable applies annual LTCG drag at income-based rate &nbsp;·&nbsp;
+            ★ = retirement age &nbsp;·&nbsp; Trad 401k shown gross (pre-tax) &nbsp;·&nbsp; Taxable applies annual LTCG drag at income-based rate &nbsp;·&nbsp;
             <span style={{ color: "#f85149" }}>0–25%</span> &nbsp;
             <span style={{ color: "#58a6ff" }}>26–50%</span> &nbsp;
             <span style={{ color: "#d4a843" }}>51–89%</span> &nbsp;
@@ -1626,11 +1653,15 @@ export default function App() {
               Account Comparison at Retirement (Age {safeRetAge})
             </p>
             <p style={{ margin: 0, fontSize: 22, color: C.gold, ...mono }}>
-              {fmt(Object.values(retVals).reduce((s, v) => s + v, 0))}
+              {fmt(totalAtRet)}
             </p>
-            <p style={{ margin: "2px 0 0", fontSize: 10, color: C.muted }}>total after-tax across all accounts</p>
+            <p style={{ margin: "2px 0 0", fontSize: 10, color: C.muted }}>
+              gross balance across all accounts (pre-tax)
+              &nbsp;·&nbsp;
+              <span style={{ color: C.green }}>≈ {fmt(spendableAtRet)} spendable after tax</span>
+            </p>
           </div>
-          <p style={{ margin: 0, fontSize: 10, color: C.muted }}>after-tax · age {safeRetAge}</p>
+          <p style={{ margin: 0, fontSize: 10, color: C.muted }}>gross · age {safeRetAge}</p>
         </div>
         <div style={{ display: "grid", gap: 8 }}>
           {ranked.map(([dataKey, val]) => {
@@ -1660,7 +1691,7 @@ export default function App() {
           })}
         </div>
         <p style={{ margin: "12px 0 0", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
-          After-tax values at retirement age. Trad 401k taxed at retirement rate. Roth &amp; HSA tax-free. Taxable applies annual LTCG drag at your income-based rate (0%, 15%, or 20%).
+          Gross (pre-tax) values at retirement age. Trad 401k is the full pre-tax balance; the after-tax estimate is shown separately as spendable-at-retirement. Roth &amp; HSA tax-free. Taxable applies annual LTCG drag at your income-based rate (0%, 15%, or 20%).
         </p>
       </div>
 
@@ -1674,13 +1705,13 @@ export default function App() {
               onChange={v => setAnnualExpenses(v)} />
             <p style={{ margin: "4px 0 0", fontSize: 10, color: C.muted }}>
               Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}</span>
-              &nbsp;·&nbsp; default = {Math.round(ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE * 100)}% of projected portfolio
+              &nbsp;·&nbsp; default = your current living spend ({fmt(effectiveLiving)}/yr)
               {annualExpenses !== null && (
                 <button onClick={() => setAnnualExpenses(null)} style={{
                   marginLeft: 8, fontSize: 9, color: C.blue, background: "transparent",
                   border: "none", cursor: "pointer", padding: 0, textDecoration: "underline",
                   fontFamily: "'DM Sans', system-ui, sans-serif",
-                }}>reset to {Math.round(ASSUMPTIONS.DEFAULT_RETIREMENT_EXPENSE_RATE * 100)}%</button>
+                }}>reset to current spend</button>
               )}
             </p>
             {(householdSS > 0 || effectivePension > 0) && (
@@ -1755,7 +1786,7 @@ export default function App() {
           </div>
         </div>
         <p style={{ margin: "12px 0 0", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
-          Based on total after-tax portfolio at retirement ({fmt(totalAtRet)}) growing at {returnRate}% per year.
+          Based on total gross portfolio at retirement ({fmt(totalAtRet)}) growing at {returnRate}% per year.
           Years sustained uses an inflation-adjusted real return ({((rReal)*100).toFixed(1)}%) at your {inflationRate}% inflation assumption.
         </p>
         {ss70DrawReduction > 0 && includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE && (
@@ -1804,8 +1835,8 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Portfolio Growth Over Time</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
-          After-tax values year by year. Trad 401k normalized to current marginal rate ({actualMarginalPct}%)
-          for an apples-to-apples comparison with Roth and taxable accounts.
+          Gross (pre-tax) values year by year. Trad 401k is the full pre-tax balance;
+          its after-tax worth is lower because withdrawals are taxed as income.
           Dashed line marks retirement age.
         </p>
         <ResponsiveContainer width="100%" height={320}>
@@ -1831,7 +1862,7 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Total Portfolio — Full Lifecycle</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
-          Combined after-tax portfolio from today to life expectancy (age {safeLifeExp}).
+          Combined gross portfolio from today to life expectancy (age {safeLifeExp}).
           Grows through retirement age {safeRetAge}, then draws down at {fmt(effectiveExpenses)}/yr.
         </p>
         <ResponsiveContainer width="100%" height={320}>
@@ -2418,7 +2449,7 @@ export default function App() {
                       val: convTargetVaries ? `${fmt(convPeakTarget)} → ${fmt(convSteadyTarget)}` : fmt(annualConversion),
                       sub: convTargetVaries ? "tapers as SS/pension begin" : "per year during window",
                       color: C.blue   },
-                    { label: "Conversion Tax Cost", val: fmt(conversionSim.totalTax),      sub: "paid now, pre-RMD",             color: C.orange },
+                    { label: "Conversion Tax Cost", val: fmt(retPhase.conversionCost),     sub: "paid now, pre-RMD",             color: C.orange },
                     { label: "RMD Tax Saved",       val: fmt(rmdTaxSaved),                 sub: "vs no conversions",             color: C.green  },
                     { label: netConversionBenefit >= 0 ? "Net Savings" : "Net Cost",
                       val: fmt(Math.abs(netConversionBenefit)),
@@ -2612,13 +2643,13 @@ export default function App() {
                           <span key={h} style={{ fontSize: 9, color: C.muted, textTransform: "uppercase",
                             letterSpacing: "0.06em", borderBottom: `1px solid ${C.border}`, paddingBottom: 3 }}>{h}</span>
                         ))}
-                        {rmdData.slice(0, 8).map((row, i) => {
-                          const postRow = rmdDataPostConversion[i];
+                        {retPhase.rmdScheduleNoConv.slice(0, 8).map((row) => {
+                          const planRow = rmdData.find(d => d.age === row.age);
                           return [
                             <span key={`ra${row.age}`} style={{ fontSize: 11, color: C.gold, ...mono }}>{row.age}</span>,
                             <span key={`ro${row.age}`} style={{ fontSize: 11, color: C.orange, ...mono }}>{fmt(row.rmd)}</span>,
-                            <span key={`rp${row.age}`} style={{ fontSize: 11, color: postRow && postRow.rmd < row.rmd ? C.green : C.text, ...mono }}>
-                              {postRow ? fmt(postRow.rmd) : "—"}
+                            <span key={`rp${row.age}`} style={{ fontSize: 11, color: planRow && planRow.rmd < row.rmd ? C.green : C.text, ...mono }}>
+                              {planRow ? fmt(planRow.rmd) : "—"}
                             </span>,
                           ];
                         })}
@@ -3023,7 +3054,7 @@ export default function App() {
                     Portfolio Lifecycle
                   </p>
                   <p style={{ margin: "0 0 12px", fontSize: 11, color: C.muted }}>
-                    Combined after-tax portfolio — accumulation through drawdown
+                    Combined gross portfolio — accumulation through drawdown
                   </p>
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={totalChartData} margin={{ top: 8, right: 12, left: 12, bottom: 6 }}>

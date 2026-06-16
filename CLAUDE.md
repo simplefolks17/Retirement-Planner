@@ -6,13 +6,13 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 ## Critical Rules (check every task)
 1. **IRS constants live in `src/config/irs-2026.js` only.** Never hardcode limits, brackets, or thresholds elsewhere.
 2. **Portfolio draws use `netPortfolioNeed`** (expenses − SS − pension), never `effectiveExpenses`. This applies to: yearsSustained, withdrawalRate, totalChartData drawdown, optimized scenario. `netPortfolioNeed` must be computed **per-year** in any loop that spans retirement — SS and pension only reduce draws in years they've actually started (see rule 5b).
-   - **2b. One retirement walk, tax-honest.** The retirement-phase portfolio is walked in exactly ONE place — `buildRetirementDrawdown` (`src/model/retirement-drawdown.js`). The chart (`totalChartData`), the headline `yearsSustained`, the Flow-Down waterfall (`calcFlowDown`), `calcDrawdownYears`, and the optimizer all consume it, so they can never diverge (BUG-31). The per-year recurrence is `balEnd = balStart*(1+rReal) − draw − tax`: the portfolio actually pays its per-year **RMD tax** (ages 73+) and **Roth-conversion tax** (conversion window), passed in as per-age maps. Only the tax leaks from the single pool — the RMD/conversion principal is never double-charged. **Never reintroduce a second retirement-phase walk, and never compute a Flow-Down "growth" as a residual plug** (`end − start + draws + tax`); growth must be the independent sum `Σ(row.growth)` so a forgotten tax can't hide in it.
+   - **2b. One retirement walk, gross-seeded, taxed once (BUG-35).** Balances are **GROSS** everywhere (the `"Trad 401k"` display is the full pre-tax value); `totalAtRet` is gross and `spendableAtRet` is an after-tax **display-only reference** (never a formula input). The retirement-phase portfolio is walked by the per-account engine `buildRetirementWalkByAccount` (`src/model/retirement-engine.js`), orchestrated by `buildRetirementPhase` (`src/model/retirement-phase.js`) — the **ONE source** for the chart (`totalChartData`), headline `yearsSustained`, the displayed RMD schedule + `rmdTaxBite`, the Flow-Down waterfall (`calcFlowDown`), and the Roth-conversion benefit + optimizer, so they can never diverge (BUG-31). The engine seeds from gross and taxes each dollar **exactly once** — when it leaves a pre-tax account (Roth conversion, RMD, or extra 401k draw), stacked bracket-accurately on the SS/pension floor; the RMD/conversion **principal** is an internal transfer that keeps compounding (only the tax leaks). **Never reintroduce the after-tax seed, never add a second nominal-growth RMD projection, and never compute a Flow-Down "growth" as a residual plug** — growth must be the independent sum `Σ(row.growth)`. (Follow-ups, tracked in `docs/BUGS.md`: `what-if.js` + `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` for *deltas* on the gross basis — they don't charge the spending-draw tax — **BUG-36**; the engine charges only *incremental* tax above the SS/pension floor, so SS/pension is effectively tax-free — **BUG-38**; and Flow-Down **accumulation** growth is still a residual plug, not `Σ(row.growth)` — **BUG-39** (a known exception to the "no residual plug" rule above, pending the fix).)
 3. **No double-counting.** `grossAfterTax` (household income − all taxes) is the budget basis. Pre-tax deductions are auto-derived from contributions. For MFJ filers, `grossAfterTax` uses `householdIncome` (primary + spouse); for all other filing statuses it uses primary income only.
 4. **Sim-level IRS guards required.** Every contribution in the simulation loop must be independently capped at its IRS limit, regardless of UI constraints.
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (412 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (441 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -456,10 +456,54 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     reconcile by model construction; Journey's growth is the independent `Σ(row.growth)`
     (rule 2b). No further changes needed.
   390 → **412** tests (+22). Tracker: #95 + #96 + #97 done (50 done, 67 planned).
+- **BUG-35 fixed — per-account retirement engine as the single source (Jun 15 2026, PR-A):**
+  the Traditional 401k was taxed twice (after-tax retirement seed + RMD/conversion tax on the
+  gross balance), and the displayed RMD schedule used a separate nominal-growth, withdrawal-
+  ignoring projection. Fixed via direction A (owner-approved): a per-account, GROSS-seeded,
+  taxed-once engine (`retirement-engine.js`) + orchestrator (`retirement-phase.js`) is now the
+  ONE source for longevity, the RMD schedule, `rmdTaxBite`, and the conversion benefit/optimizer.
+  Balances are gross everywhere (chart, Statement/Accounts, Flow-Down, accumulation rows, what-if);
+  `totalAtRet` is gross with a `spendableAtRet` after-tax reference chip (haircut at the
+  **retirement** rate — also fixes the old working-rate haircut). Default retirement expense is now
+  the user's current living spend (`effectiveLiving`), portfolio-independent, replacing the
+  self-referential `3% × portfolio`. Deliberate golden-master moves (re-locked): `totalAtRet`
+  3,484,197 → 3,950,603; default expense ~104,525 → 57,377; `firstRMD` 118,198 → 62,071;
+  `rmdTaxBite` 683,974 → 202,423; `netConversionBenefit` 77,861 → −10,096 (aggressive bracket-fill
+  is net-negative at this spend); `yearsSustained` 62.9 → Infinity (trivially sustainable at the
+  honest spend). `evaluateConversionPlan` now consumes the engine's benefit; the optimizer searches
+  via the same engine (`retPhaseBase`). Follow-ups: `what-if.js` + `calcOptimizedScenario` still use
+  the blended `buildRetirementDrawdown` for deltas (gross basis, engine-consistent tax maps), and a
+  dedicated **per-account detail screen** is the planned PR-B. The suite is **441 tests** (was 412
+  before BUG-35). `docs/BUGS.md` BUG-35 → Resolved.
+  PR #32 review fixes (Gemini + CodeRabbit), all inert at the default state (golden master unchanged):
+  (1) RMD computed **before** any same-year conversion (IRS sequencing); (2) **tax-on-tax gross-up** —
+  when Taxable is exhausted and the 401k funds the income tax, that withdrawal is now itself taxed
+  (fixed-point solve); (3) **one-time money events** folded into `needed` before the tax solve, so a
+  purchase funded from the 401k is taxed + grossed up like any draw (and depletion sees it via
+  `spendShort`); (4) stale "after-tax" display copy in App.jsx updated to **gross (pre-tax)** — the
+  "Trad 401k" line and Year-by-year table already show gross balances (rule 2b); (5) **taxable inflows
+  taxed** — the engine now routes events through the shared `applyMoneyEvents` helper (was orphaned)
+  and taxes a flagged taxable inflow (e.g. inherited pre-tax IRA) as ordinary income on the floor
+  (`inflowTax` component). Stale after-tax comments swept from simulation/what-if/retirement-tax.
+  Round-4 review fixes (Gemini + CodeRabbit + Copilot, all inert at default): (6) RMD-schedule
+  `bal` now the Traditional 401k balance (`r.trad`), not the whole portfolio, matching the
+  "Est. 401k Balance" column; (7) conversion-benefit `rmdTaxSaved` compared over the span BOTH
+  walks are active (apples-to-apples when conversions change longevity); (8) Flow-Down accumulation
+  growth no longer clamped at 0 (negative real growth reconciles the bridge); (9) per-account cards
+  reconcile to gross `totalAtRet` when `addlPreTaxBal > 0` (Trad card includes it; `retTrad` tax
+  scalar decoupled, = `tradGrossAtRet`). +2 regression tests.
+  **PR #32 merged 2026-06-15** after 6 review rounds (CodeRabbit + Gemini; Copilot was requested but
+  isn't provisioned on the repo). Four follow-ups left open + detailed in `docs/BUGS.md`: **BUG-36**
+  (what-if/optimized deltas + accumulation event income tax not yet on the engine), **BUG-37** (engine
+  ignores `conversionTaxSource` — owner-deferred, would move the golden master), **BUG-38** (engine
+  doesn't charge the base tax on the SS/pension floor — SS/pension effectively tax-free; inert at
+  default, needs income-surplus handling), **BUG-39** (Flow-Down accumulation growth is a residual
+  plug, not `Σ(row.growth)` — rule 2b). Next planned work is **PR-B** (per-account detail screen).
 
 ## Commands
+
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (412 tests)
+- `npm test` — run model + formatter + render-smoke tests (441 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

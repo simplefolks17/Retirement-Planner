@@ -25,11 +25,11 @@ const simInputs = {
   calcEmployerMatchFn: em, moneyEvents: [],
 };
 
-// Compute actual baseline totalAtRet from the simulation (mirrors App.jsx)
+// Compute actual baseline totalAtRet from the simulation (mirrors App.jsx — GROSS, BUG-35)
 const _baseSim = runSimulation(simInputs);
 const _baseAt  = _baseSim[safeRetAge - currentAge - 1];
 const realBaseTotalAtRet = _baseAt
-  ? Math.round(_baseAt.tradGross * (1 - fedMarginal))
+  ? (_baseAt.tradGross ?? 0)
     + (_baseAt["Roth IRA"] ?? 0) + (_baseAt["Taxable"] ?? 0) + (_baseAt["HSA"] ?? 0)
   : 0;
 

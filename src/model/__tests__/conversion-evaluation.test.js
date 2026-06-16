@@ -1,31 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { evaluateConversionPlan } from "../conversion-evaluation.js";
-import { calcRMDProjection } from "../rmd.js";
 import { TAX_DATA_2026 } from "../../config/irs-2026.js";
 
-// Default-state inputs mirroring the golden master (single, retire 65, claim SS 67).
-// at-retirement balances + rmdTaxBite are the values golden-master.test.js locks.
+// BUG-35: evaluateConversionPlan no longer re-derives the RMD side. The RMD-tax
+// savings and the conversion cost come from the single retirement engine
+// (buildRetirementPhase) and are passed in as `rmdTaxSaved` / `conversionCost`.
+// This file tests what the function still owns: net benefit = rmdTaxSaved −
+// conversionCost, the conversion-window sim for display, and the ACA/IRMAA costs.
 const tradGross = 2_120_026, rothBal = 573_820, taxableBal = 836_477;
 const ssTaxableRet = 45_924 * 0.85;        // 39_035.4
-const rmdTaxBite = 683_974;                 // pre-conversion lifetime RMD tax (locked)
 const conversionWindowYrs = 7;
 const retTaxData = TAX_DATA_2026.single;
 const annualConversion = Math.max(0, Math.round(retTaxData.brackets[2].max + retTaxData.deduction - ssTaxableRet));
 
-const rmdData = calcRMDProjection({
-  tradGrossAtRetirement: tradGross, safeRetAge: 65, safeLifeExp: 90,
-  returnRate: 5, useTable2: false, spouseCurrentAge: 18, currentAge: 30,
-});
+// Engine-derived benefit inputs (the golden-master default-state values).
+const rmdTaxSaved = 100_641, conversionCost = 110_737;
 
-// Factory: the flat-conversion default state (matches the golden master's conv path).
+// Factory: the flat-conversion default state.
 const planArgs = (overrides = {}) => ({
   conversionWindowYrs, annualConversion, annualConversions: null,
   returnRate: 5, retIncomeFloor: ssTaxableRet, retIncomeFloors: null,
   filingStatus: "single", conversionTaxSource: "converted", retStateRate: 0,
   tradGrossAtRetirement: tradGross, rothBalAtRet: rothBal, taxableBalAtRet: taxableBal,
   safeRetAge: 65,
-  rmdData, safeLifeExp: 90, useTable2: false, spouseCurrentAge: 18, currentAge: 30,
-  rmdTaxBite, rmdIncomeFloor: ssTaxableRet,
+  rmdTaxSaved, conversionCost,
   convMAGIFloors: Array(conversionWindowYrs).fill(0),
   hasMarketplaceInsurance: false, householdSize: 1, hasMedicare: false,
   personOnMedicare: 1, marketplaceMonthlyPremium: null, monthsPerYear: 12,
@@ -33,9 +31,9 @@ const planArgs = (overrides = {}) => ({
 });
 
 describe("evaluateConversionPlan", () => {
-  it("reproduces the golden-master net conversion benefit at default state", () => {
+  it("net benefit = engine rmdTaxSaved − engine conversionCost (golden default)", () => {
     const plan = evaluateConversionPlan(planArgs());
-    expect(plan.netConversionBenefit).toBe(77_861);
+    expect(plan.netConversionBenefit).toBe(rmdTaxSaved - conversionCost);  // -10_096
     // No Medicare / no marketplace at default → no healthcare cost.
     expect(plan.irmaaCost).toBe(0);
     expect(plan.acaLoss).toBe(0);
@@ -43,11 +41,11 @@ describe("evaluateConversionPlan", () => {
   });
 
   it("ANTI-DIVERGENCE: the optimizer's objective equals the display's adjusted benefit", () => {
-    // The optimizer scores netOf = rmdTaxSaved − totalTax − irmaaCost − acaLoss.
-    // The display shows adjustedNetConversionBenefit. They must be the SAME number
-    // for the same inputs, or the optimizer optimizes a model the screen doesn't show.
+    // The optimizer scores netOf = rmdTaxSaved − conversionCost − irmaaCost − acaLoss
+    // (totalTax = the engine's conversionCost). The display shows
+    // adjustedNetConversionBenefit. They must be the SAME number for the same inputs.
     const plan = evaluateConversionPlan(planArgs({ hasMedicare: true, convMAGIFloors: Array(7).fill(120_000) }));
-    const optimizerNetOf = plan.rmdTaxSaved - plan.conversionSim.totalTax - plan.irmaaCost - plan.acaLoss;
+    const optimizerNetOf = plan.rmdTaxSaved - plan.conversionCost - plan.irmaaCost - plan.acaLoss;
     expect(optimizerNetOf).toBe(plan.adjustedNetConversionBenefit);
   });
 

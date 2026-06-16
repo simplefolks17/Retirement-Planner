@@ -34,7 +34,7 @@ export function calcWhatIfDelta({
                           //   contrib401k, contribRoth, contribTaxable, contribHSA,
                           //   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
                           //   calcEmployerMatchFn }
-  fedMarginal,            // to normalize tradGross → after-tax Trad 401k
+  fedMarginal,            // accepted for signature parity; unused now (balances are gross, BUG-35)
   // ── retirement walk inputs ──
   retDrawShared,          // { rReal, effectiveExpenses, ssAmount, ssClaimAge,
                           //   pensionAmount, pensionStartAge, rmdTaxByAge, conversionTaxByAge }
@@ -64,8 +64,9 @@ export function calcWhatIfDelta({
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
     const at = raw[retIdx];
     if (at) {
-      const retTrad = Math.round((at.tradGross ?? 0) * (1 - fedMarginal));
-      scenarioTotalAtRet = retTrad
+      // BUG-35: gross basis (the 401k is no longer haircut) — matches the gross
+      // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples.
+      scenarioTotalAtRet = (at.tradGross ?? 0)
         + (at["Roth IRA"] ?? 0)
         + (at["Taxable"]  ?? 0)
         + (at["HSA"]      ?? 0);
@@ -191,7 +192,8 @@ export function calcWhatIfScenario({
       const retIdx = scenarioRetAge - simInputs.currentAge - 1;
       const at     = raw[retIdx];
       if (!at) return null;
-      startBal = Math.round((at.tradGross ?? 0) * (1 - (fedMarginal ?? 0)))
+      // BUG-35: gross basis (no 401k haircut) — consistent with baseTotalAtRet.
+      startBal = (at.tradGross ?? 0)
         + (at["Roth IRA"] ?? 0) + (at["Taxable"] ?? 0) + (at["HSA"] ?? 0);
     } catch {
       return null;
