@@ -40,21 +40,29 @@ export function calcPIA(aime) {
   );
 }
 
-// Returns the rounded monthly benefit at the given claiming age.
-// Clamp to the [62, 70] table range first: delayed credits stop at 70 and there is no
-// early-claim factor below 62, so an out-of-range age should pin to the nearest boundary
-// (the table ceiling/floor) — NOT silently fall back to the FRA factor (1.0), which would
-// understate a 71+ claim. In practice the claiming-age slider already stays within 62–70,
-// so this changes no current output; it makes the lookup correct-by-construction.
-export function calcBenefit(pia, claimingAge) {
+// Returns the SS claiming-age adjustment factor, clamped to the [62, 70] table range
+// (delayed credits stop at 70; there is no early-claim factor below 62) and rounded to a
+// whole year. An out-of-range or fractional age pins to the nearest boundary rather than
+// silently falling back to the FRA factor (1.0) on a lookup miss — which would wrongly
+// un-reduce an early claim or under-credit a delayed one. Shared by calcBenefit,
+// calcSpousal, and the own-record spouse path so all three treat ages identically.
+// The claiming-age sliders already stay within 62–70, so this changes no current output;
+// it makes the lookup correct-by-construction.
+export function claimFactor(claimingAge) {
   const age = Math.max(SS_MIN_CLAIM_AGE, Math.min(SS_MAX_CLAIM_AGE, Math.round(claimingAge)));
-  return Math.round(pia * (SS_FACTORS[age] ?? SS_FACTORS[SS_FRA]));
+  return SS_FACTORS[age] ?? SS_FACTORS[SS_FRA];
+}
+
+// Returns the rounded monthly benefit at the given claiming age (own record — full
+// delayed credits apply).
+export function calcBenefit(pia, claimingAge) {
+  return Math.round(pia * claimFactor(claimingAge));
 }
 
 // Returns the annual spousal floor benefit: 50% of the primary's PIA at FRA, reduced
 // for early claims. Spousal benefits earn NO delayed credits — the factor is capped at 1
 // so claiming after 67 does not inflate it above the FRA amount.
 export function calcSpousal(pia, spouseClaimingAge = SS_FRA) {
-  const factor = Math.min(1, SS_FACTORS[spouseClaimingAge] ?? 1);
+  const factor = Math.min(1, claimFactor(spouseClaimingAge));
   return Math.round(pia * ASSUMPTIONS.MONTHS_PER_YEAR * ASSUMPTIONS.SPOUSAL_BENEFIT_PCT * factor);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "../social-security.js";
+import { calcAIME, calcPIA, calcBenefit, calcSpousal, claimFactor } from "../social-security.js";
 
 describe("calcAIME", () => {
   it("caps earnings at FICA wage base ($184,500)", () => {
@@ -92,5 +92,27 @@ describe("calcSpousal", () => {
 
   it("uses FRA factor (1) when spouseClaimingAge is omitted", () => {
     expect(calcSpousal(2_500)).toBe(calcSpousal(2_500, 67));
+  });
+
+  it("clamps a fractional early age to its reduced factor (not a lookup-miss fallback to 1)", () => {
+    // 62.4 rounds to 62 → reduced. The old raw SS_FACTORS[62.4] missed → ?? 1 → wrongly
+    // returned the un-reduced FRA floor. Must now match the age-62 reduced amount.
+    expect(calcSpousal(2_500, 62.4)).toBe(calcSpousal(2_500, 62));
+    expect(calcSpousal(2_500, 62.4)).toBeLessThan(calcSpousal(2_500, 67));
+  });
+
+  it("clamps an out-of-range high age (71) to the 70 boundary, still capped at 1", () => {
+    expect(calcSpousal(2_500, 71)).toBe(calcSpousal(2_500, 67));
+  });
+});
+
+describe("claimFactor", () => {
+  it("clamps below 62 to the age-62 factor and above 70 to the age-70 factor", () => {
+    expect(claimFactor(55)).toBe(claimFactor(62));
+    expect(claimFactor(75)).toBe(claimFactor(70));
+  });
+
+  it("rounds a fractional age to the nearest whole year", () => {
+    expect(claimFactor(64.6)).toBe(claimFactor(65));
   });
 });
