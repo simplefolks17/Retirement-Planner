@@ -126,12 +126,42 @@ tables, assumption fractions in (0,1)). Fails loudly on a malformed/out-of-order
 Value-locks ONLY verified/stable figures (wage base 184,500, RMD age 73, FRA 67) so it never
 entrenches an unconfirmed dollar amount. +23 tests.
 
-**⚠️ Constants audit — INCOMPLETE, re-run needed.** A background agent was launched to web-verify
-*every* constant against 2026 IRS/SSA sources, but was cut off by a session-usage limit after
-confirming the wage base (4 tool calls in). The integrity test passing proves the file is internally
-*consistent*, but a full external value-by-value audit of the remaining dollar figures (federal +
-LTCG brackets, contribution limits, IRMAA tiers, ACA FPL, Roth phase-out, state rates) is still
-outstanding and should be completed before the 2027 refresh.
+**Constants audit — COMPLETED (web-verified vs 2026 IRS/SSA), corrections applied.** The audit
+agent (re-run after the first attempt was cut off by a session limit) verified every constant
+against primary IRS/SSA + reputable secondary sources. It found **the wage base was the tip of the
+iceberg** — ~30 more dollar figures carried 2024/2025 values under a "2026" label. The unambiguous,
+independently re-verified corrections were applied in this batch (golden master moved deliberately):
+  - **HoH standard deduction** 23,350 → **24,150** (Rev. Proc. 2025-32, OBBB). Inert at default (single).
+  - **All 8 LTCG thresholds** were 2024 values → 2026: single 47,025/518,900 → **49,450/545,500**;
+    mfj 94,050/583,750 → **98,900/613,700**; mfs 47,025/291,850 → **49,450/306,850**; hoh
+    63,000/551,350 → **66,200/579,600**.
+  - **Roth phase-out** was 2025 → 2026: single 150k/165k → **153k/168k**; mfj 230k/240k →
+    **242k/252k**; hoh 150k/165k → **153k/168k** (mfs 0/10k statutory, unchanged). Shifts the default
+    user's in-band contribution years → `retRoth` 576,295 → 587,692.
+  - **401k catch-up** 7,500 → **8,000**; **415(c)** 70,000 → **72,000**; **415(c)+catch-up** 77,500 →
+    **80,000**; **HSA self-only** 4,300 → **4,400** (IRS N-25-67 / Rev. Proc. 2025-19). HSA inert at
+    default (default contribution below the cap).
+  - **SS PIA bend points** were 2025 → 2026 eligibility year: 1,226/7,391 → **1,286/7,749**. Raises
+    PIA for the default AIME → ssPIA 3914→4010/mo, ssAnnualBenefit 46,968 → **48,120**, cascading to
+    firstRMD 62,508, totalRMDs 1,152,878, rmdTaxBite 207,557, spendableAtRet 3,582,799,
+    netConversionBenefit -9,854, withdrawalRate 1.44728, totalAtRet 3,964,475.
+  - Stale unit-test fixtures that hardcoded old constants were corrected (calcPIA tests now derive
+    from the config bend points so they're refresh-proof; HSA/Roth-band/LTCG fixtures retargeted to
+    keep their original intent under the new thresholds). Verified figures value-locked in the new
+    `irs-2026.test.js` so they fail loudly next refresh.
+
+**⚠️ Two items still need an owner decision (design forks, not stale-value questions):**
+  - **ACA FPL (`ACA_FPL_2026`)** — the in-code values are the **2024** poverty guidelines (wrong either
+    way). Open question: hold the *published-2026* HHS set (1=15,960 … 6=44,360) or the
+    *marketplace-applicable* prior-year (2025) set that subsidy eligibility for 2026 coverage actually
+    uses (1=15,650 …). Affects the conversion-window ACA-cliff warning.
+  - **IRMAA (`IRMAA_BRACKETS_2026`)** — MAGI breakpoints are stale 2025 (single 103k/129k/161k/193k →
+    2026 109k/137k/171k/205k; mfj similarly) AND the surcharge column currently holds 2025 combined
+    Part B+D figures. Open question: keep the **Part B + Part D combined** basis (matches current
+    intent, full retiree cost) or switch to **Part B only**, before re-importing the 2026 surcharges.
+
+  Both feed the default `netConversionBenefit` via conversion-cost rollup, so they'll move the golden
+  master once decided. Tracked for a follow-up commit.
 
 ---
 

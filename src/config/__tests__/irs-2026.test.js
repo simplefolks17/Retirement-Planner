@@ -82,6 +82,41 @@ describe("irs-2026 — verified / statutorily-stable value locks", () => {
   });
 });
 
+describe("irs-2026 — verified 2026 published values (audit 2026-06-17)", () => {
+  // Web-verified against IRS / SSA primary sources during the 2026-06-17 audit.
+  // Locked so a stale carry-over (the FICA_WAGE_BASE failure mode) fails loudly next refresh.
+  it("contribution limits (IRS N-25-67 / Rev. Proc. 2025-19)", () => {
+    expect(TRAD_401K_LIMIT_2026).toBe(24_500);
+    expect(CATCHUP_401K_2026).toBe(8_000);
+    expect(LIMIT_415C_2026).toBe(72_000);
+    expect(LIMIT_415C_CATCHUP_2026).toBe(80_000); // 72,000 + 8,000 age-50 catch-up
+    expect(HSA_LIMIT_2026).toBe(4_400);
+    expect(ROTH_IRA_LIMIT_2026).toBe(7_500);
+  });
+
+  it("standard deductions (IRS Rev. Proc. 2025-32, OBBB)", () => {
+    expect(TAX_DATA_2026.single.deduction).toBe(16_100);
+    expect(TAX_DATA_2026.mfj.deduction).toBe(32_200);
+    expect(TAX_DATA_2026.hoh.deduction).toBe(24_150);
+  });
+
+  it("SS PIA bend points (2026 eligibility year)", () => {
+    expect(SS_BEND1).toBe(1_286);
+    expect(SS_BEND2).toBe(7_749);
+  });
+
+  it("LTCG 0% bracket tops (IRS Rev. Proc. 2025-32)", () => {
+    expect(LTCG_BRACKETS_2026.single[0].max).toBe(49_450);
+    expect(LTCG_BRACKETS_2026.mfj[0].max).toBe(98_900);
+    expect(LTCG_BRACKETS_2026.hoh[0].max).toBe(66_200);
+  });
+
+  it("Roth phase-out starts (IRS N-25-67)", () => {
+    expect(ROTH_PHASEOUT_2026.single.start).toBe(153_000);
+    expect(ROTH_PHASEOUT_2026.mfj.start).toBe(242_000);
+  });
+});
+
 describe("irs-2026 — FICA rate consistency", () => {
   it("combined legacy rate equals SS + Medicare employee shares", () => {
     expect(FICA_RATE).toBeCloseTo(SS_TAX_RATE + MEDICARE_RATE, 10); // 0.062 + 0.0145 = 0.0765

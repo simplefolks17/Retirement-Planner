@@ -42,7 +42,7 @@ export const TAX_DATA_2026 = {
     ],
   },
   hoh: {
-    label: "Head of Household", deduction: 23_350,
+    label: "Head of Household", deduction: 24_150,
     brackets: [
       { min: 0,       max: 18_650,   rate: 0.10 },
       { min: 18_650,  max: 64_100,   rate: 0.12 },
@@ -60,28 +60,28 @@ export const FED_BRACKETS_2026 = [10, 12, 22, 24, 32, 35, 37];
 
 // ── Long-term capital gains brackets (2026 taxable income thresholds) ─────────
 export const LTCG_BRACKETS_2026 = {
-  single: [ { max: 47_025,  rate: 0.00 }, { max: 518_900, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
-  mfj:    [ { max: 94_050,  rate: 0.00 }, { max: 583_750, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
-  mfs:    [ { max: 47_025,  rate: 0.00 }, { max: 291_850, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
-  hoh:    [ { max: 63_000,  rate: 0.00 }, { max: 551_350, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  single: [ { max: 49_450,  rate: 0.00 }, { max: 545_500, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  mfj:    [ { max: 98_900,  rate: 0.00 }, { max: 613_700, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  mfs:    [ { max: 49_450,  rate: 0.00 }, { max: 306_850, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  hoh:    [ { max: 66_200,  rate: 0.00 }, { max: 579_600, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
 };
 
 // ── Roth IRA income phase-out thresholds (MAGI, 2026) ─────────────────────────
 export const ROTH_PHASEOUT_2026 = {
-  single: { start: 150_000, end: 165_000 },
-  mfj:    { start: 230_000, end: 240_000 },
+  single: { start: 153_000, end: 168_000 },
+  mfj:    { start: 242_000, end: 252_000 },
   mfs:    { start:       0, end:  10_000 },
-  hoh:    { start: 150_000, end: 165_000 },
+  hoh:    { start: 153_000, end: 168_000 },
 };
 
 // ── 2026 Contribution limits ──────────────────────────────────────────────────
 export const TRAD_401K_LIMIT_2026    = 24_500; // employee elective deferral, under 50
-export const CATCHUP_401K_2026       =  7_500; // 401k catch-up addition, age 50+
+export const CATCHUP_401K_2026       =  8_000; // 401k catch-up addition, age 50+ (2026; IRS N-25-67)
 export const ROTH_IRA_LIMIT_2026     =  7_500; // Roth IRA annual limit, under 50
 export const CATCHUP_ROTH_2026       =  1_000; // Roth IRA catch-up addition, age 50+
-export const HSA_LIMIT_2026          =  4_300; // HSA self-only annual limit
-export const LIMIT_415C_2026         = 70_000; // 415(c) combined employer+employee, under 50
-export const LIMIT_415C_CATCHUP_2026 = 77_500; // 415(c) combined, age 50+ (with super-catchup)
+export const HSA_LIMIT_2026          =  4_400; // HSA self-only annual limit (2026; Rev. Proc. 2025-19)
+export const LIMIT_415C_2026         = 72_000; // 415(c) combined employer+employee, under 50 (2026)
+export const LIMIT_415C_CATCHUP_2026 = 80_000; // 415(c) 72,000 + 8,000 age-50 catch-up (2026; 60–63 super-catchup = 83,250)
 export const CATCHUP_AGE             =     50; // age at which catch-up contributions begin
 
 // ── FICA ──────────────────────────────────────────────────────────────────────
@@ -114,9 +114,9 @@ export const SS_FACTORS = {
   67: 1.000, 68: 1.080, 69: 1.160, 70: 1.240,
 };
 
-// PIA bend points (monthly AIME thresholds, 2026)
-export const SS_BEND1 = 1_226;
-export const SS_BEND2 = 7_391;
+// PIA bend points (monthly AIME thresholds, 2026 eligibility year; indexed to AWI)
+export const SS_BEND1 = 1_286;
+export const SS_BEND2 = 7_749;
 
 // ── RMD Tables ────────────────────────────────────────────────────────────────
 

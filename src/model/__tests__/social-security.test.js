@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { calcAIME, calcPIA, calcBenefit, calcSpousal, claimFactor } from "../social-security.js";
+import { SS_BEND1, SS_BEND2, ASSUMPTIONS } from "../../config/irs-2026.js";
 
 describe("calcAIME", () => {
   it("caps earnings at FICA wage base ($184,500)", () => {
@@ -29,26 +30,28 @@ describe("calcAIME", () => {
 });
 
 describe("calcPIA", () => {
-  it("applies 90% factor below first bend point ($1,226)", () => {
-    const pia = calcPIA(1_000);
-    expect(pia).toBeCloseTo(900, 0);
+  // Derive expectations from the config bend points + PIA factors so these stay
+  // correct across an annual constants refresh (the bend points are AWI-indexed).
+  const { PIA_FACTOR_1, PIA_FACTOR_2, PIA_FACTOR_3 } = ASSUMPTIONS;
+
+  it("applies 90% factor below the first bend point", () => {
+    const aime = SS_BEND1 - 226;
+    expect(calcPIA(aime)).toBeCloseTo(aime * PIA_FACTOR_1, 0);
   });
 
-  it("applies 32% factor in middle segment", () => {
-    // AIME at $2,000: 1226 * 0.90 + (2000 - 1226) * 0.32
-    const pia = calcPIA(2_000);
-    const expected = 1_226 * 0.90 + (2_000 - 1_226) * 0.32;
-    expect(pia).toBeCloseTo(expected, 1);
+  it("applies the middle-segment factor between the bend points", () => {
+    const aime = SS_BEND1 + 800;
+    const expected = SS_BEND1 * PIA_FACTOR_1 + (aime - SS_BEND1) * PIA_FACTOR_2;
+    expect(calcPIA(aime)).toBeCloseTo(expected, 1);
   });
 
-  it("applies 15% factor above second bend point ($7,391)", () => {
-    const aime = 10_000;
-    const pia  = calcPIA(aime);
+  it("applies the top-segment factor above the second bend point", () => {
+    const aime = SS_BEND2 + 2_000;
     const expected =
-      1_226 * 0.90 +
-      (7_391 - 1_226) * 0.32 +
-      (aime - 7_391) * 0.15;
-    expect(pia).toBeCloseTo(expected, 1);
+      SS_BEND1 * PIA_FACTOR_1 +
+      (SS_BEND2 - SS_BEND1) * PIA_FACTOR_2 +
+      (aime - SS_BEND2) * PIA_FACTOR_3;
+    expect(calcPIA(aime)).toBeCloseTo(expected, 1);
   });
 });
 

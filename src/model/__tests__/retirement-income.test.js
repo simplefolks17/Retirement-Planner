@@ -14,12 +14,12 @@ describe("calcRetirementIncome — default state (golden-master value lock)", ()
 
   it("matches the golden-master SS figures", () => {
     expect(r.ssAIME).toBeCloseTo(12977.734696107114, 6);  // 2026 wage base 184,500 (was 168,600)
-    expect(r.ssPIA).toBeCloseTo(3914.210204416067, 6);
-    expect(r.ssMonthlyBenefit).toBe(3914);
-    expect(r.ssAnnualBenefit).toBe(46_968);
+    expect(r.ssPIA).toBeCloseTo(4009.8702044160673, 6);  // 2026 bend points 1,286/7,749
+    expect(r.ssMonthlyBenefit).toBe(4010);
+    expect(r.ssAnnualBenefit).toBe(48_120);
     expect(r.spouseSsBenefit).toBe(0);          // no spouse estimate
-    expect(r.householdSS).toBe(46_968);
-    expect(r.ssTaxableRet).toBeCloseTo(46_968 * ASSUMPTIONS.SS_TAXABLE_PCT, 6);
+    expect(r.householdSS).toBe(48_120);
+    expect(r.ssTaxableRet).toBeCloseTo(48_120 * ASSUMPTIONS.SS_TAXABLE_PCT, 6);
   });
 
   it("defers SS from the at-retirement need when claimed after retirement (BUG-10)", () => {

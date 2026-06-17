@@ -86,14 +86,14 @@ describe("calcOptimizedAllocation — priority order", () => {
     // optimizer must NOT push surplus into the 401k for it; HSA/Roth take priority.
     const alloc = calcOptimizedAllocation({ ...base, matchMode: "flat", contrib401k: 0 });
     expect(alloc.extraMatch).toBe(0);
-    expect(alloc.extraHSA).toBe(4_300);   // HSA filled first instead
+    expect(alloc.extraHSA).toBe(4_400);   // HSA filled first instead
     expect(alloc.extraRoth).toBeGreaterThan(0);
   });
 
   it("fills HSA after match", () => {
-    // No match gap (contrib already covers match), HSA room = $4,300
+    // No match gap (contrib already covers match), HSA room = $4,400
     const alloc = calcOptimizedAllocation(base);
-    expect(alloc.extraHSA).toBe(4_300);
+    expect(alloc.extraHSA).toBe(4_400);
   });
 
   it("fills Roth after HSA when not phased out", () => {
