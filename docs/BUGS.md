@@ -85,6 +85,56 @@ residual — removing the clamp let negative real growth through, but the value 
 
 ---
 
+### Constants-correctness + latent-bug batch (2026-06-17)
+
+**Source:** owner-directed follow-up to the whole-codebase review — verify the IRS/SSA constants
+against authoritative 2026 values (so a 2027 refresh is a clean re-import) and clear remaining
+latent correctness items. Branch `claude/ai-codebase-review-fpigu3`; committed incrementally,
+highest-impact first. Suite 443 → **471** tests; lint clean.
+
+1. **Stale FICA wage base — FIXED (data correctness; golden master moved deliberately).**
+   `FICA_WAGE_BASE` carried the **2024** figure ($168,600) while labeled "2026". The authoritative
+   2026 SSA contribution-and-benefit base is **$184,500** (2025 was $176,100). The 2026-06-16 FICA
+   *rate split* made this **inert at the default** (default income $100k < base) — which is exactly
+   why it survived that review — but the base caps SS AIME, and the default income grows above it in
+   later working years, so AIME was understated. Fixed in `src/config/irs-2026.js`. Golden master
+   moved, all direction-verified: ssAIME 12399→12977, ssAnnualBenefit 45,924→46,968, firstRMD
+   62,071→62,279, totalRMDs 1,144,815→1,148,650, rmdTaxBite 202,423→204,864, spendableAtRet
+   3,578,221→3,574,967 (higher SS floor → higher stacked retirement rate), netConversionBenefit
+   -10,096→-9,981. `social-security` wage-base-cap tests updated (titles + thresholds).
+
+2. **`fvAnnuity` negative-rate logic bug — FIXED (value-preserving at default).**
+   `finance-math.js` guarded the geometric annuity formula with `rate > 0`, so any **negative real
+   return** fell through to the linear `annual * years` branch — overstating the FV of a
+   declining-balance annuity (a -2% real return treated as flat). Now `rate !== 0`; only an exactly
+   zero rate degenerates to the linear limit. Used by the conversion optimizer + mega-backdoor
+   projection. Default real return is positive → no golden-master impact. +1 regression test.
+
+3. **SS claiming-factor clamp — extended to the two sites the 2026-06-16 batch missed (latent).**
+   That batch hardened `calcBenefit` against out-of-range/fractional claiming ages but left
+   `calcSpousal` and the own-record spouse path (`retirement-income.js:38`) doing a raw
+   `SS_FACTORS[age] ?? 1` lookup — which silently returns the **un-reduced FRA factor** on a miss
+   (overstating an early claim, under-crediting a delayed own-record one). Extracted the clamp+round
+   into one shared `claimFactor(age)` helper (`social-security.js`) now used by all three. Latent
+   today (sliders feed in-range integers); value-preserving at default (single → spousal 0). +4 tests.
+
+**Defensive tooling:** new `src/config/__tests__/irs-2026.test.js` — a constants-integrity guard
+(STRUCTURE + internal consistency: contiguous strictly-progressive tax brackets, std-deduction
+mfj=2×single, LTCG 0/15/20 ascending, monotonic SS factors =1.0 at FRA, descending RMD
+Uniform-Lifetime divisors, ascending IRMAA tiers, constant-increment ACA FPL, 51-jurisdiction state
+tables, assumption fractions in (0,1)). Fails loudly on a malformed/out-of-order refresh edit.
+Value-locks ONLY verified/stable figures (wage base 184,500, RMD age 73, FRA 67) so it never
+entrenches an unconfirmed dollar amount. +23 tests.
+
+**⚠️ Constants audit — INCOMPLETE, re-run needed.** A background agent was launched to web-verify
+*every* constant against 2026 IRS/SSA sources, but was cut off by a session-usage limit after
+confirming the wage base (4 tool calls in). The integrity test passing proves the file is internally
+*consistent*, but a full external value-by-value audit of the remaining dollar figures (federal +
+LTCG brackets, contribution limits, IRMAA tiers, ACA FPL, Roth phase-out, state rates) is still
+outstanding and should be completed before the 2027 refresh.
+
+---
+
 ### Whole-codebase review fixes — P1 + P2 batch (2026-06-16)
 
 **Source:** the parallel Claude + CodeRabbit + Gemini whole-codebase review (see `docs/REVIEW-FINDINGS.md`).
