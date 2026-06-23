@@ -378,7 +378,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["Gross income",    `$${Math.round(currentIncome).toLocaleString()}`, null, false],
                 ["Federal tax",     `−$${Math.round(fedTax).toLocaleString()}`,  "1",  false],
                 ["FICA + state",    `−$${Math.round(sv.ficaPlusState).toLocaleString()}`, null, false],
-                ["Pre-tax savings", `−$${Math.round(sv.saveTotal).toLocaleString()}`, null, false],
+                ["Pre-tax savings", `−$${Math.round(sv.preTaxDeductions).toLocaleString()}`, null, false],
                 ["Take-home",       `$${Math.round(takeHome).toLocaleString()}`,       null, true],
               ]} bar={sv.keepPct == null ? null : {
                 segs: [

@@ -697,9 +697,9 @@ export default function App() {
   // currentIncome ≤ 0 — screens render "—".
   const statementView = useMemo(() => calcStatementView({
     currentIncome, fedTax, fica, stateTax, takeHome,
-    currentContribTotal, householdSS, effectiveExpenses,
+    currentContribTotal, householdSS, effectiveExpenses, safeDeduc,
   }), [currentIncome, fedTax, fica, stateTax, takeHome,
-       currentContribTotal, householdSS, effectiveExpenses]);
+       currentContribTotal, householdSS, effectiveExpenses, safeDeduc]);
 
   // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
   // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE

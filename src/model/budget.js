@@ -146,6 +146,7 @@ export function calcStatementView({
   currentContribTotal,
   householdSS,
   effectiveExpenses,
+  safeDeduc = 0,
 }) {
   const hasIncome = currentIncome != null && currentIncome > 0;
   const gross     = hasIncome ? currentIncome : 0;
@@ -179,6 +180,10 @@ export function calcStatementView({
   return {
     gross, taxTotal, ficaPlusState,
     saveTotal: currentContribTotal,
+    // preTaxDeductions = safeDeduc (401k + HSA + otherPreTax only) — used by the
+    // Statement table so the row arithmetic matches takeHome (rule 2b / rule 10).
+    // saveTotal is ALL contributions (for the waterfall chart's allocation view).
+    preTaxDeductions: safeDeduc,
     keepPct, taxPct, savePct,
     afterTaxLevel, flowKeep, flowTaxPct, flowSavePct, flowKeepPct,
     monthlyHHSS, monthlyPortDraw, monthlyTotal,
