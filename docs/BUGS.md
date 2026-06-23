@@ -166,9 +166,24 @@ independently re-verified corrections were applied in this batch (golden master 
   - Both are **inert at the default** (default conversion MAGI sits below the first IRMAA tier and ACA
     doesn't apply at the Medicare-age retirement), so the golden master is unchanged. `healthcare.test.js`
     fixtures that hardcoded the old ACA/IRMAA values were retargeted; new figures value-locked in
-    `irs-2026.test.js`. **The full audit is now closed** — every ❌ the agent found is fixed or
-    owner-decided. The only items left unaudited are the `STATE_TAX` / `RETIREMENT_STATE_TAX`
-    approximations (explicitly out of scope as modeling heuristics, not statutory constants).
+    `irs-2026.test.js`. Every ❌ the federal/SSA audit found is fixed or owner-decided.
+
+**State-tax tables — audited + corrected (2026-06-17).** A follow-up agent audited `STATE_TAX` +
+`RETIREMENT_STATE_TAX` (51 jurisdictions × 2) against 2026 law. These are modeling *approximations*,
+so the bar was "factually correct note / reasonable 2026 figure," not bracket-exact. Found + fixed
+(all verified vs Tax Foundation 2026 + state sources; all inert at the default state → golden master
+unchanged):
+  - **HI Hawaii — factual error, highest impact.** Was `rate: 0` / "Fully exempts 401k/IRA/pension" —
+    but Hawaii exempts only *employer-funded* pensions and **fully taxes 401k/IRA** (the app's whole
+    subject). Now `rate: 0.075` with a corrected note. This was telling a Hawaii 401k retiree they owe $0.
+  - **2026 enacted rate cuts:** KY 4.0→**3.5%** flat (both tables); GA 5.39→**4.99%** flat (both); OK top
+    4.75→**4.5%** (HB 2764); UT 4.55→**4.5%** flat. Rates + note text updated.
+  - **Structural-label fix:** NE note said "Flat 4.55%" but Nebraska is **graduated** (4.55% is the top
+    rate) — note corrected. KS note "top rate 5.7%" → **5.58%** (2026), rate 0.057 → 0.056.
+  - Reasonable/✅ confirmed: IL/IA/MS/PA/MI full retirement-income exemptions, WV 2026 SS exemption, the
+    flat-rate states (AZ/CO/ID/IN/LA/NC/OH/MA), and all no-income-tax states. Graduated-state effective
+    rates (CA/NY/OR/MN/etc.) read as plausible 2026 figures, none >1pt off. **The constants audit —
+    federal, SSA, and state — is now fully closed.**
 
 ---
 
