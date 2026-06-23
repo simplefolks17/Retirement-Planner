@@ -22,9 +22,9 @@ import { STATE_TAX, FICA_WAGE_BASE, SS_TAX_RATE, MEDICARE_RATE,
          ADDL_MEDICARE_RATE, ADDL_MEDICARE_THRESHOLD, ROTH_PHASEOUT_2026 } from "../config/irs-2026.js";
 
 export function calcTaxBasis({
-  currentIncome, spouseIncome, filingStatus,
-  contrib401k, contribHSA, otherPreTaxDeduc,
-  selectedState, stateRateOverride,
+  currentIncome, spouseIncome = 0, filingStatus = "single",
+  contrib401k = 0, contribHSA = 0, otherPreTaxDeduc = 0,
+  selectedState, stateRateOverride = null,
 }) {
   const isMFJ = filingStatus === "mfj";
   const combinedIncome = currentIncome + spouseIncome;

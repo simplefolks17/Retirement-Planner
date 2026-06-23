@@ -8,9 +8,11 @@ export function calcEmployerMatch(salary, employeeContrib, {
   matchFormulaRate,
   employerMatchPct,
 }) {
+  const safeSalary  = Math.max(0, salary);          // negative inputs can't produce a negative match
+  const safeContrib = Math.max(0, employeeContrib);
   if (matchMode === "formula") {
-    const matchableContrib = Math.min(employeeContrib, salary * matchFormulaCap / 100);
+    const matchableContrib = Math.min(safeContrib, safeSalary * matchFormulaCap / 100);
     return Math.round(matchableContrib * matchFormulaRate / 100);
   }
-  return Math.round(salary * employerMatchPct / 100);
+  return Math.round(safeSalary * employerMatchPct / 100);
 }

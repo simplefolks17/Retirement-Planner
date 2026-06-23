@@ -12,7 +12,7 @@
 // NOTE: runSimulation (accumulation) and the blended what-if walk still inline only
 // the portfolio sign and do NOT yet charge event income tax — tracked as BUG-36.
 
-export function applyMoneyEvents(events, age) {
+export function applyMoneyEvents(events = [], age) {
   let portfolioAdjustment = 0;
   let taxableIncomeAdjustment = 0;
 

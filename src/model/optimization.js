@@ -35,7 +35,7 @@ export function calcOptimizedScenario({
 }) {
   const r = returnRate / 100;
   const g = incomeGrowth / 100;
-  const yearsToRet = Math.max(1, safeRetAge - currentAge);
+  const yearsToRet = Math.max(0, safeRetAge - currentAge);
   const oa = optimizedAllocation;
 
   // Extra 401k: year-by-year (room shrinks as income-scaled contributions grow)
@@ -62,7 +62,13 @@ export function calcOptimizedScenario({
 
   const optDelaying = includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE;
   const optSS = optDelaying ? ss70Annual + spouseSsBenefit : householdSS;
-  const optNetNeed = Math.max(0, effectiveExpenses - optSS - effectivePension);
+  // Year-1 withdrawal rate: SS/pension offset the draw only if already claimed by
+  // retirement (rule 5b) — mirrors the headline ssAtRet gate, so optWR is honest for
+  // someone who retires before claiming. The longevity walk below gates these the same way.
+  const optClaimAge     = !includeSS ? Infinity : (optDelaying ? SS_MAX_CLAIM_AGE : ssClaimingAge);
+  const optSSatRet      = optClaimAge <= safeRetAge ? optSS : 0;
+  const optPensionAtRet = pensionStartAge <= safeRetAge ? effectivePension : 0;
+  const optNetNeed = Math.max(0, effectiveExpenses - optSSatRet - optPensionAtRet);
   const optWR = optTotalAtRet > 0 ? (optNetNeed / optTotalAtRet) * 100 : 0;
 
   // Longevity via the SAME shared tax-honest walk as the headline metric, so the

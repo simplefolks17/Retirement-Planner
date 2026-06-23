@@ -22,6 +22,7 @@ export function calcTax(agi, filingStatus = "single") {
 export function marginalRate(agi, filingStatus = "single") {
   const { deduction, brackets } = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
   const taxable = Math.max(0, agi - deduction);
+  if (taxable <= 0) return 0; // income below the standard deduction → next dollar still shielded
   for (const { min, max, rate } of brackets) {
     if (taxable <= max) return rate;
   }

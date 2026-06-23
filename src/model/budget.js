@@ -167,9 +167,11 @@ export function calcStatementView({
   const flowKeepPct   = pct(flowKeep);
 
   // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
-  const monthlyHHSS     = Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPortDraw = Math.round(Math.max(0, effectiveExpenses - householdSS) / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyTotal    = Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
+  const exp             = effectiveExpenses ?? 0;
+  const monthlyHHSS     = Math.round(ss / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPortDraw = Math.round(Math.max(0, exp - ss) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
 
   // Effective federal rate footnote (1 decimal place), null when no income
   const effFedRatePct = hasIncome ? Math.round((fedTax / currentIncome) * 1000) / 10 : null;

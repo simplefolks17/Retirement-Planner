@@ -64,8 +64,10 @@ describe("marginalRate", () => {
     expect(marginalRate(1_000_000, "mfs")).toBe(0.37);
   });
 
-  it("returns 0% below deduction (10% bracket, taxable = 0)", () => {
-    expect(marginalRate(10_000, "single")).toBe(0.10); // taxable = 0 — hits first bracket with max Infinity
+  it("returns 0% below the standard deduction (next dollar is still shielded)", () => {
+    // $10k income < $16,100 single deduction → taxable 0 → next dollar untaxed.
+    // (Previously returned 10% — the first bracket — which was the bug this locks against.)
+    expect(marginalRate(10_000, "single")).toBe(0);
   });
 });
 

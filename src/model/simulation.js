@@ -63,7 +63,8 @@ export function runSimulation({
     const c401k = Math.min(employeeDeferral + matchAmt, limit415cYr);
 
     const primaryMAGI = currentIncome * growFactor;
-    const spouseGrown = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, y - 1);
+    // Spouse income plateaus at incomeGrowthEndAge too (same growthYears cap as primary)
+    const spouseGrown = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, growthYears);
 
     const cRoth = (() => {
       if (age > contribEndRoth || contribRoth <= 0) return 0;

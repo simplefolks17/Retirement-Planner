@@ -64,7 +64,8 @@ export function calcConversionCosts({
   monthsPerYear,
 }) {
   const cliffYears = exposure.filter(e => e.aca?.crossesCliff);
-  const irmaaCost  = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
+  const people     = Number.isFinite(personOnMedicare) ? personOnMedicare : 0; // guard NaN propagation
+  const irmaaCost  = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * people;
   const acaLoss    = hasMarketplaceInsurance && marketplaceMonthlyPremium
     ? cliffYears.length * marketplaceMonthlyPremium * monthsPerYear
     : 0;
