@@ -53,7 +53,8 @@ export function calcBracketFillTargets({
     24: bracketTopForRate(24),
   };
   const bracketTarget = bracketTops[conversionBracketTarget] ?? bracketTops[22];
-  const fillTo = bracketTarget + retTaxData.deduction;
+  // Guard a malformed bracket table (missing 22% top) from poisoning every fill target with NaN
+  const fillTo = (Number.isFinite(bracketTarget) ? bracketTarget : 0) + retTaxData.deduction;
 
   const bracketFillConversions = convFloors.map(floor => Math.max(0, Math.round(fillTo - floor)));
   const bracketFillConversion  = Math.max(0, Math.round(fillTo - retIncomeFloor));

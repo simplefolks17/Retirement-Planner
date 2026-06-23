@@ -48,7 +48,7 @@ export function runSimulation({
       : y - 1;
     const growFactor = Math.pow(1 + g, growthYears);
 
-    const isEligibleForCatchup = currentAge + (y - 1) >= CATCHUP_AGE;
+    const isEligibleForCatchup = age >= CATCHUP_AGE;
     const limit415cYr    = isEligibleForCatchup ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
     const electiveLimit  = isEligibleForCatchup
       ? TRAD_401K_LIMIT_2026 + CATCHUP_401K_2026
@@ -61,9 +61,16 @@ export function runSimulation({
       ? calcEmployerMatchFn(currentIncome * growFactor, employeeDeferral)
       : 0;
     const c401k = Math.min(employeeDeferral + matchAmt, limit415cYr);
+    const cHSA  = age <= contribEndHSA ? Math.min(contribHSA, HSA_LIMIT_2026) : 0;
 
     const primaryMAGI = currentIncome * growFactor;
-    const spouseGrown = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, y - 1);
+    // Spouse income plateaus at incomeGrowthEndAge too (same growthYears cap as primary)
+    const spouseGrown = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, growthYears);
+    // MAGI ≈ AGI: net out this year's pre-tax deductions (401k deferral + HSA). Used for
+    // BOTH the Roth phase-out and the LTCG bracket so the two can't diverge. MFJ adds spouse
+    // gross (no spouse deductions tracked); non-MFJ is primary-only (BUG-12).
+    const netOrdinaryIncome = (primaryMAGI - employeeDeferral - cHSA)
+                            + (filingStatus === "mfj" ? spouseGrown : 0);
 
     const cRoth = (() => {
       if (age > contribEndRoth || contribRoth <= 0) return 0;
@@ -71,19 +78,22 @@ export function runSimulation({
         ? ROTH_IRA_LIMIT_2026 + CATCHUP_ROTH_2026
         : ROTH_IRA_LIMIT_2026;
       const baseContrib = Math.min(contribRoth, rothCap);
-      // Only MFJ filers report combined income on one return; for every other
-      // status the Roth phase-out is tested against the primary earner's MAGI
-      // alone (spouse income/contributions are tracked separately). See CLAUDE.md rules 3 & 9.
-      const yearMAGI    = filingStatus === "mfj" ? primaryMAGI + spouseGrown : primaryMAGI;
+      // AGI-net MAGI (see netOrdinaryIncome): MFJ uses combined, every other status uses
+      // primary-only (spouse income/contributions tracked separately). CLAUDE.md rules 3 & 9, BUG-12.
+      const yearMAGI    = netOrdinaryIncome;
       const po = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
       if (yearMAGI >= po.end) return 0;
       if (yearMAGI <= po.start) return baseContrib;
-      const phasePct = (po.end - yearMAGI) / (po.end - po.start);
-      return Math.round(baseContrib * phasePct);
+      // Phase-out reduces the contribution LIMIT, then you contribute min(desired, reduced
+      // limit) — NOT the desired amount scaled down. Scaling the desired amount wrongly
+      // denied contributions to anyone in the band who wasn't already maxing out. (Review
+      // fix. IRS also rounds the reduced limit up to the nearest $10 / $200 floor — omitted.)
+      const phasePct   = (po.end - yearMAGI) / (po.end - po.start);
+      const reducedCap = rothCap * phasePct;
+      return Math.round(Math.min(contribRoth, reducedCap));
     })();
 
     const cTaxable = age <= contribEndTaxable ? contribTaxable * growFactor : 0;
-    const cHSA     = age <= contribEndHSA     ? Math.min(contribHSA, HSA_LIMIT_2026) : 0;
 
     // Per-account growth = investment earnings this year = base × rate, where the
     // base is the prior balance PLUS this year's contribution (contributions are
@@ -107,9 +117,7 @@ export function runSimulation({
     const eventAdj = moneyEvents.reduce((s, ev) =>
       ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
 
-    const yearOrdinaryIncome = primaryMAGI - employeeDeferral - cHSA
-                             + (filingStatus === "mfj" ? spouseGrown : 0);
-    const capGainsRate       = ltcgRate(yearOrdinaryIncome, filingStatus);
+    const capGainsRate       = ltcgRate(netOrdinaryIncome, filingStatus);
     const taxableBase        = Math.max(0, taxable + cTaxable + eventAdj);
     const taxableRate        = r * (1 - capGainsRate);
     const taxableGrowth      = taxableBase * taxableRate;

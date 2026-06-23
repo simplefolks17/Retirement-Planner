@@ -242,6 +242,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
     budget, taxView,
     // WI-2.6 — retirement money-flow bands (sum exactly to effectiveExpenses).
     retIncomeFlow,
+    returnRate,   // raw assumption for the Statement footnote
   } = props;
 
   const [tab, setTab] = useState(initialTab ?? "statement");
@@ -425,7 +426,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
             }}>
               {[
                 `1 Eff. federal rate ${sv.effFedRatePct == null ? "—" : `${sv.effFedRatePct}%`}.`,
-                "2 5% real return, contributions to retirement.",
+                `2 ${returnRate}% annual return, contributions to retirement.`,
                 "3 Claimed at Social Security age."
               ].map((f, i) => (
                 <span key={i} style={{ font: `400 11px ${SERIF}`, color: t.faint }}>{f}</span>
@@ -587,10 +588,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
             {/* Per-account bars — bar widths are pure layout math (style props only) */}
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {[
-                ["Traditional 401k", retVals["Trad 401k"] ?? 0, t.good],
-                ["Roth IRA",         retVals["Roth IRA"]  ?? 0, t.accent],
-                ["Taxable",          retVals["Taxable"]   ?? 0, t.warm],
-                ["HSA",              retVals["HSA"]       ?? 0, t.mut],
+                ["Traditional 401k", retVals["Trad 401k"], t.good],
+                ["Roth IRA",         retVals["Roth IRA"],  t.accent],
+                ["Taxable",          retVals["Taxable"],   t.warm],
+                ["HSA",              retVals["HSA"],        t.mut],
               ].map(([label, val, color]) => {
                 // Bar width is pure layout proportion — dividing a display value by
                 // totalAtRet to get a CSS width% is pixel/layout math (rule 1 clarification).
@@ -716,24 +717,19 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   }}>
                     Lifetime tax composition
                   </div>
-                  {/* Segment widths are pure layout proportion — pixel/layout math (rule 1) */}
+                  {/* Segment widths (flex: val/total) are pure layout proportion —
+                      pixel/layout math (rule 1). Dollar vals + pcts are pre-computed
+                      by the model (taxView.composition) — no financial math here. */}
                   {(() => {
-                    const workingTax = fedTax ?? 0;
-                    const rmdTax     = taxView.rmdTaxBite ?? 0;
-                    const convTax    = taxView.convTaxTotal ?? 0;
-                    const total      = workingTax + rmdTax + convTax;
-                    if (total <= 0) {
+                    const { segments, total } = taxView.composition;
+                    if (total <= 0 || segments.length === 0) {
                       return (
                         <div style={{ font: `400 13px ${HF}`, color: t.faint }}>
                           Tax data will appear once accounts are set up.
                         </div>
                       );
                     }
-                    const segs = [
-                      { label: "Working tax",    val: workingTax, color: t.warm },
-                      { label: "RMD tax",        val: rmdTax,     color: t.accent },
-                      { label: "Conversion tax", val: convTax,    color: t.good },
-                    ].filter(s => s.val > 0);
+                    const segColor = { working: t.warm, rmd: t.accent, conv: t.good };
                     return (
                       <>
                         <div style={{
@@ -741,11 +737,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           overflow: "hidden", border: `1px solid ${t.line2}`,
                           marginBottom: 10,
                         }}>
-                          {segs.map((seg, i) => (
-                            <div key={seg.label} style={{
+                          {segments.map((seg, i) => (
+                            <div key={seg.key} style={{
                               flex: seg.val / total,
-                              background: seg.color, opacity: 0.72,
-                              borderRight: i < segs.length - 1
+                              background: segColor[seg.key], opacity: 0.72,
+                              borderRight: i < segments.length - 1
                                 ? `1px solid ${t.surf}` : "none",
                               display: "flex", alignItems: "center",
                               justifyContent: "center",
@@ -753,22 +749,20 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                               minWidth: 0, overflow: "hidden",
                               whiteSpace: "nowrap",
                             }}>
-                              {Math.round((seg.val / total) * 100) >= 12
-                                ? `${Math.round((seg.val / total) * 100)}%`
-                                : ""}
+                              {seg.pct >= 12 ? `${seg.pct}%` : ""}
                             </div>
                           ))}
                         </div>
                         {/* Legend */}
                         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                          {segs.map(seg => (
-                            <span key={seg.label} style={{
+                          {segments.map(seg => (
+                            <span key={seg.key} style={{
                               display: "flex", alignItems: "center", gap: 6,
                               font: `400 12px ${HF}`, color: t.mut,
                             }}>
                               <span style={{
                                 width: 8, height: 8, borderRadius: 999,
-                                background: seg.color, flexShrink: 0,
+                                background: segColor[seg.key], flexShrink: 0,
                               }} />
                               {seg.label} · {fmt(seg.val)}
                             </span>

@@ -72,7 +72,10 @@ export function calcOptimizedAllocation({
   //    is paid unconditionally — directing surplus there just to "earn" it is wrong,
   //    so flat mode skips this step and lets HSA/Roth take priority.
   if (matchMode === "formula") {
-    const matchContribNeeded = Math.round(currentIncome * matchFormulaCap / 100);
+    const matchContribNeeded = Math.min(
+      Math.round(currentIncome * matchFormulaCap / 100),
+      TRAD_401K_LIMIT_2026,
+    );
     if (contrib401k < matchContribNeeded) {
       const matchGap = Math.min(remaining, matchContribNeeded - contrib401k);
       alloc.extraMatch = matchGap;
@@ -164,9 +167,11 @@ export function calcStatementView({
   const flowKeepPct   = pct(flowKeep);
 
   // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
-  const monthlyHHSS     = Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPortDraw = Math.round(Math.max(0, effectiveExpenses - householdSS) / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyTotal    = Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
+  const exp             = effectiveExpenses ?? 0;
+  const monthlyHHSS     = Math.round(ss / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPortDraw = Math.round(Math.max(0, exp - ss) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
 
   // Effective federal rate footnote (1 decimal place), null when no income
   const effFedRatePct = hasIncome ? Math.round((fedTax / currentIncome) * 1000) / 10 : null;

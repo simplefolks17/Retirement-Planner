@@ -1,19 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "../social-security.js";
+import { calcAIME, calcPIA, calcBenefit, calcSpousal, claimFactor } from "../social-security.js";
+import { SS_BEND1, SS_BEND2, ASSUMPTIONS } from "../../config/irs-2026.js";
 
 describe("calcAIME", () => {
-  it("caps earnings at FICA wage base ($168,600)", () => {
-    // $300K earner — each year capped at $168,600
+  it("caps earnings at FICA wage base ($184,500)", () => {
+    // $300K earner — each year capped at $184,500 (2026 SS wage base)
     const aime = calcAIME(300_000, 0, 35);
-    // max possible: 168,600 * 35 / 35 / 12 = 14,050
-    expect(aime).toBeCloseTo(168_600 / 12, 0);
+    // max possible: 184,500 * 35 / 35 / 12 = 15,375
+    expect(aime).toBeCloseTo(184_500 / 12, 0);
   });
 
-  it("SS benefit for $300K earner must be less than $50K/yr (wage-base cap)", () => {
+  it("SS benefit for $300K earner must be less than $60K/yr (wage-base cap)", () => {
     const aime = calcAIME(300_000, 0, 35);
     const pia  = calcPIA(aime);
     const annual = calcBenefit(pia, 67) * 12;
-    expect(annual).toBeLessThan(50_000);
+    expect(annual).toBeLessThan(60_000); // capped — far below what uncapped $300K would imply
   });
 
   it("divides by 35 minimum even with fewer work years", () => {
@@ -29,26 +30,28 @@ describe("calcAIME", () => {
 });
 
 describe("calcPIA", () => {
-  it("applies 90% factor below first bend point ($1,226)", () => {
-    const pia = calcPIA(1_000);
-    expect(pia).toBeCloseTo(900, 0);
+  // Derive expectations from the config bend points + PIA factors so these stay
+  // correct across an annual constants refresh (the bend points are AWI-indexed).
+  const { PIA_FACTOR_1, PIA_FACTOR_2, PIA_FACTOR_3 } = ASSUMPTIONS;
+
+  it("applies 90% factor below the first bend point", () => {
+    const aime = SS_BEND1 - 226;
+    expect(calcPIA(aime)).toBeCloseTo(aime * PIA_FACTOR_1, 0);
   });
 
-  it("applies 32% factor in middle segment", () => {
-    // AIME at $2,000: 1226 * 0.90 + (2000 - 1226) * 0.32
-    const pia = calcPIA(2_000);
-    const expected = 1_226 * 0.90 + (2_000 - 1_226) * 0.32;
-    expect(pia).toBeCloseTo(expected, 1);
+  it("applies the middle-segment factor between the bend points", () => {
+    const aime = SS_BEND1 + 800;
+    const expected = SS_BEND1 * PIA_FACTOR_1 + (aime - SS_BEND1) * PIA_FACTOR_2;
+    expect(calcPIA(aime)).toBeCloseTo(expected, 1);
   });
 
-  it("applies 15% factor above second bend point ($7,391)", () => {
-    const aime = 10_000;
-    const pia  = calcPIA(aime);
+  it("applies the top-segment factor above the second bend point", () => {
+    const aime = SS_BEND2 + 2_000;
     const expected =
-      1_226 * 0.90 +
-      (7_391 - 1_226) * 0.32 +
-      (aime - 7_391) * 0.15;
-    expect(pia).toBeCloseTo(expected, 1);
+      SS_BEND1 * PIA_FACTOR_1 +
+      (SS_BEND2 - SS_BEND1) * PIA_FACTOR_2 +
+      (aime - SS_BEND2) * PIA_FACTOR_3;
+    expect(calcPIA(aime)).toBeCloseTo(expected, 1);
   });
 });
 
@@ -65,8 +68,11 @@ describe("calcBenefit", () => {
     expect(calcBenefit(2_000, 70)).toBe(Math.round(2_000 * 1.240));
   });
 
-  it("falls back to FRA factor for unknown age", () => {
-    expect(calcBenefit(2_000, 99)).toBe(2_000); // 100% of PIA
+  it("clamps an out-of-range claiming age to the nearest 62/70 boundary (review hardening)", () => {
+    // Above 70 → pin to the age-70 ceiling (1.24), NOT the FRA factor (the old fallback,
+    // which understated a 71+ claim). Below 62 → pin to the age-62 floor (0.70).
+    expect(calcBenefit(2_000, 99)).toBe(Math.round(2_000 * 1.240)); // clamps to 70
+    expect(calcBenefit(2_000, 55)).toBe(Math.round(2_000 * 0.700)); // clamps to 62
   });
 });
 
@@ -89,5 +95,27 @@ describe("calcSpousal", () => {
 
   it("uses FRA factor (1) when spouseClaimingAge is omitted", () => {
     expect(calcSpousal(2_500)).toBe(calcSpousal(2_500, 67));
+  });
+
+  it("clamps a fractional early age to its reduced factor (not a lookup-miss fallback to 1)", () => {
+    // 62.4 rounds to 62 → reduced. The old raw SS_FACTORS[62.4] missed → ?? 1 → wrongly
+    // returned the un-reduced FRA floor. Must now match the age-62 reduced amount.
+    expect(calcSpousal(2_500, 62.4)).toBe(calcSpousal(2_500, 62));
+    expect(calcSpousal(2_500, 62.4)).toBeLessThan(calcSpousal(2_500, 67));
+  });
+
+  it("clamps an out-of-range high age (71) to the 70 boundary, still capped at 1", () => {
+    expect(calcSpousal(2_500, 71)).toBe(calcSpousal(2_500, 67));
+  });
+});
+
+describe("claimFactor", () => {
+  it("clamps below 62 to the age-62 factor and above 70 to the age-70 factor", () => {
+    expect(claimFactor(55)).toBe(claimFactor(62));
+    expect(claimFactor(75)).toBe(claimFactor(70));
+  });
+
+  it("rounds a fractional age to the nearest whole year", () => {
+    expect(claimFactor(64.6)).toBe(claimFactor(65));
   });
 });

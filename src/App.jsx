@@ -774,15 +774,36 @@ export default function App() {
   // rmdTaxBite + effectiveRMDTaxRate + convTaxTotal all from the engine (retPhase) —
   // one source for the retirement-phase tax composition (BUG-35).
   // Memoized so horizonProps stays identity-stable (V9).
-  const taxViewBundle = useMemo(() => ({
-    fedMarginal,
-    fedEffective: fedEffRate,
-    effectiveRMDTaxRate,
-    projectedRetBracket: projRetBracketPct,
-    rmdTaxBite,
-    convTaxTotal: retPhase.conversionCost,
-  }), [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
-       rmdTaxBite, retPhase]);
+  const taxViewBundle = useMemo(() => {
+    // Lifetime tax composition — computed ONCE here (model), so the Taxes tab
+    // formats only (rule 10). Segments carry their own dollar val + integer pct;
+    // the screen keeps the bar widths (flex: val/total) as pure layout math.
+    const workingTax = fedTax ?? 0;
+    const rmdTax     = rmdTaxBite ?? 0;
+    const convTax    = retPhase.conversionCost ?? 0;
+    const total      = workingTax + rmdTax + convTax;
+    const rawSegs = [
+      { label: "Working tax",    val: workingTax, key: "working" },
+      { label: "RMD tax",        val: rmdTax,     key: "rmd" },
+      { label: "Conversion tax", val: convTax,    key: "conv" },
+    ];
+    const segments = total > 0
+      ? rawSegs.filter(s => s.val > 0).map(s => ({
+          label: s.label, val: s.val, key: s.key,
+          pct: Math.round((s.val / total) * 100),
+        }))
+      : [];
+    return {
+      fedMarginal,
+      fedEffective: fedEffRate,
+      effectiveRMDTaxRate,
+      projectedRetBracket: projRetBracketPct,
+      rmdTaxBite,
+      convTaxTotal: retPhase.conversionCost,
+      composition: { segments, total },
+    };
+  }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
+      rmdTaxBite, fedTax, retPhase]);
 
   // WI-2.6 (#96): retirement-phase money-flow bands (SS + pension + portfolio draw).
   // Pre-split by the model and guaranteed to sum to effectiveExpenses; memoized so
@@ -837,6 +858,8 @@ export default function App() {
     taxView: taxViewBundle,
     // WI-2.6 (#96): retirement money-flow bands — sum exactly to effectiveExpenses.
     retIncomeFlow,
+    // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
+    returnRate,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -850,7 +873,7 @@ export default function App() {
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,
        // WI-2.6 retirement money-flow bands (memoized separately):
-       retIncomeFlow]);
+       retIncomeFlow, returnRate]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

@@ -131,26 +131,26 @@ const E = {
   fedTax:               10_123,
   fedEffRate:           0.11750435287289611,
   fedMarginal:          0.22,
-  ssAIME:               12399.151279681775,
-  ssPIA:                3827.422691952266,
-  ssMonthlyBenefit:     3827,
-  ssAnnualBenefit:      45_924,
+  ssAIME:               12977.734696107114,  // 2026 wage base 184,500 caps fewer high-income years (was 12399 @ stale 168,600)
+  ssPIA:                4009.8702044160673,  // 2026 bend points 1,286/7,749 (were 1,226/7,391)
+  ssMonthlyBenefit:     4010,
+  ssAnnualBenefit:      48_120,     // higher PIA from 2026 bend points (was 46_968)
   retTrad401k:          2_120_026,   // GROSS (BUG-35; was 1_653_620 after-tax)
   retTradGross:         2_120_026,
-  retRoth:              573_820,
+  retRoth:              659_072,     // AGI-net Roth MAGI: pre-tax deductions delay the phase-out → more in-band Roth (was 587_692)
   retTaxable:           836_477,
   retHSA:               420_280,
-  totalAtRet:           3_950_603,   // gross (was 3_484_197 after-tax)
-  spendableAtRet:       3_575_746,   // after-tax reference chip
+  totalAtRet:           4_035_855,   // gross (+retRoth delta; was 3_964_475)
+  spendableAtRet:       3_654_179,   // larger portfolio (was 3_582_799)
   effectiveExpenses:    57_377,      // current living spend (was ~104_525 = 3% of portfolio)
   netPortfolioNeed:     57_377,      // ssAtRet = 0 (claims at 67, retires at 65)
-  withdrawalRate:       1.4523605636911632,
+  withdrawalRate:       1.4216814033209817,  // lower draw % on the larger portfolio (AGI-net Roth)
   yearsSustained:       Infinity,    // trivially sustainable at this spend (was 62.9)
-  firstRMD:             62_071,      // live-balance, real-$, post-conversion (was 118_198)
-  totalRMDs:            1_144_815,   // (was 3_106_334)
-  rmdTaxBite:           202_423,     // with-conversion lifetime RMD tax to 90 (was 683_974)
+  firstRMD:             62_508,      // higher SS floor → less pre-RMD drawdown → higher trad bal at 73 (was 62_279)
+  totalRMDs:            1_152_878,   // higher trad bal at 73 → higher lifetime RMDs (was 1_148_650)
+  rmdTaxBite:           207_557,     // higher lifetime RMDs → higher RMD tax (was 204_864)
   conversionWindowYrs:  7,
-  netConversionBenefit: -10_096,     // bracket-fill is net-negative at this spend (was +77_861)
+  netConversionBenefit: -9_854,      // higher SS benefit shifts conversion economics (was -9_981)
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────

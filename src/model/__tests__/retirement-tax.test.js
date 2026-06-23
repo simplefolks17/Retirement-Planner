@@ -138,7 +138,9 @@ describe("calcWithdrawalOrderTax", () => {
   it("Roth withdrawals are untaxed (tax-optimal counts only taxable + trad)", () => {
     const r = calcWithdrawalOrderTax({ ...baseBalances, netPortfolioNeed: 550_000 });
     const expected = Math.round(
-      r.yr1FromTaxable * ltcgRate(0, single) +
+      // LTCG stacks on the ordinary-income floor (SS/pension + trad draw),
+      // matching the model fix — not the always-0% bracket.
+      r.yr1FromTaxable * ltcgRate(baseBalances.rmdIncomeFloor + r.yr1FromTrad, single) +
       r.yr1FromTrad    * r.yr1TradRate +
       r.yr1FromRoth    * 0
     );

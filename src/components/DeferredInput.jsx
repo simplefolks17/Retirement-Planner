@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 
-export function DeferredInput({ value, min, max, onChange, style }) {
+export function DeferredInput({ value, min = -Infinity, max = Infinity, onChange, style }) {
   const [local,   setLocal]   = useState(String(value));
   const [focused, setFocused] = useState(false);
   const prev = useRef(value);

@@ -36,7 +36,7 @@ export function calcHealthcareExposure({
     const magi = (convMAGIFloors[i] ?? 0) + yr.conversion;
 
     const aca = hasMarketplaceInsurance && age < MEDICARE_AGE
-      ? { magi, cliffMAGI, crossesCliff: magi >= cliffMAGI, margin: cliffMAGI - magi }
+      ? { magi, cliffMAGI, crossesCliff: magi > cliffMAGI, margin: cliffMAGI - magi }
       : null;
 
     const irmaaAge = age + 2; // 2-year lookback: conversion today affects premiums at age+2
@@ -64,7 +64,8 @@ export function calcConversionCosts({
   monthsPerYear,
 }) {
   const cliffYears = exposure.filter(e => e.aca?.crossesCliff);
-  const irmaaCost  = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * personOnMedicare;
+  const people     = Number.isFinite(personOnMedicare) ? personOnMedicare : 0; // guard NaN propagation
+  const irmaaCost  = exposure.reduce((s, e) => s + (e.irmaa?.surcharge ?? 0), 0) * people;
   const acaLoss    = hasMarketplaceInsurance && marketplaceMonthlyPremium
     ? cliffYears.length * marketplaceMonthlyPremium * monthsPerYear
     : 0;

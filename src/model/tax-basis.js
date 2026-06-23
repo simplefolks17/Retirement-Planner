@@ -18,12 +18,13 @@
 
 import { calcTax, marginalRate } from "./taxes.js";
 import { calcGrossAfterTax } from "./budget.js";
-import { STATE_TAX, FICA_RATE, FICA_WAGE_BASE, ROTH_PHASEOUT_2026 } from "../config/irs-2026.js";
+import { STATE_TAX, FICA_WAGE_BASE, SS_TAX_RATE, MEDICARE_RATE,
+         ADDL_MEDICARE_RATE, ADDL_MEDICARE_THRESHOLD, ROTH_PHASEOUT_2026 } from "../config/irs-2026.js";
 
 export function calcTaxBasis({
-  currentIncome, spouseIncome, filingStatus,
-  contrib401k, contribHSA, otherPreTaxDeduc,
-  selectedState, stateRateOverride,
+  currentIncome, spouseIncome = 0, filingStatus = "single",
+  contrib401k = 0, contribHSA = 0, otherPreTaxDeduc = 0,
+  selectedState, stateRateOverride = null,
 }) {
   const isMFJ = filingStatus === "mfj";
   const combinedIncome = currentIncome + spouseIncome;
@@ -43,15 +44,24 @@ export function calcTaxBasis({
   const stateTax         = agi * stateRate;
   const noStateTax       = stateRate === 0;
 
-  // FICA is per-earner: each spouse's wages capped at the wage base independently.
-  const fica = (Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)) * FICA_RATE;
+  // FICA = Social Security (6.2%, capped per-earner at the wage base) + Medicare (1.45%,
+  // UNCAPPED) + Additional Medicare (0.9% on wages above a filing-status threshold). Lumping
+  // all three under one capped rate understated FICA for high earners (review fix). SS stays
+  // per-earner (rule 9); Medicare/surtax apply to total FICA wages.
+  const ssWages   = Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE);
+  const medWages  = currentIncome + spouseIncome;
+  const addlThreshold = ADDL_MEDICARE_THRESHOLD[filingStatus] ?? ADDL_MEDICARE_THRESHOLD.single;
+  const fica = ssWages * SS_TAX_RATE
+             + medWages * MEDICARE_RATE
+             + Math.max(0, medWages - addlThreshold) * ADDL_MEDICARE_RATE;
 
   const householdIncome = isMFJ ? combinedIncome : currentIncome;
   const takeHome        = householdIncome - fedTax - stateTax - fica - safeDeduc;
   const combinedEffRate = (fedTax + stateTax + fica) / (householdIncome || 1);
 
-  // Roth phase-out tests combined MAGI for MFJ, primary-only otherwise (BUG-12).
-  const rothMAGI            = isMFJ ? combinedIncome : currentIncome;
+  // Roth phase-out tests MAGI ≈ AGI (nets out pre-tax 401k/HSA, so heavy savers aren't
+  // phased out too early). `agi` already encodes MFJ-combined vs primary-only (BUG-12).
+  const rothMAGI            = agi;
   const rothPhaseout        = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
   const rothPhaseoutWarning = rothMAGI >= rothPhaseout.start;
   const rothFullyPhased     = rothMAGI >= rothPhaseout.end;

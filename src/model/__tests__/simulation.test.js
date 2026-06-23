@@ -36,32 +36,44 @@ describe("runSimulation — IRS limits", () => {
     expect(maxDeferral).toBeGreaterThan(0);
   });
 
-  it("HSA contribution never exceeds $4,300 IRS limit", () => {
+  it("HSA contribution never exceeds $4,400 IRS limit", () => {
     // Even if user sets contribHSA high, sim-level guard caps it
     const rows = defaultSim({ contribHSA: 99_999 });
     for (const row of rows) {
-      if (row.cHSA > 0) expect(row.cHSA).toBeLessThanOrEqual(4_300);
+      if (row.cHSA > 0) expect(row.cHSA).toBeLessThanOrEqual(4_400);
     }
   });
 
-  it("Roth contribution drops to 0 when MAGI crosses phase-out (single: $150K–$165K)", () => {
-    // At $140K income + 3% growth: by year 7, income exceeds $165K, Roth = 0
+  it("Roth contribution drops to 0 when MAGI crosses phase-out (single: $153K–$168K)", () => {
+    // At $140K income + 3% growth, MAGI clears the $168K band top within ~15 years → Roth = 0
     const rows = defaultSim({ currentIncome: 140_000, contribRoth: 7_500 });
-    const year7 = rows.find(r => r.age === 37); // currentAge=30 + 7
-    expect(year7).toBeDefined();
-    expect(year7.cRoth).toBe(0);
+    const year15 = rows.find(r => r.age === 45); // currentAge=30 + 15
+    expect(year15).toBeDefined();
+    expect(year15.cRoth).toBe(0);
   });
 
-  it("Roth phases out linearly between $150K and $165K", () => {
-    // Income right in the middle of phase-out
-    const rows = defaultSim({ currentIncome: 157_500, incomeGrowth: 0, contribRoth: 7_500 });
+  it("Roth phases out linearly between $153K and $168K", () => {
+    // Income right in the middle of phase-out. No pre-tax deductions → MAGI = gross income.
+    const rows = defaultSim({ currentIncome: 160_500, incomeGrowth: 0, contribRoth: 7_500, contrib401k: 0, contribHSA: 0 });
     const year1 = rows[0];
     expect(year1.cRoth).toBeGreaterThan(0);
     expect(year1.cRoth).toBeLessThan(7_500);
   });
 
+  it("in-band phase-out reduces the LIMIT, not the desired amount (review fix)", () => {
+    // MAGI $156K, single band $153K–$168K → phasePct 0.8 → reduced limit = 7,500 × 0.8 = 6,000.
+    // No pre-tax deductions → MAGI = gross income. A contributor BELOW the reduced limit gets
+    // their FULL desired amount; one above it is capped AT the reduced limit. The old bug scaled
+    // the desired amount itself (× 0.8), so it would have returned 2,400 and 5,600 — wrongly denied.
+    const below = defaultSim({ currentIncome: 156_000, incomeGrowth: 0, contribRoth: 3_000, contrib401k: 0, contribHSA: 0 })[0];
+    expect(below.cRoth).toBe(3_000);   // under the 6,000 reduced limit → full desired (was 2,400)
+
+    const above = defaultSim({ currentIncome: 156_000, incomeGrowth: 0, contribRoth: 7_000, contrib401k: 0, contribHSA: 0 })[0];
+    expect(above.cRoth).toBe(6_000);   // capped at the reduced limit (was 5,600)
+  });
+
   it("non-MFJ filer is NOT phased out by spouse income (uses primary MAGI only)", () => {
-    // Single filer, primary $100K (under the $150K start), spouse earns $200K.
+    // Single filer, primary $100K (under the $153K start), spouse earns $200K.
     // Combined would be $300K (fully phased out) — but a single filer reports
     // separately, so the full Roth contribution must still go through.
     const rows = defaultSim({
@@ -72,7 +84,7 @@ describe("runSimulation — IRS limits", () => {
   });
 
   it("MFJ filer IS phased out by combined household income", () => {
-    // MFJ phase-out is ~$236K–$246K. Primary $150K + spouse $150K = $300K combined
+    // MFJ phase-out is $242K–$252K. Primary $150K + spouse $150K = $300K combined
     // → fully phased out, Roth = 0. Confirms MFJ still combines.
     const rows = defaultSim({
       filingStatus: "mfj", currentIncome: 150_000, incomeGrowth: 0,
@@ -128,29 +140,29 @@ describe("runSimulation — tradGross output", () => {
 });
 
 describe("runSimulation — catch-up contributions at age 50", () => {
-  // Catch-up eligibility: `currentAge + (y - 1) >= CATCHUP_AGE` — the person must be 50 at
-  // year-start. Row age = currentAge + y, so a row with age=51 is the first to carry catch-up
-  // contributions (worker turns 50 at the start of that year). Row age=50 is NOT eligible yet.
+  // Catch-up eligibility: `age >= CATCHUP_AGE` where row age = currentAge + y (year-END age).
+  // IRS allows catch-up for the whole calendar year you turn 50, so the row with age=50 is the
+  // FIRST to carry catch-up contributions. Row age=49 is NOT eligible yet.
   it("401k contribution increases by CATCHUP_401K_2026 ($7,500) at first catch-up year", () => {
     // contrib401k set well above the under-50 elective limit ($24,500) so it's uncapped once
     // catch-up raises the ceiling to $32,000. flat match stays constant (income unchanged).
-    const rows = defaultSim({ currentAge: 48, totalYears: 5, incomeGrowth: 0, contrib401k: 32_000 });
-    const age50 = rows.find(r => r.age === 50); // not eligible: worker is 49 at year-start
-    const age51 = rows.find(r => r.age === 51); // eligible: worker is 50 at year-start
+    const rows = defaultSim({ currentAge: 47, totalYears: 5, incomeGrowth: 0, contrib401k: 32_000 });
+    const age49 = rows.find(r => r.age === 49); // not eligible: worker turns 49 this year
+    const age50 = rows.find(r => r.age === 50); // eligible: worker turns 50 this year
+    expect(age49).toBeDefined();
     expect(age50).toBeDefined();
-    expect(age51).toBeDefined();
-    // c401k at age50 = min(32_000, 24_500) + flat match; at age51 = 32_000 + flat match → +7,500
-    expect(age51.c401k - age50.c401k).toBe(7_500);
+    // c401k at age49 = min(32_000, 24_500) + flat match; at age50 = 32_000 + flat match → +7,500
+    expect(age50.c401k - age49.c401k).toBe(7_500);
   });
 
   it("Roth contribution increases by CATCHUP_ROTH_2026 ($1,000) at first catch-up year", () => {
     // contribRoth set above the base $7,500 limit so the catch-up $1,000 is visible.
-    const rows = defaultSim({ currentAge: 48, totalYears: 5, incomeGrowth: 0, contribRoth: 9_000 });
+    const rows = defaultSim({ currentAge: 47, totalYears: 5, incomeGrowth: 0, contribRoth: 9_000 });
+    const age49 = rows.find(r => r.age === 49);
     const age50 = rows.find(r => r.age === 50);
-    const age51 = rows.find(r => r.age === 51);
     // At $100k income (under $150k phase-out start), full contribution is allowed.
-    // age50: min(9_000, 7_500) = 7_500; age51: min(9_000, 8_500) = 8_500 → delta = 1_000
-    expect(age51.cRoth - age50.cRoth).toBe(1_000);
+    // age49: min(9_000, 7_500) = 7_500; age50: min(9_000, 8_500) = 8_500 → delta = 1_000
+    expect(age50.cRoth - age49.cRoth).toBe(1_000);
   });
 });
 
@@ -333,8 +345,8 @@ describe("runSimulation — MFS Roth phase-out", () => {
 describe("runSimulation — MFJ LTCG combined income", () => {
   it("MFJ household with dual ~$50k earners experiences 15% LTCG drag that single filer escapes", () => {
     // For LTCG bracket lookup, ordinaryIncome = income - deferral - HSA (no standard deduction subtracted).
-    // MFJ combined $100k (two $50k earners) crosses into 15% LTCG bracket (MFJ 0% threshold: $94,050).
-    // Single filer at $50k - deferral stays well under single 0% threshold ($47,025), staying at 0% LTCG.
+    // MFJ combined $110k (two $55k earners) - 3k deferral = 107k → clears MFJ 0% top ($98,900) → 15% LTCG.
+    // Single filer at $45k - 3k deferral = 42k → under single 0% top ($49,450), staying at 0% LTCG.
     // Over 10 years at 7% return, the difference in taxable growth is measurable.
     const sharedArgs = {
       totalYears: 10, currentAge: 30, incomeGrowth: 0,
@@ -347,22 +359,22 @@ describe("runSimulation — MFJ LTCG combined income", () => {
 
     const mfj = runSimulation({
       ...sharedArgs,
-      currentIncome: 50_000,
+      currentIncome: 55_000,
       filingStatus: "mfj",
-      spouseIncome: 50_000,
+      spouseIncome: 55_000,
       spouseIncomeGrowth: 0,
     });
 
     const single = runSimulation({
       ...sharedArgs,
-      currentIncome: 50_000,
+      currentIncome: 45_000,
       filingStatus: "single",
       spouseIncome: 0,
       spouseIncomeGrowth: 0,
     });
 
-    // MFJ case: ordinaryIncome = (50k + 50k) - 3k = 97k → exceeds 94,050 threshold → 15% LTCG rate.
-    // Single case: ordinaryIncome = 50k - 3k = 47k → under 47,025 threshold → 0% LTCG rate.
+    // MFJ case: ordinaryIncome = (55k + 55k) - 3k = 107k → exceeds 98,900 threshold → 15% LTCG rate.
+    // Single case: ordinaryIncome = 45k - 3k = 42k → under 49,450 threshold → 0% LTCG rate.
     // Therefore, MFJ taxable account grows slower and should be strictly smaller at end.
     expect(mfj[9]["Taxable"]).toBeLessThan(single[9]["Taxable"]);
   });

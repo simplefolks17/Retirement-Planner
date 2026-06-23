@@ -85,6 +85,164 @@ residual — removing the clamp let negative real growth through, but the value 
 
 ---
 
+### Constants-correctness + latent-bug batch (2026-06-23)
+
+**Source:** owner-directed follow-up to the whole-codebase review — verify the IRS/SSA constants
+against authoritative 2026 values (so a 2027 refresh is a clean re-import) and clear remaining
+latent correctness items. Branch `claude/ai-codebase-review-fpigu3`; committed incrementally,
+highest-impact first. Suite 443 → **471** tests; lint clean.
+
+1. **Stale FICA wage base — FIXED (data correctness; golden master moved deliberately).**
+   `FICA_WAGE_BASE` carried the **2024** figure ($168,600) while labeled "2026". The authoritative
+   2026 SSA contribution-and-benefit base is **$184,500** (2025 was $176,100). The 2026-06-16 FICA
+   *rate split* made this **inert at the default** (default income $100k < base) — which is exactly
+   why it survived that review — but the base caps SS AIME, and the default income grows above it in
+   later working years, so AIME was understated. Fixed in `src/config/irs-2026.js`. Golden master
+   moved, all direction-verified: ssAIME 12399→12977, ssAnnualBenefit 45,924→46,968, firstRMD
+   62,071→62,279, totalRMDs 1,144,815→1,148,650, rmdTaxBite 202,423→204,864, spendableAtRet
+   3,578,221→3,574,967 (higher SS floor → higher stacked retirement rate), netConversionBenefit
+   -10,096→-9,981. `social-security` wage-base-cap tests updated (titles + thresholds).
+
+2. **`fvAnnuity` negative-rate logic bug — FIXED (value-preserving at default).**
+   `finance-math.js` guarded the geometric annuity formula with `rate > 0`, so any **negative real
+   return** fell through to the linear `annual * years` branch — overstating the FV of a
+   declining-balance annuity (a -2% real return treated as flat). Now `rate !== 0`; only an exactly
+   zero rate degenerates to the linear limit. Used by the conversion optimizer + mega-backdoor
+   projection. Default real return is positive → no golden-master impact. +1 regression test.
+
+3. **SS claiming-factor clamp — extended to the two sites the 2026-06-16 batch missed (latent).**
+   That batch hardened `calcBenefit` against out-of-range/fractional claiming ages but left
+   `calcSpousal` and the own-record spouse path (`retirement-income.js:38`) doing a raw
+   `SS_FACTORS[age] ?? 1` lookup — which silently returns the **un-reduced FRA factor** on a miss
+   (overstating an early claim, under-crediting a delayed own-record one). Extracted the clamp+round
+   into one shared `claimFactor(age)` helper (`social-security.js`) now used by all three. Latent
+   today (sliders feed in-range integers); value-preserving at default (single → spousal 0). +4 tests.
+
+**Defensive tooling:** new `src/config/__tests__/irs-2026.test.js` — a constants-integrity guard
+(STRUCTURE + internal consistency: contiguous strictly-progressive tax brackets, std-deduction
+mfj=2×single, LTCG 0/15/20 ascending, monotonic SS factors =1.0 at FRA, descending RMD
+Uniform-Lifetime divisors, ascending IRMAA tiers, constant-increment ACA FPL, 51-jurisdiction state
+tables, assumption fractions in (0,1)). Fails loudly on a malformed/out-of-order refresh edit.
+Value-locks ONLY verified/stable figures (wage base 184,500, RMD age 73, FRA 67) so it never
+entrenches an unconfirmed dollar amount. +23 tests.
+
+**Constants audit — COMPLETED (web-verified vs 2026 IRS/SSA), corrections applied.** The audit
+agent (re-run after the first attempt was cut off by a session limit) verified every constant
+against primary IRS/SSA + reputable secondary sources. It found **the wage base was the tip of the
+iceberg** — ~30 more dollar figures carried 2024/2025 values under a "2026" label. The unambiguous,
+independently re-verified corrections were applied in this batch (golden master moved deliberately):
+  - **HoH standard deduction** 23,350 → **24,150** (Rev. Proc. 2025-32, OBBB). Inert at default (single).
+  - **All 8 LTCG thresholds** were 2024 values → 2026: single 47,025/518,900 → **49,450/545,500**;
+    mfj 94,050/583,750 → **98,900/613,700**; mfs 47,025/291,850 → **49,450/306,850**; hoh
+    63,000/551,350 → **66,200/579,600**.
+  - **Roth phase-out** was 2025 → 2026: single 150k/165k → **153k/168k**; mfj 230k/240k →
+    **242k/252k**; hoh 150k/165k → **153k/168k** (mfs 0/10k statutory, unchanged). Shifts the default
+    user's in-band contribution years → `retRoth` 576,295 → 587,692.
+  - **401k catch-up** 7,500 → **8,000**; **415(c)** 70,000 → **72,000**; **415(c)+catch-up** 77,500 →
+    **80,000**; **HSA self-only** 4,300 → **4,400** (IRS N-25-67 / Rev. Proc. 2025-19). HSA inert at
+    default (default contribution below the cap).
+  - **SS PIA bend points** were 2025 → 2026 eligibility year: 1,226/7,391 → **1,286/7,749**. Raises
+    PIA for the default AIME → ssPIA 3914→4010/mo, ssAnnualBenefit 46,968 → **48,120**, cascading to
+    firstRMD 62,508, totalRMDs 1,152,878, rmdTaxBite 207,557, spendableAtRet 3,582,799,
+    netConversionBenefit -9,854, withdrawalRate 1.44728, totalAtRet 3,964,475.
+  - Stale unit-test fixtures that hardcoded old constants were corrected (calcPIA tests now derive
+    from the config bend points so they're refresh-proof; HSA/Roth-band/LTCG fixtures retargeted to
+    keep their original intent under the new thresholds). Verified figures value-locked in the new
+    `irs-2026.test.js` so they fail loudly next refresh.
+
+**ACA FPL + IRMAA — RESOLVED (owner decisions, 2026-06-23).** Both were design forks, now settled:
+  - **ACA FPL (`ACA_FPL_2026`)** — was the **2024** guidelines (wrong). Owner chose the model-correct
+    *prior-year* basis: ACA subsidy eligibility for a plan year uses the FPL guidelines published the
+    prior calendar year, so 2026 coverage uses the **2025-published** HHS set (1=15,650 … 6=43,150,
+    +5,500/person; Federal Register 2025-01377). Kept the `_2026` name (= "governs 2026 coverage") with
+    an explicit comment that these are the 2025-published numbers + a REFRESH RULE (for 2027 coverage →
+    use the 2026-published set 1=15,960 … 6=44,360). This is the user's "use the correct values, label
+    them honestly" design.
+  - **IRMAA (`IRMAA_BRACKETS_2026`)** — owner chose **Part B + Part D combined** (full retiree cost,
+    matches the prior intent). MAGI breakpoints refreshed 2025 → 2026 (single 109/137/171/205/500k;
+    mfj 218/274/342/410/750k) and surcharges set to 2026 combined B+D annual: 1,148 / 2,885 / 4,620 /
+    6,355 / 6,936 (per-tier monthly Part B + Part D: 81.20+14.50, 202.90+37.50, 324.60+60.40,
+    446.30+83.30, 487.00+91.00; Kiplinger 2026 IRMAA).
+  - Both are **inert at the default** (default conversion MAGI sits below the first IRMAA tier and ACA
+    doesn't apply at the Medicare-age retirement), so the golden master is unchanged. `healthcare.test.js`
+    fixtures that hardcoded the old ACA/IRMAA values were retargeted; new figures value-locked in
+    `irs-2026.test.js`. Every ❌ the federal/SSA audit found is fixed or owner-decided.
+
+**State-tax tables — audited + corrected (2026-06-23).** A follow-up agent audited `STATE_TAX` +
+`RETIREMENT_STATE_TAX` (51 jurisdictions × 2) against 2026 law. These are modeling *approximations*,
+so the bar was "factually correct note / reasonable 2026 figure," not bracket-exact. Found + fixed
+(all verified vs Tax Foundation 2026 + state sources; all inert at the default state → golden master
+unchanged):
+  - **HI Hawaii — factual error, highest impact.** Was `rate: 0` / "Fully exempts 401k/IRA/pension" —
+    but Hawaii exempts only *employer-funded* pensions and **fully taxes 401k/IRA** (the app's whole
+    subject). Now `rate: 0.075` with a corrected note. This was telling a Hawaii 401k retiree they owe $0.
+  - **2026 enacted rate cuts:** KY 4.0→**3.5%** flat (both tables); GA 5.39→**4.99%** flat (both); OK top
+    4.75→**4.5%** (HB 2764); UT 4.55→**4.5%** flat. Rates + note text updated.
+  - **Structural-label fix:** NE note said "Flat 4.55%" but Nebraska is **graduated** (4.55% is the top
+    rate) — note corrected. KS note "top rate 5.7%" → **5.58%** (2026), rate 0.057 → 0.056.
+  - Reasonable/✅ confirmed: IL/IA/MS/PA/MI full retirement-income exemptions, WV 2026 SS exemption, the
+    flat-rate states (AZ/CO/ID/IN/LA/NC/OH/MA), and all no-income-tax states. Graduated-state effective
+    rates (CA/NY/OR/MN/etc.) read as plausible 2026 figures, none >1pt off. **The constants audit —
+    federal, SSA, and state — is now fully closed.**
+
+---
+
+### Whole-codebase review fixes — P1 + P2 batch (2026-06-16)
+
+**Source:** the parallel Claude + CodeRabbit + Gemini whole-codebase review (see `docs/REVIEW-FINDINGS.md`).
+Two commits on `claude/ai-codebase-review-fpigu3`; golden master unchanged (all fixes value-preserving at the default state); 441 tests stay green, lint clean.
+
+**P1 (correctness):**
+1. **Catch-up contribution off-by-one** — `simulation.js:51`. `isEligibleForCatchup` tested *start-of-year* age (`currentAge + (y-1)`), excluding the year the user **turns 50** from 401k/415(c)/Roth catch-up limits. Now tests the year-end `age >= CATCHUP_AGE`. The test that locked the wrong behavior (`simulation.test.js`) was corrected. *(Flagged by Claude + CodeRabbit.)*
+2. **Tax-composition rule-10 leak** — `NumbersScreen.jsx` Taxes tab summed `fedTax + rmdTaxBite + convTaxTotal` and computed per-segment `%` inline. Moved into the model: `App.jsx` `taxViewBundle` now provides a `composition: { segments[{label,val,pct}], total }`; the screen formats only (bar widths stay as layout). Test fixture extended to match. *(Claude + CodeRabbit.)*
+
+**P2 (defensive / minor):**
+- `action-cards.js` — "Capture full employer match" card now gated to `matchMode === "formula"` (no-op for flat match); hardcoded RMD ages in copy now from config (rule 1).
+- `budget.js` — `matchContribNeeded` capped at `TRAD_401K_LIMIT_2026` (rule 4).
+- `healthcare.js` — ACA cliff boundary `>=` → `>` (income exactly at threshold doesn't cross).
+- `what-if.js` — guards for degenerate inputs (`step <= 0`, `targetLifeExpectancy <= safeRetAge`, `scenarioRetAge <= currentAge`) to avoid early-termination / fabricated depletion.
+- `accumulation.js` — `balAtAge` equal-age interpolation guard (NaN).
+- `roth-conversion.js` — `findOptimalConversion` non-positive/non-finite `step` guard (infinite-loop); Scenario-B conversion capped so `taxableB` can't go negative.
+- `retirement-tax.js` — `calcWithdrawalOrderTax` taxable-withdrawal LTCG rate now stacks on the ordinary floor instead of always `ltcgRate(0)`.
+- `JourneyScreen.jsx` — hardcoded "73+" → RMD start age from props/config.
+- `NumbersScreen.jsx` — dropped dead `retVals[...] ?? 0` fallbacks (keys always present).
+- React-correctness nits — `ChartTooltip` stable key; `ArcGraph` per-instance SVG ids via `useId()`, event-marker key includes index, literal `0.92` → `CONE_LOWER_ASYMMETRY`; `ThemeContext` listens for OS `prefers-color-scheme` changes in `auto`; `DeferredInput` default `min`/`max`; `TaxTimeline` zero-horizon guard.
+
+**Disputed items — re-reviewed 2026-06-16 (owner asked to re-validate; 2 of 4 were real):**
+
+- **Roth phase-out (Gemini) — REAL, FIXED.** `simulation.js` scaled the *desired* contribution by the
+  phase-out fraction instead of reducing the *limit* and taking `min(desired, reduced limit)`. This
+  under-counted Roth contributions for anyone in the phase-out band not already maxing out (the
+  first re-review pass mistook "direction correct" for "formula correct"). Fixed: `reducedCap =
+  rothCap × phasePct; return Math.round(Math.min(contribRoth, reducedCap))`. Reachable at the default
+  (income grows into the $150–165k single band ~ages 44–47), so the **golden master moved
+  deliberately**: `retRoth` 573_820 → 576_295, `totalAtRet` 3_950_603 → 3_953_078, `spendableAtRet`
+  3_575_746 → 3_578_221, `withdrawalRate` 1.45236… → 1.45145…. +1 regression test (below-max
+  in-band contributor gets full desired; above-cap pinned to the reduced limit).
+- **FICA / Medicare cap (Gemini) — REAL, FIXED.** `tax-basis.js` applied the combined 7.65% to wages
+  *capped* at the SS wage base, but **Medicare (1.45%) is uncapped** and there's an additional **0.9%**
+  surtax above $200k single / $250k MFJ. Lumping understated FICA for high earners (overstating
+  take-home / `grossAfterTax`). Fixed: split into SS (6.2%, capped per-earner) + Medicare (1.45%,
+  uncapped) + Additional Medicare (0.9% above the filing-status threshold); new config constants
+  `SS_TAX_RATE` / `MEDICARE_RATE` / `ADDL_MEDICARE_RATE` / `ADDL_MEDICARE_THRESHOLD`. **Value-preserving
+  at the default** ($100k < wage base → 6.2%+1.45% = 7.65%, no surtax), so the golden master is
+  unaffected; two `tax-basis.test.js` cases that had locked the *capped* high-earner value were
+  corrected (they were locking the bug). +1 net regression test.
+- **SS factor out-of-range fallback (Gemini) — latent, HARDENED.** `calcBenefit` fell back to the FRA
+  factor (1.0) for any age outside the 62–70 table, which would understate a 71+ claim. Not reachable
+  today (the claiming-age slider clamps to 62–70), so changes no current output; now clamps the age to
+  the nearest 62/70 boundary before lookup (correct-by-construction). The test that asserted the FRA
+  fallback was corrected.
+- **MoneyEvents `ev.amount || ""` (CodeRabbit) — NOT a bug, dismissal stands.** For a money-event
+  amount, `0` means "nothing entered," so collapsing to the placeholder is the intended empty state;
+  `?? ""` would render a meaningless $0 row. The `onChange` already floors at `Math.max(0, …)`.
+
+**Still deliberately NOT changed:** the vite `node`→`jsdom` suggestion (react-test-renderer needs no
+DOM; 443 tests pass under `node`), the screen-`useState` / formatter-division "rule-10" over-flags
+(benign UI state / display formatting), and the Shell perf nits (P3, deferred).
+
+---
+
 ### ~~BUG-35~~ — Traditional 401k taxed twice (after-tax retirement seed **and** RMD/conversion tax on the gross balance)
 
 **Reported:** 2026-06-13 · **Fixed:** 2026-06-15 (dedicated change, owner-approved; direction **A** — gross seed + one tax-honest engine).

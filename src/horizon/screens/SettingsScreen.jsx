@@ -2,6 +2,7 @@ import React from "react";
 import { GhostArc } from "../../components/ArcGraph.jsx";
 import { PALETTES, HF, useTheme } from "../ThemeContext.jsx";
 import { ACTIVITIES } from "./SomedayScreen.jsx";
+import { kbActivate } from "../shared.jsx";
 
 export default function SettingsScreen({ t, activity, setActivity, onResetOnboarding }) {
   const { palKey, setPalKey, modePref, setModePref, arcStyle, setArcStyle } = useTheme();
@@ -25,6 +26,7 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
               const on = palKey === key;
               return (
                 <div key={key} onClick={() => setPalKey(key)}
+                  role="button" tabIndex={0} aria-pressed={on} onKeyDown={kbActivate(() => setPalKey(key))}
                   style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer" }}>
                   <div style={{
                     width: 44, height: 44, borderRadius: 999, background: pal.swatch,
@@ -48,7 +50,9 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
             {[["light","Light"],["dark","Dark"],["auto","Auto"]].map(([k, l]) => {
               const on = modePref === k;
               return (
-                <div key={k} onClick={() => setModePref(k)} style={{
+                <div key={k} onClick={() => setModePref(k)}
+                  role="button" tabIndex={0} aria-pressed={on} onKeyDown={kbActivate(() => setModePref(k))}
+                  style={{
                   padding: "8px 20px", borderRadius: 8, cursor: "pointer",
                   background: on ? t.surf2 : "transparent",
                   font: `${on ? 600 : 500} 13px ${HF}`,
@@ -68,7 +72,9 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
             {[["soft","Soft"],["vivid","Vivid"],["glow","Glow"]].map(([k, l]) => {
               const on = arcStyle === k;
               return (
-                <div key={k} onClick={() => setArcStyle(k)} style={{
+                <div key={k} onClick={() => setArcStyle(k)}
+                  role="button" tabIndex={0} aria-pressed={on} onKeyDown={kbActivate(() => setArcStyle(k))}
+                  style={{
                   padding: "8px 20px", borderRadius: 8, cursor: "pointer",
                   background: on ? t.surf2 : "transparent",
                   font: `${on ? 600 : 500} 13px ${HF}`,

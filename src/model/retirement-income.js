@@ -11,7 +11,7 @@
 // gated to "active at retirement"; householdSS / ssTaxableRet are the full
 // amounts used by the per-year drawdown loops (which apply their own age gates).
 
-import { calcAIME, calcPIA, calcBenefit, calcSpousal } from "./social-security.js";
+import { calcAIME, calcPIA, calcBenefit, calcSpousal, claimFactor } from "./social-security.js";
 import { SS_FRA, SS_MAX_CLAIM_AGE, SS_FACTORS, ASSUMPTIONS } from "../config/irs-2026.js";
 
 export function calcRetirementIncome({
@@ -35,7 +35,7 @@ export function calcRetirementIncome({
   // Spouse SS: choose between own record (earns delayed credits) or spousal floor
   // (capped at 50% of PIA — no delayed credits). The unchosen basis is reported as
   // spouseAlt for the advisory note. Gated by isMarried; default state is single → 0.
-  const factor       = SS_FACTORS[spouseClaimingAge] ?? 1;          // own benefit earns delayed credits
+  const factor       = claimFactor(spouseClaimingAge);              // own benefit earns delayed credits (clamped to 62–70)
   const ownReduced   = Math.round(spouseSsEstimate * factor);        // estimate is an at-FRA figure
   const spousalFloor = calcSpousal(ssPIA, spouseClaimingAge);        // capped at 50% (no delayed credits)
   const spouseChosen = isMarried ? (spouseBenefitBasis === "spousal" ? spousalFloor : ownReduced) : 0;

@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (441 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (481 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -499,11 +499,45 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   doesn't charge the base tax on the SS/pension floor — SS/pension effectively tax-free; inert at
   default, needs income-surplus handling), **BUG-39** (Flow-Down accumulation growth is a residual
   plug, not `Σ(row.growth)` — rule 2b). Next planned work is **PR-B** (per-account detail screen).
+- **Constants correction + whole-codebase-review close-out (2026-06-23, branch
+  `claude/ai-codebase-review-fpigu3` → PR to `main`):** two threads of work landed together.
+  1. **IRS/SSA/state constants audit + correction.** A stale `FICA_WAGE_BASE` (2024's 168,600 under a
+     "2026" label) triggered a full web-sourced audit of `irs-2026.js`; it turned up ~30 more stale
+     dollar figures. All corrected to verified 2026 values: wage base → **184,500**; SS PIA bend points
+     → **1,286 / 7,749**; HoH std deduction → **24,150**; all 8 LTCG thresholds (were 2024); Roth
+     phase-out (single/mfj/hoh, were 2025); 401k catch-up **8,000** / 415(c) **72,000** / +catch-up
+     **80,000** / HSA **4,400**; IRMAA breakpoints+surcharges → 2026 **combined Part B+D** (owner
+     choice); ACA FPL → the **2025-published** set, with a documented prior-year rule (ACA subsidy
+     eligibility for plan year N uses year N−1's FPL — refresh note in the file). State tables: **HI
+     factual fix** (was "fully exempts 401k/IRA" — it taxes them; now 0.075), 2026 rate cuts (KY 3.5,
+     GA 4.99, OK 4.5, UT 4.5), NE "flat"→graduated, KS 5.58. New **`src/config/__tests__/irs-2026.test.js`**
+     integrity guard: structural invariants (ascending brackets, monotonic SS factors, descending RMD
+     divisors, etc.) + value-locks on every verified figure, so a future stale refresh fails loudly.
+     Deliberate golden-master moves (re-locked, all direction-verified): ssAIME 12399→12977,
+     ssAnnualBenefit 45,924→48,120, firstRMD →62,508, totalRMDs →1,152,878, rmdTaxBite →207,557,
+     `retRoth` →659,072, `totalAtRet` →4,035,855, `spendableAtRet` →3,654,179, `withdrawalRate`
+     →1.42168, `netConversionBenefit` →−9,854. Full detail: `docs/BUGS.md` (2026-06-23 batch).
+  2. **Whole-codebase AI review (CodeRabbit + Gemini) — both passes closed.** The review was run as 3
+     layer PRs (#34 Model / #35 View / #36 Shell) against an empty `review-base` so the bots saw whole
+     files; setup in `docs/REVIEW-GUIDE.md` + `.coderabbit.yaml`, findings consolidated + triaged in
+     **`docs/REVIEW-FINDINGS.md`** (first + second pass). ~50% of bot volume was false positives
+     (filtered with reasons). Real fixes landed this session: `optWR` SS/pension claim-age gating
+     (rule 5b); `marginalRate` 0 below the standard deduction; spouse income plateau at
+     `incomeGrowthEndAge`; **Roth phase-out switched to AGI-net MAGI** (was gross — owner-approved,
+     moved `retRoth`, shared `netOrdinaryIncome` used by both the phase-out and the LTCG bracket);
+     `fvAnnuity` negative-rate; shared `claimFactor()` SS clamp; defensive NaN/negative guards
+     (employer-match, healthcare, conversion-planning, budget, tax-basis/money-events defaults);
+     removed a **fabricated "9 in 10 markets" probability** from the arc (rule 6 — no Monte Carlo);
+     formatter hardening; file-upload validation; keyboard-a11y (`kbActivate` + StatCard/Settings);
+     money-event age clamp-on-blur; NumbersScreen footnote now shows the real `returnRate`. The 3
+     review PRs were **closed** (vehicles, not merge candidates); `review/*` + `review-base` branches
+     remain for reference. Intentionally deferred (documented in REVIEW-FINDINGS.md): cosmetic
+     micro-perf nits only. Suite **481 tests**, lint clean, production build OK.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (441 tests)
+- `npm test` — run model + formatter + render-smoke tests (481 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

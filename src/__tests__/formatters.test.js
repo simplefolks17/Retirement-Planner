@@ -35,9 +35,25 @@ describe("fmt — currency abbreviation", () => {
     // The K suffix always follows digits with no decimal: $XXXK
     expect(fmt(118_198)).toMatch(/^\$\d+K$/);
   });
+  it("preserves the sign for negative values, then abbreviates the magnitude", () => {
+    expect(fmt(-500)).toBe("-$500");
+    expect(fmt(-1_500)).toBe("-$2K");
+    expect(fmt(-3_568_998)).toBe("-$3.57M");
+  });
+
+  it("maps non-finite inputs to $0 instead of $NaN", () => {
+    expect(fmt(NaN)).toBe("$0");
+    expect(fmt(Infinity)).toBe("$0");
+    expect(fmt(undefined)).toBe("$0");
+  });
 });
 
 describe("fmtPct — percentage formatting", () => {
+  it("renders an em dash for non-finite inputs", () => {
+    expect(fmtPct(NaN)).toBe("—");
+    expect(fmtPct(Infinity)).toBe("—");
+  });
+
   it("formats to one decimal place with % suffix", () => {
     expect(fmtPct(0)).toBe("0.0%");
     expect(fmtPct(5)).toBe("5.0%");

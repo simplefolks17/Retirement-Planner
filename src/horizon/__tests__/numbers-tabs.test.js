@@ -113,6 +113,16 @@ const taxView = {
   projectedRetBracket:  0.12,    // 12% projected retirement bracket (BUG-33 fixed)
   rmdTaxBite:         683_974,   // golden-master rmdTaxBite
   convTaxTotal:        82_765,   // golden-master conversion tax
+  // WI-2.4: lifetime tax composition — pre-computed by the model (App taxViewBundle),
+  // so the Taxes tab formats only (rule 10). Mirrors workingTax/rmdTax/convTax split.
+  composition: {
+    total: 784_739,             // 18_000 + 683_974 + 82_765
+    segments: [
+      { label: "Working tax",    val:  18_000, key: "working", pct:  2 },
+      { label: "RMD tax",        val: 683_974, key: "rmd",     pct: 87 },
+      { label: "Conversion tax", val:  82_765, key: "conv",    pct: 11 },
+    ],
+  },
 };
 
 // ── Composite props object ────────────────────────────────────────────────────

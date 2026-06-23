@@ -42,7 +42,7 @@ export const TAX_DATA_2026 = {
     ],
   },
   hoh: {
-    label: "Head of Household", deduction: 23_350,
+    label: "Head of Household", deduction: 24_150,
     brackets: [
       { min: 0,       max: 18_650,   rate: 0.10 },
       { min: 18_650,  max: 64_100,   rate: 0.12 },
@@ -60,33 +60,44 @@ export const FED_BRACKETS_2026 = [10, 12, 22, 24, 32, 35, 37];
 
 // ── Long-term capital gains brackets (2026 taxable income thresholds) ─────────
 export const LTCG_BRACKETS_2026 = {
-  single: [ { max: 47_025,  rate: 0.00 }, { max: 518_900, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
-  mfj:    [ { max: 94_050,  rate: 0.00 }, { max: 583_750, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
-  mfs:    [ { max: 47_025,  rate: 0.00 }, { max: 291_850, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
-  hoh:    [ { max: 63_000,  rate: 0.00 }, { max: 551_350, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  single: [ { max: 49_450,  rate: 0.00 }, { max: 545_500, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  mfj:    [ { max: 98_900,  rate: 0.00 }, { max: 613_700, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  mfs:    [ { max: 49_450,  rate: 0.00 }, { max: 306_850, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
+  hoh:    [ { max: 66_200,  rate: 0.00 }, { max: 579_600, rate: 0.15 }, { max: Infinity, rate: 0.20 } ],
 };
 
 // ── Roth IRA income phase-out thresholds (MAGI, 2026) ─────────────────────────
 export const ROTH_PHASEOUT_2026 = {
-  single: { start: 150_000, end: 165_000 },
-  mfj:    { start: 230_000, end: 240_000 },
+  single: { start: 153_000, end: 168_000 },
+  mfj:    { start: 242_000, end: 252_000 },
   mfs:    { start:       0, end:  10_000 },
-  hoh:    { start: 150_000, end: 165_000 },
+  hoh:    { start: 153_000, end: 168_000 },
 };
 
 // ── 2026 Contribution limits ──────────────────────────────────────────────────
 export const TRAD_401K_LIMIT_2026    = 24_500; // employee elective deferral, under 50
-export const CATCHUP_401K_2026       =  7_500; // 401k catch-up addition, age 50+
+export const CATCHUP_401K_2026       =  8_000; // 401k catch-up addition, age 50+ (2026; IRS N-25-67)
 export const ROTH_IRA_LIMIT_2026     =  7_500; // Roth IRA annual limit, under 50
 export const CATCHUP_ROTH_2026       =  1_000; // Roth IRA catch-up addition, age 50+
-export const HSA_LIMIT_2026          =  4_300; // HSA self-only annual limit
-export const LIMIT_415C_2026         = 70_000; // 415(c) combined employer+employee, under 50
-export const LIMIT_415C_CATCHUP_2026 = 77_500; // 415(c) combined, age 50+ (with super-catchup)
+export const HSA_LIMIT_2026          =  4_400; // HSA self-only annual limit (2026; Rev. Proc. 2025-19)
+export const LIMIT_415C_2026         = 72_000; // 415(c) combined employer+employee, under 50 (2026)
+export const LIMIT_415C_CATCHUP_2026 = 80_000; // 415(c) 72,000 + 8,000 age-50 catch-up (2026; 60–63 super-catchup = 83,250)
 export const CATCHUP_AGE             =     50; // age at which catch-up contributions begin
 
 // ── FICA ──────────────────────────────────────────────────────────────────────
-export const FICA_RATE       = 0.0765;    // employee share: 6.2% SS + 1.45% Medicare
-export const FICA_WAGE_BASE  = 168_600;   // 2026 Social Security wage base
+// FICA has three pieces with DIFFERENT caps (do not lump them — see tax-basis.js):
+//   • Social Security 6.2% — capped at the SS wage base (benefits are also capped).
+//   • Medicare 1.45% — UNCAPPED (every dollar of wages; cap removed in 1994).
+//   • Additional Medicare 0.9% — on wages ABOVE a filing-status threshold (ACA, 2013).
+export const FICA_RATE       = 0.0765;    // legacy combined employee share (6.2% + 1.45%); below the
+                                          // wage base only — kept for the under-base default path.
+export const FICA_WAGE_BASE  = 184_500;   // 2026 Social Security wage base (SSA; 2025 was 176,100, 2024 168,600)
+export const SS_TAX_RATE     = 0.062;     // Social Security employee share (capped at wage base)
+export const MEDICARE_RATE   = 0.0145;    // Medicare employee share (uncapped)
+export const ADDL_MEDICARE_RATE      = 0.009;   // Additional Medicare surtax above the threshold
+export const ADDL_MEDICARE_THRESHOLD = {        // wages above which the 0.9% surtax applies
+  single: 200_000, mfj: 250_000, mfs: 125_000, hoh: 200_000,
+};
 
 // ── RMD ───────────────────────────────────────────────────────────────────────
 export const RMD_START_AGE = 73; // SECURE 2.0: RMDs begin at 73
@@ -103,9 +114,9 @@ export const SS_FACTORS = {
   67: 1.000, 68: 1.080, 69: 1.160, 70: 1.240,
 };
 
-// PIA bend points (monthly AIME thresholds, 2026)
-export const SS_BEND1 = 1_226;
-export const SS_BEND2 = 7_391;
+// PIA bend points (monthly AIME thresholds, 2026 eligibility year; indexed to AWI)
+export const SS_BEND1 = 1_286;
+export const SS_BEND2 = 7_749;
 
 // ── RMD Tables ────────────────────────────────────────────────────────────────
 
@@ -152,11 +163,11 @@ export const STATE_TAX = {
   AZ: { name: "Arizona",           rate: 0.025 }, AR: { name: "Arkansas",          rate: 0.044 },
   CA: { name: "California",        rate: 0.093 }, CO: { name: "Colorado",          rate: 0.044 },
   CT: { name: "Connecticut",       rate: 0.065 }, DE: { name: "Delaware",          rate: 0.066 },
-  FL: { name: "Florida",           rate: 0.000 }, GA: { name: "Georgia",           rate: 0.055 },
+  FL: { name: "Florida",           rate: 0.000 }, GA: { name: "Georgia",           rate: 0.0499 },
   HI: { name: "Hawaii",            rate: 0.090 }, ID: { name: "Idaho",             rate: 0.058 },
   IL: { name: "Illinois",          rate: 0.049 }, IN: { name: "Indiana",           rate: 0.030 },
   IA: { name: "Iowa",              rate: 0.057 }, KS: { name: "Kansas",            rate: 0.057 },
-  KY: { name: "Kentucky",          rate: 0.045 }, LA: { name: "Louisiana",         rate: 0.030 },
+  KY: { name: "Kentucky",          rate: 0.035 }, LA: { name: "Louisiana",         rate: 0.030 },
   ME: { name: "Maine",             rate: 0.075 }, MD: { name: "Maryland",          rate: 0.055 },
   MA: { name: "Massachusetts",     rate: 0.050 }, MI: { name: "Michigan",          rate: 0.042 },
   MN: { name: "Minnesota",         rate: 0.098 }, MS: { name: "Mississippi",       rate: 0.047 },
@@ -169,7 +180,7 @@ export const STATE_TAX = {
   OR: { name: "Oregon",            rate: 0.099 }, PA: { name: "Pennsylvania",      rate: 0.031 },
   RI: { name: "Rhode Island",      rate: 0.060 }, SC: { name: "South Carolina",    rate: 0.065 },
   SD: { name: "South Dakota",      rate: 0.000 }, TN: { name: "Tennessee",         rate: 0.000 },
-  TX: { name: "Texas",             rate: 0.000 }, UT: { name: "Utah",              rate: 0.046 },
+  TX: { name: "Texas",             rate: 0.000 }, UT: { name: "Utah",              rate: 0.045 },
   VT: { name: "Vermont",           rate: 0.066 }, VA: { name: "Virginia",          rate: 0.058 },
   WA: { name: "Washington",        rate: 0.000 }, WV: { name: "West Virginia",     rate: 0.065 },
   WI: { name: "Wisconsin",         rate: 0.075 }, WY: { name: "Wyoming",           rate: 0.000 },
@@ -189,14 +200,14 @@ export const RETIREMENT_STATE_TAX = {
   CT: { name: "Connecticut",       rate: 0.065, note: "Taxes 401k/IRA; ~6.5%; 50–75% of SS exempt" },
   DE: { name: "Delaware",          rate: 0.066, note: "Taxes 401k/IRA; top 6.6%; $12.5k exclusion age 60+" },
   FL: { name: "Florida",           rate: 0.000, note: "No state income tax" },
-  GA: { name: "Georgia",           rate: 0.054, note: "Flat 5.39% 2026; retirement exclusion up to $65k age 65+" },
-  HI: { name: "Hawaii",            rate: 0.000, note: "Fully exempts 401k/IRA/pension distributions" },
+  GA: { name: "Georgia",           rate: 0.0499, note: "Flat 4.99% 2026; retirement exclusion up to $65k age 65+" },
+  HI: { name: "Hawaii",            rate: 0.075, note: "Taxes 401k/IRA (graduated to 11%); exempts employer-funded pensions only — NOT 401k/IRA; ~7.5% effective" },
   ID: { name: "Idaho",             rate: 0.053, note: "Flat 5.3% on all income incl. 401k/IRA" },
   IL: { name: "Illinois",          rate: 0.000, note: "4.95% income tax but fully exempts 401k/IRA/pension/SS" },
   IN: { name: "Indiana",           rate: 0.030, note: "Flat 2.95% 2026; taxes 401k/IRA; $1k exemption age 65+" },
   IA: { name: "Iowa",              rate: 0.000, note: "Flat 3.9% but fully exempts retirement income age 55+" },
-  KS: { name: "Kansas",            rate: 0.057, note: "Taxes 401k/IRA; top rate 5.7%; SS exempt" },
-  KY: { name: "Kentucky",          rate: 0.040, note: "Flat 4.0% 2026; taxes 401k/IRA; $31k pension exclusion" },
+  KS: { name: "Kansas",            rate: 0.056, note: "Taxes 401k/IRA; top rate 5.58% 2026; SS exempt" },
+  KY: { name: "Kentucky",          rate: 0.035, note: "Flat 3.5% 2026; taxes 401k/IRA; $31k pension exclusion" },
   LA: { name: "Louisiana",         rate: 0.030, note: "Flat 3% 2026; taxes 401k/IRA" },
   ME: { name: "Maine",             rate: 0.075, note: "Taxes 401k/IRA; ~7.5% at typical retirement income" },
   MD: { name: "Maryland",          rate: 0.048, note: "Taxes 401k/IRA; ~4.8%; $36.2k exclusion age 65+" },
@@ -206,7 +217,7 @@ export const RETIREMENT_STATE_TAX = {
   MS: { name: "Mississippi",       rate: 0.000, note: "4% income tax but fully exempts 401k/IRA/pension" },
   MO: { name: "Missouri",          rate: 0.048, note: "Taxes 401k/IRA; top 4.8%; SS fully exempt" },
   MT: { name: "Montana",           rate: 0.057, note: "Taxes 401k/IRA; top 5.65% 2026; $5,500 retirement deduction" },
-  NE: { name: "Nebraska",          rate: 0.046, note: "Flat 4.55% 2026; taxes 401k/IRA; SS exempt" },
+  NE: { name: "Nebraska",          rate: 0.046, note: "Top rate 4.55% 2026 (graduated); taxes 401k/IRA; SS exempt" },
   NV: { name: "Nevada",            rate: 0.000, note: "No state income tax" },
   NH: { name: "New Hampshire",     rate: 0.000, note: "No state income tax (I&D tax repealed 2025)" },
   NJ: { name: "New Jersey",        rate: 0.063, note: "Taxes 401k/IRA; ~6.3%; pension exclusion up to $100k" },
@@ -215,7 +226,7 @@ export const RETIREMENT_STATE_TAX = {
   NC: { name: "North Carolina",    rate: 0.040, note: "Flat 3.99% 2026; taxes 401k/IRA" },
   ND: { name: "North Dakota",      rate: 0.025, note: "Top rate 2.5%; taxes 401k/IRA; very low burden" },
   OH: { name: "Ohio",              rate: 0.028, note: "Flat 2.75% 2026; taxes 401k/IRA" },
-  OK: { name: "Oklahoma",          rate: 0.048, note: "Top rate 4.75% 2026; taxes 401k/IRA" },
+  OK: { name: "Oklahoma",          rate: 0.045, note: "Top rate 4.5% 2026 (HB 2764); taxes 401k/IRA" },
   OR: { name: "Oregon",            rate: 0.099, note: "Taxes 401k/IRA; ~9.9%; up to $7,500 credit available" },
   PA: { name: "Pennsylvania",      rate: 0.000, note: "3.07% income tax but fully exempts 401k/IRA/pension age 60+" },
   RI: { name: "Rhode Island",      rate: 0.048, note: "Taxes 401k/IRA; top rate 4.75%; SS partially taxed" },
@@ -223,7 +234,7 @@ export const RETIREMENT_STATE_TAX = {
   SD: { name: "South Dakota",      rate: 0.000, note: "No state income tax" },
   TN: { name: "Tennessee",         rate: 0.000, note: "No state income tax" },
   TX: { name: "Texas",             rate: 0.000, note: "No state income tax" },
-  UT: { name: "Utah",              rate: 0.046, note: "Flat 4.55%; taxes 401k/IRA; retirement tax credit available" },
+  UT: { name: "Utah",              rate: 0.045, note: "Flat 4.5% 2026; taxes 401k/IRA; retirement tax credit available" },
   VT: { name: "Vermont",           rate: 0.066, note: "Taxes 401k/IRA; ~6.6% at typical retirement income" },
   VA: { name: "Virginia",          rate: 0.058, note: "Taxes 401k/IRA; top 5.75%; $12k age deduction age 65+" },
   WA: { name: "Washington",        rate: 0.000, note: "No state income tax (cap gains tax N/A to retirement accts)" },
@@ -233,33 +244,41 @@ export const RETIREMENT_STATE_TAX = {
   DC: { name: "Dist. of Columbia", rate: 0.085, note: "Taxes 401k/IRA; ~8.5% at typical retirement income" },
 };
 
-// ── ACA / Marketplace Insurance (2026 estimated FPL) ─────────────────────────
-export const ACA_FPL_2026 = {
-  1: 15_060, 2: 20_440, 3: 25_820, 4: 31_200,
-  5: 36_580, 6: 41_960,
+// ── ACA / Marketplace federal poverty levels ─────────────────────────────────
+// ACA premium-subsidy eligibility for a plan year is measured against the FPL guidelines
+// PUBLISHED IN THE PRIOR CALENDAR YEAR. So 2026 marketplace coverage uses the
+// 2025-published HHS guidelines (below) — NOT the 2026-published set. (48 contiguous
+// states + DC; HHS/ASPE, Federal Register 2025-01377.)
+// REFRESH RULE: for plan year N, use the guidelines published in year N−1. For 2027
+// coverage, advance to the 2026-published set (1=15,960, 2=21,640, … 6=44,360).
+export const ACA_FPL_2026 = {           // 2025-published HHS guidelines → govern 2026 coverage
+  1: 15_650, 2: 21_150, 3: 26_650, 4: 32_150,
+  5: 37_650, 6: 43_150,
 };
 export const ACA_CLIFF_PCT  = 400; // subsidy disappears at 400% FPL
 
 // ── Medicare IRMAA 2026 ───────────────────────────────────────────────────────
 // 2-year lookback: IRMAA in 2026 is based on 2024 MAGI.
 // Use these brackets to project future IRMAA from future conversion income.
-// annualSurcharge = monthly surcharge × 12 (per person on Medicare).
+// annualSurcharge = (Part B IRMAA + Part D IRMAA) monthly × 12, per person on Medicare
+// (COMBINED B+D basis). 2026 per-tier monthly surcharges (Part B + Part D):
+//   81.20+14.50, 202.90+37.50, 324.60+60.40, 446.30+83.30, 487.00+91.00.
 export const IRMAA_BRACKETS_2026 = {
   single: [
     { magi:       0, annualSurcharge:     0 },
-    { magi: 103_000, annualSurcharge: 1_044 },
-    { magi: 129_000, annualSurcharge: 2_640 },
-    { magi: 161_000, annualSurcharge: 4_224 },
-    { magi: 193_000, annualSurcharge: 5_820 },
-    { magi: 500_000, annualSurcharge: 6_708 },
+    { magi: 109_000, annualSurcharge: 1_148 },
+    { magi: 137_000, annualSurcharge: 2_885 },
+    { magi: 171_000, annualSurcharge: 4_620 },
+    { magi: 205_000, annualSurcharge: 6_355 },
+    { magi: 500_000, annualSurcharge: 6_936 },
   ],
   mfj: [
     { magi:       0, annualSurcharge:     0 },
-    { magi: 206_000, annualSurcharge: 1_044 },
-    { magi: 258_000, annualSurcharge: 2_640 },
-    { magi: 322_000, annualSurcharge: 4_224 },
-    { magi: 386_000, annualSurcharge: 5_820 },
-    { magi: 750_000, annualSurcharge: 6_708 },
+    { magi: 218_000, annualSurcharge: 1_148 },
+    { magi: 274_000, annualSurcharge: 2_885 },
+    { magi: 342_000, annualSurcharge: 4_620 },
+    { magi: 410_000, annualSurcharge: 6_355 },
+    { magi: 750_000, annualSurcharge: 6_936 },
   ],
 };
 export const MEDICARE_AGE = 65;
