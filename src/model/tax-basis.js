@@ -59,8 +59,9 @@ export function calcTaxBasis({
   const takeHome        = householdIncome - fedTax - stateTax - fica - safeDeduc;
   const combinedEffRate = (fedTax + stateTax + fica) / (householdIncome || 1);
 
-  // Roth phase-out tests combined MAGI for MFJ, primary-only otherwise (BUG-12).
-  const rothMAGI            = isMFJ ? combinedIncome : currentIncome;
+  // Roth phase-out tests MAGI ≈ AGI (nets out pre-tax 401k/HSA, so heavy savers aren't
+  // phased out too early). `agi` already encodes MFJ-combined vs primary-only (BUG-12).
+  const rothMAGI            = agi;
   const rothPhaseout        = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
   const rothPhaseoutWarning = rothMAGI >= rothPhaseout.start;
   const rothFullyPhased     = rothMAGI >= rothPhaseout.end;

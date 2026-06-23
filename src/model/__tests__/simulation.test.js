@@ -53,8 +53,8 @@ describe("runSimulation — IRS limits", () => {
   });
 
   it("Roth phases out linearly between $153K and $168K", () => {
-    // Income right in the middle of phase-out
-    const rows = defaultSim({ currentIncome: 160_500, incomeGrowth: 0, contribRoth: 7_500 });
+    // Income right in the middle of phase-out. No pre-tax deductions → MAGI = gross income.
+    const rows = defaultSim({ currentIncome: 160_500, incomeGrowth: 0, contribRoth: 7_500, contrib401k: 0, contribHSA: 0 });
     const year1 = rows[0];
     expect(year1.cRoth).toBeGreaterThan(0);
     expect(year1.cRoth).toBeLessThan(7_500);
@@ -62,13 +62,13 @@ describe("runSimulation — IRS limits", () => {
 
   it("in-band phase-out reduces the LIMIT, not the desired amount (review fix)", () => {
     // MAGI $156K, single band $153K–$168K → phasePct 0.8 → reduced limit = 7,500 × 0.8 = 6,000.
-    // A contributor BELOW the reduced limit gets their FULL desired amount; one above it is
-    // capped AT the reduced limit. The old bug scaled the desired amount itself (× 0.8), so it
-    // would have returned 2,400 and 5,600 here — wrongly denying legal contributions.
-    const below = defaultSim({ currentIncome: 156_000, incomeGrowth: 0, contribRoth: 3_000 })[0];
+    // No pre-tax deductions → MAGI = gross income. A contributor BELOW the reduced limit gets
+    // their FULL desired amount; one above it is capped AT the reduced limit. The old bug scaled
+    // the desired amount itself (× 0.8), so it would have returned 2,400 and 5,600 — wrongly denied.
+    const below = defaultSim({ currentIncome: 156_000, incomeGrowth: 0, contribRoth: 3_000, contrib401k: 0, contribHSA: 0 })[0];
     expect(below.cRoth).toBe(3_000);   // under the 6,000 reduced limit → full desired (was 2,400)
 
-    const above = defaultSim({ currentIncome: 156_000, incomeGrowth: 0, contribRoth: 7_000 })[0];
+    const above = defaultSim({ currentIncome: 156_000, incomeGrowth: 0, contribRoth: 7_000, contrib401k: 0, contribHSA: 0 })[0];
     expect(above.cRoth).toBe(6_000);   // capped at the reduced limit (was 5,600)
   });
 

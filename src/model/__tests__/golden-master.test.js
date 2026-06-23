@@ -137,14 +137,14 @@ const E = {
   ssAnnualBenefit:      48_120,     // higher PIA from 2026 bend points (was 46_968)
   retTrad401k:          2_120_026,   // GROSS (BUG-35; was 1_653_620 after-tax)
   retTradGross:         2_120_026,
-  retRoth:              587_692,     // 2026 Roth phase-out band 153–168k shifts in-band contribution years (was 576_295)
+  retRoth:              659_072,     // AGI-net Roth MAGI: pre-tax deductions delay the phase-out → more in-band Roth (was 587_692)
   retTaxable:           836_477,
   retHSA:               420_280,
-  totalAtRet:           3_964_475,   // gross (+retRoth delta; was 3_953_078)
-  spendableAtRet:       3_582_799,   // larger portfolio (was 3_574_967)
+  totalAtRet:           4_035_855,   // gross (+retRoth delta; was 3_964_475)
+  spendableAtRet:       3_654_179,   // larger portfolio (was 3_582_799)
   effectiveExpenses:    57_377,      // current living spend (was ~104_525 = 3% of portfolio)
   netPortfolioNeed:     57_377,      // ssAtRet = 0 (claims at 67, retires at 65)
-  withdrawalRate:       1.4472786434521596,  // lower draw % on the larger portfolio
+  withdrawalRate:       1.4216814033209817,  // lower draw % on the larger portfolio (AGI-net Roth)
   yearsSustained:       Infinity,    // trivially sustainable at this spend (was 62.9)
   firstRMD:             62_508,      // higher SS floor → less pre-RMD drawdown → higher trad bal at 73 (was 62_279)
   totalRMDs:            1_152_878,   // higher trad bal at 73 → higher lifetime RMDs (was 1_148_650)

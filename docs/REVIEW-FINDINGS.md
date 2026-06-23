@@ -113,11 +113,16 @@ accumulation NaN guard — plus this session's `fvAnnuity` negative-rate fix and
   is illustrative, no Monte Carlo); hardened `formatters.js` for negative/non-finite inputs; file
   type/size validation in `SomedayScreen.jsx`.
 
-**Deferred — owner decision (moves the golden master):**
-- **Roth-MAGI basis** (`tax-basis.js:63` + `simulation.js:65/77`) — the Roth phase-out tests **gross**
-  income, not AGI (which nets out pre-tax 401k/HSA). Display warning and the actual contribution
-  phase-out both use gross *consistently*, so it's a real modeling choice: an AGI-net basis is more
-  correct (MAGI ≈ AGI for deferrers) but shifts `retRoth` and the golden master. Needs an owner call.
+**Resolved — owner decision (2026-06-23): switched to AGI-net.**
+- **Roth-MAGI basis** (`tax-basis.js` + `simulation.js`) — the Roth phase-out tested **gross** income,
+  not AGI (which nets out pre-tax 401k/HSA), phasing heavy savers out of Roth earlier than the IRS
+  would. Owner chose the AGI-net basis. `tax-basis.js` `rothMAGI` is now `agi` (which already encodes
+  MFJ-combined vs primary-only, BUG-12); `simulation.js` hoists a shared `netOrdinaryIncome`
+  (gross − 401k deferral − HSA) used by BOTH the Roth phase-out and the LTCG bracket, so they can't
+  diverge. Deliberate golden-master move (re-locked): `retRoth` 587,692 → 659,072, `totalAtRet`
+  → 4,035,855, `spendableAtRet` → 3,654,179, `withdrawalRate` → 1.42168 (trad-based RMD/conversion
+  unaffected). Band phase-out tests set deductions to 0 (MAGI = gross) to keep their demonstration;
+  BUG-12 test now asserts `rothMAGI === agi`.
 
 **Deferred — minor:** `NumbersScreen.jsx:428` "5% real return" footnote hardcodes the return
 assumption (rule 1/10; correct fix plumbs the real return via `horizonProps`); optional cluster —

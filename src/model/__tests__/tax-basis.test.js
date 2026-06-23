@@ -77,8 +77,11 @@ describe("calcTaxBasis — Roth phase-out is filing-status aware (BUG-12)", () =
     // primary $120k, spouse $200k
     const single = calcTaxBasis({ ...defaults, currentIncome: 120_000, spouseIncome: 200_000 });
     const mfj    = calcTaxBasis({ ...defaults, currentIncome: 120_000, spouseIncome: 200_000, filingStatus: "mfj" });
-    expect(single.rothMAGI).toBe(120_000);      // spouse income excluded
-    expect(mfj.rothMAGI).toBe(320_000);         // combined
+    // Roth MAGI is now the AGI-net basis (nets pre-tax 401k/HSA); agi already encodes the
+    // single=primary-only vs MFJ=combined rule, so rothMAGI === agi for both.
+    expect(single.rothMAGI).toBe(single.agi);          // spouse income excluded (primary AGI only)
+    expect(mfj.rothMAGI).toBe(mfj.agi);                // combined AGI
+    expect(mfj.rothMAGI - single.rothMAGI).toBe(200_000); // MFJ adds the full spouse income
     expect(mfj.rothFullyPhased).toBe(true);     // well above the MFJ end
   });
 });
