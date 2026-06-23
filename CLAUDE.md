@@ -499,6 +499,40 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   doesn't charge the base tax on the SS/pension floor — SS/pension effectively tax-free; inert at
   default, needs income-surplus handling), **BUG-39** (Flow-Down accumulation growth is a residual
   plug, not `Σ(row.growth)` — rule 2b). Next planned work is **PR-B** (per-account detail screen).
+- **Constants correction + whole-codebase-review close-out (2026-06-23, branch
+  `claude/ai-codebase-review-fpigu3` → PR to `main`):** two threads of work landed together.
+  1. **IRS/SSA/state constants audit + correction.** A stale `FICA_WAGE_BASE` (2024's 168,600 under a
+     "2026" label) triggered a full web-sourced audit of `irs-2026.js`; it turned up ~30 more stale
+     dollar figures. All corrected to verified 2026 values: wage base → **184,500**; SS PIA bend points
+     → **1,286 / 7,749**; HoH std deduction → **24,150**; all 8 LTCG thresholds (were 2024); Roth
+     phase-out (single/mfj/hoh, were 2025); 401k catch-up **8,000** / 415(c) **72,000** / +catch-up
+     **80,000** / HSA **4,400**; IRMAA breakpoints+surcharges → 2026 **combined Part B+D** (owner
+     choice); ACA FPL → the **2025-published** set, with a documented prior-year rule (ACA subsidy
+     eligibility for plan year N uses year N−1's FPL — refresh note in the file). State tables: **HI
+     factual fix** (was "fully exempts 401k/IRA" — it taxes them; now 0.075), 2026 rate cuts (KY 3.5,
+     GA 4.99, OK 4.5, UT 4.5), NE "flat"→graduated, KS 5.58. New **`src/config/__tests__/irs-2026.test.js`**
+     integrity guard: structural invariants (ascending brackets, monotonic SS factors, descending RMD
+     divisors, etc.) + value-locks on every verified figure, so a future stale refresh fails loudly.
+     Deliberate golden-master moves (re-locked, all direction-verified): ssAIME 12399→12977,
+     ssAnnualBenefit 45,924→48,120, firstRMD →62,508, totalRMDs →1,152,878, rmdTaxBite →207,557,
+     `retRoth` →659,072, `totalAtRet` →4,035,855, `spendableAtRet` →3,654,179, `withdrawalRate`
+     →1.42168, `netConversionBenefit` →−9,854. Full detail: `docs/BUGS.md` (2026-06-23 batch).
+  2. **Whole-codebase AI review (CodeRabbit + Gemini) — both passes closed.** The review was run as 3
+     layer PRs (#34 Model / #35 View / #36 Shell) against an empty `review-base` so the bots saw whole
+     files; setup in `docs/REVIEW-GUIDE.md` + `.coderabbit.yaml`, findings consolidated + triaged in
+     **`docs/REVIEW-FINDINGS.md`** (first + second pass). ~50% of bot volume was false positives
+     (filtered with reasons). Real fixes landed this session: `optWR` SS/pension claim-age gating
+     (rule 5b); `marginalRate` 0 below the standard deduction; spouse income plateau at
+     `incomeGrowthEndAge`; **Roth phase-out switched to AGI-net MAGI** (was gross — owner-approved,
+     moved `retRoth`, shared `netOrdinaryIncome` used by both the phase-out and the LTCG bracket);
+     `fvAnnuity` negative-rate; shared `claimFactor()` SS clamp; defensive NaN/negative guards
+     (employer-match, healthcare, conversion-planning, budget, tax-basis/money-events defaults);
+     removed a **fabricated "9 in 10 markets" probability** from the arc (rule 6 — no Monte Carlo);
+     formatter hardening; file-upload validation; keyboard-a11y (`kbActivate` + StatCard/Settings);
+     money-event age clamp-on-blur; NumbersScreen footnote now shows the real `returnRate`. The 3
+     review PRs were **closed** (vehicles, not merge candidates); `review/*` + `review-base` branches
+     remain for reference. Intentionally deferred (documented in REVIEW-FINDINGS.md): cosmetic
+     micro-perf nits only. Suite **481 tests**, lint clean, production build OK.
 
 ## Commands
 

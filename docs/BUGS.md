@@ -85,7 +85,7 @@ residual — removing the clamp let negative real growth through, but the value 
 
 ---
 
-### Constants-correctness + latent-bug batch (2026-06-17)
+### Constants-correctness + latent-bug batch (2026-06-23)
 
 **Source:** owner-directed follow-up to the whole-codebase review — verify the IRS/SSA constants
 against authoritative 2026 values (so a 2027 refresh is a clean re-import) and clear remaining
@@ -150,7 +150,7 @@ independently re-verified corrections were applied in this batch (golden master 
     keep their original intent under the new thresholds). Verified figures value-locked in the new
     `irs-2026.test.js` so they fail loudly next refresh.
 
-**ACA FPL + IRMAA — RESOLVED (owner decisions, 2026-06-17).** Both were design forks, now settled:
+**ACA FPL + IRMAA — RESOLVED (owner decisions, 2026-06-23).** Both were design forks, now settled:
   - **ACA FPL (`ACA_FPL_2026`)** — was the **2024** guidelines (wrong). Owner chose the model-correct
     *prior-year* basis: ACA subsidy eligibility for a plan year uses the FPL guidelines published the
     prior calendar year, so 2026 coverage uses the **2025-published** HHS set (1=15,650 … 6=43,150,
@@ -168,7 +168,7 @@ independently re-verified corrections were applied in this batch (golden master 
     fixtures that hardcoded the old ACA/IRMAA values were retargeted; new figures value-locked in
     `irs-2026.test.js`. Every ❌ the federal/SSA audit found is fixed or owner-decided.
 
-**State-tax tables — audited + corrected (2026-06-17).** A follow-up agent audited `STATE_TAX` +
+**State-tax tables — audited + corrected (2026-06-23).** A follow-up agent audited `STATE_TAX` +
 `RETIREMENT_STATE_TAX` (51 jurisdictions × 2) against 2026 law. These are modeling *approximations*,
 so the bar was "factually correct note / reasonable 2026 figure," not bracket-exact. Found + fixed
 (all verified vs Tax Foundation 2026 + state sources; all inert at the default state → golden master
