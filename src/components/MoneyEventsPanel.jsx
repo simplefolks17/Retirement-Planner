@@ -63,7 +63,10 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
             style={inputStyle} type="number" min={currentAge} max={120}
             placeholder="Age"
             value={ev.age}
-            onChange={e => update(ev.id, "age", Math.max(currentAge, Number(e.target.value)))}
+            // Free typing on change; clamp to [currentAge, …] on blur so passing through a
+            // transient low value (e.g. typing "6" before "65") doesn't snap the field.
+            onChange={e => update(ev.id, "age", Number(e.target.value))}
+            onBlur={e => update(ev.id, "age", Math.max(currentAge, Number(e.target.value) || currentAge))}
           />
           <select
             style={{ ...inputStyle, width: "auto", padding: "4px 6px" }}

@@ -858,6 +858,8 @@ export default function App() {
     taxView: taxViewBundle,
     // WI-2.6 (#96): retirement money-flow bands — sum exactly to effectiveExpenses.
     retIncomeFlow,
+    // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
+    returnRate,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -871,7 +873,7 @@ export default function App() {
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,
        // WI-2.6 retirement money-flow bands (memoized separately):
-       retIncomeFlow]);
+       retIncomeFlow, returnRate]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

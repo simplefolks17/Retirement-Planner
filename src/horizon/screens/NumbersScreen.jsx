@@ -242,6 +242,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
     budget, taxView,
     // WI-2.6 — retirement money-flow bands (sum exactly to effectiveExpenses).
     retIncomeFlow,
+    returnRate,   // raw assumption for the Statement footnote
   } = props;
 
   const [tab, setTab] = useState(initialTab ?? "statement");
@@ -425,7 +426,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
             }}>
               {[
                 `1 Eff. federal rate ${sv.effFedRatePct == null ? "—" : `${sv.effFedRatePct}%`}.`,
-                "2 5% real return, contributions to retirement.",
+                `2 ${returnRate}% annual return, contributions to retirement.`,
                 "3 Claimed at Social Security age."
               ].map((f, i) => (
                 <span key={i} style={{ font: `400 11px ${SERIF}`, color: t.faint }}>{f}</span>

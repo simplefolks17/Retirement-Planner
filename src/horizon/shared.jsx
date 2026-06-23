@@ -19,11 +19,19 @@ export function fmtMo(annual) {
 // onClick (optional, WI-1.1): makes the card a door to the screen that explains
 // its number. The card's natural size (~70px tall) already exceeds the 44px
 // minimum touch target; minHeight guards it if padding ever shrinks.
+// Keyboard activation for click-driven divs: fire on Enter/Space like a real button.
+// Pair with role="button" + tabIndex={0} so a div control is keyboard-accessible.
+export const kbActivate = (fn) => (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
+};
+
 export function StatCard({ t, label, value, accent, warm, large, onClick }) {
   return (
     <div
       onClick={onClick}
       role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? kbActivate(onClick) : undefined}
       style={{
         flex: 1,
         background: warm ? `${t.warm}12` : t.surf,
