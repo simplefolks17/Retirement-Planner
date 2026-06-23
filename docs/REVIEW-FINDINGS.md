@@ -84,3 +84,47 @@ One-walk / gross-seeded / taxed-once (rule 2/2b/3) holds; per-year `netPortfolio
 correct everywhere; MFJ combined income + per-earner FICA (rules 4/9); model layer is pure (rule 6); `horizonProps` and
 all sub-bundles memoized with honest deps and enforced by `horizon-props-stability.test.js` (rule/BUG-22, V9); no screen
 reads a field App doesn't provide; the historical `totalAtRet × 0.92` fake-number class is gone (WI-0.1 landed).
+
+---
+
+# Second pass — re-synced PRs, triaged 2026-06-23
+
+After the first-pass fixes, the three layer PRs (#34/#35/#36) were re-synced to HEAD and the bots
+re-ran (commits `341bee3`/`309e4e2`/`d4026e3`). Those second-pass findings sat un-triaged until now.
+Re-triaged against the **current branch HEAD** (which also carries this session's full IRS/SSA/state
+constants correction). Headline: **most genuinely-valid bugs were already fixed on the branch**; the
+remainder was a short tail of correctness + defensive items, and again ~half the bot volume was noise.
+
+**Already fixed before this triage** (re-flagged but resolved): catch-up off-by-one, Roth phase-out
+limit-scaling, ACA cliff `>=`→`>`, both roth-conversion guards, withdrawal-order LTCG floor, the
+NumbersScreen rule-10 tax-percentage math, the action-cards flat-match guard + hardcoded ages,
+accumulation NaN guard — plus this session's `fvAnnuity` negative-rate fix and the shared
+`claimFactor()` SS clamp (the "spouseClaimingAge rounding" finding).
+
+**Fixed in this triage** (all inert at the default → golden master unchanged; suite 478 → 481):
+- *Model (correctness):* `optimization.js` `optWR` now gates SS/pension by claim/start age (rule 5b;
+  was understating the optimized withdrawal rate) + `yearsToRet` `Math.max(1→0)`; `taxes.js`
+  `marginalRate` returns 0 below the standard deduction (was the 10% bracket — corrected the test that
+  locked it); `simulation.js` spouse income plateaus at `incomeGrowthEndAge` like the primary.
+- *Model (defensive):* negative-input clamp (`employer-match.js`), `personOnMedicare` finite-guard
+  (`healthcare.js`), bracket-fill `Number.isFinite` guard (`conversion-planning.js`), monthly `?? 0`
+  guards (`budget.js`), safe param defaults (`tax-basis.js`, `money-events.js`).
+- *View:* removed the fabricated "9 in 10 markets" probability from `ArcGraph.jsx` (rule 6 — the cone
+  is illustrative, no Monte Carlo); hardened `formatters.js` for negative/non-finite inputs; file
+  type/size validation in `SomedayScreen.jsx`.
+
+**Deferred — owner decision (moves the golden master):**
+- **Roth-MAGI basis** (`tax-basis.js:63` + `simulation.js:65/77`) — the Roth phase-out tests **gross**
+  income, not AGI (which nets out pre-tax 401k/HSA). Display warning and the actual contribution
+  phase-out both use gross *consistently*, so it's a real modeling choice: an AGI-net basis is more
+  correct (MAGI ≈ AGI for deferrers) but shifts `retRoth` and the golden master. Needs an owner call.
+
+**Deferred — minor:** `NumbersScreen.jsx:428` "5% real return" footnote hardcodes the return
+assumption (rule 1/10; correct fix plumbs the real return via `horizonProps`); optional cluster —
+keyboard-a11y on click-divs, `MoneyEventsPanel` clamp-on-change→on-blur, small perf/structure nits.
+
+**Not actionable:** `tax-basis.js` FICA "includes spouse for non-MFJ" (FALSE — rule 9, FICA is always
+per-earner); `vite` `node`→`jsdom` (FALSE — `react-test-renderer` needs no DOM); the `useState` /
+display-division / pixel-layout "rule-10" flags (cross-layer contract allows them). No new KNOWN
+(BUG-36/37/38/39) re-files. Note: Gemini's GitHub reviewer is being sunset (new installs blocked
+2026-06-18; activity ends 2026-07-17).
