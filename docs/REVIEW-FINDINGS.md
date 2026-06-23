@@ -124,9 +124,18 @@ accumulation NaN guard — plus this session's `fvAnnuity` negative-rate fix and
   unaffected). Band phase-out tests set deductions to 0 (MAGI = gross) to keep their demonstration;
   BUG-12 test now asserts `rothMAGI === agi`.
 
-**Deferred — minor:** `NumbersScreen.jsx:428` "5% real return" footnote hardcodes the return
-assumption (rule 1/10; correct fix plumbs the real return via `horizonProps`); optional cluster —
-keyboard-a11y on click-divs, `MoneyEventsPanel` clamp-on-change→on-blur, small perf/structure nits.
+**Resolved — minor polish (2026-06-23):**
+- `NumbersScreen` footnote now shows the real `returnRate` assumption (threaded via `horizonProps`)
+  instead of a hardcoded/mislabeled "5% real return" (rule 1/10).
+- Keyboard-a11y: new shared `kbActivate()` helper; `StatCard` (Plan-screen stat cards) and the
+  `SettingsScreen` palette/theme/arc selectors are now keyboard-activatable (role=button, tabIndex,
+  Enter/Space, aria-pressed).
+- `MoneyEventsPanel` age input clamps on blur (free typing on change).
+
+**Still deferred — intentional (cosmetic, regression-risk-without-benefit; revisit post-merge):** the
+micro-perf/structure nits only — hoisting the nested `Seg` component, moving one bottom-of-file
+import to the top, and injecting Horizon fonts via CSS rather than during render. No correctness or
+a11y impact; left out of the pre-merge batch deliberately.
 
 **Not actionable:** `tax-basis.js` FICA "includes spouse for non-MFJ" (FALSE — rule 9, FICA is always
 per-earner); `vite` `node`→`jsdom` (FALSE — `react-test-renderer` needs no DOM); the `useState` /
