@@ -244,33 +244,41 @@ export const RETIREMENT_STATE_TAX = {
   DC: { name: "Dist. of Columbia", rate: 0.085, note: "Taxes 401k/IRA; ~8.5% at typical retirement income" },
 };
 
-// ── ACA / Marketplace Insurance (2026 estimated FPL) ─────────────────────────
-export const ACA_FPL_2026 = {
-  1: 15_060, 2: 20_440, 3: 25_820, 4: 31_200,
-  5: 36_580, 6: 41_960,
+// ── ACA / Marketplace federal poverty levels ─────────────────────────────────
+// ACA premium-subsidy eligibility for a plan year is measured against the FPL guidelines
+// PUBLISHED IN THE PRIOR CALENDAR YEAR. So 2026 marketplace coverage uses the
+// 2025-published HHS guidelines (below) — NOT the 2026-published set. (48 contiguous
+// states + DC; HHS/ASPE, Federal Register 2025-01377.)
+// REFRESH RULE: for plan year N, use the guidelines published in year N−1. For 2027
+// coverage, advance to the 2026-published set (1=15,960, 2=21,640, … 6=44,360).
+export const ACA_FPL_2026 = {           // 2025-published HHS guidelines → govern 2026 coverage
+  1: 15_650, 2: 21_150, 3: 26_650, 4: 32_150,
+  5: 37_650, 6: 43_150,
 };
 export const ACA_CLIFF_PCT  = 400; // subsidy disappears at 400% FPL
 
 // ── Medicare IRMAA 2026 ───────────────────────────────────────────────────────
 // 2-year lookback: IRMAA in 2026 is based on 2024 MAGI.
 // Use these brackets to project future IRMAA from future conversion income.
-// annualSurcharge = monthly surcharge × 12 (per person on Medicare).
+// annualSurcharge = (Part B IRMAA + Part D IRMAA) monthly × 12, per person on Medicare
+// (COMBINED B+D basis). 2026 per-tier monthly surcharges (Part B + Part D):
+//   81.20+14.50, 202.90+37.50, 324.60+60.40, 446.30+83.30, 487.00+91.00.
 export const IRMAA_BRACKETS_2026 = {
   single: [
     { magi:       0, annualSurcharge:     0 },
-    { magi: 103_000, annualSurcharge: 1_044 },
-    { magi: 129_000, annualSurcharge: 2_640 },
-    { magi: 161_000, annualSurcharge: 4_224 },
-    { magi: 193_000, annualSurcharge: 5_820 },
-    { magi: 500_000, annualSurcharge: 6_708 },
+    { magi: 109_000, annualSurcharge: 1_148 },
+    { magi: 137_000, annualSurcharge: 2_885 },
+    { magi: 171_000, annualSurcharge: 4_620 },
+    { magi: 205_000, annualSurcharge: 6_355 },
+    { magi: 500_000, annualSurcharge: 6_936 },
   ],
   mfj: [
     { magi:       0, annualSurcharge:     0 },
-    { magi: 206_000, annualSurcharge: 1_044 },
-    { magi: 258_000, annualSurcharge: 2_640 },
-    { magi: 322_000, annualSurcharge: 4_224 },
-    { magi: 386_000, annualSurcharge: 5_820 },
-    { magi: 750_000, annualSurcharge: 6_708 },
+    { magi: 218_000, annualSurcharge: 1_148 },
+    { magi: 274_000, annualSurcharge: 2_885 },
+    { magi: 342_000, annualSurcharge: 4_620 },
+    { magi: 410_000, annualSurcharge: 6_355 },
+    { magi: 750_000, annualSurcharge: 6_936 },
   ],
 };
 export const MEDICARE_AGE = 65;

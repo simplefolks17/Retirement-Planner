@@ -115,6 +115,18 @@ describe("irs-2026 — verified 2026 published values (audit 2026-06-17)", () =>
     expect(ROTH_PHASEOUT_2026.single.start).toBe(153_000);
     expect(ROTH_PHASEOUT_2026.mfj.start).toBe(242_000);
   });
+
+  it("ACA FPL holds the 2025-published set (governs 2026 coverage — prior-year rule)", () => {
+    expect(ACA_FPL_2026[1]).toBe(15_650);
+    expect(ACA_FPL_2026[4]).toBe(32_150);
+  });
+
+  it("IRMAA 2026 thresholds + combined Part B+D surcharges", () => {
+    expect(IRMAA_BRACKETS_2026.single[1].magi).toBe(109_000);
+    expect(IRMAA_BRACKETS_2026.mfj[1].magi).toBe(218_000);
+    expect(IRMAA_BRACKETS_2026.single[1].annualSurcharge).toBe(1_148);
+    expect(IRMAA_BRACKETS_2026.single[5].annualSurcharge).toBe(6_936);
+  });
 });
 
 describe("irs-2026 — FICA rate consistency", () => {

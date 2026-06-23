@@ -150,18 +150,25 @@ independently re-verified corrections were applied in this batch (golden master 
     keep their original intent under the new thresholds). Verified figures value-locked in the new
     `irs-2026.test.js` so they fail loudly next refresh.
 
-**⚠️ Two items still need an owner decision (design forks, not stale-value questions):**
-  - **ACA FPL (`ACA_FPL_2026`)** — the in-code values are the **2024** poverty guidelines (wrong either
-    way). Open question: hold the *published-2026* HHS set (1=15,960 … 6=44,360) or the
-    *marketplace-applicable* prior-year (2025) set that subsidy eligibility for 2026 coverage actually
-    uses (1=15,650 …). Affects the conversion-window ACA-cliff warning.
-  - **IRMAA (`IRMAA_BRACKETS_2026`)** — MAGI breakpoints are stale 2025 (single 103k/129k/161k/193k →
-    2026 109k/137k/171k/205k; mfj similarly) AND the surcharge column currently holds 2025 combined
-    Part B+D figures. Open question: keep the **Part B + Part D combined** basis (matches current
-    intent, full retiree cost) or switch to **Part B only**, before re-importing the 2026 surcharges.
-
-  Both feed the default `netConversionBenefit` via conversion-cost rollup, so they'll move the golden
-  master once decided. Tracked for a follow-up commit.
+**ACA FPL + IRMAA — RESOLVED (owner decisions, 2026-06-17).** Both were design forks, now settled:
+  - **ACA FPL (`ACA_FPL_2026`)** — was the **2024** guidelines (wrong). Owner chose the model-correct
+    *prior-year* basis: ACA subsidy eligibility for a plan year uses the FPL guidelines published the
+    prior calendar year, so 2026 coverage uses the **2025-published** HHS set (1=15,650 … 6=43,150,
+    +5,500/person; Federal Register 2025-01377). Kept the `_2026` name (= "governs 2026 coverage") with
+    an explicit comment that these are the 2025-published numbers + a REFRESH RULE (for 2027 coverage →
+    use the 2026-published set 1=15,960 … 6=44,360). This is the user's "use the correct values, label
+    them honestly" design.
+  - **IRMAA (`IRMAA_BRACKETS_2026`)** — owner chose **Part B + Part D combined** (full retiree cost,
+    matches the prior intent). MAGI breakpoints refreshed 2025 → 2026 (single 109/137/171/205/500k;
+    mfj 218/274/342/410/750k) and surcharges set to 2026 combined B+D annual: 1,148 / 2,885 / 4,620 /
+    6,355 / 6,936 (per-tier monthly Part B + Part D: 81.20+14.50, 202.90+37.50, 324.60+60.40,
+    446.30+83.30, 487.00+91.00; Kiplinger 2026 IRMAA).
+  - Both are **inert at the default** (default conversion MAGI sits below the first IRMAA tier and ACA
+    doesn't apply at the Medicare-age retirement), so the golden master is unchanged. `healthcare.test.js`
+    fixtures that hardcoded the old ACA/IRMAA values were retargeted; new figures value-locked in
+    `irs-2026.test.js`. **The full audit is now closed** — every ❌ the agent found is fixed or
+    owner-decided. The only items left unaudited are the `STATE_TAX` / `RETIREMENT_STATE_TAX`
+    approximations (explicitly out of scope as modeling heuristics, not statutory constants).
 
 ---
 
