@@ -145,82 +145,6 @@ function IncomeWaterfall({ t, view }) {
   );
 }
 
-// ── Retirement money flow (WI-2.6) ────────────────────────────────────────────
-// The mirror of the paycheck waterfall for the retirement phase: every dollar of
-// spending traced back to its source — Social Security + Pension + Portfolio draw.
-// All dollar values come from the model's retIncomeFlow bundle, which guarantees
-// the three sources sum to `expenses` (calcRetIncomeFlow, drawdown.js). This
-// component only converts those values to band widths (pixel/layout math).
-function RetirementFlow({ t, flow }) {
-  const { expenses, ss, pension, portfolioDraw } = flow;
-  const segs = [
-    { label: "Social Security", val: ss,            color: t.warm },
-    { label: "Pension",         val: pension,       color: t.accent },
-    { label: "Portfolio draw",  val: portfolioDraw, color: t.good },
-  ].filter(s => s.val > 0);
-
-  if (expenses <= 0 || segs.length === 0) {
-    return (
-      <div style={{ font: `400 13px ${HF}`, color: t.faint }}>
-        Set a retirement age and expenses to see where your income comes from.
-      </div>
-    );
-  }
-
-  return (
-    <>
-      {/* Total expenses headline */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ font: `400 11px ${HF}`, color: t.accent, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>
-          Annual spending in retirement
-        </div>
-        <div style={{ font: `700 28px/1 ${SERIF}`, color: t.ink }}>{fmt(expenses)}<span style={{ font: `400 14px ${SERIF}`, color: t.mut }}> / year</span></div>
-      </div>
-
-      {/* Stacked source band — widths are pure layout proportion of expenses */}
-      <div style={{
-        display: "flex", height: 40, borderRadius: 9, overflow: "hidden",
-        border: `1px solid ${t.line2}`, marginBottom: 14,
-      }}>
-        {segs.map((seg, i) => (
-          <div key={seg.label} style={{
-            flex: seg.val / expenses, background: seg.color, opacity: 0.72,
-            borderRight: i < segs.length - 1 ? `1px solid ${t.surf}` : "none",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            font: `600 11px ${HF}`, color: t.surf, minWidth: 0, overflow: "hidden", whiteSpace: "nowrap",
-          }}>
-            {Math.round((seg.val / expenses) * 100) >= 12 ? `${Math.round((seg.val / expenses) * 100)}%` : ""}
-          </div>
-        ))}
-      </div>
-
-      {/* Source rows */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {segs.map(seg => (
-          <div key={seg.label} style={{
-            display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
-            borderBottom: `1px solid ${t.line}`, paddingBottom: 8,
-          }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 9, height: 9, borderRadius: 999, background: seg.color, flexShrink: 0 }} />
-              <span style={{ font: `400 14px ${SERIF}`, color: t.mut }}>{seg.label}</span>
-            </span>
-            <span style={{ font: `600 14px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>{fmt(seg.val)}/yr</span>
-          </div>
-        ))}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, paddingTop: 4 }}>
-          <span style={{ font: `600 14px ${SERIF}`, color: t.ink }}>Total covered</span>
-          <span style={{ font: `700 15px ${HM}`, color: t.ink }}>{fmt(expenses)}/yr</span>
-        </div>
-      </div>
-
-      <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", marginTop: 14, textAlign: "center" }}>
-        Social Security and pension cover what they can; your portfolio funds the rest.
-      </div>
-    </>
-  );
-}
-
 // initialTab (optional, WI-1.1): tab id to land on when another screen
 // deep-links here via navigate("numbers", tabId) — e.g. the Plan stat cards
 // and signals strip. The user's own tab clicks still control the state after
@@ -229,7 +153,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
   const {
     currentIncome, fedTax, takeHome,
     totalAtRet, retVals, effectiveExpenses, balAt90,
-    householdSS, isSustainable, withdrawalRate,
+    householdSS, effectivePension, isSustainable, withdrawalRate,
     retirementAge,
     netConversionBenefit, yr1TaxSavings,
     retirementWalk,
@@ -237,18 +161,14 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
     // (percentages/residuals: calcStatementView; milestones: calcChartMilestones;
     // calendar years: buildYearlyRows). The screen only formats.
     statementView, chartMilestones, yearlyRows,
-    // WI-2.2 / WI-2.3 / WI-2.4 — new Numbers tabs bundles.
+    // WI-2.2 / WI-2.3 / WI-2.4 — Numbers tabs bundles.
     // All derived numbers come from the model via these bundles; screens only format.
     budget, taxView,
-    // WI-2.6 — retirement money-flow bands (sum exactly to effectiveExpenses).
-    retIncomeFlow,
     returnRate,   // raw assumption for the Statement footnote
   } = props;
 
   const [tab, setTab] = useState(initialTab ?? "statement");
   const [showAllYears, setShowAllYears] = useState(false);
-  // WI-2.6: Money-flow tab sub-mode — "working" (paycheck) vs "retirement" (sources).
-  const [flowMode, setFlowMode] = useState("working");
 
   // Adopt a new deep-link target if one arrives while already mounted
   // (re-navigation to the same screen with a different subView).
@@ -314,7 +234,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         </span>
       </div>
 
-      {/* tab strip — 6 tabs: Statement | Budget | Accounts | Taxes | Year by year | Money flow */}
+      {/* tab strip — 5 tabs: Statement | Budget | Accounts | Taxes | Year by year */}
       <div style={{
         display: "flex", gap: 3, padding: 3, borderRadius: 11,
         background: t.line, alignSelf: "flex-start", marginBottom: 12, flexShrink: 0,
@@ -326,7 +246,6 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
           ["accounts",  "Accounts"],
           ["taxes",     "Taxes"],
           ["yearly",    "Year by year"],
-          ["flow",      "Money flow"],
         ].map(([k, l]) => {
           const on = tab === k;
           return (
@@ -407,18 +326,41 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
               <StmtCol t={t} title="Income for life" items={[
                 ["Social Security",   `${fmtMo(householdSS)}/mo`, "3",  false],
+                ...(sv.monthlyPension > 0 ? [["Pension", `$${sv.monthlyPension.toLocaleString()}/mo`, null, false]] : []),
                 ["Portfolio draw",    `$${sv.monthlyPortDraw.toLocaleString()}/mo`, null, false],
                 ["Safe rate",         `${(Math.round(withdrawalRate * 10) / 10).toFixed(1)}%`, null, false],
                 ["Runs dry at",       runsOutLabel,  null, false],
                 ["Total monthly",     `$${sv.monthlyTotal.toLocaleString()}/mo`, null, true],
               ]} bar={{
                 segs: [
-                  { f: sv.monthlyHHSS,     c: t.warm, l: "Soc Sec" },
-                  { f: sv.monthlyPortDraw, c: t.good,  l: "Portfolio" },
+                  { f: sv.monthlyHHSS,     c: t.warm,   l: "Soc Sec" },
+                  ...(sv.monthlyPension > 0 ? [{ f: sv.monthlyPension, c: t.accent, l: "Pension" }] : []),
+                  { f: sv.monthlyPortDraw, c: t.good,   l: "Portfolio" },
                 ],
                 cap: "blended monthly income"
               }} />
             </div>
+
+            {/* Income waterfall — where each paycheck dollar goes (gross → tax → savings → take-home) */}
+            {sv.gross > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <div style={{
+                  font: `600 11px ${HF}`, color: t.accent,
+                  letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12,
+                }}>
+                  Where your paycheck goes
+                </div>
+                <div style={{ maxWidth: 620, width: "100%", alignSelf: "center" }}>
+                  <IncomeWaterfall t={t} view={sv} />
+                </div>
+                <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", textAlign: "center", marginTop: 4 }}>
+                  {sv.flowKeepPct == null
+                    ? "Add your income to see where each dollar goes."
+                    : `Of every dollar you earn, ${sv.flowKeepPct}% comes home, ${sv.flowSavePct}% builds your future, ${sv.flowTaxPct}% goes to tax.`}
+                </div>
+              </div>
+            )}
+
             {/* footnotes */}
             <div style={{
               borderTop: `1px solid ${t.line2}`, marginTop: 12, paddingTop: 8,
@@ -639,138 +581,213 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
         {/* ── Taxes (WI-2.4) ── */}
         {tab === "taxes" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 20 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 24 }}>
             {taxView == null ? (
               <div style={{ font: `400 13px ${HF}`, color: t.faint }}>
                 Add your income to see your tax picture.
               </div>
             ) : (
               <>
-                {/* 2-segment working/retirement tax timeline */}
+                {/* ── Section 1: Working Year Tax ── */}
                 <div>
                   <div style={{
                     font: `600 11px ${HF}`, color: t.accent,
                     letterSpacing: "0.08em", textTransform: "uppercase",
-                    marginBottom: 12,
+                    marginBottom: 14, borderBottom: `1.5px solid ${t.accent}44`,
+                    paddingBottom: 6,
                   }}>
-                    Tax rates: working years → retirement
+                    Working Year Tax
                   </div>
+
+                  {/* AGI derivation table */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: 16 }}>
+                    {[
+                      ["Gross income",            `$${Math.round(taxView.householdIncome ?? 0).toLocaleString()}`, false, false],
+                      ["Pre-tax deductions",       `−$${Math.round(taxView.safeDeduc ?? 0).toLocaleString()}`,     false, false],
+                      ["Adjusted Gross Income",    `$${Math.round(taxView.agi ?? 0).toLocaleString()}`,            false, true ],
+                      ["Federal tax",              `−$${Math.round(fedTax ?? 0).toLocaleString()}`,                false, false],
+                      ["State tax",                `−$${Math.round(taxView.stateTax ?? 0).toLocaleString()}`,      false, false],
+                      ["FICA",                     `−$${Math.round(taxView.fica ?? 0).toLocaleString()}`,          false, false],
+                      ["Take-home",                `$${Math.round(takeHome ?? 0).toLocaleString()}`,               false, true ],
+                    ].map(([label, val, , strong]) => (
+                      <div key={label} style={{
+                        display: "flex", justifyContent: "space-between",
+                        alignItems: "baseline", gap: 12,
+                        padding: "9px 0",
+                        borderBottom: `1px solid ${t.line}`,
+                      }}>
+                        <span style={{ font: `${strong ? 600 : 400} 14px ${SERIF}`, color: strong ? t.ink : t.mut }}>
+                          {label}
+                        </span>
+                        <span style={{ font: `${strong ? 700 : 500} 14px ${HM}`, color: strong ? t.ink : t.mut }}>
+                          {val}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 3-stat rate card */}
                   <div style={{
                     display: "flex", gap: 0, borderRadius: 10, overflow: "hidden",
-                    border: `1px solid ${t.line2}`, height: 54,
+                    border: `1px solid ${t.line2}`, marginBottom: 14,
                   }}>
-                    {/* Working years segment */}
+                    {[
+                      ["Fed effective",  taxView.fedEffective,   t.accent],
+                      ["Fed marginal",   taxView.fedMarginal,    t.ink],
+                      ["Combined",       taxView.combinedEffRate, t.mut],
+                    ].map(([label, rate, color], i, arr) => (
+                      <div key={label} style={{
+                        flex: 1, padding: "10px 0",
+                        background: i === 0 ? `${t.accent}18` : "transparent",
+                        display: "flex", flexDirection: "column",
+                        alignItems: "center", justifyContent: "center",
+                        borderRight: i < arr.length - 1 ? `1px solid ${t.line2}` : "none",
+                      }}>
+                        <span style={{ font: `700 18px ${HM}`, color }}>
+                          {rate != null ? `${Math.round(rate * 100)}%` : "—"}
+                        </span>
+                        <span style={{ font: `400 11px ${HF}`, color: t.mut }}>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Pre-tax savings callout */}
+                  {taxView.taxSaveFromPreTax > 0 && (
+                    <div style={{
+                      background: `${t.good}14`, border: `1px solid ${t.good}44`,
+                      borderRadius: 9, padding: "9px 14px",
+                      font: `400 13px ${SERIF}`, color: t.ink,
+                    }}>
+                      Your 401k and HSA contributions save approximately{" "}
+                      <strong>${taxView.taxSaveFromPreTax.toLocaleString()}</strong> in federal tax
+                      this year at your {Math.round(taxView.fedMarginal * 100)}% marginal rate.
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Section 2: Retirement Tax ── */}
+                <div>
+                  <div style={{
+                    font: `600 11px ${HF}`, color: t.accent,
+                    letterSpacing: "0.08em", textTransform: "uppercase",
+                    marginBottom: 14, borderBottom: `1.5px solid ${t.accent}44`,
+                    paddingBottom: 6,
+                  }}>
+                    Retirement Tax
+                  </div>
+
+                  {/* Working → Retirement rate transition */}
+                  <div style={{
+                    display: "flex", gap: 0, borderRadius: 10, overflow: "hidden",
+                    border: `1px solid ${t.line2}`, height: 58, marginBottom: 16,
+                  }}>
                     <div style={{
                       flex: 1, background: `${t.accent}22`,
                       display: "flex", flexDirection: "column",
                       alignItems: "center", justifyContent: "center",
                       borderRight: `1px solid ${t.line2}`,
                     }}>
-                      <span style={{ font: `700 18px ${HM}`, color: t.accent }}>
-                        {taxView.fedMarginal != null
-                          ? `${Math.round(taxView.fedMarginal * 100)}%`
-                          : "—"}
+                      <span style={{ font: `700 20px ${HM}`, color: t.accent }}>
+                        {taxView.fedMarginal != null ? `${Math.round(taxView.fedMarginal * 100)}%` : "—"}
                       </span>
                       <span style={{ font: `400 11px ${HF}`, color: t.mut }}>working marginal</span>
                     </div>
-                    {/* Retirement segment */}
                     <div style={{
                       flex: 1, background: `${t.good}18`,
                       display: "flex", flexDirection: "column",
                       alignItems: "center", justifyContent: "center",
                     }}>
-                      <span style={{ font: `700 18px ${HM}`, color: t.good }}>
+                      <span style={{ font: `700 20px ${HM}`, color: t.good }}>
                         {taxView.projectedRetBracket != null
                           ? `${Math.round(taxView.projectedRetBracket * 100)}%`
                           : "—"}
                       </span>
-                      <span style={{ font: `400 11px ${HF}`, color: t.mut }}>retirement bracket</span>
+                      <span style={{ font: `400 11px ${HF}`, color: t.mut }}>projected ret. bracket</span>
                     </div>
                   </div>
-                </div>
 
-                {/* Rate detail rows */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                  {[
-                    ["Federal marginal (working)",   taxView.fedMarginal != null ? `${Math.round(taxView.fedMarginal * 100)}%` : "—"],
-                    ["Federal effective (working)",  taxView.fedEffective != null ? `${Math.round(taxView.fedEffective * 100)}%` : "—"],
-                    ["Projected retirement bracket", taxView.projectedRetBracket != null ? `${Math.round(taxView.projectedRetBracket * 100)}%` : "—"],
-                    ["Effective RMD tax rate",       taxView.effectiveRMDTaxRate != null ? `${Math.round(taxView.effectiveRMDTaxRate * 100)}%` : "—"],
-                  ].map(([label, val]) => (
-                    <div key={label} style={{
-                      display: "flex", justifyContent: "space-between",
-                      alignItems: "baseline", gap: 12,
-                      borderBottom: `1px solid ${t.line}`, paddingBottom: 8,
+                  {/* Retirement rate detail rows */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 16 }}>
+                    {[
+                      ["Projected retirement bracket", taxView.projectedRetBracket != null ? `${Math.round(taxView.projectedRetBracket * 100)}%` : "—"],
+                      ["Effective RMD tax rate",       taxView.effectiveRMDTaxRate != null ? `${Math.round(taxView.effectiveRMDTaxRate * 100)}%` : "—"],
+                      ["Total lifetime RMD tax burden", taxView.rmdTaxBite != null ? `$${Math.round(taxView.rmdTaxBite).toLocaleString()}` : "—"],
+                    ].map(([label, val]) => (
+                      <div key={label} style={{
+                        display: "flex", justifyContent: "space-between",
+                        alignItems: "baseline", gap: 12,
+                        borderBottom: `1px solid ${t.line}`, paddingBottom: 8,
+                      }}>
+                        <span style={{ font: `400 14px ${SERIF}`, color: t.mut }}>{label}</span>
+                        <span style={{ font: `600 14px ${HM}`, color: t.ink }}>{val}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Lifetime tax composition bar */}
+                  <div>
+                    <div style={{
+                      font: `600 11px ${HF}`, color: t.accent,
+                      letterSpacing: "0.08em", textTransform: "uppercase",
+                      marginBottom: 10,
                     }}>
-                      <span style={{ font: `400 14px ${SERIF}`, color: t.mut }}>{label}</span>
-                      <span style={{ font: `600 14px ${HM}`, color: t.ink }}>{val}</span>
+                      Lifetime tax composition
                     </div>
-                  ))}
-                </div>
-
-                {/* Lifetime tax composition bar */}
-                <div>
-                  <div style={{
-                    font: `600 11px ${HF}`, color: t.accent,
-                    letterSpacing: "0.08em", textTransform: "uppercase",
-                    marginBottom: 10,
-                  }}>
-                    Lifetime tax composition
-                  </div>
-                  {/* Segment widths (flex: val/total) are pure layout proportion —
-                      pixel/layout math (rule 1). Dollar vals + pcts are pre-computed
-                      by the model (taxView.composition) — no financial math here. */}
-                  {(() => {
-                    const { segments, total } = taxView.composition;
-                    if (total <= 0 || segments.length === 0) {
+                    {/* Segment widths (flex: val/total) are pure layout proportion —
+                        pixel/layout math (rule 1). Dollar vals + pcts are pre-computed
+                        by the model (taxView.composition) — no financial math here. */}
+                    {(() => {
+                      const { segments, total } = taxView.composition;
+                      if (total <= 0 || segments.length === 0) {
+                        return (
+                          <div style={{ font: `400 13px ${HF}`, color: t.faint }}>
+                            Tax data will appear once accounts are set up.
+                          </div>
+                        );
+                      }
+                      const segColor = { working: t.warm, rmd: t.accent, conv: t.good };
                       return (
-                        <div style={{ font: `400 13px ${HF}`, color: t.faint }}>
-                          Tax data will appear once accounts are set up.
-                        </div>
+                        <>
+                          <div style={{
+                            display: "flex", height: 26, borderRadius: 8,
+                            overflow: "hidden", border: `1px solid ${t.line2}`,
+                            marginBottom: 10,
+                          }}>
+                            {segments.map((seg, i) => (
+                              <div key={seg.key} style={{
+                                flex: seg.val / total,
+                                background: segColor[seg.key], opacity: 0.72,
+                                borderRight: i < segments.length - 1
+                                  ? `1px solid ${t.surf}` : "none",
+                                display: "flex", alignItems: "center",
+                                justifyContent: "center",
+                                font: `600 10px ${HF}`, color: t.surf,
+                                minWidth: 0, overflow: "hidden",
+                                whiteSpace: "nowrap",
+                              }}>
+                                {seg.pct >= 12 ? `${seg.pct}%` : ""}
+                              </div>
+                            ))}
+                          </div>
+                          {/* Legend */}
+                          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                            {segments.map(seg => (
+                              <span key={seg.key} style={{
+                                display: "flex", alignItems: "center", gap: 6,
+                                font: `400 12px ${HF}`, color: t.mut,
+                              }}>
+                                <span style={{
+                                  width: 8, height: 8, borderRadius: 999,
+                                  background: segColor[seg.key], flexShrink: 0,
+                                }} />
+                                {seg.label} · {fmt(seg.val)}
+                              </span>
+                            ))}
+                          </div>
+                        </>
                       );
-                    }
-                    const segColor = { working: t.warm, rmd: t.accent, conv: t.good };
-                    return (
-                      <>
-                        <div style={{
-                          display: "flex", height: 26, borderRadius: 8,
-                          overflow: "hidden", border: `1px solid ${t.line2}`,
-                          marginBottom: 10,
-                        }}>
-                          {segments.map((seg, i) => (
-                            <div key={seg.key} style={{
-                              flex: seg.val / total,
-                              background: segColor[seg.key], opacity: 0.72,
-                              borderRight: i < segments.length - 1
-                                ? `1px solid ${t.surf}` : "none",
-                              display: "flex", alignItems: "center",
-                              justifyContent: "center",
-                              font: `600 10px ${HF}`, color: t.surf,
-                              minWidth: 0, overflow: "hidden",
-                              whiteSpace: "nowrap",
-                            }}>
-                              {seg.pct >= 12 ? `${seg.pct}%` : ""}
-                            </div>
-                          ))}
-                        </div>
-                        {/* Legend */}
-                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                          {segments.map(seg => (
-                            <span key={seg.key} style={{
-                              display: "flex", alignItems: "center", gap: 6,
-                              font: `400 12px ${HF}`, color: t.mut,
-                            }}>
-                              <span style={{
-                                width: 8, height: 8, borderRadius: 999,
-                                background: segColor[seg.key], flexShrink: 0,
-                              }} />
-                              {seg.label} · {fmt(seg.val)}
-                            </span>
-                          ))}
-                        </div>
-                      </>
-                    );
-                  })()}
+                    })()}
+                  </div>
                 </div>
               </>
             )}
@@ -891,74 +908,6 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
           </div>
         )}
 
-        {/* ── Money flow ── */}
-        {tab === "flow" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
-            {/* WI-2.6: Working years / Retirement years toggle */}
-            <div style={{
-              display: "flex", gap: 3, padding: 3, borderRadius: 10,
-              background: t.line, alignSelf: "center", flexShrink: 0,
-            }}>
-              {[
-                ["working", "Working years"],
-                ["retirement", "Retirement years"],
-              ].map(([k, l]) => {
-                const on = flowMode === k;
-                return (
-                  <div key={k} onClick={() => setFlowMode(k)} style={{
-                    padding: "5px 16px", borderRadius: 8, cursor: "pointer",
-                    background: on ? t.surf2 : "transparent",
-                    font: `${on ? 600 : 400} 12.5px ${HF}`, color: on ? t.ink : t.mut,
-                    boxShadow: on ? "0 1px 4px rgba(0,0,0,.09)" : "none",
-                  }}>{l}</div>
-                );
-              })}
-            </div>
-
-            {flowMode === "working" ? (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16, justifyContent: "center" }}>
-                <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase" }}>
-                  Where your paycheck goes
-                </div>
-                <div style={{ maxWidth: 620, width: "100%", alignSelf: "center" }}>
-                  <IncomeWaterfall t={t} view={sv} />
-                </div>
-                <div style={{ font: `400 12.5px ${SERIF}`, color: t.faint, fontStyle: "italic", textAlign: "center" }}>
-                  {sv.flowKeepPct == null
-                    ? "Add your income to see where each dollar goes."
-                    : `Of every dollar you earn, ${sv.flowKeepPct}% comes home, ${sv.flowSavePct}% builds your future, ${sv.flowTaxPct}% goes to tax.`}
-                </div>
-                {/* legend chips */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, justifyContent: "center" }}>
-                  {[
-                    ["Tax",       "#b09070", pctLabel(sv.flowTaxPct)],
-                    ["Savings",   t.warm,   pctLabel(sv.flowSavePct)],
-                    ["Take-home", t.good,   pctLabel(sv.flowKeepPct)],
-                  ].map(([label, c, pct]) => (
-                    <span key={label} style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "5px 12px", borderRadius: 999,
-                      border: `1px solid ${c}55`, background: `${c}14`,
-                      font: `500 12px ${HF}`, color: t.ink,
-                    }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 999, background: c }} />
-                      {label} · {pct}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div style={{ maxWidth: 560, width: "100%", alignSelf: "center", marginTop: 8 }}>
-                <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 14 }}>
-                  Where your retirement income comes from
-                </div>
-                {retIncomeFlow == null
-                  ? <div style={{ font: `400 13px ${HF}`, color: t.faint }}>Retirement income breakdown will appear once your plan is set up.</div>
-                  : <RetirementFlow t={t} flow={retIncomeFlow} />}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

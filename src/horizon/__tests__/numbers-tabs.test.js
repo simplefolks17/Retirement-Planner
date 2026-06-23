@@ -54,9 +54,11 @@ const statementView = {
   flowSavePct:      25,
   flowKeepPct:      49,
   ficaPlusState:     8_000,
+  preTaxDeductions: 23_500,
   monthlyPortDraw:   2_000,
   monthlyTotal:      5_000,
   monthlyHHSS:       3_096,
+  monthlyPension:        0,
 };
 
 // ── Minimal chartMilestones shape ─────────────────────────────────────────────
@@ -105,12 +107,21 @@ const budgetSurplus = {
   availableSurplus: 5_000,
 };
 
-// ── WI-2.4: taxView bundle ────────────────────────────────────────────────────
+// ── WI-2.4: taxView bundle (expanded for two-section Taxes tab) ───────────────
 const taxView = {
-  fedMarginal:          0.22,    // 22% marginal bracket
-  fedEffective:         0.18,    // 18% effective rate
-  effectiveRMDTaxRate:  0.24,    // 24% blended RMD rate
-  projectedRetBracket:  0.12,    // 12% projected retirement bracket (BUG-33 fixed)
+  // Section 1 — Working Year Tax
+  householdIncome:    100_000,
+  safeDeduc:           23_500,
+  agi:                 76_500,
+  stateTax:             3_000,
+  fica:                 7_650,
+  combinedEffRate:      0.29,    // (18k + 3k + 7.65k) / 100k ≈ 28.65%
+  taxSaveFromPreTax:    5_170,   // 23_500 × 0.22 = 5_170
+  fedMarginal:           0.22,   // 22% marginal bracket
+  fedEffective:          0.18,   // 18% effective rate
+  // Section 2 — Retirement Tax
+  effectiveRMDTaxRate:   0.24,   // 24% blended RMD rate
+  projectedRetBracket:   0.12,   // 12% projected retirement bracket (decimal, not integer — BUG-33 + Phase-1 fix)
   rmdTaxBite:         683_974,   // golden-master rmdTaxBite
   convTaxTotal:        82_765,   // golden-master conversion tax
   // WI-2.4: lifetime tax composition — pre-computed by the model (App taxViewBundle),
@@ -140,6 +151,7 @@ const minimalProps = {
   effectiveExpenses:   120_000,
   balAt90:           3_566_026,
   householdSS:          45_924,
+  effectivePension:          0,
   isSustainable:         true,
   withdrawalRate:          3.4,
   retirementAge:            65,
@@ -157,8 +169,6 @@ const minimalProps = {
   ],
   budget,
   taxView,
-  // WI-2.6: retirement money-flow bands (sum to effectiveExpenses).
-  retIncomeFlow: { expenses: 120_000, ss: 45_924, pension: 0, portfolioDraw: 74_076 },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -284,7 +294,7 @@ describe("NumbersScreen — Accounts tab (WI-2.3 / #93)", () => {
   });
 });
 
-// ── WI-2.4: Taxes tab ────────────────────────────────────────────────────────
+// ── WI-2.4: Taxes tab (expanded two-section layout) ──────────────────────────
 describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
   it("renders without crashing", () => {
     const renderer = mountTab("taxes");
@@ -292,22 +302,53 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
-  it("renders 'Tax rates' section label (always-visible marker)", () => {
+  it("renders 'Working Year Tax' section label (section-1 always-visible marker)", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Tax rates");
+    expect(allText).toContain("Working Year Tax");
     act(() => renderer.unmount());
   });
 
-  it("wiring: fedMarginal rate appears as formatted percentage", () => {
+  it("renders 'Retirement Tax' section label (section-2 always-visible marker)", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    // taxView.fedMarginal = 0.22 → "22%"
+    expect(allText).toContain("Retirement Tax");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring section 1: AGI derivation shows householdIncome, safeDeduc, and AGI", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // householdIncome = 100_000 → "$100,000"
+    expect(allText).toContain("$100,000");
+    // safeDeduc = 23_500 → "−$23,500"
+    expect(allText).toContain("−$23,500");
+    // agi = 76_500 → "$76,500"
+    expect(allText).toContain("$76,500");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring section 1: 3-stat card — fedEffective, fedMarginal, combinedEffRate", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // fedEffective = 0.18 → "18%"
+    expect(allText).toContain("18%");
+    // fedMarginal = 0.22 → "22%"
     expect(allText).toContain("22%");
+    // combinedEffRate = 0.29 → "29%"
+    expect(allText).toContain("29%");
     act(() => renderer.unmount());
   });
 
-  it("wiring: projectedRetBracket appears as formatted percentage", () => {
+  it("wiring section 1: taxSaveFromPreTax callout appears", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // taxSaveFromPreTax = 5_170 → "$5,170"
+    expect(allText).toContain("$5,170");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring section 2: projectedRetBracket appears as formatted percentage", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
     // taxView.projectedRetBracket = 0.12 → "12%"
@@ -315,7 +356,7 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
-  it("wiring: rmdTaxBite appears in the lifetime composition legend", () => {
+  it("wiring section 2: rmdTaxBite appears in both detail row and composition legend", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
     // fmt(683_974) → "$684k" (rounded)
@@ -378,41 +419,3 @@ describe("NumbersScreen — Year by year (WI-2.5 / #95)", () => {
   });
 });
 
-// ── WI-2.6: Money flow (Working / Retirement toggle) ─────────────────────────
-describe("NumbersScreen — Money flow retirement view (WI-2.6 / #96)", () => {
-  it("renders the Working / Retirement toggle", () => {
-    const renderer = mountTab("flow");
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("Working years");
-    expect(allText).toContain("Retirement years");
-    act(() => renderer.unmount());
-  });
-
-  it("retirement view shows the income sources and total covered = expenses", () => {
-    const renderer = mountTab("flow");
-    // click the Retirement years toggle
-    const toggle = renderer.root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n) === "Retirement years"
-    )[0];
-    expect(toggle).toBeTruthy();
-    act(() => { toggle.props.onClick(); });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("Social Security");
-    expect(allText).toContain("Portfolio draw");
-    // expenses 120_000 → "$120k" appears (headline + total covered)
-    expect(allText).toContain("$120k");
-    act(() => renderer.unmount());
-  });
-
-  it("null retIncomeFlow renders graceful empty state in retirement view", () => {
-    const renderer = mountTab("flow", { retIncomeFlow: null });
-    const toggle = renderer.root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n) === "Retirement years"
-    )[0];
-    act(() => { toggle.props.onClick(); });
-    expect(renderer.toJSON()).toBeTruthy();
-    const allText = textOf(renderer.root);
-    expect(allText.toLowerCase()).toContain("appear");
-    act(() => renderer.unmount());
-  });
-});

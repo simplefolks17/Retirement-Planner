@@ -147,6 +147,7 @@ export function calcStatementView({
   householdSS,
   effectiveExpenses,
   safeDeduc = 0,
+  effectivePension = 0,
 }) {
   const hasIncome = currentIncome != null && currentIncome > 0;
   const gross     = hasIncome ? currentIncome : 0;
@@ -169,9 +170,11 @@ export function calcStatementView({
 
   // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
   const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
+  const pension         = effectivePension ?? 0;
   const exp             = effectiveExpenses ?? 0;
   const monthlyHHSS     = Math.round(ss / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPortDraw = Math.round(Math.max(0, exp - ss) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPension  = Math.round(pension / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPortDraw = Math.round(Math.max(0, exp - ss - pension) / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
 
   // Effective federal rate footnote (1 decimal place), null when no income
@@ -186,7 +189,7 @@ export function calcStatementView({
     preTaxDeductions: safeDeduc,
     keepPct, taxPct, savePct,
     afterTaxLevel, flowKeep, flowTaxPct, flowSavePct, flowKeepPct,
-    monthlyHHSS, monthlyPortDraw, monthlyTotal,
+    monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
     effFedRatePct,
   };
 }

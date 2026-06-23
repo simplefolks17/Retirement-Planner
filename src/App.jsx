@@ -12,7 +12,7 @@ import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
 import { buildRetirementPhase, buildConversionByAge } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
@@ -697,9 +697,9 @@ export default function App() {
   // currentIncome ≤ 0 — screens render "—".
   const statementView = useMemo(() => calcStatementView({
     currentIncome, fedTax, fica, stateTax, takeHome,
-    currentContribTotal, householdSS, effectiveExpenses, safeDeduc,
+    currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
   }), [currentIncome, fedTax, fica, stateTax, takeHome,
-       currentContribTotal, householdSS, effectiveExpenses, safeDeduc]);
+       currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension]);
 
   // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
   // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE
@@ -794,24 +794,24 @@ export default function App() {
         }))
       : [];
     return {
+      // Working-year fields (AGI derivation + rate card for Taxes tab section 1)
+      householdIncome, agi, safeDeduc, stateTax, fica,
+      combinedEffRate,
+      // "Your 401k + HSA saves you ~$X in federal tax this year" callout
+      taxSaveFromPreTax: Math.round(safeDeduc * fedMarginal),
+      // Rate columns
       fedMarginal,
       fedEffective: fedEffRate,
+      // Retirement-phase fields (section 2)
       effectiveRMDTaxRate,
-      projectedRetBracket: projRetBracketPct,
+      projectedRetBracket: projRetBracketPct / 100,   // normalized to decimal (was whole-number — BUG display fix)
       rmdTaxBite,
       convTaxTotal: retPhase.conversionCost,
       composition: { segments, total },
     };
   }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
-      rmdTaxBite, fedTax, retPhase]);
-
-  // WI-2.6 (#96): retirement-phase money-flow bands (SS + pension + portfolio draw).
-  // Pre-split by the model and guaranteed to sum to effectiveExpenses; memoized so
-  // horizonProps stays identity-stable (V9). Uses ssAtRet (the age-gated SS active
-  // at retirement) so the bands match the netPortfolioNeed basis (rule 5b).
-  const retIncomeFlow = useMemo(() => calcRetIncomeFlow({
-    effectiveExpenses, ss: ssAtRet, pension: effectivePension,
-  }), [effectiveExpenses, ssAtRet, effectivePension]);
+      rmdTaxBite, fedTax, retPhase,
+      householdIncome, agi, safeDeduc, stateTax, fica, combinedEffRate]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
@@ -856,8 +856,6 @@ export default function App() {
     // WI-2.4 (#94): Taxes tab — phase rates + lifetime composition.
     // Memoized separately as taxViewBundle (V9) so this object reference is stable.
     taxView: taxViewBundle,
-    // WI-2.6 (#96): retirement money-flow bands — sum exactly to effectiveExpenses.
-    retIncomeFlow,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
@@ -872,8 +870,7 @@ export default function App() {
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,
-       // WI-2.6 retirement money-flow bands (memoized separately):
-       retIncomeFlow, returnRate]);
+       returnRate]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.
