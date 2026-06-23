@@ -482,7 +482,7 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax }) {
         boxShadow: "0 4px 16px rgba(0,0,0,.11)", whiteSpace: "nowrap", zIndex: 2
       }}>
         <div style={{ font: `700 13px ${HM}`, color: t.warm }}>Even lean: covered</div>
-        <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 1 }}>across 9 in 10 markets</div>
+        <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 1 }}>even in a lean market</div>
       </div>
     </>
   );

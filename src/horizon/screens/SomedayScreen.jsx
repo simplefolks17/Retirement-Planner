@@ -23,6 +23,8 @@ export default function SomedayScreen({ t, props }) {
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!file.type.startsWith("image/")) return;   // images only
+    if (file.size > 5 * 1024 * 1024) return;        // cap at 5 MB — avoid bloating session state
     const reader = new FileReader();
     reader.onload = (ev) => setCustomPhoto(ev.target.result);
     reader.readAsDataURL(file);
