@@ -15,12 +15,16 @@
 export function applyConversionEvents(conversionEvents = [], age) {
   let convAmount = 0;
   for (const ev of conversionEvents) {
-    if (ev.age === age) convAmount += Math.max(0, ev.amount);
+    const amount = Number(ev?.amount);
+    if (ev?.age === age && Number.isFinite(amount)) convAmount += Math.max(0, amount);
   }
   return { convAmount };
 }
 
 // Convenience: total requested conversion across all events (pre-cap). Test sanity only.
 export function totalConversionRequested(conversionEvents = []) {
-  return conversionEvents.reduce((s, ev) => s + Math.max(0, ev.amount), 0);
+  return conversionEvents.reduce((s, ev) => {
+    const amount = Number(ev?.amount);
+    return s + (Number.isFinite(amount) ? Math.max(0, amount) : 0);
+  }, 0);
 }

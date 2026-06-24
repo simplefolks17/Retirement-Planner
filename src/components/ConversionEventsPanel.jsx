@@ -20,7 +20,18 @@ function emptyEvent(currentAge, safeRetAge) {
 
 export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge, estTaxByAge = {} }) {
   const minAge = currentAge + 1;
-  const maxAge = Math.max(minAge, safeRetAge - 1); // strictly before retirement (window owns ≥ retirement)
+  const maxAge = safeRetAge - 1; // strictly before retirement (window owns ≥ retirement)
+  const hasWorkingYears = minAge <= maxAge;
+
+  // No pre-retirement year to convert in (retiring this year / next year). Show a clean
+  // message instead of inputs that the model would silently drop (activeConversionEvents).
+  if (!hasWorkingYears) {
+    return (
+      <p style={{ margin: 0, fontSize: 11, color: C.muted, fontStyle: "italic" }}>
+        No working years remaining before retirement to model conversions.
+      </p>
+    );
+  }
 
   const add = () => {
     if (events.length >= MAX_CONVERSION_EVENTS) return;
@@ -56,17 +67,19 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
           }}>
             <input
               style={inputStyle} type="number" min={minAge} max={maxAge}
+              aria-label="Conversion age"
               placeholder="Age"
               value={ev.age}
-              // Free typing on change; clamp on blur so a transient low value doesn't snap.
-              onChange={e => update(ev.id, "age", Number(e.target.value))}
+              // Free typing on change (finite-guarded); clamp on blur so a transient low value doesn't snap.
+              onChange={e => { const n = Number(e.target.value); if (Number.isFinite(n)) update(ev.id, "age", n); }}
               onBlur={e => update(ev.id, "age", clampAge(e.target.value))}
             />
             <input
               style={inputStyle} type="number" min="0" step="5000"
+              aria-label="Conversion amount"
               placeholder="Convert $"
               value={ev.amount || ""}
-              onChange={e => update(ev.id, "amount", Math.max(0, Number(e.target.value)))}
+              onChange={e => { const n = Number(e.target.value); update(ev.id, "amount", Number.isFinite(n) ? Math.max(0, n) : 0); }}
             />
             <span style={{ fontSize: 10, color: C.muted }}>
               {ev.amount > 0 && estTax != null
@@ -74,6 +87,8 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
                 : "401k → Roth, taxed as income"}
             </span>
             <button
+              type="button"
+              aria-label={`Remove conversion event at age ${ev.age}`}
               onClick={() => remove(ev.id)}
               style={{ background: "transparent", border: "none", color: C.muted,
                 cursor: "pointer", fontSize: 16, padding: "0 4px" }}
@@ -83,7 +98,7 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
       })}
 
       {events.length < MAX_CONVERSION_EVENTS && (
-        <button onClick={add} style={{
+        <button type="button" onClick={add} style={{
           fontSize: 12, padding: "5px 14px", borderRadius: 6,
           border: `1px solid ${C.border}`, background: "transparent",
           color: C.blue, cursor: "pointer", marginTop: 4,
@@ -96,7 +111,7 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
         <p style={{ fontSize: 11, color: C.muted, margin: "8px 0 0" }}>
           Total converted before retirement:{" "}
           <span style={{ color: C.text }}>
-            {fmt(events.reduce((s, e) => s + Math.max(0, e.amount), 0))}
+            {fmt(events.reduce((s, e) => s + (Number.isFinite(e.amount) ? Math.max(0, e.amount) : 0), 0))}
           </span>
           {" "}· lowers future RMDs (shows up as longer longevity, not in the window benefit figure).
         </p>

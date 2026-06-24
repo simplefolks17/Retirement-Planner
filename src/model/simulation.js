@@ -122,7 +122,14 @@ export function runSimulation({
     const eventAdj = moneyEvents.reduce((s, ev) =>
       ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
 
-    const capGainsRate       = ltcgRate(netOrdinaryIncome, filingStatus);
+    // Capped working-year conversion for THIS age (0 when none). Computed before the
+    // LTCG-rate selection because the conversion is ordinary income that can push this
+    // year's capital gains into a higher LTCG bracket. Inert when no events (conv = 0).
+    const requestedConv = conversionEvents.length
+      ? applyConversionEvents(conversionEvents, age).convAmount : 0;
+    const conv = Math.min(Math.max(0, requestedConv), Math.max(0, trad));
+
+    const capGainsRate       = ltcgRate(netOrdinaryIncome + conv, filingStatus);
     const taxableBase        = Math.max(0, taxable + cTaxable + eventAdj);
     const taxableRate        = r * (1 - capGainsRate);
     const taxableGrowth      = taxableBase * taxableRate;
@@ -140,24 +147,20 @@ export function runSimulation({
     // and that withheld portion is an early distribution hit with the 10% penalty
     // when under 59½ (retirement-phase conversions never see this — they're post-59½).
     let convEvent = 0, convEventTax = 0, convEventPenalty = 0;
-    if (conversionEvents.length) {
-      const { convAmount } = applyConversionEvents(conversionEvents, age);
-      const conv = Math.min(Math.max(0, convAmount), Math.max(0, trad));
-      if (conv > 0) {
-        const tax = stackedIncomeTax(conv, netOrdinaryIncome, filingStatus, stateRate);
-        trad -= conv;
-        roth += conv;                                  // principal moves in full
-        const taxFromTaxable   = Math.min(tax, Math.max(0, taxable));
-        const taxFromConverted = tax - taxFromTaxable; // shortfall when taxable can't cover
-        taxable -= taxFromTaxable;
-        roth    -= taxFromConverted;                   // leaks from the Roth deposit (no dollar conjured)
-        const penalty = age < EARLY_WITHDRAWAL_AGE
-          ? EARLY_WITHDRAWAL_PENALTY * taxFromConverted : 0;
-        roth -= penalty;                               // penalty also leaks from the converted dollars
-        convEvent        = conv;
-        convEventTax     = tax + penalty;              // total bite (penalty folded in)
-        convEventPenalty = penalty;
-      }
+    if (conv > 0) {
+      const tax = stackedIncomeTax(conv, netOrdinaryIncome, filingStatus, stateRate);
+      trad -= conv;
+      roth += conv;                                  // principal moves in full
+      const taxFromTaxable   = Math.min(tax, Math.max(0, taxable));
+      const taxFromConverted = tax - taxFromTaxable; // shortfall when taxable can't cover
+      taxable -= taxFromTaxable;
+      roth    -= taxFromConverted;                   // leaks from the Roth deposit (no dollar conjured)
+      const penalty = age < EARLY_WITHDRAWAL_AGE
+        ? EARLY_WITHDRAWAL_PENALTY * taxFromConverted : 0;
+      roth -= penalty;                               // penalty also leaks from the converted dollars
+      convEvent        = conv;
+      convEventTax     = tax + penalty;              // total bite (penalty folded in)
+      convEventPenalty = penalty;
     }
 
     arr.push({

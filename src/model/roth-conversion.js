@@ -44,7 +44,8 @@ export function findOptimalConversionPlan({
 
   // Guard non-finite / non-positive steps (would never terminate). Fall back to the
   // no-conversion result at the earliest start age.
-  if (!Number.isFinite(step) || step <= 0 || !Number.isFinite(ageStep) || ageStep <= 0
+  if (!Number.isFinite(step) || step <= 0 || !Number.isFinite(maxSearch) || maxSearch < 0
+      || !Number.isFinite(ageStep) || ageStep <= 0
       || !Number.isFinite(minStart) || !Number.isFinite(maxStart)) {
     return { optimalStartAge: minStart, optimalConversion: 0,
       optimalBenefit: Math.round(netOf(getNetBenefit(minStart, 0))) };

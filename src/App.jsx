@@ -2802,7 +2802,9 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                  {optimizerResult && (hasMedicare || hasMarketplaceInsurance) && Math.abs(optimizerResult.optimalConversion - annualConversion) > 4_999 && (
+                  {optimizerResult && (hasMedicare || hasMarketplaceInsurance)
+                    && (Math.abs(optimizerResult.optimalConversion - annualConversion) > 4_999
+                      || optimizerResult.optimalStartAge !== resolvedStartAge) && (
                     <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, marginTop: 8,
                       background: "#0a1a0a", borderRadius: 6, padding: "8px 10px" }}>
                       <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: C.green }}>
