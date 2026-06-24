@@ -325,4 +325,10 @@ export const ASSUMPTIONS = {
   // take-home" savings-rate rule of thumb. Both are percents (4 = 4%).
   SAFE_WITHDRAWAL_GUIDELINE_PCT: 4,
   SAVINGS_RATE_GUIDELINE_PCT:    15,
+
+  // Income replacement ratio thresholds for the Statement "Income for life" column.
+  // The common retirement planning target is 70–80% of pre-retirement income;
+  // below 50% is a significant shortfall. Not IRS rules — planning heuristics.
+  INCOME_REPLACEMENT_GOOD_PCT: 70,
+  INCOME_REPLACEMENT_WARN_PCT: 50,
 };

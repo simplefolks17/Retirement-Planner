@@ -142,6 +142,7 @@ export function buildAccumulationRows({ simData, fedMarginal, currentAge, curren
         rmd: null,
         conversion: null,
         phase: "accum",
+        withdrawalRatePct: null,
       };
     });
 }

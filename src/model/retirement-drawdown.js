@@ -189,5 +189,10 @@ export function buildYearlyRows({ rows, currentAge, currentYear, rmdByAge = {}, 
     rmd: rmdByAge[r.age] != null ? Math.round(rmdByAge[r.age]) : null,
     conversion: conversionByAge[r.age] != null ? Math.round(conversionByAge[r.age]) : null,
     phase: "ret",
+    // Withdrawal rate: (draw + tax) / balStart — shows what fraction of the
+    // portfolio was consumed that year. null when balStart = 0 (no divide-by-zero).
+    withdrawalRatePct: (r.balStart > 0)
+      ? Math.round((r.draw + r.tax) / r.balStart * 1000) / 10
+      : null,
   }));
 }

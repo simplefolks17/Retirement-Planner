@@ -178,6 +178,12 @@ export function calcStatementView({
   const monthlyPension  = Math.round(pension / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyPortDraw = Math.round(Math.max(0, exp - ss - pension) / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyTakeHome = (hasIncome && takeHome > 0)
+    ? Math.round(takeHome / ASSUMPTIONS.MONTHS_PER_YEAR)
+    : null;
+  const incomeReplacementPct = (monthlyTakeHome != null && monthlyTakeHome > 0 && monthlyTotal > 0)
+    ? Math.round(monthlyTotal / monthlyTakeHome * 100)
+    : null;
 
   // Effective federal rate footnote (1 decimal place), null when no income
   const effFedRatePct = hasIncome ? Math.round((fedTax / currentIncome) * 1000) / 10 : null;
@@ -198,6 +204,7 @@ export function calcStatementView({
     keepPct, taxPct, savePct,
     afterTaxLevel, flowKeep, flowTaxPct, flowSavePct, flowKeepPct,
     monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
+    monthlyTakeHome, incomeReplacementPct,
     effFedRatePct,
     lifetimeContribROI,
   };

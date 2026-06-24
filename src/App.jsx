@@ -497,6 +497,9 @@ export default function App() {
 
   const retirementWalk = retPhase;
 
+  // Scalar extraction for V9 stability (depletionAge used in markerByAge + horizonProps).
+  const depletionAge = retirementWalk?.depletionAge ?? null;
+
   const totalChartData = useMemo(
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
     [accumChart, retirementWalk]);
@@ -713,6 +716,19 @@ export default function App() {
     chartData: totalChartData, currentAge, retirementAge: safeRetAge, lifeExpect: safeLifeExp,
   }), [totalChartData, currentAge, safeRetAge, safeLifeExp]);
 
+  // Per-account engine rows keyed by age — forwarded to the Year-by-year expanded
+  // row detail panel so each click can show Trad/Roth/Taxable/HSA breakdown.
+  // Derived from retPhase.rows (the display-horizon slice already filtered to lifeExp).
+  const retirementRowByAge = useMemo(
+    () => Object.fromEntries((retPhase?.rows ?? []).map(r => [r.age, r])),
+    [retPhase]);
+
+  // Milestone ages keyed for inline portfolio-cell badge (age → tag string).
+  // Derived from chartMilestones.rows which is already sorted + filtered by the model.
+  const milestoneByAge = useMemo(
+    () => Object.fromEntries((chartMilestones?.rows ?? []).map(m => [m.age, m.tag])),
+    [chartMilestones]);
+
   // Plan-screen progress (V6). progressPct: 100 when sustainable (incl. Infinity
   // yearsSustained), else 0–99. Grown by a named field (principle 11) for
   // WI-1.1: `drivers` — the on-track pill popover's 3 rows from calcPlanDrivers
@@ -894,6 +910,7 @@ export default function App() {
       [RMD_START_AGE]: "RMD start",
       ...(includeSS && ssClaimingAge > safeRetAge ? { [ssClaimingAge]: "SS claimed" } : {}),
       ...(conversionWindowYrs > 0 ? { [safeRetAge + conversionWindowYrs]: "Conv. window closes" } : {}),
+      ...(depletionAge != null ? { [depletionAge]: "Portfolio depleted" } : {}),
     },
     // tablePhases: phase-summary header strip for Year by year.
     tablePhases: {
@@ -903,6 +920,9 @@ export default function App() {
         ? Math.min(Math.round(yearsSustained), safeLifeExp - safeRetAge)
         : safeLifeExp - safeRetAge,
     },
+    // Session-4: per-account breakdown + milestone badges for Year-by-year deep layer.
+    retirementRowByAge,   // { [age]: engineRow } — Trad/Roth/Taxable/HSA + tax breakdown
+    milestoneByAge,       // { [age]: tag } — inline portfolio-cell milestone badge
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -918,7 +938,9 @@ export default function App() {
        returnRate,
        // Session-3 additions:
        ssClaimingAge, includeSS,
-       safeRetAge, safeLifeExp]);
+       safeRetAge, safeLifeExp,
+       // Session-4 additions:
+       depletionAge, retirementRowByAge, milestoneByAge]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.
