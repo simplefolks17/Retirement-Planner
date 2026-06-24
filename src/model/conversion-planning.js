@@ -14,21 +14,22 @@
 // wraps the calls in useMemo for referential stability (the BUG-22 fix); the
 // functions themselves are pure and stateless.
 
-// Per-year income floor for the conversion window. Conversion year i is DISPLAYED
-// at age safeRetAge + i + 1 (calcConversionSim returns 1-indexed years and App
-// offsets by safeRetAge), so the SS/pension gate must use that age — using
-// safeRetAge + i drops SS from the first SS year (BUG-25 finding 3).
+// Per-year income floor for the conversion window. Window year i is at age
+// startAge + i (the caller passes startAge = safeRetAge+1 for the default window;
+// a later user-chosen start shifts every floor's SS/pension gate with it), so the
+// SS/pension gate uses that age — an off-by-one here drops SS from the first SS
+// year (BUG-25 finding 3).
 //
 // ssAmount is the SS figure to apply once active: ssTaxableRet (85% taxable
 // fraction) for tax floors, or householdSS (100% gross) for ACA/IRMAA MAGI floors
 // — the only difference between the two floor arrays App builds.
 export function buildIncomeFloors({
-  conversionWindowYrs, safeRetAge,
+  conversionWindowYrs, startAge,
   includeSS, ssClaimingAge, ssAmount,
   pensionMonthly, pensionStartAge, monthsPerYear,
 }) {
   return Array.from({ length: conversionWindowYrs }, (_, i) => {
-    const age         = safeRetAge + i + 1;
+    const age         = startAge + i;
     const yearSS      = includeSS && age >= ssClaimingAge ? ssAmount : 0;
     const yearPension = pensionMonthly > 0 && age >= pensionStartAge
       ? pensionMonthly * monthsPerYear : 0;

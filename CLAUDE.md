@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (516 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (537 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (117 items, 50 done, 67 planned)
+- Feature backlog: `feature-tracker.html` (118 items, 51 done, 67 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -583,11 +583,30 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   misses `drawTax` (tax on extra 401k draws beyond conversions/RMDs) so the retirement-phase
   tax total is understated in Taxes tab. Needs `totalTax` added to `retirementWalk` (model
   change); deferred to a future PR.
+- **User-controlled Roth-conversion timing (2026-06-24, branch `claude/401k-roth-conversion-rules-5dtodw`):**
+  conversions were hardcoded to the gap-years window (retirement+1 → 72). Now: (1) **flexible window** —
+  `buildConversionByAge` (`retirement-phase.js`) and `buildIncomeFloors` (`conversion-planning.js`) take
+  explicit `startAge`/`endAge` instead of `safeRetAge`+offset; App resolves them from new
+  `conversionStartAge`/`conversionEndAge` state (null = default window, the golden-master pin) with
+  start/stop-age sliders. `evaluateConversionPlan`'s age-offset param renamed `safeRetAge`→`windowStartAge`.
+  (2) **Pre-retirement one-time conversions** — new `conversionEvents:[{id,age,amount}]` + helper
+  `src/model/conversion-events.js`; `runSimulation` applies them in the working-year loop (rule 2b: principal
+  trad→Roth, taxed once via `stackedIncomeTax` on `netOrdinaryIncome`, tax funded from taxable with a
+  converted-amount fallback). Under-59½ funded-from-converted shortfalls charge the **10% early-withdrawal
+  penalty** (new `EARLY_WITHDRAWAL_AGE`/`EARLY_WITHDRAWAL_PENALTY` constants). Lowered trad seed carries
+  forward to `tradGrossAtRet` automatically → lower future RMDs (the benefit shows in longevity/`rmdTaxBite`,
+  NOT in the window `netConversionBenefit` headline — the `noConv` counterfactual seeds from the lowered
+  balance; documented). Gated behind an **in-service-eligibility** toggle (`ConversionEventsPanel`). (3)
+  **Optimizer suggests start age + amount** — `findOptimalConversionPlan` (sibling of `findOptimalConversion`)
+  searches `(startAge, amount)`; the suggestion line shows both. New working-year `convEvent`/`convEventTax`
+  row fields flow into the Year-by-year ledger (`accumulation.js`, reconciles `prev+contrib+growth−tax=total`).
+  Default state unchanged (events `[]`, window null, in-service off) → **golden master untouched**. 516 → **537**
+  tests (+21: window-equivalence, working-year conservation/penalty/carry-forward, optimizer-plan).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (516 tests)
+- `npm test` — run model + formatter + render-smoke tests (537 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

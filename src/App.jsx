@@ -20,7 +20,7 @@ import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
 import { calcRMDIncomeFloor, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
 import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
-import { findOptimalConversion } from "./model/roth-conversion.js";
+import { findOptimalConversionPlan } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
@@ -44,6 +44,7 @@ import { ChartTooltip }      from "./components/ChartTooltip.jsx";
 import { FlowConn }          from "./components/FlowConn.jsx";
 import { WhatIfPanel }       from "./components/WhatIfPanel.jsx";
 import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
+import { ConversionEventsPanel } from "./components/ConversionEventsPanel.jsx";
 import { calcWhatIfDelta }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider } from "./horizon/ThemeContext.jsx";
@@ -121,6 +122,16 @@ export default function App() {
   const [conversionBracketTarget, setConversionBracketTarget] = useState(22);
   const [annualConversionAmt,     setAnnualConversionAmt]     = useState(20_000);
   const [conversionTaxSource,     setConversionTaxSource]     = useState("converted");
+  // Conversion-window timing. null = use the default window (retirement+1 → RMD_START_AGE-1),
+  // which reproduces the prior hardcoded behavior exactly (golden-master pin).
+  const [conversionStartAge,      setConversionStartAge]      = useState(null);
+  const [conversionEndAge,        setConversionEndAge]        = useState(null);
+  // Pre-retirement one-time 401k→Roth conversions in low-income working years.
+  // { id, age, amount }. Empty default → zero golden master impact.
+  const [conversionEvents,        setConversionEvents]        = useState([]);
+  // The user's plan must allow in-service distributions for working-year conversions
+  // — gates the events panel so we don't imply it's always possible.
+  const [conversionInService,     setConversionInService]     = useState(false);
   const [employerMatchPct,        setEmployerMatchPct]        = useState(3);
   const [matchMode,               setMatchMode]               = useState("flat");
   const [matchFormulaRate,        setMatchFormulaRate]        = useState(50);
@@ -169,6 +180,16 @@ export default function App() {
     selectedState, stateRateOverride,
   });
 
+  // The conversion events the MODEL actually sees: only when the in-service toggle is
+  // on, and only valid working-year events (amount > 0, strictly before retirement).
+  // Clamping here means lowering the retirement age can't strand an event inside the
+  // retirement window where it would double-convert (review #11) — no effect/loop.
+  const activeConversionEvents = useMemo(() => {
+    if (!conversionInService) return [];
+    const minAge = currentAge + 1, maxAge = safeRetAge - 1;
+    return conversionEvents.filter(e => e.amount > 0 && e.age >= minAge && e.age <= maxAge);
+  }, [conversionInService, conversionEvents, currentAge, safeRetAge]);
+
   const simData = useMemo(() => {
     const raw = runSimulation({
       totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
@@ -178,6 +199,7 @@ export default function App() {
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       calcEmployerMatchFn: employerMatch,
       moneyEvents,
+      conversionEvents: activeConversionEvents, stateRate,
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards
@@ -195,7 +217,17 @@ export default function App() {
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
     employerMatch,
     moneyEvents,
+    activeConversionEvents, stateRate,
   ]);
+
+  // Per-age estimated tax (incl. any early-withdrawal penalty) for the working-year
+  // conversions actually set — read straight off the engine-computed simData rows so
+  // the panel shows the real charged figure, not a re-derived estimate (rule 10 spirit).
+  const convEventTaxByAge = useMemo(() => {
+    const out = {};
+    for (const d of simData) if (d.convEvent > 0) out[d.age] = d.convEventTax;
+    return out;
+  }, [simData]);
 
   // Year-0 fallback: when retirementAge === currentAge the user is already retired
   // and simData has no rows at or before safeRetAge. Use current input balances directly.
@@ -331,19 +363,29 @@ export default function App() {
   // These feed the engine's conversion schedule and the IRMAA/ACA exposure. They do
   // NOT depend on the RMD schedule — that now comes OUT of the engine — which is what
   // lets the engine be the single source (no rmdData → conversion → rmdData cycle).
-  const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
+  // Resolve the conversion window. null inputs fall back to the default window
+  // (retirement+1 → RMD_START_AGE-1), clamped so conversions stay between the year
+  // after retirement and the year before RMDs force the issue. At the default this
+  // reproduces the old `RMD_START_AGE - 1 - safeRetAge` window exactly.
+  const convWindowFloor = safeRetAge + 1;
+  const convWindowCeil  = RMD_START_AGE - 1;
+  const resolvedStartAge = Math.min(convWindowCeil,
+    Math.max(convWindowFloor, conversionStartAge ?? convWindowFloor));
+  const resolvedEndAge   = Math.max(resolvedStartAge,
+    Math.min(convWindowCeil, conversionEndAge ?? convWindowCeil));
+  const conversionWindowYrs = Math.max(0, resolvedEndAge - resolvedStartAge + 1);
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
   // Per-year conversion-window income floors (BUG-25 #3 per-year SS/pension gate):
   //   convFloors     → ssTaxableRet (85% taxable, marginal-rate math)
   //   convMAGIFloors → householdSS  (100% gross SS, ACA/IRMAA MAGI)
   const convFloors = useMemo(() => buildIncomeFloors({
-    conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
+    conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
     pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-  }), [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
   const convMAGIFloors = useMemo(() => buildIncomeFloors({
-    conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, ssAmount: householdSS,
+    conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: householdSS,
     pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-  }), [conversionWindowYrs, safeRetAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
   const retIncomeFloor = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
 
@@ -366,10 +408,10 @@ export default function App() {
   const hasRetRow = !!(simData.find(d => d.age === safeRetAge)
     ?? (safeRetAge === currentAge ? currentSnapshot : null));
   const conversionByAge = useMemo(() => buildConversionByAge({
-    conversionWindowYrs: hasRetRow ? conversionWindowYrs : 0, safeRetAge,
+    startAge: resolvedStartAge, endAge: hasRetRow ? resolvedEndAge : resolvedStartAge - 1,
     annualConversions: conversionMode === "bracket" ? bracketFillConversions : null,
     annualConversion,
-  }), [hasRetRow, conversionWindowYrs, safeRetAge, conversionMode, bracketFillConversions, annualConversion]);
+  }), [hasRetRow, resolvedStartAge, resolvedEndAge, conversionMode, bracketFillConversions, annualConversion]);
 
   // ── THE single retirement-phase walk (BUG-35 / BUG-31) ────────────────────
   // One per-account, GROSS-seeded, taxed-once engine run drives longevity AND the
@@ -441,13 +483,13 @@ export default function App() {
     tradGrossAtRetirement: tradGrossAtRet,
     rothBalAtRet: retRoth,
     taxableBalAtRet: retTaxable,
-    safeRetAge,
+    windowStartAge: resolvedStartAge,
     rmdTaxSaved: retPhase.rmdTaxSaved, conversionCost: retPhase.conversionCost,
     convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
     personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
   }), [hasRetRow, conversionWindowYrs, annualConversion, conversionMode, bracketFillConversions,
       returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource, retStateRate,
-      tradGrossAtRet, retRoth, retTaxable, safeRetAge, retPhase,
+      tradGrossAtRet, retRoth, retTaxable, resolvedStartAge, retPhase,
       convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare, personOnMedicare,
       marketplaceMonthlyPremium]);
   const {
@@ -535,26 +577,31 @@ export default function App() {
   // model than what the display shows.
   const optimizerResult = useMemo(() => {
     if (conversionMode === "bracket" || conversionWindowYrs === 0 || !hasRetRow) return null;
-    const _convFloors = convFloors;
-    const _convMAGIFloors = convMAGIFloors;
 
-    // For each candidate flat conversion amount: run the SAME engine (retPhaseBase)
-    // with that schedule for the RMD-tax saving + conversion cost, then the SAME
-    // evaluateConversionPlan for the IRMAA/ACA costs — so the optimizer can never
-    // search a different model than the screen shows (BUG-31 / BUG-35).
-    const getNetBenefit = (amount) => {
+    // For each candidate (startAge, amount): rebuild the window floors + schedule for
+    // that start, run the SAME engine (retPhaseBase) for the RMD-tax saving + conversion
+    // cost, then the SAME evaluateConversionPlan for the IRMAA/ACA costs — so the
+    // optimizer can never search a different model than the screen shows (BUG-31/BUG-35).
+    const getNetBenefit = (startAge, amount) => {
+      const windowLen = Math.max(0, resolvedEndAge - startAge + 1);
+      const floorArgs = {
+        conversionWindowYrs: windowLen, startAge, includeSS, ssClaimingAge,
+        pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+      };
+      const candidateFloors     = buildIncomeFloors({ ...floorArgs, ssAmount: ssTaxableRet });
+      const candidateMAGIFloors = buildIncomeFloors({ ...floorArgs, ssAmount: householdSS });
       const candidateByAge = buildConversionByAge({
-        conversionWindowYrs, safeRetAge, annualConversions: null, annualConversion: amount,
+        startAge, endAge: resolvedEndAge, annualConversions: null, annualConversion: amount,
       });
       const rp = buildRetirementPhase({ ...retPhaseBase, conversionByAge: candidateByAge });
       const plan = evaluateConversionPlan({
-        conversionWindowYrs, annualConversion: amount, annualConversions: null,
-        returnRate, retIncomeFloor, retIncomeFloors: _convFloors,
+        conversionWindowYrs: windowLen, annualConversion: amount, annualConversions: null,
+        returnRate, retIncomeFloor, retIncomeFloors: candidateFloors,
         filingStatus, conversionTaxSource, retStateRate,
         tradGrossAtRetirement: tradGrossAtRet, rothBalAtRet: retRoth, taxableBalAtRet: retTaxable,
-        safeRetAge,
+        windowStartAge: startAge,
         rmdTaxSaved: rp.rmdTaxSaved, conversionCost: rp.conversionCost,
-        convMAGIFloors: _convMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
+        convMAGIFloors: candidateMAGIFloors, hasMarketplaceInsurance, householdSize, hasMedicare,
         personOnMedicare, marketplaceMonthlyPremium, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
       });
       return {
@@ -563,11 +610,12 @@ export default function App() {
       };
     };
 
-    return findOptimalConversion({ getNetBenefit });
+    return findOptimalConversionPlan({ startAgeRange: [convWindowFloor, resolvedEndAge], getNetBenefit });
   }, [conversionMode, conversionWindowYrs, hasRetRow, retPhaseBase, retStateRate,
-      retRoth, retTaxable, returnRate, retIncomeFloor, convFloors, filingStatus, conversionTaxSource,
-      tradGrossAtRet, safeRetAge,
-      hasMedicare, convMAGIFloors, personOnMedicare,
+      retRoth, retTaxable, returnRate, retIncomeFloor, filingStatus, conversionTaxSource,
+      tradGrossAtRet, convWindowFloor, resolvedEndAge,
+      includeSS, ssClaimingAge, ssTaxableRet, householdSS, pensionMonthly, pensionStartAge,
+      hasMedicare, personOnMedicare,
       hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
@@ -1470,6 +1518,35 @@ export default function App() {
           onChange={setMoneyEvents}
           currentAge={currentAge}
         />
+      </div>
+
+      <div style={{ ...panel, marginBottom: 20 }}>
+        <h3 style={{ ...sectionTitle, marginBottom: 8 }}>Working-Year Roth Conversions</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 11, color: C.muted, lineHeight: 1.5 }}>
+          Most conversions are best done in the “gap years” after you retire (above). But if you
+          hit a low-income year <em>before</em> retiring — a job change, a sabbatical — converting
+          some 401k → Roth then can lock in a low tax rate and shrink future RMDs.
+        </p>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: C.text, marginBottom: 10 }}>
+          <input type="checkbox" checked={conversionInService}
+            onChange={e => setConversionInService(e.target.checked)} />
+          My 401k plan allows in-service distributions / in-plan Roth conversions
+        </label>
+        {conversionInService ? (
+          <ConversionEventsPanel
+            events={conversionEvents}
+            onChange={setConversionEvents}
+            currentAge={currentAge}
+            safeRetAge={safeRetAge}
+            estTaxByAge={convEventTaxByAge}
+          />
+        ) : (
+          <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5, fontStyle: "italic" }}>
+            Converting an <em>active</em> employer 401k while still working is plan-dependent —
+            many plans only allow it after age 59½, or not at all. Check the box above once you’ve
+            confirmed your plan allows it (it’s always available from a rollover IRA after you leave a job).
+          </p>
+        )}
       </div>
 
       <div style={{ ...panel, marginBottom: 20 }}>
@@ -2466,9 +2543,25 @@ export default function App() {
                   <p style={{ margin: "0 0 12px", fontSize: 11, color: C.text, fontWeight: 600 }}>
                     Conversion Strategy
                     <span style={{ fontSize: 10, color: C.muted, fontWeight: 400, marginLeft: 8 }}>
-                      {conversionWindowYrs}-year window · age {safeRetAge + 1} → 72
+                      {conversionWindowYrs}-year window · age {resolvedStartAge} → {resolvedEndAge}
                     </span>
                   </p>
+                  <div style={{ marginBottom: 14 }}>
+                    <Slider label="Start converting at age" value={resolvedStartAge}
+                      min={convWindowFloor} max={convWindowCeil} step={1}
+                      format={v => `age ${v}`}
+                      onChange={v => setConversionStartAge(Math.min(v, resolvedEndAge))}
+                      valueColor={C.blue} />
+                    <Slider label="Stop converting at age" value={resolvedEndAge}
+                      min={convWindowFloor} max={convWindowCeil} step={1}
+                      format={v => `age ${v}`}
+                      onChange={v => setConversionEndAge(Math.max(v, resolvedStartAge))}
+                      valueColor={C.blue} />
+                    <p style={{ margin: "2px 0 0", fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
+                      The low-income “gap years” between retirement and age {RMD_START_AGE} (when RMDs begin)
+                      are usually the best time to convert. Default fills the whole window.
+                    </p>
+                  </div>
                   <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                     {[["bracket", "Fill a bracket"], ["custom", "Custom amount"]].map(([id, label]) => (
                       <button key={id} onClick={() => setConversionMode(id)} style={{
@@ -2708,10 +2801,13 @@ export default function App() {
                       <p style={{ margin: 0, fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
                         Converting{" "}
                         <span style={{ color: C.green, fontWeight: 600, ...mono }}>{fmt(optimizerResult.optimalConversion)}/yr</span>
+                        {" "}starting at age{" "}
+                        <span style={{ color: C.green, fontWeight: 600, ...mono }}>{optimizerResult.optimalStartAge}</span>
                         {" "}maximizes net benefit after healthcare costs (IRMAA{hasMarketplaceInsurance ? " + ACA" : ""})
                         (estimated <span style={{ color: C.green, ...mono }}>{fmt(optimizerResult.optimalBenefit)}</span> net).
                         {" "}Your current setting is{" "}
-                        <span style={{ color: C.blue, ...mono }}>{fmt(annualConversion)}/yr</span>.
+                        <span style={{ color: C.blue, ...mono }}>{fmt(annualConversion)}/yr</span>
+                        {" "}from age <span style={{ color: C.blue, ...mono }}>{resolvedStartAge}</span>.
                       </p>
                     </div>
                   )}
@@ -3083,7 +3179,7 @@ export default function App() {
                 <FlowConn value={flowData.totalAtRet} color={C.gold} label="at retirement" peakPortfolio={flowData.peakPortfolio} />
                 {flowData.hasConvWindow ? (
                   <>
-                    <PhaseCard num={2} title="Optimize & Convert" ageRange={`Age ${safeRetAge} → 72`}
+                    <PhaseCard num={2} title="Optimize & Convert" ageRange={`Age ${resolvedStartAge} → ${resolvedEndAge}`}
                       years={flowData.conversionWindowYrs} color={C.blue} steps={phase2Steps}
                       note={flowData.totalConverted > 0
                         ? `${fmt(flowData.totalConverted)} moved from 401k → Roth during this window. Every dollar converted escapes future RMDs and grows tax-free.`
