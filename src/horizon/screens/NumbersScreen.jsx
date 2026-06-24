@@ -353,7 +353,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
             <div style={{ flex: 1, display: "flex", gap: 28, minHeight: 0, flexWrap: "wrap" }}>
               <StmtCol t={t} title="Income & tax" items={[
-                ["Gross income",    `$${Math.round(currentIncome).toLocaleString()}`, null, false],
+                ["Gross income",    `$${Math.round(sv.gross).toLocaleString()}`, null, false],
                 ["Federal tax",     `−$${Math.round(fedTax).toLocaleString()}`,  "1",  false],
                 ["FICA + state",    `−$${Math.round(sv.ficaPlusState).toLocaleString()}`, null, false],
                 ["Pre-tax savings", `−$${Math.round(sv.preTaxDeductions).toLocaleString()}`, null, false],
