@@ -1260,7 +1260,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         </div>
                       )}
                       <div
-                        ref={el => { if (el) rowRefs.current[row.age] = el; }}
+                        ref={el => { rowRefs.current[row.age] = el; }}
                         role={isRet ? "button" : undefined}
                         tabIndex={isRet ? 0 : undefined}
                         aria-expanded={isRet ? isExpanded : undefined}
