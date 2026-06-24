@@ -146,6 +146,10 @@ export function calcStatementView({
   currentContribTotal,
   householdSS,
   effectiveExpenses,
+  safeDeduc = 0,
+  effectivePension = 0,
+  totalAtRet = null,
+  totalContrib = null,
 }) {
   const hasIncome = currentIncome != null && currentIncome > 0;
   const gross     = hasIncome ? currentIncome : 0;
@@ -168,20 +172,40 @@ export function calcStatementView({
 
   // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
   const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
+  const pension         = effectivePension ?? 0;
   const exp             = effectiveExpenses ?? 0;
   const monthlyHHSS     = Math.round(ss / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPortDraw = Math.round(Math.max(0, exp - ss) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPension  = Math.round(pension / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPortDraw = Math.round(Math.max(0, exp - ss - pension) / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyTakeHome = (hasIncome && takeHome > 0)
+    ? Math.round(takeHome / ASSUMPTIONS.MONTHS_PER_YEAR)
+    : null;
+  const incomeReplacementPct = (monthlyTakeHome != null && monthlyTakeHome > 0 && monthlyTotal > 0)
+    ? Math.round(monthlyTotal / monthlyTakeHome * 100)
+    : null;
 
   // Effective federal rate footnote (1 decimal place), null when no income
   const effFedRatePct = hasIncome ? Math.round((fedTax / currentIncome) * 1000) / 10 : null;
 
+  // Lifetime compounding multiplier: how many × the user's total contributions becomes
+  // the retirement nest egg. null when either input is missing or contributions = 0.
+  const lifetimeContribROI = (totalAtRet != null && totalContrib != null && totalContrib > 0)
+    ? Math.round((totalAtRet / totalContrib) * 10) / 10
+    : null;
+
   return {
     gross, taxTotal, ficaPlusState,
     saveTotal: currentContribTotal,
+    // preTaxDeductions = safeDeduc (401k + HSA + otherPreTax only) — used by the
+    // Statement table so the row arithmetic matches takeHome (rule 2b / rule 10).
+    // saveTotal is ALL contributions (for the waterfall chart's allocation view).
+    preTaxDeductions: safeDeduc,
     keepPct, taxPct, savePct,
     afterTaxLevel, flowKeep, flowTaxPct, flowSavePct, flowKeepPct,
-    monthlyHHSS, monthlyPortDraw, monthlyTotal,
+    monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
+    monthlyTakeHome, incomeReplacementPct,
     effFedRatePct,
+    lifetimeContribROI,
   };
 }

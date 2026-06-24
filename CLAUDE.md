@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (481 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (516 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -533,11 +533,61 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
      review PRs were **closed** (vehicles, not merge candidates); `review/*` + `review-base` branches
      remain for reference. Intentionally deferred (documented in REVIEW-FINDINGS.md): cosmetic
      micro-perf nits only. Suite **481 tests**, lint clean, production build OK.
+- **Numbers screen depth build-out — Sessions 1–4 (2026-06-13 through 2026-06-24, PR #38):**
+  completed the Level 2 "Understand" Numbers tabs (Budget / Accounts / Taxes) and hardened the
+  Year-by-year and Money-flow tabs. PR #38 on branch `claude/kind-euler-rh0qvs` was reviewed by
+  CodeRabbit and Gemini across 4 sessions and 4 review rounds; all real findings fixed, noise
+  triaged and recorded. Fixes shipped in PR #38:
+  1. **MFJ income in `calcStatementView`** — was calling with `currentIncome` (primary only);
+     fixed to `householdIncome` (combined for MFJ per rules 3 & 9). Display-only; golden master
+     untouched.
+  2. **Composition bar scope** — `taxView.composition` mixed `fedTax` (one working year) with
+     lifetime `rmdTaxBite` + `conversionCost`. Removed the working-year segment; renamed heading
+     to "Retirement-phase tax composition"; total changed 784_739 → 766_739 (RMD + conversion
+     only). Renamed `taxViewBundle` field accordingly.
+  3. **`taxSaveFromPreTax` scope** (`App.jsx`) — was using `safeDeduc` (all pre-tax deductions)
+     for the 401k+HSA tax-saving callout; fixed to `Math.round((contrib401k + contribHSA) *
+     fedMarginal)` so the copy "401k + HSA saves you $X in taxes this year" matches what it says.
+  4. **Tab-strip keyboard accessibility** — Numbers tab `<div>` controls converted to
+     `<button type="button">` with `aria-pressed`; expandable year-by-year rows gained
+     `role="button"` + `tabIndex={0}` + `aria-expanded` + `onKeyDown` Enter handler.
+  5. **Jump bar filtered to displayed ages** — was showing age buttons for unmounted rows (ages
+     past row 50); now filtered to ages present in `displayedRows`.
+  6. **`WITHDRAWAL_RATE_DANGER_PCT: 6`** — formerly hardcoded `wr <= 6` threshold; moved to
+     `irs-2026.js` ASSUMPTIONS and imported (rule 1).
+  7. **Null driver edge state** — `d.ok === null` (inapplicable metric, e.g. longevity=Infinity)
+     was counted as a failing driver in the plan view; fixed to only count explicit `false`.
+  8. **`markerByAge` key collision** — object literal with the same numeric age key silently
+     dropped earlier label (e.g. retire-at-73 lost either "Retire" or "RMD start"); fixed with
+     a `reduce` that concatenates labels: `"Retire · RMD start"`.
+  9. **Budget footer total** — allocation-stack rows showed optimized values (`oa.opt*`) but the
+     footer showed `currentContribTotal`; fixed by adding `optimizedContribTotal` to `budgetView`
+     and using it in the screen footer.
+  10. **Ref callback memory leak** — year-by-year `ref={el => { if (el) rowRefs.current[...] = el }}`
+      prevented React's null-on-unmount from clearing stale DOM refs; fixed to always assign
+      (including null on unmount).
+  11. **V9 referential stability** — `markerByAge` and `tablePhases` memoized separately so their
+      deps (`safeRetAge`, `depletionAge`, `safeLifeExp`) no longer appear in the `horizonProps`
+      dep array. `budgetView` and `taxViewBundle` dep arrays cleaned up (removed stale `fedTax`
+      and age deps that had moved to child memos). All stability tests pass.
+  12. **Footer copy** — year-by-year footer now reads "balances and growth shown gross; taxes
+      appear in the Tax and Draw columns" (was "growth after tax", inaccurate after BUG-35).
+  13. **`fmtMo` / `fmt` guard** — retirement income companion strip values were already monthly;
+      corrected from `fmtMo(val)` to `fmt(val)` (would have shown 1/12 of correct amount).
+  14. **`?? null` for savings guideline** — was `?? 15` (fabricated); changed to `?? null` with
+      a null guard on render (shows "—" when driver unavailable — rule 10).
+  15. **Null display in expanded row** — `fmt(engRow.rmdTax ?? 0)` → `fmt(engRow.rmdTax)` and
+      `Math.round(X ?? 0).toLocaleString()` → `fmt(X)` so null cells show "—" not "$0".
+  Suite **516 tests**, lint clean, golden master untouched.
+  New open bug filed: **BUG-40** — `taxView.composition.total` = RMD tax + conversion tax only;
+  misses `drawTax` (tax on extra 401k draws beyond conversions/RMDs) so the retirement-phase
+  tax total is understated in Taxes tab. Needs `totalTax` added to `retirementWalk` (model
+  change); deferred to a future PR.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (481 tests)
+- `npm test` — run model + formatter + render-smoke tests (516 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

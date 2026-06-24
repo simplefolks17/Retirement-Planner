@@ -7,6 +7,30 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
+**What:** The Taxes tab's "Retirement-phase tax composition" bar uses `taxView.composition.total =
+rmdTaxBite + convTaxTotal` (`App.jsx`, `taxViewBundle`). This captures the RMD-schedule tax and
+the conversion-window tax, but misses `drawTax` — the incremental tax the per-account engine
+charges when the 401k is tapped for living expenses beyond RMDs/conversions (e.g. after the
+conversion window closes but before depletion). In scenarios with meaningful extra 401k draws, the
+displayed retirement-phase tax total is understated.
+**Root cause:** `rmdTaxBite` and `convTaxTotal` are scalar aggregates from the existing plan-level
+fields; `drawTax` is a per-row field inside `retirementWalk.rows` that has no existing scalar
+rollup. Adding it requires either (a) a new `totalDrawTax = Σ(row.drawTax)` field in
+`retirementWalk` (preferred — keeps the rollup in the model, rule 10) or (b) a `Σ` over the rows
+in App.jsx before the `taxViewBundle` memo.
+**Inert at the default state:** the default plan is trivially sustainable (Infinity longevity) and
+`drawTax` is near-zero at the default spending level; effect is visible for under-funded plans.
+**Fix path:** add `totalDrawTax: rows.reduce((s, r) => s + (r.drawTax ?? 0), 0)` to `buildRetirementPhase`
+return; include it in `taxView.composition.total` and as a third "draw" segment in `taxViewBundle`.
+**Where:** `src/model/retirement-phase.js` (add field), `src/App.jsx` `taxViewBundle` (consume it),
+`src/horizon/screens/NumbersScreen.jsx` (render third segment), `src/horizon/__tests__/numbers-tabs.test.js`
+(update composition mock).
+
+---
+
 ### BUG-36 — What-if / optimized deltas not yet on the taxed-once engine (accepted, low)
 
 **Found:** 2026-06-15 (BUG-35 follow-up, surfaced in PR #32 review). **Owner:** me_theguy.
@@ -82,6 +106,102 @@ residual — removing the clamp let negative real growth through, but the value 
 ---
 
 ## Resolved Issues
+
+---
+
+### Numbers screen depth build-out review fixes — PR #38 (2026-06-24)
+
+**Source:** CodeRabbit + Gemini review of PR #38 (`claude/kind-euler-rh0qvs`), Sessions 1–4.
+Suite **516 tests**, lint clean, golden master untouched (all fixes display-only).
+
+1. **MFJ income in `calcStatementView` — FIXED.**
+   `App.jsx` was calling `calcStatementView({ currentIncome, … })` using the primary-only income
+   instead of `householdIncome` (combined for MFJ — rules 3 & 9). The Statement tab's gross,
+   keepPct, taxPct, and savePct were understated for MFJ filers. Fixed to pass `householdIncome`.
+
+2. **Composition bar scope mismatch — FIXED.**
+   `taxView.composition` mixed `fedTax` (a single working year) with the lifetime aggregates
+   `rmdTaxBite` + `convTaxTotal`. Removed the working-year "Working tax" segment. Renamed the
+   heading to "Retirement-phase tax composition (RMD + conversion)". Total 784_739 → 766_739
+   (RMD + conversion only). Test mock and assertions updated.
+   **File:** `src/App.jsx` (`taxViewBundle`), `src/horizon/screens/NumbersScreen.jsx`,
+   `src/horizon/__tests__/numbers-tabs.test.js`.
+
+3. **`taxSaveFromPreTax` scope — FIXED.**
+   The 401k+HSA tax-saving callout used `safeDeduc` (all pre-tax deductions including other
+   pre-tax) to compute "saves you $X in taxes." Fixed to `Math.round((contrib401k + contribHSA) *
+   fedMarginal)` — matches what the copy actually says.
+   **File:** `src/App.jsx` (line ~827), deps updated.
+
+4. **Tab-strip keyboard accessibility — FIXED.**
+   Numbers screen tab-strip `<div>` controls were not keyboard-operable. Converted to
+   `<button type="button">` with `aria-pressed={on}`. Expandable year-by-year rows gained
+   `role="button"`, `tabIndex={0}`, `aria-expanded`, and `onKeyDown` Enter handler.
+   **File:** `src/horizon/screens/NumbersScreen.jsx` (tab strip ~L266; expandable row ~L1252).
+
+5. **Jump bar filtered to displayed ages — FIXED.**
+   Year-by-year jump bar showed age buttons for all marker ages including those past the "Show all"
+   fold (unmounted rows). Fixed by filtering `markerByAge` to ages present in `displayedRows`.
+   **File:** `src/horizon/screens/NumbersScreen.jsx` (~L1176–1227).
+
+6. **`WITHDRAWAL_RATE_DANGER_PCT` constant — FIXED.**
+   The `wr <= 6` threshold was hardcoded; added `WITHDRAWAL_RATE_DANGER_PCT: 6` to ASSUMPTIONS in
+   `src/config/irs-2026.js` and imported it (rule 1).
+   **File:** `src/config/irs-2026.js`, `src/horizon/screens/NumbersScreen.jsx`.
+
+7. **Null driver edge state — FIXED.**
+   `planView.drivers.filter(d => !d.ok)` counted `d.ok === null` (inapplicable metric, e.g.
+   longevity when plan is Infinity-sustainable) as a failing driver. Fixed to
+   `d.ok === false` only. The On Track pill no longer shows false warnings for sustainable plans.
+   **File:** `src/horizon/screens/NumbersScreen.jsx` (~L312).
+
+8. **`markerByAge` key collision — FIXED.**
+   When retire age equals RMD start age (73), the object literal `{ [73]: "Retire", [73]: "RMD
+   start" }` silently dropped the first label. Fixed with a `reduce` that concatenates labels for
+   the same age: `"Retire · RMD start"`.
+   **File:** `src/App.jsx` (`markerByAge` memo).
+
+9. **Budget footer total — FIXED.**
+   The allocation-stack rows showed optimized values (`oa.opt*`) but the footer total showed
+   `currentContribTotal` (unoptimized). Added `optimizedContribTotal` to `budgetView` in App.jsx
+   and updated the screen footer to use it.
+   **File:** `src/App.jsx` (`budgetView` memo), `src/horizon/screens/NumbersScreen.jsx` (~L694).
+
+10. **Ref callback memory leak — FIXED.**
+    Year-by-year row refs used `ref={el => { if (el) rowRefs.current[age] = el }}`. The `if (el)`
+    guard prevented React's null-on-unmount from clearing the stale ref — a memory leak. Fixed by
+    always assigning (`rowRefs.current[age] = el`) so unmount clears it as React intends.
+    **File:** `src/horizon/screens/NumbersScreen.jsx` (~L1263).
+
+11. **V9 referential stability — FIXED.**
+    `markerByAge` and `tablePhases` were computed inline inside the `horizonProps` useMemo body
+    (new object on every deps-triggered rerender). Now memoized as separate useMemo calls with
+    their own targeted dep arrays. Their deps (`safeRetAge`, `depletionAge`, `safeLifeExp`)
+    removed from `horizonProps` dep array. `taxViewBundle` dep array cleaned up (removed stale
+    `fedTax`). All V9/principle-13 referential-stability tests pass.
+    **File:** `src/App.jsx`.
+
+12. **Footer copy — FIXED.**
+    Year-by-year footer said "growth after tax" — inaccurate after BUG-35 (balances are gross).
+    Now reads "balances and growth shown gross; taxes appear in the Tax and Draw columns."
+    **File:** `src/horizon/screens/NumbersScreen.jsx` (~L1366).
+
+13. **`fmtMo` / `fmt` fix — FIXED.**
+    The retirement income companion strip passed already-monthly values to `fmtMo()` (which divides
+    by 12), displaying 1/12 of the correct dollar amount. Fixed to `fmt()`.
+    **File:** `src/horizon/screens/NumbersScreen.jsx` (~L473).
+
+14. **Savings guideline `?? null` — FIXED.**
+    Budget tab's savings rate pill used `savingsGuide ?? 15` — fabricating a 15% guideline when
+    the driver was unavailable (rule 10 violation). Fixed to `?? null` with a null guard on render.
+    **File:** `src/horizon/screens/NumbersScreen.jsx` (~L510).
+
+15. **Null display in expanded rows — FIXED.**
+    Year-by-year expanded row used `fmt(engRow.rmdTax ?? 0)` and `Math.round(X ?? 0).toLocaleString()`
+    — coercing null/missing values to $0 instead of "—". Fixed to `fmt(engRow.rmdTax)` etc.
+    **File:** `src/horizon/screens/NumbersScreen.jsx` (~L1327, ~L859–865).
+
+**New open bug filed:** BUG-40 (`taxView.composition.total` misses `drawTax`).
 
 ---
 

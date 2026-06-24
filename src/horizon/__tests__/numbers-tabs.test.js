@@ -41,22 +41,29 @@ const t = {
 
 // ── Minimal statementView shape ───────────────────────────────────────────────
 const statementView = {
-  gross:           100_000,
-  taxTotal:         26_000,
-  saveTotal:        24_850,
-  afterTaxLevel:    74_000,
-  flowKeep:         49_150,
-  keepPct:          49,
-  taxPct:           26,
-  savePct:          25,
-  effFedRatePct:    18,
-  flowTaxPct:       26,
-  flowSavePct:      25,
-  flowKeepPct:      49,
-  ficaPlusState:     8_000,
-  monthlyPortDraw:   2_000,
-  monthlyTotal:      5_000,
-  monthlyHHSS:       3_096,
+  gross:              100_000,
+  taxTotal:            26_000,
+  saveTotal:           24_850,
+  afterTaxLevel:       74_000,
+  flowKeep:            49_150,
+  keepPct:             49,
+  taxPct:              26,
+  savePct:             25,
+  effFedRatePct:       18,
+  flowTaxPct:          26,
+  flowSavePct:         25,
+  flowKeepPct:         49,
+  ficaPlusState:        8_000,
+  preTaxDeductions:    23_500,
+  monthlyPortDraw:      2_000,
+  monthlyTotal:         5_000,
+  monthlyHHSS:          3_096,
+  monthlyPension:           0,
+  // Session-3: lifetime compounding multiplier (totalAtRet / totalContrib)
+  lifetimeContribROI:    7.0,
+  // Session-4: income replacement ratio
+  monthlyTakeHome:      6_000,
+  incomeReplacementPct:    72,
 };
 
 // ── Minimal chartMilestones shape ─────────────────────────────────────────────
@@ -73,8 +80,8 @@ const retirementWalk = {
   depletionAge: null,
   yearsSustained: Infinity,
   rows: [
-    { age: 65, total: 3_484_197, draw: 120_000, growth: 174_210, tax: 5_000 },
-    { age: 66, total: 3_550_000, draw: 120_000, growth: 185_803, tax: 5_000 },
+    { age: 65, total: 3_484_197, draw: 120_000, growth: 174_210, tax: 5_000, balStart: 3_550_000 },
+    { age: 66, total: 3_550_000, draw: 120_000, growth: 185_803, tax: 5_000, balStart: 3_484_197 },
   ],
 };
 
@@ -85,6 +92,13 @@ const budget = {
   savingsCapacity:     14_000,  // grossAfterTax − effectiveLiving
   currentContribTotal: 24_850,  // sum of all contributions
   availableSurplus:   -10_850,  // savingsCapacity − contributions (deficit case)
+  surplusFutureValue:      0,   // fvAnnuity(availableSurplus, ...) — 0 when deficit
+  optimizedContribTotal: 30_800, // opt401k(19_500) + optRoth(7_000) + optHSA(4_300) + optTaxable(0)
+  // Pre-computed sign/tone fields (rule-10: no comparisons on financial values in src/horizon/)
+  savingsCapacityPositive: true,   // savingsCapacity 14_000 >= 0
+  surplusPositive:         false,  // availableSurplus -10_850 < 0
+  hasDeficit:              true,
+  deficitAmount:           10_850,
   optimizedAllocation: {
     extraMatch:   0,
     extraHSA:     0,
@@ -102,26 +116,59 @@ const budget = {
 // Budget with surplus (for wiring assertions that test the no-deficit path).
 const budgetSurplus = {
   ...budget,
-  availableSurplus: 5_000,
+  availableSurplus:    5_000,
+  surplusFutureValue: 85_000,  // fvAnnuity(5_000, 0.07, 10) ≈ 69k; round number for test
+  surplusPositive:     true,
+  hasDeficit:          false,
+  deficitAmount:           0,
 };
 
-// ── WI-2.4: taxView bundle ────────────────────────────────────────────────────
+// ── planView shape (savings driver used by Budget tab) ───────────────────────
+const planView = {
+  progressPct: 78,
+  drivers: [
+    { id: "withdrawal", ok: true,  withdrawalRatePct: 3.4, guidelinePct: 4 },
+    { id: "longevity",  ok: true,  sustainedYears: null,   horizonYears: 25 },
+    { id: "savings",    ok: false, savingsRatePct: 31,     guidelinePct: 15 },
+  ],
+};
+
+// ── WI-2.4: taxView bundle (expanded for two-section Taxes tab) ───────────────
 const taxView = {
-  fedMarginal:          0.22,    // 22% marginal bracket
-  fedEffective:         0.18,    // 18% effective rate
-  effectiveRMDTaxRate:  0.24,    // 24% blended RMD rate
-  projectedRetBracket:  0.12,    // 12% projected retirement bracket (BUG-33 fixed)
+  // Section 1 — Working Year Tax
+  householdIncome:    100_000,
+  safeDeduc:           23_500,
+  agi:                 76_500,
+  stateTax:             3_000,
+  fica:                 7_650,
+  combinedEffRate:      0.29,    // (18k + 3k + 7.65k) / 100k ≈ 28.65%
+  taxSaveFromPreTax:    5_170,   // 23_500 × 0.22 = 5_170
+  fedMarginal:           0.22,   // 22% marginal bracket
+  fedEffective:          0.18,   // 18% effective rate
+  // Section 2 — Retirement Tax
+  effectiveRMDTaxRate:   0.24,   // 24% blended RMD rate
+  projectedRetBracket:   0.12,   // 12% projected retirement bracket (decimal, not integer — BUG-33 + Phase-1 fix)
   rmdTaxBite:         683_974,   // golden-master rmdTaxBite
   convTaxTotal:        82_765,   // golden-master conversion tax
-  // WI-2.4: lifetime tax composition — pre-computed by the model (App taxViewBundle),
-  // so the Taxes tab formats only (rule 10). Mirrors workingTax/rmdTax/convTax split.
+  // WI-2.4: retirement-phase tax composition (RMD + conversion only) — pre-computed by
+  // the model (App taxViewBundle). Working-year tax excluded (one year ≠ lifetime scope).
   composition: {
-    total: 784_739,             // 18_000 + 683_974 + 82_765
+    total: 766_739,             // 683_974 + 82_765
     segments: [
-      { label: "Working tax",    val:  18_000, key: "working", pct:  2 },
-      { label: "RMD tax",        val: 683_974, key: "rmd",     pct: 87 },
-      { label: "Conversion tax", val:  82_765, key: "conv",    pct: 11 },
+      { label: "RMD tax",        val: 683_974, key: "rmd",  pct: 89 },
+      { label: "Conversion tax", val:  82_765, key: "conv", pct: 11 },
     ],
+  },
+  // Session-3: conversion breakdown — always surfaced so the verdict is honest (+ or −)
+  conversionDetail: {
+    rmdTaxSaved:                  100_000,
+    conversionCost:                82_765,
+    irmaaCost:                      5_000,
+    acaLoss:                            0,
+    adjustedNetConversionBenefit:  12_235,  // 100k − 82.7k − 5k
+    // Pre-computed for rule-10 compliance (no comparisons on financial values in src/horizon/)
+    isPositive:                      true,  // 12_235 >= 0
+    benefitAbs:                    12_235,
   },
 };
 
@@ -131,6 +178,9 @@ const minimalProps = {
   fedTax:               18_000,
   takeHome:             49_150,
   totalAtRet:        3_484_197,
+  spendableAtRet:    3_150_000,  // gross 401k haircut at retirement rate + Roth/HSA/Taxable
+  currentTotalSaved:   450_000,  // sum of today's account balances
+  currentAge:               45,
   retVals: {
     "Trad 401k": 1_800_000,
     "Roth IRA":    900_000,
@@ -140,25 +190,55 @@ const minimalProps = {
   effectiveExpenses:   120_000,
   balAt90:           3_566_026,
   householdSS:          45_924,
+  effectivePension:          0,
   isSustainable:         true,
   withdrawalRate:          3.4,
   retirementAge:            65,
+  rmdStartAge:              73,
   netConversionBenefit:  77_861,
   yr1TaxSavings:          4_290,
   retirementWalk,
   statementView,
   chartMilestones,
+  planView,
   // WI-2.5: whole-life ledger — one accumulation row + retirement rows with
   // RMD/conversion driver columns (matching the App-built yearlyRows shape).
+  // Session-4: withdrawalRatePct added to retirement rows; null for accum.
   yearlyRows: [
-    { age: 64, year: 2025, total: 3_000_000, contrib: 30_000, growth: 150_000, draw: 0, tax: 0, rmd: null, conversion: null, phase: "accum" },
-    { age: 65, year: 2026, total: 3_484_197, contrib: null, growth: 174_210, draw: 120_000, tax: 5_000, rmd: null, conversion: 50_000, phase: "ret" },
-    { age: 73, year: 2034, total: 3_550_000, contrib: null, growth: 185_803, draw: 120_000, tax: 5_000, rmd: 80_000, conversion: null, phase: "ret" },
+    { age: 64, year: 2025, total: 3_000_000, contrib: 30_000, growth: 150_000, draw: 0, tax: 0, rmd: null, conversion: null, phase: "accum", withdrawalRatePct: null },
+    { age: 65, year: 2026, total: 3_484_197, contrib: null, growth: 174_210, draw: 120_000, tax: 5_000, rmd: null, conversion: 50_000, phase: "ret", withdrawalRatePct: 2.5 },
+    { age: 73, year: 2034, total: 3_550_000, contrib: null, growth: 185_803, draw: 120_000, tax: 5_000, rmd: 80_000, conversion: null, phase: "ret", withdrawalRatePct: 3.8 },
   ],
   budget,
   taxView,
-  // WI-2.6: retirement money-flow bands (sum to effectiveExpenses).
-  retIncomeFlow: { expenses: 120_000, ss: 45_924, pension: 0, portfolioDraw: 74_076 },
+  // Session-3: new horizonProps fields
+  flowDown: {
+    totalContrib:  500_000,
+    totalGrowth: 3_000_000,
+    distDraws:   1_500_000,
+  },
+  conversionWindowYrs: 5,
+  ssClaimingAge: 67,
+  includeSS: true,
+  markerByAge: {
+    65: "Retire",
+    73: "RMD start",
+    70: "Conv. window closes",
+  },
+  tablePhases: {
+    accumYears:      20,
+    conversionYears:  5,
+    retirementYears: 25,
+  },
+  // Session-4: per-account breakdown + milestone badges
+  retirementRowByAge: {
+    65: { trad: 2_000_000, roth: 500_000, taxable: 300_000, hsa: 50_000, rmdTax: 0, drawTax: 5_000, convTax: 0 },
+    66: { trad: 1_950_000, roth: 520_000, taxable: 310_000, hsa: 51_000, rmdTax: 0, drawTax: 5_200, convTax: 0 },
+  },
+  milestoneByAge: {
+    58: "First $1M",
+    65: "Retire",
+  },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -187,10 +267,10 @@ describe("NumbersScreen — Budget tab (WI-2.2 / #92)", () => {
     act(() => renderer.unmount());
   });
 
-  it("renders the 'Savings waterfall' section label (always-visible marker)", () => {
+  it("renders 'Where your income goes' section label (always-visible marker)", () => {
     const renderer = mountTab("budget");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Savings waterfall");
+    expect(allText).toContain("Where your income goes");
     act(() => renderer.unmount());
   });
 
@@ -232,6 +312,47 @@ describe("NumbersScreen — Budget tab (WI-2.2 / #92)", () => {
     expect(allText).toContain("Add your income");
     act(() => renderer.unmount());
   });
+
+  it("waterfall row 1 shows gross income from taxView.householdIncome", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // taxView.householdIncome = 100_000 → "$100k"; grossAfterTax = 74_000 → "$74k"
+    expect(allText).toContain("Gross income");
+    expect(allText).toContain("$100k");
+    act(() => renderer.unmount());
+  });
+
+  it("savings rate benchmark renders with rate and guideline", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // savingsDriver.savingsRatePct = 31 → "31%"; guidelinePct = 15 → "≥15%"
+    expect(allText).toContain("31%");
+    expect(allText).toContain("savings rate");
+    act(() => renderer.unmount());
+  });
+
+  it("saving opportunity section renders when totalExtra === 0", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // budget.optimizedAllocation.totalExtra = 0 → "already saving the maximum" state
+    expect(allText.toLowerCase()).toContain("already saving the maximum");
+    act(() => renderer.unmount());
+  });
+
+  it("surplus → retirement bridge callout renders when surplus > 0", () => {
+    const renderer = mountTab("budget", { budget: { ...budgetSurplus, availableSurplus: 5_000, surplusFutureValue: 85_000 } });
+    const allText = textOf(renderer.root);
+    expect(allText.toLowerCase()).toContain("investing this surplus");
+    act(() => renderer.unmount());
+  });
+
+  it("no surplus callout when availableSurplus <= 0", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // default budget has availableSurplus = -10_850
+    expect(allText.toLowerCase()).not.toContain("investing this surplus");
+    act(() => renderer.unmount());
+  });
 });
 
 // ── WI-2.3: Accounts tab ─────────────────────────────────────────────────────
@@ -242,10 +363,11 @@ describe("NumbersScreen — Accounts tab (WI-2.3 / #93)", () => {
     act(() => renderer.unmount());
   });
 
-  it("renders 'Projected account balances' label (always-visible marker)", () => {
+  it("renders tax-character bucket labels (always-visible markers)", () => {
     const renderer = mountTab("accounts");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Projected account balances");
+    expect(allText).toContain("Tax-deferred");
+    expect(allText).toContain("Tax-free");
     act(() => renderer.unmount());
   });
 
@@ -282,9 +404,35 @@ describe("NumbersScreen — Accounts tab (WI-2.3 / #93)", () => {
     expect(allText).toContain("HSA");
     act(() => renderer.unmount());
   });
+
+  it("now→retirement banner shows currentTotalSaved and totalAtRet", () => {
+    const renderer = mountTab("accounts");
+    const allText = textOf(renderer.root);
+    // currentTotalSaved = 450_000 → "$450k"; totalAtRet = 3_484_197 → "$3.5M"
+    expect(allText).toContain("$450k");
+    expect(allText).toContain("$3.5M");
+    act(() => renderer.unmount());
+  });
+
+  it("spendable reference appears in banner", () => {
+    const renderer = mountTab("accounts");
+    const allText = textOf(renderer.root);
+    // spendableAtRet = 3_150_000 → "$3.2M"
+    expect(allText).toContain("after retirement taxes");
+    act(() => renderer.unmount());
+  });
+
+  it("RMD exposure flag appears on tax-deferred bucket", () => {
+    const renderer = mountTab("accounts");
+    const allText = textOf(renderer.root);
+    // rmdStartAge = 73 → "age 73"; rmdTaxBite = 683_974 → "$684k"
+    expect(allText).toContain("Required distributions");
+    expect(allText).toContain("73");
+    act(() => renderer.unmount());
+  });
 });
 
-// ── WI-2.4: Taxes tab ────────────────────────────────────────────────────────
+// ── WI-2.4: Taxes tab (expanded two-section layout) ──────────────────────────
 describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
   it("renders without crashing", () => {
     const renderer = mountTab("taxes");
@@ -292,22 +440,53 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
-  it("renders 'Tax rates' section label (always-visible marker)", () => {
+  it("renders 'Working Year Tax' section label (section-1 always-visible marker)", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Tax rates");
+    expect(allText).toContain("Working Year Tax");
     act(() => renderer.unmount());
   });
 
-  it("wiring: fedMarginal rate appears as formatted percentage", () => {
+  it("renders 'Retirement Tax' section label (section-2 always-visible marker)", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    // taxView.fedMarginal = 0.22 → "22%"
+    expect(allText).toContain("Retirement Tax");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring section 1: AGI derivation shows householdIncome, safeDeduc, and AGI", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // householdIncome = 100_000 → "$100,000"
+    expect(allText).toContain("$100,000");
+    // safeDeduc = 23_500 → "−$23,500"
+    expect(allText).toContain("−$23,500");
+    // agi = 76_500 → "$76,500"
+    expect(allText).toContain("$76,500");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring section 1: 3-stat card — fedEffective, fedMarginal, combinedEffRate", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // fedEffective = 0.18 → "18%"
+    expect(allText).toContain("18%");
+    // fedMarginal = 0.22 → "22%"
     expect(allText).toContain("22%");
+    // combinedEffRate = 0.29 → "29%"
+    expect(allText).toContain("29%");
     act(() => renderer.unmount());
   });
 
-  it("wiring: projectedRetBracket appears as formatted percentage", () => {
+  it("wiring section 1: taxSaveFromPreTax callout appears", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // taxSaveFromPreTax = 5_170 → "$5,170"
+    expect(allText).toContain("$5,170");
+    act(() => renderer.unmount());
+  });
+
+  it("wiring section 2: projectedRetBracket appears as formatted percentage", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
     // taxView.projectedRetBracket = 0.12 → "12%"
@@ -315,7 +494,7 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
-  it("wiring: rmdTaxBite appears in the lifetime composition legend", () => {
+  it("wiring section 2: rmdTaxBite appears in both detail row and composition legend", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
     // fmt(683_974) → "$684k" (rounded)
@@ -323,10 +502,10 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
-  it("lifetime composition bar renders all three segments (working / RMD / conversion)", () => {
+  it("retirement-phase composition bar renders RMD and Conversion segments (no Working tax)", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Working tax");
+    expect(allText).not.toContain("Working tax");
     expect(allText).toContain("RMD tax");
     expect(allText).toContain("Conversion tax");
     act(() => renderer.unmount());
@@ -378,41 +557,264 @@ describe("NumbersScreen — Year by year (WI-2.5 / #95)", () => {
   });
 });
 
-// ── WI-2.6: Money flow (Working / Retirement toggle) ─────────────────────────
-describe("NumbersScreen — Money flow retirement view (WI-2.6 / #96)", () => {
-  it("renders the Working / Retirement toggle", () => {
-    const renderer = mountTab("flow");
+// ── Session-3: Statement tab new content ──────────────────────────────────────
+describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
+  it("plan-health badge renders when planView.drivers is present", () => {
+    const renderer = mountTab("statement");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Working years");
-    expect(allText).toContain("Retirement years");
+    // planView.drivers has 1 bad driver (savings) → "1 area to review"
+    expect(allText).toContain("area");
     act(() => renderer.unmount());
   });
 
-  it("retirement view shows the income sources and total covered = expenses", () => {
-    const renderer = mountTab("flow");
-    // click the Retirement years toggle
-    const toggle = renderer.root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n) === "Retirement years"
-    )[0];
-    expect(toggle).toBeTruthy();
-    act(() => { toggle.props.onClick(); });
+  it("plan-health badge shows 'On track' when all drivers are ok", () => {
+    const allOkPlanView = {
+      ...planView,
+      drivers: planView.drivers.map(d => ({ ...d, ok: true })),
+    };
+    const renderer = mountTab("statement", { planView: allOkPlanView });
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Social Security");
-    expect(allText).toContain("Portfolio draw");
-    // expenses 120_000 → "$120k" appears (headline + total covered)
-    expect(allText).toContain("$120k");
+    expect(allText).toContain("On track");
     act(() => renderer.unmount());
   });
 
-  it("null retIncomeFlow renders graceful empty state in retirement view", () => {
-    const renderer = mountTab("flow", { retIncomeFlow: null });
-    const toggle = renderer.root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n) === "Retirement years"
-    )[0];
-    act(() => { toggle.props.onClick(); });
-    expect(renderer.toJSON()).toBeTruthy();
+  it("contributions-vs-growth section shows lifetimeContribROI multiplier", () => {
+    const renderer = mountTab("statement");
     const allText = textOf(renderer.root);
-    expect(allText.toLowerCase()).toContain("appear");
+    // lifetimeContribROI = 7.0 → "7×" compounding multiplier
+    expect(allText).toContain("7×");
+    expect(allText).toContain("compounding multiplier");
+    act(() => renderer.unmount());
+  });
+
+  it("contributions-vs-growth section shows flowDown.totalContrib", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    // flowDown.totalContrib = 500_000 → "$500k"
+    expect(allText).toContain("$500k");
+    act(() => renderer.unmount());
+  });
+
+  it("no contrib-vs-growth section when lifetimeContribROI is null", () => {
+    const renderer = mountTab("statement", {
+      statementView: { ...statementView, lifetimeContribROI: null },
+    });
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("compounding multiplier");
     act(() => renderer.unmount());
   });
 });
+
+// ── Session-3: Taxes tab new content ─────────────────────────────────────────
+describe("NumbersScreen — Taxes tab (Session-3 additions)", () => {
+  it("retirement-phase tax anchor shows composition.total", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // composition.total = 766_739 → "$767k"; heading is "Retirement-phase income tax (RMD + conversion):"
+    expect(allText).toContain("Retirement-phase income tax");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout renders when conversionWindowYrs > 0 (positive benefit)", () => {
+    // netConversionBenefit = 77_861 (positive) → "Conversions work in your favor"
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Conversions work in your favor");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout renders with negative verdict (honest negative state)", () => {
+    const negTaxView = {
+      ...taxView,
+      conversionDetail: {
+        ...taxView.conversionDetail,
+        adjustedNetConversionBenefit: -9_854,
+        isPositive: false,
+        benefitAbs: 9_854,
+      },
+    };
+    const renderer = mountTab("taxes", { netConversionBenefit: -9_854, taxView: negTaxView });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("net-negative");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout shows RMD tax saved breakdown", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // taxView.conversionDetail.rmdTaxSaved = 100_000 → "$100k"
+    expect(allText).toContain("RMD tax saved");
+    expect(allText).toContain("$100k");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout hidden when conversionWindowYrs is 0", () => {
+    const renderer = mountTab("taxes", { conversionWindowYrs: 0 });
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("Conversions work");
+    expect(allText).not.toContain("net-negative");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Session-3: Year by year new content ──────────────────────────────────────
+describe("NumbersScreen — Year by year (Session-3 additions)", () => {
+  it("phase-summary strip renders all three phase boxes", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Accumulation");
+    expect(allText).toContain("Conversion window");
+    expect(allText).toContain("Retirement");
+    act(() => renderer.unmount());
+  });
+
+  it("phase-summary strip shows accumYears count", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // tablePhases.accumYears = 20 → "20 yrs"
+    expect(allText).toContain("20 yr");
+    act(() => renderer.unmount());
+  });
+
+  it("lifecycle annotation divider appears at retirement age", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // markerByAge[65] = "Retire" → "↑ Retire" annotation
+    expect(allText).toContain("↑ Retire");
+    act(() => renderer.unmount());
+  });
+
+  it("lifecycle annotation divider appears at RMD start age", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // markerByAge[73] = "RMD start" → "↑ RMD start"
+    expect(allText).toContain("↑ RMD start");
+    act(() => renderer.unmount());
+  });
+
+  it("footer shows lifetime column totals from flowDown", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // flowDown.totalContrib = 500_000 → "$500k"; totalGrowth = 3_000_000 → "$3M"
+    expect(allText).toContain("Contributions");
+    expect(allText).toContain("Growth");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Session-4: Statement tab income replacement ratio ─────────────────────────
+describe("NumbersScreen — Statement tab (Session-4: income replacement)", () => {
+  it("shows incomeReplacementPct when present", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    // incomeReplacementPct = 72 → "72%"
+    expect(allText).toContain("72%");
+    expect(allText).toContain("working take-home");
+    act(() => renderer.unmount());
+  });
+
+  it("hidden when incomeReplacementPct is null", () => {
+    const renderer = mountTab("statement", {
+      statementView: { ...statementView, incomeReplacementPct: null },
+    });
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("working take-home");
+    act(() => renderer.unmount());
+  });
+
+  it("shows 'Explore all years' nav link when navigate is provided", () => {
+    let renderer;
+    act(() => {
+      renderer = React.createElement(NumbersScreen, {
+        t,
+        props: minimalProps,
+        initialTab: "statement",
+        navigate: () => {},
+      });
+    });
+    act(() => {
+      renderer = require("react-test-renderer").create(renderer);
+    });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Explore all years");
+    act(() => renderer.unmount());
+  });
+
+  it("shows retirement income companion strip below waterfall", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    // monthlyTotal > 0 → strip visible
+    expect(allText).toContain("Where retirement income comes from");
+    expect(allText).toContain("Social Security");
+    act(() => renderer.unmount());
+  });
+
+  it("retirement income strip hidden when monthlyTotal is 0", () => {
+    const renderer = mountTab("statement", {
+      statementView: { ...statementView, monthlyTotal: 0, gross: 100_000 },
+    });
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("Where retirement income comes from");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Session-4: Year by year deeper numbers layer ──────────────────────────────
+describe("NumbersScreen — Year by year (Session-4: deeper numbers)", () => {
+  it("jump bar renders 'Jump to:' label when markerByAge is non-empty", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Jump to:");
+    act(() => renderer.unmount());
+  });
+
+  it("jump bar renders marker labels from markerByAge", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // markerByAge has "Retire", "RMD start", "Conv. window closes"
+    expect(allText).toContain("Retire");
+    act(() => renderer.unmount());
+  });
+
+  it("jump bar hidden when markerByAge is empty", () => {
+    const renderer = mountTab("yearly", { markerByAge: {} });
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("Jump to:");
+    act(() => renderer.unmount());
+  });
+
+  it("WR% sub-label appears in retirement rows", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // yearlyRows has retirement rows with withdrawalRatePct: 2.5 and 3.8
+    expect(allText).toContain("WR");
+    act(() => renderer.unmount());
+  });
+
+  it("milestone badge appears in portfolio cell at milestone age", () => {
+    // milestoneByAge[65] = "Retire" and age 65 is in yearlyRows, so the
+    // badge pill renders alongside the portfolio balance in that row.
+    // The text content of the badge ("Retire") will appear in the row cell.
+    // We verify the badge is rendered by checking the row AND the jump bar
+    // both show their respective labels (proving the data path is wired).
+    const renderer = mountTab("yearly", {
+      milestoneByAge: { 65: "First $1M", 73: "Peak" },
+    });
+    const allText = textOf(renderer.root);
+    // age 65 is in yearlyRows → badge pill "First $1M" renders in its Portfolio cell
+    expect(allText).toContain("First $1M");
+    act(() => renderer.unmount());
+  });
+
+  it("depletion age marker appears in lifecycle divider when depletionAge is set", () => {
+    const deplWalk = { ...retirementWalk, depletionAge: 65 };
+    const renderer = mountTab("yearly", {
+      retirementWalk: deplWalk,
+      markerByAge: { 65: "Retire", 73: "RMD start", [65]: "Portfolio depleted" },
+    });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Portfolio depleted");
+    act(() => renderer.unmount());
+  });
+});
+

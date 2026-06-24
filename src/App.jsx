@@ -12,7 +12,7 @@ import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
 import { buildRetirementPhase, buildConversionByAge } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
@@ -25,6 +25,7 @@ import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
+import { fvAnnuity } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
@@ -496,6 +497,9 @@ export default function App() {
 
   const retirementWalk = retPhase;
 
+  // Scalar extraction for V9 stability (depletionAge used in markerByAge + horizonProps).
+  const depletionAge = retirementWalk?.depletionAge ?? null;
+
   const totalChartData = useMemo(
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
     [accumChart, retirementWalk]);
@@ -695,11 +699,15 @@ export default function App() {
   // Statement / Money-flow tab numbers (percentages, waterfall residual set,
   // monthly conversions, eff-fed-rate footnote). Percentages are null when
   // currentIncome ≤ 0 — screens render "—".
+  // lifetimeContribROI: scalar extracted from flowData for a stable dep (V9 pattern).
+  const flowTotalContrib = flowData.totalContrib;
   const statementView = useMemo(() => calcStatementView({
-    currentIncome, fedTax, fica, stateTax, takeHome,
-    currentContribTotal, householdSS, effectiveExpenses,
-  }), [currentIncome, fedTax, fica, stateTax, takeHome,
-       currentContribTotal, householdSS, effectiveExpenses]);
+    currentIncome: householdIncome, fedTax, fica, stateTax, takeHome,
+    currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
+    totalAtRet, totalContrib: flowTotalContrib,
+  }), [householdIncome, fedTax, fica, stateTax, takeHome,
+       currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
+       totalAtRet, flowTotalContrib]);
 
   // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
   // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE
@@ -707,6 +715,19 @@ export default function App() {
   const chartMilestones = useMemo(() => calcChartMilestones({
     chartData: totalChartData, currentAge, retirementAge: safeRetAge, lifeExpect: safeLifeExp,
   }), [totalChartData, currentAge, safeRetAge, safeLifeExp]);
+
+  // Per-account engine rows keyed by age — forwarded to the Year-by-year expanded
+  // row detail panel so each click can show Trad/Roth/Taxable/HSA breakdown.
+  // Derived from retPhase.rows (the display-horizon slice already filtered to lifeExp).
+  const retirementRowByAge = useMemo(
+    () => Object.fromEntries((retPhase?.rows ?? []).map(r => [r.age, r])),
+    [retPhase]);
+
+  // Milestone ages keyed for inline portfolio-cell badge (age → tag string).
+  // Derived from chartMilestones.rows which is already sorted + filtered by the model.
+  const milestoneByAge = useMemo(
+    () => Object.fromEntries((chartMilestones?.rows ?? []).map(m => [m.age, m.tag])),
+    [chartMilestones]);
 
   // Plan-screen progress (V6). progressPct: 100 when sustainable (incl. Infinity
   // yearsSustained), else 0–99. Grown by a named field (principle 11) for
@@ -758,6 +779,8 @@ export default function App() {
 
   // WI-2.2 (#92): Budget tab bundle — savings waterfall + allocation stack.
   // All values already computed above; memoized so horizonProps stays identity-stable (V9).
+  // surplusFutureValue: FV of availableSurplus compounded to retirement — bridges the
+  // Budget "save more now" message to the Accounts "what you'll have" number.
   const budgetView = useMemo(() => ({
     grossAfterTax,
     effectiveLiving,
@@ -765,8 +788,20 @@ export default function App() {
     currentContribTotal,
     availableSurplus,
     optimizedAllocation,
+    // Pre-computed for rule-10 compliance — no comparisons on financial values in src/horizon/:
+    savingsCapacityPositive: savingsCapacity >= 0,
+    surplusPositive: availableSurplus >= 0,
+    hasDeficit: availableSurplus < 0,
+    deficitAmount: Math.abs(availableSurplus),
+    surplusFutureValue: availableSurplus > 0
+      ? Math.round(fvAnnuity(availableSurplus, returnRate / 100, Math.max(0, safeRetAge - currentAge)))
+      : 0,
+    // Sum of optimized employee-side allocations — matches the opt* rows displayed in
+    // the allocation stack so the footer total is consistent with the visible rows.
+    optimizedContribTotal: optimizedAllocation.opt401k + optimizedAllocation.optRoth
+      + optimizedAllocation.optHSA + optimizedAllocation.optTaxable,
   }), [grossAfterTax, effectiveLiving, savingsCapacity, currentContribTotal,
-       availableSurplus, optimizedAllocation]);
+       availableSurplus, optimizedAllocation, returnRate, safeRetAge, currentAge]);
 
   // WI-2.4 (#94): Taxes tab bundle — phase rates + lifetime composition.
   // fedEffRate (calcTaxBasis) = effective federal rate.
@@ -775,17 +810,16 @@ export default function App() {
   // one source for the retirement-phase tax composition (BUG-35).
   // Memoized so horizonProps stays identity-stable (V9).
   const taxViewBundle = useMemo(() => {
-    // Lifetime tax composition — computed ONCE here (model), so the Taxes tab
-    // formats only (rule 10). Segments carry their own dollar val + integer pct;
-    // the screen keeps the bar widths (flex: val/total) as pure layout math.
-    const workingTax = fedTax ?? 0;
-    const rmdTax     = rmdTaxBite ?? 0;
-    const convTax    = retPhase.conversionCost ?? 0;
-    const total      = workingTax + rmdTax + convTax;
+    // Retirement-phase tax composition — RMD + conversion (both lifetime totals).
+    // Working-year tax is excluded: fedTax is one year, not a lifetime figure,
+    // so mixing it here would distort the bar. Computed ONCE here (rule 10).
+    // Segments carry their own dollar val + integer pct; bar widths are layout math.
+    const rmdTax  = rmdTaxBite ?? 0;
+    const convTax = retPhase.conversionCost ?? 0;
+    const total   = rmdTax + convTax;
     const rawSegs = [
-      { label: "Working tax",    val: workingTax, key: "working" },
-      { label: "RMD tax",        val: rmdTax,     key: "rmd" },
-      { label: "Conversion tax", val: convTax,    key: "conv" },
+      { label: "RMD tax",        val: rmdTax,  key: "rmd" },
+      { label: "Conversion tax", val: convTax, key: "conv" },
     ];
     const segments = total > 0
       ? rawSegs.filter(s => s.val > 0).map(s => ({
@@ -794,24 +828,61 @@ export default function App() {
         }))
       : [];
     return {
+      // Working-year fields (AGI derivation + rate card for Taxes tab section 1)
+      householdIncome, agi, safeDeduc, stateTax, fica,
+      combinedEffRate,
+      // "Your 401k + HSA saves you ~$X in federal tax this year" callout
+      taxSaveFromPreTax: Math.round((contrib401k + contribHSA) * fedMarginal),
+      // Rate columns
       fedMarginal,
       fedEffective: fedEffRate,
+      // Retirement-phase fields (section 2)
       effectiveRMDTaxRate,
-      projectedRetBracket: projRetBracketPct,
+      projectedRetBracket: projRetBracketPct / 100,   // normalized to decimal (was whole-number — BUG display fix)
       rmdTaxBite,
       convTaxTotal: retPhase.conversionCost,
       composition: { segments, total },
+      // Conversion breakdown — always surfaced so the Taxes tab can show the
+      // honest verdict (positive OR negative) with a cost breakdown. Fields come
+      // from the same evaluateConversionPlan call that produces netConversionBenefit
+      // (BUG-31 guarantee: one model, one display).
+      conversionDetail: {
+        rmdTaxSaved,
+        conversionCost: retPhase.conversionCost,
+        irmaaCost: totalIRMAACost,
+        acaLoss: acaAnnualLoss,
+        adjustedNetConversionBenefit,
+        // Pre-computed for rule-10 compliance — no comparisons on financial values in src/horizon/:
+        isPositive: (adjustedNetConversionBenefit ?? 0) >= 0,
+        benefitAbs: Math.abs(adjustedNetConversionBenefit ?? 0),
+      },
     };
   }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
-      rmdTaxBite, fedTax, retPhase]);
+      rmdTaxBite, retPhase,
+      householdIncome, agi, safeDeduc, stateTax, fica, combinedEffRate,
+      contrib401k, contribHSA,
+      rmdTaxSaved, totalIRMAACost, acaAnnualLoss, adjustedNetConversionBenefit]);
 
-  // WI-2.6 (#96): retirement-phase money-flow bands (SS + pension + portfolio draw).
-  // Pre-split by the model and guaranteed to sum to effectiveExpenses; memoized so
-  // horizonProps stays identity-stable (V9). Uses ssAtRet (the age-gated SS active
-  // at retirement) so the bands match the netPortfolioNeed basis (rule 5b).
-  const retIncomeFlow = useMemo(() => calcRetIncomeFlow({
-    effectiveExpenses, ss: ssAtRet, pension: effectivePension,
-  }), [effectiveExpenses, ssAtRet, effectivePension]);
+  // V9: markerByAge and tablePhases memoized separately so they don't cause
+  // horizonProps to re-reference on unrelated dep changes.
+  const markerByAge = useMemo(() => [
+    [safeRetAge, "Retire"],
+    [RMD_START_AGE, "RMD start"],
+    includeSS && ssClaimingAge > safeRetAge ? [ssClaimingAge, "SS claimed"] : null,
+    conversionWindowYrs > 0 ? [safeRetAge + conversionWindowYrs, "Conv. window closes"] : null,
+    depletionAge != null ? [depletionAge, "Portfolio depleted"] : null,
+  ].filter(Boolean).reduce((acc, [age, label]) => {
+    acc[age] = acc[age] ? `${acc[age]} · ${label}` : label;
+    return acc;
+  }, {}), [safeRetAge, includeSS, ssClaimingAge, conversionWindowYrs, depletionAge]);
+
+  const tablePhases = useMemo(() => ({
+    accumYears: safeRetAge - currentAge,
+    conversionYears: conversionWindowYrs,
+    retirementYears: Number.isFinite(yearsSustained)
+      ? Math.min(Math.round(yearsSustained), safeLifeExp - safeRetAge)
+      : safeLifeExp - safeRetAge,
+  }), [safeRetAge, currentAge, conversionWindowYrs, yearsSustained, safeLifeExp]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
@@ -830,6 +901,10 @@ export default function App() {
     netConversionBenefit, yr1TaxSavings,
     // Sum of all current account balances — used by onboarding "savings today" field
     currentTotalSaved: bal401k + balRoth + balTaxable + balHSA,
+    // After-tax spendable reference (display-only; never a formula input — BUG-35).
+    // Haircuts the gross Trad 401k at the retirement effective rate; Roth/HSA/Taxable
+    // are already net. Used by the Accounts tab "gross vs spendable" headline.
+    spendableAtRet,
     // Batch A additions:
     moneyEvents, setMoneyEvents,
     whatIfSimInputs: whatIfBundle,
@@ -856,24 +931,35 @@ export default function App() {
     // WI-2.4 (#94): Taxes tab — phase rates + lifetime composition.
     // Memoized separately as taxViewBundle (V9) so this object reference is stable.
     taxView: taxViewBundle,
-    // WI-2.6 (#96): retirement money-flow bands — sum exactly to effectiveExpenses.
-    retIncomeFlow,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
+    // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
+    ssClaimingAge,
+    includeSS,
+    // markerByAge and tablePhases: memoized separately above (V9).
+    markerByAge,
+    tablePhases,
+    // Session-4: per-account breakdown + milestone badges for Year-by-year deep layer.
+    retirementRowByAge,   // { [age]: engineRow } — Trad/Roth/Taxable/HSA + tax breakdown
+    milestoneByAge,       // { [age]: tag } — inline portfolio-cell milestone badge
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
        balAt90, contribSeries, householdSS, effectivePension, activity, setActivity,
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
-       bal401k, balRoth, balTaxable, balHSA,
+       bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
        moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,
-       // WI-2.6 retirement money-flow bands (memoized separately):
-       retIncomeFlow, returnRate]);
+       returnRate,
+       // Session-3 additions:
+       ssClaimingAge, includeSS,
+       markerByAge, tablePhases,
+       // Session-4 additions:
+       retirementRowByAge, milestoneByAge]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

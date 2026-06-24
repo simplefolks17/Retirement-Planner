@@ -175,6 +175,25 @@ describe("calcStatementView", () => {
     expect(v.monthlyPortDraw).toBe(0);
   });
 
+  it("Statement table arithmetic: gross − taxes − preTaxDeductions = takeHome", () => {
+    // A user with 401k (pre-tax), Roth IRA, and taxable brokerage contributions.
+    // safeDeduc = pre-tax only (401k); Roth + taxable are after-tax.
+    const safeDeduc      = 23_500;
+    const contribRoth    = 7_000;
+    const contribTaxable = 5_000;
+    const contribAll     = safeDeduc + contribRoth + contribTaxable;
+    // takeHome = gross − taxes − safeDeduc (Roth/taxable don't reduce it):
+    const takeHome = base.currentIncome - base.fedTax - base.fica - base.stateTax - safeDeduc;
+    const v = calcStatementView({ ...base, currentContribTotal: contribAll, safeDeduc, takeHome });
+    expect(v.preTaxDeductions).toBe(safeDeduc);
+    // The "Income & tax" column arithmetic must balance:
+    expect(base.currentIncome - base.fedTax - v.ficaPlusState - v.preTaxDeductions).toBe(takeHome);
+    // saveTotal (for the waterfall chart) still includes ALL contributions:
+    expect(v.saveTotal).toBe(contribAll);
+    // flowKeep (waterfall residual) is lower than takeHome by the after-tax contributions:
+    expect(v.flowKeep).toBe(v.gross - v.taxTotal - contribAll);
+  });
+
   it("designed empty state: no income → percentages are null, NOT 0 (principle 10)", () => {
     const v = calcStatementView({ ...base, currentIncome: 0, fedTax: 0, fica: 0, stateTax: 0, takeHome: 0 });
     expect(v.keepPct).toBeNull();
