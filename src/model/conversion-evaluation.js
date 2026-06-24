@@ -33,8 +33,9 @@ export function evaluateConversionPlan({
   tradGrossAtRetirement,
   rothBalAtRet,
   taxableBalAtRet,
-  // age offset (1-indexed sim years → real ages)
-  safeRetAge,
+  // window start age (1-indexed sim years → real ages: year yr → windowStartAge + yr).
+  // At the default window this equals safeRetAge+1; a user-chosen later start shifts it.
+  windowStartAge,
   // engine-derived benefit (single source — from buildRetirementPhase)
   rmdTaxSaved,
   conversionCost,
@@ -53,7 +54,8 @@ export function evaluateConversionPlan({
     tradGrossAtRetirement, rothBalAtRet, taxableBalAtRet,
   });
   // Offset year ages once; totalTax / tradBal73 / rothBalEnd* are scalars unaffected.
-  const conversionSim = { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + safeRetAge })) };
+  // raw years are 1-indexed (yr+1), so real age = (yr+1) + (windowStartAge-1) = windowStartAge + yr.
+  const conversionSim = { ...raw, years: raw.years.map(y => ({ ...y, age: y.age + windowStartAge - 1 })) };
 
   // Net benefit comes straight from the engine: RMD tax saved minus the conversion
   // tax the engine actually charged on the live balances.

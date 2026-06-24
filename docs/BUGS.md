@@ -48,6 +48,11 @@ spending-draw tax, which is small relative to the deltas being compared.
 The retirement **engine** (the headline source) now does charge it — fixed 2026-06-15. Accumulation's
 working-year tax basis is computed once on regular income, so per-year event income tax there is a
 separate, deliberate extension.
+**Update (2026-06-24, conversion-timing PR #39):** working-year **Roth-conversion** events ARE now
+taxed per-year in `runSimulation` (ordinary tax + under-59½ penalty, `conversion-events.js`), and the
+what-if re-sim threads them through `whatIfSimInputs`, so conversion events are *outside* this gap.
+The remaining BUG-36 gap is (a) the retirement-phase **delta** still using the blended walk, and (b)
+`moneyEvents` taxable-inflow income tax still uncharged in accumulation / the blended walk.
 **Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
 work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
 

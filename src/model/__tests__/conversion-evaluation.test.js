@@ -22,7 +22,7 @@ const planArgs = (overrides = {}) => ({
   returnRate: 5, retIncomeFloor: ssTaxableRet, retIncomeFloors: null,
   filingStatus: "single", conversionTaxSource: "converted", retStateRate: 0,
   tradGrossAtRetirement: tradGross, rothBalAtRet: rothBal, taxableBalAtRet: taxableBal,
-  safeRetAge: 65,
+  windowStartAge: 66, // default window starts the year after retirement (safeRetAge 65 + 1)
   rmdTaxSaved, conversionCost,
   convMAGIFloors: Array(conversionWindowYrs).fill(0),
   hasMarketplaceInsurance: false, householdSize: 1, hasMedicare: false,
@@ -56,7 +56,7 @@ describe("evaluateConversionPlan", () => {
     expect(a.adjustedNetConversionBenefit).toBe(b.adjustedNetConversionBenefit);
   });
 
-  it("offsets conversion-year ages by safeRetAge (first window year = 66)", () => {
+  it("offsets conversion-year ages by windowStartAge (first window year = 66)", () => {
     const plan = evaluateConversionPlan(planArgs());
     expect(plan.conversionSim.years).toHaveLength(conversionWindowYrs);
     expect(plan.conversionSim.years[0].age).toBe(66);

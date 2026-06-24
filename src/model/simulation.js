@@ -8,8 +8,11 @@ import {
   LIMIT_415C_CATCHUP_2026,
   CATCHUP_AGE,
   ROTH_PHASEOUT_2026,
+  EARLY_WITHDRAWAL_AGE,
+  EARLY_WITHDRAWAL_PENALTY,
 } from "../config/irs-2026.js";
-import { ltcgRate } from "./taxes.js";
+import { ltcgRate, stackedIncomeTax } from "./taxes.js";
+import { applyConversionEvents } from "./conversion-events.js";
 
 // Runs the accumulation simulation.
 // Returns an array of yearly rows from year 1 through totalYears.
@@ -31,6 +34,8 @@ export function runSimulation({
   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
   calcEmployerMatchFn,
   moneyEvents = [],   // { amount, age, isInflow } — applied to taxable account at matching age
+  conversionEvents = [], // { age, amount } — one-time 401k→Roth conversion in a working year
+  stateRate = 0,      // working-year state income-tax rate, applied only to conversion-event tax
 }) {
   let trad    = bal401k;
   let roth    = balRoth;
@@ -117,14 +122,46 @@ export function runSimulation({
     const eventAdj = moneyEvents.reduce((s, ev) =>
       ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
 
-    const capGainsRate       = ltcgRate(netOrdinaryIncome, filingStatus);
+    // Capped working-year conversion for THIS age (0 when none). Computed before the
+    // LTCG-rate selection because the conversion is ordinary income that can push this
+    // year's capital gains into a higher LTCG bracket. Inert when no events (conv = 0).
+    const requestedConv = conversionEvents.length
+      ? applyConversionEvents(conversionEvents, age).convAmount : 0;
+    const conv = Math.min(Math.max(0, requestedConv), Math.max(0, trad));
+
+    const capGainsRate       = ltcgRate(netOrdinaryIncome + conv, filingStatus);
     const taxableBase        = Math.max(0, taxable + cTaxable + eventAdj);
     const taxableRate        = r * (1 - capGainsRate);
     const taxableGrowth      = taxableBase * taxableRate;
     taxable = taxableBase * (1 + taxableRate);
 
     // Total gross growth across the four accounts (Taxable already net of LTCG drag).
+    // Computed BEFORE any conversion event so growth = investment earnings only — a
+    // conversion is a transfer, not earnings, and must not perturb the growth figure.
     const growth = tradGrowth + rothBase * r + hsaBase * r + taxableGrowth;
+
+    // Working-year one-time Roth conversion(s) at this age (rule 2b: the principal
+    // moves trad→Roth and is taxed ONCE as ordinary income stacked on this year's
+    // wages — only the tax leaks). Tax is funded from the taxable brokerage so the
+    // full principal lands in Roth; any shortfall comes out of the converted amount,
+    // and that withheld portion is an early distribution hit with the 10% penalty
+    // when under 59½ (retirement-phase conversions never see this — they're post-59½).
+    let convEvent = 0, convEventTax = 0, convEventPenalty = 0;
+    if (conv > 0) {
+      const tax = stackedIncomeTax(conv, netOrdinaryIncome, filingStatus, stateRate);
+      trad -= conv;
+      roth += conv;                                  // principal moves in full
+      const taxFromTaxable   = Math.min(tax, Math.max(0, taxable));
+      const taxFromConverted = tax - taxFromTaxable; // shortfall when taxable can't cover
+      taxable -= taxFromTaxable;
+      roth    -= taxFromConverted;                   // leaks from the Roth deposit (no dollar conjured)
+      const penalty = age < EARLY_WITHDRAWAL_AGE
+        ? EARLY_WITHDRAWAL_PENALTY * taxFromConverted : 0;
+      roth -= penalty;                               // penalty also leaks from the converted dollars
+      convEvent        = conv;
+      convEventTax     = tax + penalty;              // total bite (penalty folded in)
+      convEventPenalty = penalty;
+    }
 
     arr.push({
       age,
@@ -138,6 +175,9 @@ export function runSimulation({
       cHSA:     Math.round(cHSA),
       growth:     Math.round(growth),      // gross investment earnings this year
       tradGrowth: Math.round(tradGrowth),  // 401k's share of gross growth (per-account detail)
+      convEvent:        Math.round(convEvent),        // pre-tax $ converted this working year (0 = none)
+      convEventTax:     Math.round(convEventTax),     // ordinary tax + any early-withdrawal penalty
+      convEventPenalty: Math.round(convEventPenalty), // 10% penalty component (under-59½ shortfall)
     });
   }
 

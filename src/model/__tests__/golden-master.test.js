@@ -97,16 +97,20 @@ const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ri.ssAtRet, ri.
 
 // Conversion schedule (bracket-fill to 22%) → engine.
 const retTaxData = TAX_DATA_2026[filingStatus];
-const conversionWindowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
+// Default window: retirement+1 → RMD_START_AGE-1 (inclusive). The new inclusive-range
+// derivation reproduces the prior `RMD_START_AGE - 1 - safeRetAge` length exactly.
+const resolvedStartAge = safeRetAge + 1;
+const resolvedEndAge   = RMD_START_AGE - 1;
+const conversionWindowYrs = Math.max(0, resolvedEndAge - resolvedStartAge + 1);
 const convFloors = buildIncomeFloors({
-  conversionWindowYrs, safeRetAge, includeSS: true, ssClaimingAge: 67, ssAmount: ri.ssTaxableRet,
+  conversionWindowYrs, startAge: resolvedStartAge, includeSS: true, ssClaimingAge: 67, ssAmount: ri.ssTaxableRet,
   pensionMonthly: 0, pensionStartAge: 65, monthsPerYear: 12,
 });
 const retIncomeFloor = ri.ssTaxableRet;
 const { bracketFillConversions, bracketFillConversion } =
   calcBracketFillTargets({ retTaxData, conversionBracketTarget: 22, convFloors, retIncomeFloor });
 const conversionByAge = buildConversionByAge({
-  conversionWindowYrs, safeRetAge, annualConversions: bracketFillConversions, annualConversion: bracketFillConversion,
+  startAge: resolvedStartAge, endAge: resolvedEndAge, annualConversions: bracketFillConversions, annualConversion: bracketFillConversion,
 });
 const retStateRate = RETIREMENT_STATE_TAX["TX"]?.rate ?? 0;
 

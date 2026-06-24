@@ -102,6 +102,14 @@ export const ADDL_MEDICARE_THRESHOLD = {        // wages above which the 0.9% su
 // ── RMD ───────────────────────────────────────────────────────────────────────
 export const RMD_START_AGE = 73; // SECURE 2.0: RMDs begin at 73
 
+// ── Early withdrawal (pre-retirement 401k → Roth conversions) ──────────────────
+// A Roth conversion's principal is never an early distribution, but if the tax on
+// a conversion is paid OUT OF the converted amount before this age, that withheld
+// portion IS an early distribution and is hit with the 10% penalty. Only relevant
+// for working-year conversions (retirement-phase conversions are post-59½).
+export const EARLY_WITHDRAWAL_AGE     = 59.5; // age below which the penalty applies
+export const EARLY_WITHDRAWAL_PENALTY = 0.10; // 10% additional tax on the early portion
+
 // ── Social Security ───────────────────────────────────────────────────────────
 export const SS_FRA           = 67; // Full Retirement Age for born ≥ 1960
 export const SS_MIN_CLAIM_AGE = 62; // earliest claiming age
@@ -318,6 +326,8 @@ export const ASSUMPTIONS = {
   // materiality threshold for the Plan-screen conversion signal — a net benefit
   // smaller than one search step isn't a meaningful nudge (WI-1.2).
   CONVERSION_STEP:      5_000,
+  // Start-age granularity for the timing+amount conversion optimizer (years per step).
+  CONVERSION_STARTAGE_STEP: 1,
 
   // Glance-level guidelines for the Plan on-track explainer (WI-1.1).
   // Heuristics for plain-language framing, not advice and not IRS rules:

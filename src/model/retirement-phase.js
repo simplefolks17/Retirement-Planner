@@ -2,16 +2,19 @@ import { buildRetirementWalkByAccount } from "./retirement-engine.js";
 
 // Build the engine's { [age]: amount } Roth-conversion schedule from the plan's
 // per-year (bracket-fill) or flat conversion targets. Conversions occur at ages
-// safeRetAge+1 .. safeRetAge+conversionWindowYrs (the sim grows one year before
-// the first conversion, so the window starts the year AFTER retirement). Shared
-// by the display path and the optimizer so they feed the engine the same schedule.
+// startAge .. endAge (inclusive). At the default window (startAge = safeRetAge+1,
+// endAge = RMD_START_AGE-1) this is byte-identical to the previous
+// safeRetAge+yr+1 indexing — the equivalence pin that keeps the golden master
+// unchanged. annualConversions is indexed by (age - startAge). Shared by the
+// display path and the optimizer so they feed the engine the same schedule.
 export function buildConversionByAge({
-  conversionWindowYrs, safeRetAge, annualConversions = null, annualConversion = 0,
+  startAge, endAge, annualConversions = null, annualConversion = 0,
 }) {
   const out = {};
-  for (let yr = 0; yr < conversionWindowYrs; yr++) {
-    const amt = annualConversions ? (annualConversions[yr] ?? annualConversion) : annualConversion;
-    if (amt > 0) out[safeRetAge + yr + 1] = amt;
+  for (let age = startAge; age <= endAge; age++) {
+    const i = age - startAge;
+    const amt = annualConversions ? (annualConversions[i] ?? annualConversion) : annualConversion;
+    if (amt > 0) out[age] = amt;
   }
   return out;
 }

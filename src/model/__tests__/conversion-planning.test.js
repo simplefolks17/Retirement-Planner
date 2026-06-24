@@ -5,8 +5,9 @@ import { TAX_DATA_2026, ASSUMPTIONS } from "../../config/irs-2026.js";
 const MPY = ASSUMPTIONS.MONTHS_PER_YEAR;
 const SINGLE = TAX_DATA_2026.single;
 
+// startAge 66 = the default window start (safeRetAge 65 + 1); window year i is age 66+i.
 const floorArgs = (overrides = {}) => ({
-  conversionWindowYrs: 7, safeRetAge: 65,
+  conversionWindowYrs: 7, startAge: 66,
   includeSS: true, ssClaimingAge: 67, ssAmount: 39_035.4,
   pensionMonthly: 0, pensionStartAge: 65, monthsPerYear: MPY,
   ...overrides,

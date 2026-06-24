@@ -118,10 +118,13 @@ export function calcChartMilestones({ chartData, currentAge, retirementAge, life
 // (buildYearlyRows) and start the year after. When already retired
 // (safeRetAge === currentAge) there are no rows and this returns [].
 //
-// Each row: { age, year, total, contrib, growth, draw: 0, tax: 0,
-//             rmd: null, conversion: null, phase: "accum" }.
-// draw/tax are an explicit 0 (no withdrawals/tax paid while accumulating);
-// rmd/conversion are null (not applicable) so the screen renders "—".
+// Each row: { age, year, total, contrib, growth, draw: 0, tax,
+//             rmd: null, conversion, phase: "accum" }.
+// draw is an explicit 0 (no spending withdrawals while accumulating). `conversion`
+// is the working-year 401k→Roth event amount (null when none → screen renders "—"),
+// and `tax` is the tax + any early-withdrawal penalty that conversion leaked from the
+// portfolio — so the ledger still reconciles: prevTotal + contrib + growth − tax = total.
+// rmd is null (not applicable in working years).
 // fedMarginal is accepted for signature compatibility (callers/tests still pass it)
 // but no longer used — rows are gross now (BUG-35), so there's no marginal discount.
 export function buildAccumulationRows({ simData, fedMarginal, currentAge, currentYear, safeRetAge }) {
@@ -131,6 +134,7 @@ export function buildAccumulationRows({ simData, fedMarginal, currentAge, curren
     .map(d => {
       const contrib = Math.round((d.c401k ?? 0) + (d.cRoth ?? 0) + (d.cTaxable ?? 0) + (d.cHSA ?? 0));
       const growth  = Math.round(d.growth ?? 0);
+      const convEvent = Math.round(d.convEvent ?? 0);
       return {
         age: d.age,
         year: currentYear + (d.age - currentAge),
@@ -138,9 +142,9 @@ export function buildAccumulationRows({ simData, fedMarginal, currentAge, curren
         contrib,
         growth,
         draw: 0,
-        tax: 0,
+        tax: Math.round(d.convEventTax ?? 0),  // conversion tax + penalty leaked from the portfolio
         rmd: null,
-        conversion: null,
+        conversion: convEvent > 0 ? convEvent : null,
         phase: "accum",
         withdrawalRatePct: null,
       };

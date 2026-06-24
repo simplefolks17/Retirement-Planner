@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildRetirementPhase } from "../retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge } from "../retirement-phase.js";
+import { RMD_START_AGE } from "../../config/irs-2026.js";
 
 // The orchestrator that makes the per-account engine the ONE source for the whole
 // retirement phase (BUG-35 / BUG-31): longevity AND the displayed RMD/conversion
@@ -75,5 +76,57 @@ describe("buildRetirementPhase — single source", () => {
     const { rows, planWalk } = base();
     expect(rows[rows.length - 1].age).toBeLessThanOrEqual(90);
     expect(planWalk.rows.length).toBeGreaterThanOrEqual(rows.length);
+  });
+});
+
+// ── buildConversionByAge — window decoupling (B1) ──────────────────────────────
+describe("buildConversionByAge — flexible window", () => {
+  // The default window (startAge = safeRetAge+1, endAge = RMD_START_AGE-1) must
+  // reproduce the prior hardcoded `safeRetAge + yr + 1` indexing exactly. We rebuild
+  // the legacy map by hand and assert deep equality (the golden-master equivalence pin).
+  const legacy = (safeRetAge, annualConversions, annualConversion) => {
+    const windowYrs = Math.max(0, RMD_START_AGE - 1 - safeRetAge);
+    const out = {};
+    for (let yr = 0; yr < windowYrs; yr++) {
+      const amt = annualConversions ? (annualConversions[yr] ?? annualConversion) : annualConversion;
+      if (amt > 0) out[safeRetAge + yr + 1] = amt;
+    }
+    return out;
+  };
+
+  it("default window equals the legacy safeRetAge+yr+1 schedule (flat)", () => {
+    for (const safeRetAge of [55, 60, 65, 70]) {
+      const out = buildConversionByAge({
+        startAge: safeRetAge + 1, endAge: RMD_START_AGE - 1, annualConversion: 25_000,
+      });
+      expect(out).toEqual(legacy(safeRetAge, null, 25_000));
+    }
+  });
+
+  it("default window equals the legacy schedule (per-year bracket-fill array)", () => {
+    const safeRetAge = 62;
+    const perYear = [120_000, 110_000, 90_000, 80_000, 80_000, 80_000, 80_000, 80_000, 80_000, 80_000];
+    const out = buildConversionByAge({
+      startAge: safeRetAge + 1, endAge: RMD_START_AGE - 1, annualConversions: perYear, annualConversion: 0,
+    });
+    expect(out).toEqual(legacy(safeRetAge, perYear, 0));
+  });
+
+  it("a later start / earlier end confines conversions to [startAge, endAge]", () => {
+    const out = buildConversionByAge({ startAge: 67, endAge: 70, annualConversion: 30_000 });
+    expect(Object.keys(out).map(Number).sort((a, b) => a - b)).toEqual([67, 68, 69, 70]);
+    expect(out[66]).toBeUndefined();
+    expect(out[71]).toBeUndefined();
+  });
+
+  it("annualConversions is indexed from startAge (offset travels with the window)", () => {
+    const out = buildConversionByAge({
+      startAge: 67, endAge: 69, annualConversions: [10_000, 20_000, 30_000],
+    });
+    expect(out).toEqual({ 67: 10_000, 68: 20_000, 69: 30_000 });
+  });
+
+  it("empty window (endAge < startAge) yields no conversions", () => {
+    expect(buildConversionByAge({ startAge: 66, endAge: 65, annualConversion: 50_000 })).toEqual({});
   });
 });

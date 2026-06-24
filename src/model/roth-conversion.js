@@ -25,6 +25,50 @@ export function findOptimalConversion({ maxSearch = 300_000, step = ASSUMPTIONS.
   return { optimalConversion: bestAmount, optimalBenefit: Math.round(bestNet) };
 }
 
+// Optimizer (timing + amount): searches BOTH the conversion-window start age and the
+// flat annual amount that together maximize net benefit after IRMAA/ACA. Same coarse
+// objective as findOptimalConversion, with an added age dimension.
+//   startAgeRange = [minStart, maxStart] (inclusive) — bound tightly by the caller to
+//     the legal window so the nested search stays cheap.
+//   getNetBenefit(startAge, amount) → { rmdTaxSaved, totalTax, irmaaCost, acaLoss? }
+//     MUST rebuild the SAME model the display uses (engine + evaluateConversionPlan)
+//     for the candidate (startAge, amount) — divergence here is the BUG-31/BUG-35 class.
+export function findOptimalConversionPlan({
+  startAgeRange = [], maxSearch = 300_000,
+  step = ASSUMPTIONS.CONVERSION_STEP,
+  ageStep = ASSUMPTIONS.CONVERSION_STARTAGE_STEP ?? 1,
+  getNetBenefit,
+}) {
+  const netOf = (r) => r.rmdTaxSaved - r.totalTax - r.irmaaCost - (r.acaLoss ?? 0);
+  // Destructure defensively — a missing / non-array range must hit the fallback below,
+  // not throw before the guard runs.
+  const [minStart, maxStart] = Array.isArray(startAgeRange) ? startAgeRange : [];
+
+  // Guard non-finite / non-positive steps (would never terminate). Fall back to the
+  // no-conversion result at the earliest start age (0 when the range itself is invalid).
+  if (!Number.isFinite(step) || step <= 0 || !Number.isFinite(maxSearch) || maxSearch < 0
+      || !Number.isFinite(ageStep) || ageStep <= 0
+      || !Number.isFinite(minStart) || !Number.isFinite(maxStart)) {
+    const safeStart = Number.isFinite(minStart) ? minStart : 0;
+    return { optimalStartAge: safeStart, optimalConversion: 0, optimalBenefit: 0 };
+  }
+
+  // Baseline: no conversion. Converting $0 nets exactly $0 by definition (no RMD tax
+  // saved, no conversion cost, no IRMAA/ACA) — so seed bestNet at 0 directly instead of
+  // running the engine twice via getNetBenefit(minStart, 0) (Gemini review).
+  let bestStartAge = minStart;
+  let bestAmount = 0;
+  let bestNet = 0;
+
+  for (let startAge = minStart; startAge <= maxStart; startAge += ageStep) {
+    for (let amount = step; amount <= maxSearch; amount += step) {
+      const net = netOf(getNetBenefit(startAge, amount));
+      if (net > bestNet) { bestNet = net; bestStartAge = startAge; bestAmount = amount; }
+    }
+  }
+  return { optimalStartAge: bestStartAge, optimalConversion: bestAmount, optimalBenefit: Math.round(bestNet) };
+}
+
 // Runs the Roth conversion ladder simulation through the conversion window.
 // Computes BOTH scenarios simultaneously:
 //   Scenario A: tax paid from the converted amount (less efficient)

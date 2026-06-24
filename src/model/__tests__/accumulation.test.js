@@ -60,6 +60,24 @@ describe("buildAccumulationRows (WI-2.5)", () => {
     // prev displayed total + this year's contrib + this year's growth == this total
     expect(Math.abs((rows[0].total + r2.contrib + r2.growth) - r2.total)).toBeLessThan(5);
   });
+
+  it("surfaces a working-year conversion event (amount + tax) and stays reconciled with the leak", () => {
+    // A row carrying a convEvent/convEventTax — the conversion principal nets zero on
+    // the total (trad↓ = roth↑) but the tax left the portfolio, so the ledger must
+    // reconcile prevTotal + contrib + growth − tax = total.
+    // Row 1 total = 160,000; contrib (each year) = 10k+7k+4k+3k = 24k.
+    // Row 2 balances chosen so 160,000 + 24,000 + 5,500 − 9,000 = 180,500 = total.
+    const convRows = [
+      mkRow(31, 100_000, 20_000, 30_000, 10_000, 10_000, 5_000, 4_000),
+      { ...mkRow(32, 90_000, 65_000, 15_500, 10_000, 10_000, 5_500, 4_500),
+        convEvent: 40_000, convEventTax: 9_000 },
+    ];
+    const rows = buildAccumulationRows({ simData: convRows, fedMarginal: m, currentAge: 30, currentYear: 2026, safeRetAge: 40 });
+    const r2 = rows[1];
+    expect(r2.conversion).toBe(40_000);
+    expect(r2.tax).toBe(9_000);
+    expect(Math.abs((rows[0].total + r2.contrib + r2.growth - r2.tax) - r2.total)).toBeLessThan(5);
+  });
 });
 
 describe("sumAccountRow", () => {

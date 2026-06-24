@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcConversionSim, findOptimalConversion } from "../roth-conversion.js";
+import { calcConversionSim, findOptimalConversion, findOptimalConversionPlan } from "../roth-conversion.js";
 import { marginalRate } from "../taxes.js";
 
 const base = {
@@ -221,5 +221,70 @@ describe("findOptimalConversion", () => {
       },
     });
     expect(optimalConversion).toBe(50_000);
+  });
+});
+
+describe("findOptimalConversionPlan (timing + amount)", () => {
+  it("picks the (startAge, amount) pair that maximizes net benefit", () => {
+    // Best cell is (startAge 66, amount 50k): net 30k. A later start is worse here.
+    const { optimalStartAge, optimalConversion, optimalBenefit } = findOptimalConversionPlan({
+      startAgeRange: [66, 68], step: 50_000, maxSearch: 100_000, ageStep: 1,
+      getNetBenefit: (startAge, amount) => {
+        if (amount === 0) return { rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 };
+        if (startAge === 66 && amount === 50_000)  return { rmdTaxSaved: 40_000, totalTax: 10_000, irmaaCost: 0 };
+        if (startAge === 66 && amount === 100_000) return { rmdTaxSaved: 45_000, totalTax: 25_000, irmaaCost: 0 };
+        if (startAge === 67 && amount === 50_000)  return { rmdTaxSaved: 35_000, totalTax: 10_000, irmaaCost: 0 };
+        return { rmdTaxSaved: 10_000, totalTax: 9_000, irmaaCost: 0 };
+      },
+    });
+    expect(optimalStartAge).toBe(66);
+    expect(optimalConversion).toBe(50_000);
+    expect(optimalBenefit).toBe(30_000);
+  });
+
+  it("prefers a later start when it nets more (timing actually matters)", () => {
+    const { optimalStartAge, optimalConversion } = findOptimalConversionPlan({
+      startAgeRange: [65, 68], step: 50_000, maxSearch: 50_000, ageStep: 1,
+      getNetBenefit: (startAge, amount) => {
+        if (amount === 0) return { rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 };
+        // Each later start year is strictly better (e.g. avoids an IRMAA/ACA cliff early).
+        return { rmdTaxSaved: 30_000, totalTax: 5_000, irmaaCost: Math.max(0, (68 - startAge) * 3_000) };
+      },
+    });
+    expect(optimalStartAge).toBe(68);
+    expect(optimalConversion).toBe(50_000);
+  });
+
+  it("returns the zero-conversion baseline when nothing beats not converting", () => {
+    const { optimalStartAge, optimalConversion, optimalBenefit } = findOptimalConversionPlan({
+      startAgeRange: [66, 70], step: 25_000, maxSearch: 75_000,
+      getNetBenefit: (_s, amount) => amount === 0
+        ? { rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 }      // not converting nets exactly 0
+        : { rmdTaxSaved: 0, totalTax: 5_000, irmaaCost: 0 }, // any conversion is a net loss
+    });
+    expect(optimalConversion).toBe(0);
+    expect(optimalStartAge).toBe(66); // earliest start, amount 0
+    expect(optimalBenefit).toBe(0);
+  });
+
+  it("guards a non-positive step/ageStep (no infinite loop) → no-conversion fallback", () => {
+    const r1 = findOptimalConversionPlan({
+      startAgeRange: [66, 70], step: 0,
+      getNetBenefit: () => ({ rmdTaxSaved: 1, totalTax: 0, irmaaCost: 0 }),
+    });
+    expect(r1.optimalConversion).toBe(0);
+    const r2 = findOptimalConversionPlan({
+      startAgeRange: [66, 70], ageStep: 0,
+      getNetBenefit: () => ({ rmdTaxSaved: 1, totalTax: 0, irmaaCost: 0 }),
+    });
+    expect(r2.optimalConversion).toBe(0);
+  });
+
+  it("a missing / non-array startAgeRange falls back instead of throwing", () => {
+    const gnb = () => ({ rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 });
+    expect(() => findOptimalConversionPlan({ getNetBenefit: gnb })).not.toThrow();
+    const r = findOptimalConversionPlan({ startAgeRange: null, getNetBenefit: gnb });
+    expect(r.optimalConversion).toBe(0);
+    expect(r.optimalStartAge).toBe(0);
   });
 });
