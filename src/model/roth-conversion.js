@@ -50,14 +50,15 @@ export function findOptimalConversionPlan({
       || !Number.isFinite(ageStep) || ageStep <= 0
       || !Number.isFinite(minStart) || !Number.isFinite(maxStart)) {
     const safeStart = Number.isFinite(minStart) ? minStart : 0;
-    return { optimalStartAge: safeStart, optimalConversion: 0,
-      optimalBenefit: Math.round(netOf(getNetBenefit(safeStart, 0))) };
+    return { optimalStartAge: safeStart, optimalConversion: 0, optimalBenefit: 0 };
   }
 
-  // Baseline: no conversion (start age irrelevant when amount is 0).
+  // Baseline: no conversion. Converting $0 nets exactly $0 by definition (no RMD tax
+  // saved, no conversion cost, no IRMAA/ACA) — so seed bestNet at 0 directly instead of
+  // running the engine twice via getNetBenefit(minStart, 0) (Gemini review).
   let bestStartAge = minStart;
   let bestAmount = 0;
-  let bestNet = netOf(getNetBenefit(minStart, 0));
+  let bestNet = 0;
 
   for (let startAge = minStart; startAge <= maxStart; startAge += ageStep) {
     for (let amount = step; amount <= maxSearch; amount += step) {
