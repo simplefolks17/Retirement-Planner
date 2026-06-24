@@ -152,18 +152,19 @@ function IncomeWaterfall({ t, view }) {
 export default function NumbersScreen({ t, props, isMobile = false, initialTab = null }) {
   const {
     currentIncome, fedTax, takeHome,
-    totalAtRet, retVals, effectiveExpenses, balAt90,
+    totalAtRet, spendableAtRet, retVals, effectiveExpenses, balAt90,
     householdSS, effectivePension, isSustainable, withdrawalRate,
-    retirementAge,
+    retirementAge, currentAge,
     netConversionBenefit, yr1TaxSavings,
-    retirementWalk,
+    retirementWalk, currentTotalSaved,
     // WI-0.1 display bundles — all derived numbers come from the model
     // (percentages/residuals: calcStatementView; milestones: calcChartMilestones;
     // calendar years: buildYearlyRows). The screen only formats.
-    statementView, chartMilestones, yearlyRows,
+    statementView, chartMilestones, planView, yearlyRows,
     // WI-2.2 / WI-2.3 / WI-2.4 — Numbers tabs bundles.
     // All derived numbers come from the model via these bundles; screens only format.
     budget, taxView,
+    rmdStartAge,
     returnRate,   // raw assumption for the Statement footnote
   } = props;
 
@@ -380,140 +381,240 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         {/* ── Budget (WI-2.2) ── */}
         {tab === "budget" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 0 }}>
-            {/* Section label */}
-            <div style={{
-              font: `600 11px ${HF}`, color: t.accent,
-              letterSpacing: "0.08em", textTransform: "uppercase",
-              marginBottom: 18,
-            }}>
-              Savings waterfall — where your income goes
-            </div>
-
-            {/* Waterfall rows — all dollar values from the budget bundle (model-only) */}
             {budget == null ? (
               <div style={{ font: `400 13px ${HF}`, color: t.faint }}>
-                Add your income to see your savings waterfall.
+                Add your income to see your budget breakdown.
               </div>
-            ) : (
-              <>
-                {/* Deficit callout (shown above waterfall when spending exceeds take-home) */}
-                {budget.availableSurplus < 0 && (
-                  <div style={{
-                    background: `${t.warm}18`,
-                    border: `1px solid ${t.warm}55`,
-                    borderRadius: 10, padding: "10px 16px",
-                    marginBottom: 16,
-                    font: `500 13px ${HF}`, color: t.warm,
-                  }}>
-                    Spending exceeds take-home by {fmt(Math.abs(budget.availableSurplus))} — consider reducing expenses or contributions.
-                  </div>
-                )}
+            ) : (() => {
+              const oa = budget.optimizedAllocation;
+              const savingsDriver = planView?.drivers?.find(d => d.id === "savings");
+              const savingsRatePct = savingsDriver?.savingsRatePct ?? null;
+              const savingsRateOk  = savingsDriver?.ok ?? null;
+              const savingsGuide   = savingsDriver?.guidelinePct ?? 15;
 
-                {/* Waterfall rows */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                  {[
-                    ["Gross income",                budget.grossAfterTax,       t.ink,   false],
-                    ["→ After-tax income",          budget.grossAfterTax,       t.ink,   false],
-                    ["→ After living expenses",     budget.savingsCapacity,     budget.savingsCapacity >= 0 ? t.good : t.warm, false],
-                    ["→ After contributions",       budget.availableSurplus,    budget.availableSurplus >= 0 ? t.good : t.warm, true],
-                  ].map(([label, val, color, strong], i) => (
-                    <div key={label} style={{
-                      display: "flex", justifyContent: "space-between",
-                      alignItems: "baseline", gap: 12,
-                      padding: "11px 0",
-                      borderBottom: `1px solid ${t.line}`,
-                      paddingLeft: i === 0 ? 0 : i * 10,
-                    }}>
-                      <span style={{
-                        font: `${strong ? 600 : 400} 14px ${SERIF}`,
-                        color: strong ? color : t.mut,
-                      }}>
-                        {label}
-                      </span>
-                      <span style={{
-                        font: `${strong ? 700 : 500} 15px ${HM}`,
-                        color: color,
-                      }}>
-                        {fmt(val)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Allocation stack — current contribution amounts across accounts */}
-                <div style={{ marginTop: 24 }}>
+              return (
+                <>
+                  {/* ── Savings waterfall ── */}
                   <div style={{
                     font: `600 11px ${HF}`, color: t.accent,
                     letterSpacing: "0.08em", textTransform: "uppercase",
-                    marginBottom: 12,
+                    marginBottom: 14, borderBottom: `1.5px solid ${t.accent}44`,
+                    paddingBottom: 6,
                   }}>
-                    How contributions are allocated
+                    Where your income goes
                   </div>
-                  {budget.optimizedAllocation == null ? (
-                    <div style={{ font: `400 13px ${HF}`, color: t.faint }}>—</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {[
-                        ["Employer match",   budget.optimizedAllocation.extraMatch,   t.good],
-                        ["Roth IRA",         budget.optimizedAllocation.optRoth,      t.accent],
-                        ["HSA",              budget.optimizedAllocation.optHSA,       t.warm],
-                        ["Traditional 401k", budget.optimizedAllocation.opt401k,      t.ink],
-                        ["Taxable",          budget.optimizedAllocation.optTaxable,   t.mut],
-                      ]
-                        .filter(([, amt]) => amt > 0)
-                        .map(([label, amt, color]) => (
-                          <div key={label} style={{
-                            display: "flex", justifyContent: "space-between",
-                            alignItems: "center", gap: 12,
-                          }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
-                              <span style={{
-                                width: 8, height: 8, borderRadius: 999,
-                                background: color, flexShrink: 0,
-                              }} />
-                              <span style={{ font: `400 13px ${SERIF}`, color: t.mut }}>{label}</span>
-                            </div>
-                            <span style={{ font: `500 13px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>
-                              {fmt(amt)}/yr
-                            </span>
-                          </div>
-                        ))}
-                      {/* current total */}
-                      <div style={{
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: 12 }}>
+                    {[
+                      ["Gross income",           taxView?.householdIncome ?? 0,  t.ink,  false, 0],
+                      ["→ After taxes",           budget.grossAfterTax,           t.ink,  false, 1],
+                      ["→ After living expenses", budget.savingsCapacity,
+                        budget.savingsCapacity >= 0 ? t.good : t.warm,           false,  2],
+                      ["→ After contributions",   budget.availableSurplus,
+                        budget.availableSurplus >= 0 ? t.good : t.warm,          true,   3],
+                    ].map(([label, val, color, strong, indent]) => (
+                      <div key={label} style={{
                         display: "flex", justifyContent: "space-between",
                         alignItems: "baseline", gap: 12,
-                        borderTop: `1.5px solid ${t.ink}`, paddingTop: 8, marginTop: 4,
+                        padding: "10px 0",
+                        borderBottom: `1px solid ${t.line}`,
+                        paddingLeft: indent * 10,
                       }}>
-                        <span style={{ font: `600 14px ${SERIF}`, color: t.ink }}>Total contributions</span>
-                        <span style={{ font: `700 15px ${HM}`, color: t.ink }}>
-                          {fmt(budget.currentContribTotal)}/yr
+                        <span style={{ font: `${strong ? 600 : 400} 14px ${SERIF}`, color: strong ? color : t.mut }}>
+                          {label}
+                        </span>
+                        <span style={{ font: `${strong ? 700 : 500} 15px ${HM}`, color: color }}>
+                          {fmt(val)}
                         </span>
                       </div>
+                    ))}
+                  </div>
+
+                  {/* Deficit warning */}
+                  {budget.availableSurplus < 0 && (
+                    <div style={{
+                      background: `${t.warm}18`, border: `1px solid ${t.warm}55`,
+                      borderRadius: 10, padding: "10px 16px", marginBottom: 14,
+                      font: `500 13px ${HF}`, color: t.warm,
+                    }}>
+                      Spending exceeds take-home by {fmt(Math.abs(budget.availableSurplus))} — consider reducing expenses or contributions.
                     </div>
                   )}
-                </div>
-              </>
-            )}
+
+                  {/* Surplus → retirement bridge callout */}
+                  {budget.availableSurplus > 0 && budget.surplusFutureValue > 0 && (
+                    <div style={{
+                      background: `${t.good}12`, border: `1px solid ${t.good}44`,
+                      borderRadius: 10, padding: "10px 16px", marginBottom: 14,
+                      font: `400 13px ${SERIF}`, color: t.mut,
+                    }}>
+                      Investing this surplus could add{" "}
+                      <span style={{ font: `600 13px ${HM}`, color: t.good }}>
+                        {fmt(budget.surplusFutureValue)}
+                      </span>{" "}
+                      to your retirement portfolio.
+                    </div>
+                  )}
+
+                  {/* Savings rate benchmark */}
+                  {savingsRatePct != null && (
+                    <div style={{
+                      display: "inline-flex", alignItems: "center", gap: 8,
+                      padding: "6px 14px", borderRadius: 999, marginBottom: 20,
+                      border: `1px solid ${savingsRateOk ? t.good : t.warm}55`,
+                      background: `${savingsRateOk ? t.good : t.warm}12`,
+                    }}>
+                      <span style={{
+                        font: `600 12px ${HM}`,
+                        color: savingsRateOk ? t.good : t.warm,
+                      }}>
+                        {savingsRatePct}%
+                      </span>
+                      <span style={{ font: `400 12px ${HF}`, color: t.mut }}>
+                        savings rate · guideline ≥{savingsGuide}%
+                      </span>
+                    </div>
+                  )}
+
+                  {/* ── Saving gap headline ── */}
+                  {oa != null && (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{
+                        font: `600 11px ${HF}`, color: t.accent,
+                        letterSpacing: "0.08em", textTransform: "uppercase",
+                        marginBottom: 12, borderBottom: `1.5px solid ${t.accent}44`,
+                        paddingBottom: 6,
+                      }}>
+                        Your saving opportunity
+                      </div>
+                      {oa.totalExtra > 0 ? (
+                        <div style={{
+                          background: `${t.accent}10`, border: `1px solid ${t.accent}44`,
+                          borderRadius: 10, padding: "12px 16px",
+                        }}>
+                          <div style={{ font: `400 13px ${SERIF}`, color: t.mut, marginBottom: 6 }}>
+                            You could save{" "}
+                            <span style={{ font: `700 15px ${HM}`, color: t.accent }}>
+                              {fmt(oa.totalExtra)}/yr
+                            </span>{" "}
+                            more without changing your spending.
+                          </div>
+                          {oa.extraMatch > 0 && (
+                            <div style={{ font: `500 12px ${HF}`, color: t.good }}>
+                              ✦ {fmt(oa.extraMatch)}/yr of that is free employer match — highest priority.
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{
+                          background: `${t.good}10`, border: `1px solid ${t.good}44`,
+                          borderRadius: 10, padding: "12px 16px",
+                          font: `400 13px ${SERIF}`, color: t.mut,
+                        }}>
+                          You're already saving the maximum available. Well done.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Optimized allocation ── */}
+                  <div>
+                    <div style={{
+                      font: `600 11px ${HF}`, color: t.accent,
+                      letterSpacing: "0.08em", textTransform: "uppercase",
+                      marginBottom: 12, borderBottom: `1.5px solid ${t.accent}44`,
+                      paddingBottom: 6,
+                    }}>
+                      Optimized allocation
+                    </div>
+                    {oa == null ? (
+                      <div style={{ font: `400 13px ${HF}`, color: t.faint }}>—</div>
+                    ) : (
+                      <>
+                        {/* Employer match callout */}
+                        {oa.extraMatch > 0 && (
+                          <div style={{
+                            background: `${t.good}12`, border: `1px solid ${t.good}44`,
+                            borderRadius: 8, padding: "8px 12px", marginBottom: 12,
+                            font: `500 12px ${HF}`, color: t.good,
+                          }}>
+                            ✦ Claim your employer match first — it's free money ({fmt(oa.extraMatch)}/yr).
+                          </div>
+                        )}
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {[
+                            ["Employer match",   oa.extraMatch,   t.good],
+                            ["Roth IRA",         oa.optRoth,      t.accent],
+                            ["HSA",              oa.optHSA,       t.warm],
+                            ["Traditional 401k", oa.opt401k,      t.ink],
+                            ["Taxable",          oa.optTaxable,   t.mut],
+                          ]
+                            .filter(([, amt]) => amt > 0)
+                            .map(([label, amt, color]) => (
+                              <div key={label} style={{
+                                display: "flex", justifyContent: "space-between",
+                                alignItems: "center", gap: 12,
+                              }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+                                  <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }} />
+                                  <span style={{ font: `400 13px ${SERIF}`, color: t.mut }}>{label}</span>
+                                </div>
+                                <span style={{ font: `500 13px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>
+                                  {fmt(amt)}/yr
+                                </span>
+                              </div>
+                            ))}
+                          <div style={{
+                            display: "flex", justifyContent: "space-between",
+                            alignItems: "baseline", gap: 12,
+                            borderTop: `1.5px solid ${t.ink}`, paddingTop: 8, marginTop: 4,
+                          }}>
+                            <span style={{ font: `600 14px ${SERIF}`, color: t.ink }}>Total contributions</span>
+                            <span style={{ font: `700 15px ${HM}`, color: t.ink }}>
+                              {fmt(budget.currentContribTotal)}/yr
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 
         {/* ── Accounts (WI-2.3) ── */}
         {tab === "accounts" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 0 }}>
+
+            {/* ── Now → Retirement banner ── */}
             <div style={{
-              font: `600 11px ${HF}`, color: t.accent,
-              letterSpacing: "0.08em", textTransform: "uppercase",
-              marginBottom: 18,
+              display: "flex", alignItems: "center", gap: 0,
+              background: t.surf2, border: `1px solid ${t.line2}`,
+              borderRadius: 12, padding: "14px 18px", marginBottom: 20,
             }}>
-              Projected account balances at retirement
+              <div style={{ flex: 1 }}>
+                <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>Today</div>
+                <div style={{ font: `700 20px ${HM}`, color: t.ink }}>{fmt(currentTotalSaved)}</div>
+              </div>
+              <div style={{ font: `600 20px ${HF}`, color: t.line2, padding: "0 14px" }}>→</div>
+              <div style={{ flex: 1, textAlign: "right" }}>
+                <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>
+                  At retirement · age {retirementAge}
+                </div>
+                <div style={{ font: `700 20px ${HM}`, color: t.ink }}>{fmt(totalAtRet)}</div>
+                {spendableAtRet != null && (
+                  <div style={{ font: `400 12px ${SERIF}`, color: t.mut, marginTop: 2 }}>
+                    ≈ {fmt(spendableAtRet)} after retirement taxes
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Milestone pills (reused from chartMilestones — already in horizonProps) */}
+            {/* Milestone pills */}
             {chartMilestones.rows.length > 0 && (
-              <div style={{
-                display: "flex", gap: 8, flexWrap: "wrap",
-                marginBottom: 20, flexShrink: 0,
-              }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, flexShrink: 0 }}>
                 {chartMilestones.rows.map(r => (
                   <span key={`${r.tag}-${r.age}`} style={{
                     padding: "4px 12px", borderRadius: 999,
@@ -527,52 +628,88 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               </div>
             )}
 
-            {/* Per-account bars — bar widths are pure layout math (style props only) */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {[
-                ["Traditional 401k", retVals["Trad 401k"], t.good],
-                ["Roth IRA",         retVals["Roth IRA"],  t.accent],
-                ["Taxable",          retVals["Taxable"],   t.warm],
-                ["HSA",              retVals["HSA"],        t.mut],
-              ].map(([label, val, color]) => {
-                // Bar width is pure layout proportion — dividing a display value by
-                // totalAtRet to get a CSS width% is pixel/layout math (rule 1 clarification).
-                const pct = totalAtRet > 0 ? Math.max(2, (val / totalAtRet) * 100) : 0;
-                return (
-                  <div key={label}>
-                    <div style={{
-                      display: "flex", justifyContent: "space-between",
-                      alignItems: "baseline", gap: 12, marginBottom: 5,
-                    }}>
-                      <span style={{ font: `400 14px ${SERIF}`, color: t.mut }}>{label}</span>
-                      <span style={{ font: `600 14px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>
-                        {fmt(val)}
-                      </span>
-                    </div>
-                    <div style={{
-                      height: 8, borderRadius: 8,
-                      background: t.line, overflow: "hidden",
-                    }}>
-                      <div style={{
-                        height: "100%", width: `${pct}%`,
-                        background: color, opacity: 0.8,
-                        borderRadius: 8,
-                        transition: "width 0.3s ease",
-                      }} />
-                    </div>
+            {/* ── Tax-character buckets ── */}
+            {[
+              {
+                key: "deferred",
+                label: "Tax-deferred",
+                note: "Taxed as ordinary income when withdrawn",
+                accounts: [["Traditional 401k", retVals["Trad 401k"], t.good]],
+                extra: retVals["Trad 401k"] > 0 && (
+                  <div style={{ font: `400 12px ${SERIF}`, color: t.mut, marginTop: 8 }}>
+                    Required distributions start at age {rmdStartAge} —{" "}
+                    {taxView?.rmdTaxBite > 0
+                      ? <span>estimated <span style={{ font: `500 12px ${HM}`, color: t.warm }}>{fmt(taxView.rmdTaxBite)}</span> in lifetime taxes</span>
+                      : "amount depends on conversions and spending"}.
+                    {netConversionBenefit > 0 && (
+                      <span style={{ color: t.accent }}> Roth conversions reduce this burden.</span>
+                    )}
                   </div>
-                );
-              })}
-            </div>
+                ),
+              },
+              {
+                key: "free",
+                label: "Tax-free",
+                note: "No tax on qualified withdrawals · no required distributions",
+                accounts: [
+                  ["Roth IRA", retVals["Roth IRA"], t.accent],
+                  ["HSA",      retVals["HSA"],       t.warm],
+                ],
+              },
+              {
+                key: "taxable",
+                label: "Taxable",
+                note: "Capital-gains tax on growth only · most flexible",
+                accounts: [["Taxable", retVals["Taxable"], t.mut]],
+              },
+            ].map(bucket => {
+              const bucketTotal = bucket.accounts.reduce((s, [, v]) => s + (v ?? 0), 0);
+              if (bucketTotal === 0) return null;
+              return (
+                <div key={bucket.key} style={{ marginBottom: 20 }}>
+                  {/* Bucket header */}
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+                    <span style={{ font: `600 12px ${HF}`, color: t.ink, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                      {bucket.label}
+                    </span>
+                    <span style={{ font: `400 12px ${SERIF}`, color: t.faint }}>{bucket.note}</span>
+                  </div>
+                  {/* Account bars within bucket */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {bucket.accounts.map(([label, val, color]) => {
+                      if (!val) return null;
+                      // Bar width = layout proportion only (CSS %, no financial meaning)
+                      const pct = totalAtRet > 0 ? Math.max(2, (val / totalAtRet) * 100) : 0;
+                      return (
+                        <div key={label}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+                            <span style={{ font: `400 14px ${SERIF}`, color: t.mut }}>{label}</span>
+                            <span style={{ font: `600 14px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>{fmt(val)}</span>
+                          </div>
+                          <div style={{ height: 8, borderRadius: 8, background: t.line, overflow: "hidden" }}>
+                            <div style={{
+                              height: "100%", width: `${pct}%`,
+                              background: color, opacity: 0.8,
+                              borderRadius: 8, transition: "width 0.3s ease",
+                            }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {bucket.extra}
+                </div>
+              );
+            })}
 
             {/* Total row */}
             <div style={{
               display: "flex", justifyContent: "space-between",
               alignItems: "baseline", gap: 12,
-              borderTop: `1.5px solid ${t.ink}`, paddingTop: 12, marginTop: 16,
+              borderTop: `1.5px solid ${t.ink}`, paddingTop: 12, marginTop: 4,
             }}>
               <span style={{ font: `600 15px ${SERIF}`, color: t.ink }}>
-                Total at retirement (age {retirementAge})
+                Total at retirement (gross)
               </span>
               <span style={{ font: `700 18px ${HM}`, color: t.ink }}>{fmt(totalAtRet)}</span>
             </div>

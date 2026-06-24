@@ -87,6 +87,7 @@ const budget = {
   savingsCapacity:     14_000,  // grossAfterTax − effectiveLiving
   currentContribTotal: 24_850,  // sum of all contributions
   availableSurplus:   -10_850,  // savingsCapacity − contributions (deficit case)
+  surplusFutureValue:      0,   // fvAnnuity(availableSurplus, ...) — 0 when deficit
   optimizedAllocation: {
     extraMatch:   0,
     extraHSA:     0,
@@ -104,7 +105,18 @@ const budget = {
 // Budget with surplus (for wiring assertions that test the no-deficit path).
 const budgetSurplus = {
   ...budget,
-  availableSurplus: 5_000,
+  availableSurplus:    5_000,
+  surplusFutureValue: 85_000,  // fvAnnuity(5_000, 0.07, 10) ≈ 69k; round number for test
+};
+
+// ── planView shape (savings driver used by Budget tab) ───────────────────────
+const planView = {
+  progressPct: 78,
+  drivers: [
+    { id: "withdrawal", ok: true,  withdrawalRatePct: 3.4, guidelinePct: 4 },
+    { id: "longevity",  ok: true,  sustainedYears: null,   horizonYears: 25 },
+    { id: "savings",    ok: false, savingsRatePct: 31,     guidelinePct: 15 },
+  ],
 };
 
 // ── WI-2.4: taxView bundle (expanded for two-section Taxes tab) ───────────────
@@ -142,6 +154,9 @@ const minimalProps = {
   fedTax:               18_000,
   takeHome:             49_150,
   totalAtRet:        3_484_197,
+  spendableAtRet:    3_150_000,  // gross 401k haircut at retirement rate + Roth/HSA/Taxable
+  currentTotalSaved:   450_000,  // sum of today's account balances
+  currentAge:               45,
   retVals: {
     "Trad 401k": 1_800_000,
     "Roth IRA":    900_000,
@@ -155,11 +170,13 @@ const minimalProps = {
   isSustainable:         true,
   withdrawalRate:          3.4,
   retirementAge:            65,
+  rmdStartAge:              73,
   netConversionBenefit:  77_861,
   yr1TaxSavings:          4_290,
   retirementWalk,
   statementView,
   chartMilestones,
+  planView,
   // WI-2.5: whole-life ledger — one accumulation row + retirement rows with
   // RMD/conversion driver columns (matching the App-built yearlyRows shape).
   yearlyRows: [
@@ -197,10 +214,10 @@ describe("NumbersScreen — Budget tab (WI-2.2 / #92)", () => {
     act(() => renderer.unmount());
   });
 
-  it("renders the 'Savings waterfall' section label (always-visible marker)", () => {
+  it("renders 'Where your income goes' section label (always-visible marker)", () => {
     const renderer = mountTab("budget");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Savings waterfall");
+    expect(allText).toContain("Where your income goes");
     act(() => renderer.unmount());
   });
 
@@ -242,6 +259,47 @@ describe("NumbersScreen — Budget tab (WI-2.2 / #92)", () => {
     expect(allText).toContain("Add your income");
     act(() => renderer.unmount());
   });
+
+  it("waterfall row 1 shows gross income from taxView.householdIncome", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // taxView.householdIncome = 100_000 → "$100k"; grossAfterTax = 74_000 → "$74k"
+    expect(allText).toContain("Gross income");
+    expect(allText).toContain("$100k");
+    act(() => renderer.unmount());
+  });
+
+  it("savings rate benchmark renders with rate and guideline", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // savingsDriver.savingsRatePct = 31 → "31%"; guidelinePct = 15 → "≥15%"
+    expect(allText).toContain("31%");
+    expect(allText).toContain("savings rate");
+    act(() => renderer.unmount());
+  });
+
+  it("saving opportunity section renders when totalExtra === 0", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // budget.optimizedAllocation.totalExtra = 0 → "already saving the maximum" state
+    expect(allText.toLowerCase()).toContain("already saving the maximum");
+    act(() => renderer.unmount());
+  });
+
+  it("surplus → retirement bridge callout renders when surplus > 0", () => {
+    const renderer = mountTab("budget", { budget: { ...budgetSurplus, availableSurplus: 5_000, surplusFutureValue: 85_000 } });
+    const allText = textOf(renderer.root);
+    expect(allText.toLowerCase()).toContain("investing this surplus");
+    act(() => renderer.unmount());
+  });
+
+  it("no surplus callout when availableSurplus <= 0", () => {
+    const renderer = mountTab("budget");
+    const allText = textOf(renderer.root);
+    // default budget has availableSurplus = -10_850
+    expect(allText.toLowerCase()).not.toContain("investing this surplus");
+    act(() => renderer.unmount());
+  });
 });
 
 // ── WI-2.3: Accounts tab ─────────────────────────────────────────────────────
@@ -252,10 +310,11 @@ describe("NumbersScreen — Accounts tab (WI-2.3 / #93)", () => {
     act(() => renderer.unmount());
   });
 
-  it("renders 'Projected account balances' label (always-visible marker)", () => {
+  it("renders tax-character bucket labels (always-visible markers)", () => {
     const renderer = mountTab("accounts");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Projected account balances");
+    expect(allText).toContain("Tax-deferred");
+    expect(allText).toContain("Tax-free");
     act(() => renderer.unmount());
   });
 
@@ -290,6 +349,32 @@ describe("NumbersScreen — Accounts tab (WI-2.3 / #93)", () => {
     expect(allText).toContain("Roth IRA");
     expect(allText).toContain("Taxable");
     expect(allText).toContain("HSA");
+    act(() => renderer.unmount());
+  });
+
+  it("now→retirement banner shows currentTotalSaved and totalAtRet", () => {
+    const renderer = mountTab("accounts");
+    const allText = textOf(renderer.root);
+    // currentTotalSaved = 450_000 → "$450k"; totalAtRet = 3_484_197 → "$3.5M"
+    expect(allText).toContain("$450k");
+    expect(allText).toContain("$3.5M");
+    act(() => renderer.unmount());
+  });
+
+  it("spendable reference appears in banner", () => {
+    const renderer = mountTab("accounts");
+    const allText = textOf(renderer.root);
+    // spendableAtRet = 3_150_000 → "$3.2M"
+    expect(allText).toContain("after retirement taxes");
+    act(() => renderer.unmount());
+  });
+
+  it("RMD exposure flag appears on tax-deferred bucket", () => {
+    const renderer = mountTab("accounts");
+    const allText = textOf(renderer.root);
+    // rmdStartAge = 73 → "age 73"; rmdTaxBite = 683_974 → "$684k"
+    expect(allText).toContain("Required distributions");
+    expect(allText).toContain("73");
     act(() => renderer.unmount());
   });
 });

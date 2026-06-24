@@ -25,6 +25,7 @@ import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
+import { fvAnnuity } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
@@ -758,6 +759,8 @@ export default function App() {
 
   // WI-2.2 (#92): Budget tab bundle — savings waterfall + allocation stack.
   // All values already computed above; memoized so horizonProps stays identity-stable (V9).
+  // surplusFutureValue: FV of availableSurplus compounded to retirement — bridges the
+  // Budget "save more now" message to the Accounts "what you'll have" number.
   const budgetView = useMemo(() => ({
     grossAfterTax,
     effectiveLiving,
@@ -765,8 +768,11 @@ export default function App() {
     currentContribTotal,
     availableSurplus,
     optimizedAllocation,
+    surplusFutureValue: availableSurplus > 0
+      ? Math.round(fvAnnuity(availableSurplus, returnRate / 100, Math.max(0, safeRetAge - currentAge)))
+      : 0,
   }), [grossAfterTax, effectiveLiving, savingsCapacity, currentContribTotal,
-       availableSurplus, optimizedAllocation]);
+       availableSurplus, optimizedAllocation, returnRate, safeRetAge, currentAge]);
 
   // WI-2.4 (#94): Taxes tab bundle — phase rates + lifetime composition.
   // fedEffRate (calcTaxBasis) = effective federal rate.
@@ -830,6 +836,10 @@ export default function App() {
     netConversionBenefit, yr1TaxSavings,
     // Sum of all current account balances — used by onboarding "savings today" field
     currentTotalSaved: bal401k + balRoth + balTaxable + balHSA,
+    // After-tax spendable reference (display-only; never a formula input — BUG-35).
+    // Haircuts the gross Trad 401k at the retirement effective rate; Roth/HSA/Taxable
+    // are already net. Used by the Accounts tab "gross vs spendable" headline.
+    spendableAtRet,
     // Batch A additions:
     moneyEvents, setMoneyEvents,
     whatIfSimInputs: whatIfBundle,
@@ -864,7 +874,7 @@ export default function App() {
        balAt90, contribSeries, householdSS, effectivePension, activity, setActivity,
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
-       bal401k, balRoth, balTaxable, balHSA,
+       bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
        moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
