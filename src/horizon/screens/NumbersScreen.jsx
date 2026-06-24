@@ -457,9 +457,9 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       Where retirement income comes from · per month
                     </div>
                     {[
-                      { label: "Social Security", val: sv.monthlyHHSS, color: t.good },
+                      { label: "Social Security", val: sv.monthlyHHSS, color: t.warm },
                       ...(sv.monthlyPension > 0 ? [{ label: "Pension", val: sv.monthlyPension, color: t.accent }] : []),
-                      { label: "Portfolio draw", val: sv.monthlyPortDraw, color: t.warm },
+                      { label: "Portfolio draw", val: sv.monthlyPortDraw, color: t.good },
                     ].map(({ label, val, color }) => (
                       <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <div style={{ font: `400 12px ${SERIF}`, color: t.mut, width: 110 }}>{label}</div>
