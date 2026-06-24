@@ -1262,7 +1262,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         role={isRet ? "button" : undefined}
                         tabIndex={isRet ? 0 : undefined}
                         aria-expanded={isRet ? isExpanded : undefined}
-                        onClick={() => isRet ? setExpandedRow(e => e === row.age ? null : row.age) : undefined}
+                        onClick={isRet ? () => setExpandedRow(e => e === row.age ? null : row.age) : undefined}
                         onKeyDown={isRet ? e => { if (e.key === "Enter") setExpandedRow(prev => prev === row.age ? null : row.age); } : undefined}
                         style={{
                           display: "grid", gridTemplateColumns: GRID_COLS,
