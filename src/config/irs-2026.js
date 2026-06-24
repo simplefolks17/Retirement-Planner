@@ -323,7 +323,8 @@ export const ASSUMPTIONS = {
   // Heuristics for plain-language framing, not advice and not IRS rules:
   // the "4% rule" safe-withdrawal guideline, and the common "save 15% of
   // take-home" savings-rate rule of thumb. Both are percents (4 = 4%).
-  SAFE_WITHDRAWAL_GUIDELINE_PCT: 4,
+  SAFE_WITHDRAWAL_GUIDELINE_PCT:  4,
+  WITHDRAWAL_RATE_DANGER_PCT:     6,  // above this WR%, draw is unsustainable — danger zone coloring
   SAVINGS_RATE_GUIDELINE_PCT:    15,
 
   // Income replacement ratio thresholds for the Statement "Income for life" column.

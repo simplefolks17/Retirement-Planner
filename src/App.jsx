@@ -824,7 +824,7 @@ export default function App() {
       householdIncome, agi, safeDeduc, stateTax, fica,
       combinedEffRate,
       // "Your 401k + HSA saves you ~$X in federal tax this year" callout
-      taxSaveFromPreTax: Math.round(safeDeduc * fedMarginal),
+      taxSaveFromPreTax: Math.round((contrib401k + contribHSA) * fedMarginal),
       // Rate columns
       fedMarginal,
       fedEffective: fedEffRate,
@@ -849,6 +849,7 @@ export default function App() {
   }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
       rmdTaxBite, fedTax, retPhase,
       householdIncome, agi, safeDeduc, stateTax, fica, combinedEffRate,
+      contrib401k, contribHSA,
       rmdTaxSaved, totalIRMAACost, acaAnnualLoss, adjustedNetConversionBenefit]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back

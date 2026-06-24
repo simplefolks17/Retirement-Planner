@@ -263,13 +263,14 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         ].map(([k, l]) => {
           const on = tab === k;
           return (
-            <div key={k} onClick={() => setTab(k)} style={{
+            <button key={k} type="button" aria-pressed={on} onClick={() => setTab(k)} style={{
               padding: "6px 16px", borderRadius: 8, cursor: "pointer",
+              border: "none",
               background: on ? t.surf2 : "transparent",
               font: `${on ? 600 : 400} 13px ${HF}`,
               color: on ? t.ink : t.mut,
               boxShadow: on ? "0 1px 4px rgba(0,0,0,.09)" : "none"
-            }}>{l}</div>
+            }}>{l}</button>
           );
         })}
       </div>
@@ -470,7 +471,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           }} />
                         </div>
                         <div style={{ font: `500 12px ${HM}`, color: t.ink, width: 56, textAlign: "right" }}>
-                          {fmtMo(val)}
+                          {fmt(val)}
                         </div>
                       </div>
                     ))}
@@ -507,7 +508,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               const savingsDriver = planView?.drivers?.find(d => d.id === "savings");
               const savingsRatePct = savingsDriver?.savingsRatePct ?? null;
               const savingsRateOk  = savingsDriver?.ok ?? null;
-              const savingsGuide   = savingsDriver?.guidelinePct ?? 15;
+              const savingsGuide   = savingsDriver?.guidelinePct ?? null;
 
               return (
                 <>
@@ -523,7 +524,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: 12 }}>
                     {[
-                      ["Gross income",           taxView?.householdIncome ?? 0,  t.ink,  false, 0],
+                      ["Gross income",           taxView?.householdIncome,       t.ink,  false, 0],
                       ["→ After taxes",           budget.grossAfterTax,           t.ink,  false, 1],
                       ["→ After living expenses", budget.savingsCapacity,
                         budget.savingsCapacity >= 0 ? t.good : t.warm,           false,  2],
@@ -588,7 +589,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         {savingsRatePct}%
                       </span>
                       <span style={{ font: `400 12px ${HF}`, color: t.mut }}>
-                        savings rate · guideline ≥{savingsGuide}%
+                        savings rate{savingsGuide != null ? ` · guideline ≥${savingsGuide}%` : ""}
                       </span>
                     </div>
                   )}
@@ -855,15 +856,19 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
                   {/* AGI derivation table */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: 16 }}>
-                    {[
-                      ["Gross income",            `$${Math.round(taxView.householdIncome ?? 0).toLocaleString()}`, false, false],
-                      ["Pre-tax deductions",       `−$${Math.round(taxView.safeDeduc ?? 0).toLocaleString()}`,     false, false],
-                      ["Adjusted Gross Income",    `$${Math.round(taxView.agi ?? 0).toLocaleString()}`,            false, true ],
-                      ["Federal tax",              `−$${Math.round(fedTax ?? 0).toLocaleString()}`,                false, false],
-                      ["State tax",                `−$${Math.round(taxView.stateTax ?? 0).toLocaleString()}`,      false, false],
-                      ["FICA",                     `−$${Math.round(taxView.fica ?? 0).toLocaleString()}`,          false, false],
-                      ["Take-home",                `$${Math.round(takeHome ?? 0).toLocaleString()}`,               false, true ],
-                    ].map(([label, val, , strong]) => (
+                    {(() => {
+                      const fmtExact = v => v != null ? `$${Math.round(v).toLocaleString()}` : "—";
+                      const fmtDeduc = v => v != null ? `−$${Math.round(v).toLocaleString()}` : "—";
+                      return [
+                        ["Gross income",            fmtExact(taxView.householdIncome), false, false],
+                        ["Pre-tax deductions",       fmtDeduc(taxView.safeDeduc),       false, false],
+                        ["Adjusted Gross Income",    fmtExact(taxView.agi),             false, true ],
+                        ["Federal tax",              fmtDeduc(fedTax),                  false, false],
+                        ["State tax",                fmtDeduc(taxView.stateTax),        false, false],
+                        ["FICA",                     fmtDeduc(taxView.fica),            false, false],
+                        ["Take-home",                fmtExact(takeHome),                false, true ],
+                      ];
+                    })().map(([label, val, , strong]) => (
                       <div key={label} style={{
                         display: "flex", justifyContent: "space-between",
                         alignItems: "baseline", gap: 12,
@@ -1173,31 +1178,36 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
             <div ref={tableScrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
               <div style={{ minWidth: GRID_MIN_W }}>
                 {/* Jump bar — scroll-to-lifecycle shortcuts (Session 4) */}
-                {Object.keys(markerByAge ?? {}).length > 0 && (
-                  <div style={{
-                    display: "flex", flexWrap: "wrap", gap: 6,
-                    padding: "8px 12px", borderBottom: `1px solid ${t.line}`,
-                    background: t.surf2,
-                  }}>
-                    <span style={{ font: `400 11px ${SERIF}`, color: t.mut, alignSelf: "center" }}>
-                      Jump to:
-                    </span>
-                    {Object.entries(markerByAge ?? {}).map(([age, label]) => (
-                      <button
-                        key={age}
-                        onClick={() => rowRefs.current[Number(age)]?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
-                        style={{
-                          background: `${t.accent}14`, border: `1px solid ${t.accent}44`,
-                          borderRadius: 6, cursor: "pointer",
-                          font: `500 11px ${SERIF}`, color: t.accent,
-                          padding: "3px 10px",
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {(() => {
+                  const mountedAges = new Set(displayedRows.map(r => r.age));
+                  const visibleMarkers = Object.entries(markerByAge ?? {})
+                    .filter(([age]) => mountedAges.has(Number(age)));
+                  return visibleMarkers.length > 0 && (
+                    <div style={{
+                      display: "flex", flexWrap: "wrap", gap: 6,
+                      padding: "8px 12px", borderBottom: `1px solid ${t.line}`,
+                      background: t.surf2,
+                    }}>
+                      <span style={{ font: `400 11px ${SERIF}`, color: t.mut, alignSelf: "center" }}>
+                        Jump to:
+                      </span>
+                      {visibleMarkers.map(([age, label]) => (
+                        <button
+                          key={age}
+                          onClick={() => rowRefs.current[Number(age)]?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
+                          style={{
+                            background: `${t.accent}14`, border: `1px solid ${t.accent}44`,
+                            borderRadius: 6, cursor: "pointer",
+                            font: `500 11px ${SERIF}`, color: t.accent,
+                            padding: "3px 10px",
+                          }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {/* column headers */}
                 <div style={{
@@ -1224,7 +1234,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   const wrHigh = wr != null && wr > ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT;
                   const wrColor = wr == null ? t.faint
                     : wr <= ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT ? t.good
-                    : wr <= 6 ? t.warm : "#c0392b";
+                    : wr <= ASSUMPTIONS.WITHDRAWAL_RATE_DANGER_PCT ? t.warm : "#c0392b";
                   const milestone = milestoneByAge?.[row.age];
                   const isExpanded = expandedRow === row.age;
                   const engRow = isExpanded && isRet ? retirementRowByAge?.[row.age] : null;
@@ -1249,7 +1259,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       )}
                       <div
                         ref={el => { if (el) rowRefs.current[row.age] = el; }}
+                        role={isRet ? "button" : undefined}
+                        tabIndex={isRet ? 0 : undefined}
+                        aria-expanded={isRet ? isExpanded : undefined}
                         onClick={() => isRet ? setExpandedRow(e => e === row.age ? null : row.age) : undefined}
+                        onKeyDown={isRet ? e => { if (e.key === "Enter") setExpandedRow(prev => prev === row.age ? null : row.age); } : undefined}
                         style={{
                           display: "grid", gridTemplateColumns: GRID_COLS,
                           gap: 4, alignItems: "center",
@@ -1326,7 +1340,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           ))}
                           {((engRow.rmdTax ?? 0) > 0 || (engRow.drawTax ?? 0) > 0 || (engRow.convTax ?? 0) > 0) && (
                             <div style={{ font: `400 11px ${SERIF}`, color: t.mut, width: "100%", marginTop: 4 }}>
-                              Tax: RMD {fmt(engRow.rmdTax ?? 0)}{" · "}Draw {fmt(engRow.drawTax ?? 0)}{" · "}Conv. {fmt(engRow.convTax ?? 0)}
+                              Tax: RMD {fmt(engRow.rmdTax)}{" · "}Draw {fmt(engRow.drawTax)}{" · "}Conv. {fmt(engRow.convTax)}
                             </div>
                           )}
                         </div>
@@ -1363,7 +1377,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               {/* Bottom row: note + show-all toggle */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <span style={{ font: `400 11px ${HF}`, color: t.faint }}>
-                  whole life · {allRetirementRows.length} years · growth shown after the tax you'll owe on pre-tax accounts
+                  whole life · {allRetirementRows.length} years · balances and growth shown gross; taxes appear in the Tax and Draw columns
                 </span>
                 {allRetirementRows.length > YEAR_CAP && (
                   <button onClick={() => setShowAllYears(v => !v)} style={{
