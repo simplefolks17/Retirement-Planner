@@ -527,9 +527,9 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       ["Gross income",           taxView?.householdIncome,       t.ink,  false, 0],
                       ["→ After taxes",           budget.grossAfterTax,           t.ink,  false, 1],
                       ["→ After living expenses", budget.savingsCapacity,
-                        budget.savingsCapacity >= 0 ? t.good : t.warm,           false,  2],
+                        budget.savingsCapacityPositive ? t.good : t.warm,        false,  2],
                       ["→ After contributions",   budget.availableSurplus,
-                        budget.availableSurplus >= 0 ? t.good : t.warm,          true,   3],
+                        budget.surplusPositive ? t.good : t.warm,                true,   3],
                     ].map(([label, val, color, strong, indent]) => (
                       <div key={label} style={{
                         display: "flex", justifyContent: "space-between",
@@ -549,18 +549,18 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   </div>
 
                   {/* Deficit warning */}
-                  {budget.availableSurplus < 0 && (
+                  {budget.hasDeficit && (
                     <div style={{
                       background: `${t.warm}18`, border: `1px solid ${t.warm}55`,
                       borderRadius: 10, padding: "10px 16px", marginBottom: 14,
                       font: `500 13px ${HF}`, color: t.warm,
                     }}>
-                      Spending exceeds take-home by {fmt(Math.abs(budget.availableSurplus))} — consider reducing expenses or contributions.
+                      Spending exceeds take-home by {fmt(budget.deficitAmount)} — consider reducing expenses or contributions.
                     </div>
                   )}
 
                   {/* Surplus → retirement bridge callout */}
-                  {budget.availableSurplus > 0 && budget.surplusFutureValue > 0 && (
+                  {budget.surplusFutureValue > 0 && (
                     <div style={{
                       background: `${t.good}12`, border: `1px solid ${t.good}44`,
                       borderRadius: 10, padding: "10px 16px", marginBottom: 14,
@@ -1003,28 +1003,28 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       the user is missing when it's negative). */}
                   {conversionWindowYrs > 0 && taxView.conversionDetail != null && (
                     <div style={{
-                      background: netConversionBenefit >= 0 ? `${t.good}12` : `${t.warm}12`,
-                      border: `1px solid ${netConversionBenefit >= 0 ? t.good : t.warm}44`,
+                      background: taxView.conversionDetail.isPositive ? `${t.good}12` : `${t.warm}12`,
+                      border: `1px solid ${taxView.conversionDetail.isPositive ? t.good : t.warm}44`,
                       borderRadius: 9, padding: "12px 16px", marginBottom: 14,
                     }}>
                       <div style={{
                         font: `600 12px ${HF}`,
-                        color: netConversionBenefit >= 0 ? t.good : t.warm,
+                        color: taxView.conversionDetail.isPositive ? t.good : t.warm,
                         marginBottom: 6,
                       }}>
-                        {netConversionBenefit >= 0
+                        {taxView.conversionDetail.isPositive
                           ? "Conversions work in your favor"
                           : "Conversions are net-negative at current settings"}
                       </div>
                       <div style={{ font: `400 13px ${SERIF}`, color: t.ink, marginBottom: 10 }}>
-                        {netConversionBenefit >= 0 ? (
+                        {taxView.conversionDetail.isPositive ? (
                           <>Converting now saves{" "}
-                            <strong style={{ font: `700 13px ${HM}`, color: t.good }}>{fmt(netConversionBenefit)}</strong>
+                            <strong style={{ font: `700 13px ${HM}`, color: t.good }}>{fmt(taxView.conversionDetail.adjustedNetConversionBenefit)}</strong>
                             {" "}in lifetime taxes (RMD reduction minus conversion cost).
                           </>
                         ) : (
                           <>At current settings, converting costs{" "}
-                            <strong style={{ font: `700 13px ${HM}`, color: t.warm }}>{fmt(Math.abs(netConversionBenefit))}</strong>
+                            <strong style={{ font: `700 13px ${HM}`, color: t.warm }}>{fmt(taxView.conversionDetail.benefitAbs)}</strong>
                             {" "}more than it saves. Reduce the conversion amount or skip conversions entirely.
                           </>
                         )}

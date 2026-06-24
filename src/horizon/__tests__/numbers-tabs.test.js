@@ -93,6 +93,11 @@ const budget = {
   currentContribTotal: 24_850,  // sum of all contributions
   availableSurplus:   -10_850,  // savingsCapacity − contributions (deficit case)
   surplusFutureValue:      0,   // fvAnnuity(availableSurplus, ...) — 0 when deficit
+  // Pre-computed sign/tone fields (rule-10: no comparisons on financial values in src/horizon/)
+  savingsCapacityPositive: true,   // savingsCapacity 14_000 >= 0
+  surplusPositive:         false,  // availableSurplus -10_850 < 0
+  hasDeficit:              true,
+  deficitAmount:           10_850,
   optimizedAllocation: {
     extraMatch:   0,
     extraHSA:     0,
@@ -112,6 +117,9 @@ const budgetSurplus = {
   ...budget,
   availableSurplus:    5_000,
   surplusFutureValue: 85_000,  // fvAnnuity(5_000, 0.07, 10) ≈ 69k; round number for test
+  surplusPositive:     true,
+  hasDeficit:          false,
+  deficitAmount:           0,
 };
 
 // ── planView shape (savings driver used by Budget tab) ───────────────────────
@@ -158,6 +166,9 @@ const taxView = {
     irmaaCost:                      5_000,
     acaLoss:                            0,
     adjustedNetConversionBenefit:  12_235,  // 100k − 82.7k − 5k
+    // Pre-computed for rule-10 compliance (no comparisons on financial values in src/horizon/)
+    isPositive:                      true,  // 12_235 >= 0
+    benefitAbs:                    12_235,
   },
 };
 
@@ -613,7 +624,16 @@ describe("NumbersScreen — Taxes tab (Session-3 additions)", () => {
   });
 
   it("conversion callout renders with negative verdict (honest negative state)", () => {
-    const renderer = mountTab("taxes", { netConversionBenefit: -9_854 });
+    const negTaxView = {
+      ...taxView,
+      conversionDetail: {
+        ...taxView.conversionDetail,
+        adjustedNetConversionBenefit: -9_854,
+        isPositive: false,
+        benefitAbs: 9_854,
+      },
+    };
+    const renderer = mountTab("taxes", { netConversionBenefit: -9_854, taxView: negTaxView });
     const allText = textOf(renderer.root);
     expect(allText).toContain("net-negative");
     act(() => renderer.unmount());

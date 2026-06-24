@@ -788,6 +788,11 @@ export default function App() {
     currentContribTotal,
     availableSurplus,
     optimizedAllocation,
+    // Pre-computed for rule-10 compliance — no comparisons on financial values in src/horizon/:
+    savingsCapacityPositive: savingsCapacity >= 0,
+    surplusPositive: availableSurplus >= 0,
+    hasDeficit: availableSurplus < 0,
+    deficitAmount: Math.abs(availableSurplus),
     surplusFutureValue: availableSurplus > 0
       ? Math.round(fvAnnuity(availableSurplus, returnRate / 100, Math.max(0, safeRetAge - currentAge)))
       : 0,
@@ -844,6 +849,9 @@ export default function App() {
         irmaaCost: totalIRMAACost,
         acaLoss: acaAnnualLoss,
         adjustedNetConversionBenefit,
+        // Pre-computed for rule-10 compliance — no comparisons on financial values in src/horizon/:
+        isPositive: (adjustedNetConversionBenefit ?? 0) >= 0,
+        benefitAbs: Math.abs(adjustedNetConversionBenefit ?? 0),
       },
     };
   }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
