@@ -110,19 +110,66 @@ Most users won't know the term "Section 125" or the difference between payroll d
 
 ## Roth Conversion Model
 
-### Conversion Window
-- Years from retirement to age 72 (before RMDs at 73)
-- Low-income years where conversions are taxed at lower rates
+### Conversion Window (user-adjustable timing)
+- The "gap years" between retirement and RMD age (73) are the textbook-optimal window —
+  income is lowest before SS, pension, and RMDs stack up. This is the **default** window:
+  retirement+1 → `RMD_START_AGE − 1` (age 72).
+- **User-adjustable start/stop ages.** `conversionStartAge` / `conversionEndAge` (App state)
+  default to `null` = the default window (the golden-master pin). The resolved window is
+  clamped to `[safeRetAge+1, RMD_START_AGE−1]`; when `safeRetAge ≥ RMD_START_AGE−1` there is
+  no window (`conversionWindowYrs = 0`) and the whole section is suppressed.
+- **`buildConversionByAge({ startAge, endAge, … })`** (`retirement-phase.js`) builds the
+  engine's `{ [age]: amount }` schedule over the inclusive `[startAge, endAge]` range;
+  `annualConversions` is indexed by `age − startAge`. At the default window this is byte-identical
+  to the old `safeRetAge+yr+1` indexing.
+- Retirement-window conversions run through the single per-account engine
+  (`buildRetirementPhase` → `retirement-engine.js`, rule 2b): the principal moves trad→Roth and
+  only the tax leaks, stacked bracket-accurately on the SS/pension floor.
+
+### Working-Year Conversions (pre-retirement, sporadic)
+- A 401k→Roth conversion can also happen in a low-income **working** year (a job change /
+  sabbatical). Modeled as a list `conversionEvents: [{ id, age, amount }]` applied inside the
+  accumulation walk (`runSimulation`, helper `conversion-events.js → applyConversionEvents`).
+- **Taxed once** as ordinary income stacked on that year's wage floor (`netOrdinaryIncome`,
+  MFJ-combined) via `stackedIncomeTax`; the conversion amount is also added to the income base
+  for that year's LTCG-bracket selection (`ltcgRate(netOrdinaryIncome + conv, …)`).
+- **Tax funding:** from the taxable brokerage so the full principal lands in Roth; any shortfall
+  leaks from the converted dollars (Roth deposit shrinks). When that shortfall happens **under
+  age 59½**, the withheld portion is an early distribution and is charged the **10% penalty**
+  (`EARLY_WITHDRAWAL_AGE` 59.5 / `EARLY_WITHDRAWAL_PENALTY` 0.10). Row fields:
+  `convEvent` / `convEventTax` (tax+penalty) / `convEventPenalty`.
+- **Carry-forward:** the lowered trad balance flows through `tradGrossAtRet` into the retirement
+  engine seed, so future RMDs drop automatically.
+- **Gated** behind an in-service-eligibility toggle (`conversionInService`) — converting an active
+  employer 401k while still working is plan-dependent (it requires in-service distributions; it's
+  freely available from a rollover IRA after leaving a job).
+- **Benefit attribution (intentional limitation):** because working-year conversions lower the
+  retirement *seed* (not the retirement-window `conversionByAge`), the `noConv` counterfactual in
+  `buildRetirementPhase` seeds from the already-lowered balance — so their benefit shows up as
+  **longer longevity and a lower `rmdTaxBite`**, NOT in the conversion-*window* `netConversionBenefit`
+  headline. The UI says so; the optimizer is scoped to retirement-window conversions so it never
+  claims a benefit it can't measure.
 
 ### Bracket Fill Strategy
 - Target bracket top (12%, 22%, or 24%) + standard deduction − retirement income floor
 - Retirement income floor = 85% of householdSS + effectivePension (steady-state, for display and bracket-fill suggestion)
-- **Per-year floors for tax calculation:** `calcConversionSim` receives a `retIncomeFloors[]` array where each entry reflects whether SS and pension have actually started in that year. Pre-SS/pre-pension years use a lower floor, so the marginal rate on conversions in those years is computed correctly.
+- **Per-year floors for tax calculation:** `buildIncomeFloors({ startAge, … })` (anchored to the
+  resolved window start) produces a `retIncomeFloors[]` array where each entry reflects whether SS
+  and pension have actually started in that year. Pre-SS/pre-pension years use a lower floor, so the
+  marginal rate on conversions in those years is computed correctly.
 
 ### Dual Tax Source Scenarios
 - **From converted amount**: Roth receives (conversion − tax), less efficient
 - **From taxable brokerage**: Roth receives full conversion, tax paid from taxable account
 - Both scenarios computed simultaneously; user selects which to display
+
+### Optimizer (timing + amount)
+- `findOptimalConversionPlan` (`roth-conversion.js`) searches BOTH the conversion-window **start
+  age** and the flat annual **amount** that maximize net benefit after IRMAA/ACA, via the SAME
+  engine + `evaluateConversionPlan` the screen uses (so it can never search a different model —
+  BUG-31/BUG-35 class). The suggestion line shows the recommended start age and amount. Start-age
+  search granularity is `ASSUMPTIONS.CONVERSION_STARTAGE_STEP` (1 yr); amount step is
+  `ASSUMPTIONS.CONVERSION_STEP` ($5k). Only runs in custom (flat-amount) mode.
 
 ## Drawdown Model
 
@@ -200,6 +247,10 @@ same reason: one update point, no magic numbers scattered across the code.
 | `SPOUSAL_BENEFIT_PCT` | 0.5 | Spousal benefit = 50% of primary PIA |
 | `PIA_FACTOR_1/2/3` | 0.90 / 0.32 / 0.15 | PIA bend-point replacement rates |
 | `LTCG_DRAG_PROXY` | 0.15 | Annual taxable-brokerage drag proxy (`r × (1 − 0.15)`) |
+| `CONVERSION_STEP` | 5_000 | Amount-search step for the Roth-conversion optimizer |
+| `CONVERSION_STARTAGE_STEP` | 1 | Start-age-search granularity (years) for the timing+amount optimizer |
+
+> Note: `EARLY_WITHDRAWAL_AGE` (59.5) and `EARLY_WITHDRAWAL_PENALTY` (0.10) are **statutory** (the 10% early-distribution penalty), so they live with the IRS constants in `irs-2026.js`, not in `ASSUMPTIONS`.
 
 ## Known Simplifications
 
@@ -216,6 +267,7 @@ These are intentional modeling choices, not bugs. Document them so users and rev
 | SS benefit assumes continuous work to retirement | Overstates SS for anyone with career gaps | Retiring at 45 leaves fewer high-earning years in the 35-year average. Work-gap input planned: feature #11. |
 | Income growth compounds indefinitely without a user-set plateau | Overstates contribution capacity and SS AIME for long projections | A $100k earner at 3%/yr reaches $289k by 65. Users can cap this with the "Income plateau age" slider; `incomeGrowthEndAge` passed to both `runSimulation` and `calcAIME`. Default null = no cap. |
 | Spouse 401k/Roth/HSA accounts not modeled | Understates household contribution capacity for dual-income MFJ | Spouse accounts tracked as planned premium feature #30. Current sliders are primary earner only. |
+| Working-year conversion benefit not shown in the window headline | The `netConversionBenefit` figure ignores pre-retirement (working-year) conversions | These conversions lower the retirement *seed*, so the `noConv` counterfactual seeds from the already-lowered balance. Their real benefit appears in longevity / lower `rmdTaxBite`, not the conversion-window figure. Quantifying it would need a third counterfactual — deferred. UI states this; optimizer is scoped to window conversions. |
 | Single fixed return rate for full projection | Ignores sequence-of-returns risk | A bad decade early in retirement is far worse than the same average return. Monte Carlo planned: feature #38. |
 
 ## IRS Annual Update Procedure
@@ -251,3 +303,6 @@ A record of bugs found and fixed in the financial model (not feature additions �
 | Jun 2026 | Pension not counted in drawdown when `pensionStartAge > safeRetAge` | Same per-year fix — check `age >= pensionStartAge` in all drawdown loops | `yearsSustained` for deferred-pension users |
 | Jun 2026 | Spouse FICA not included in household taxes | `fica = (min(p, FICA_WAGE_BASE) + min(s, FICA_WAGE_BASE)) × 0.0765` | `takeHome`, `grossAfterTax`, `savingsCapacity` |
 | Jun 2026 | MFJ spouse income missing from AGI, state tax, and budget | `agi` and `grossAfterTax` now use `householdIncome` when `filingStatus === "mfj"` | Federal tax, state tax, `savingsCapacity`, `optimizedAllocation` |
+| Jun 24 2026 | Working-year conversion didn't bump that year's LTCG bracket (cap-gains rate picked before the conversion) | Compute the capped `conv` before the `ltcgRate` call; pass `ltcgRate(netOrdinaryIncome + conv, …)` (`simulation.js`). Inert when no events → golden-master-safe | Taxable-account growth in a working-conversion year, and downstream retirement balances |
+| Jun 24 2026 | What-if overlay re-sim dropped permanent working-year conversions, diverging the overlay baseline from the main plan (BUG-34 class) | Thread `conversionEvents` + `stateRate` through `whatIfSimInputs` so the re-sim sees the same events | What-if scenario baseline arc/longevity |
+| Jun 24 2026 | Phantom 1-year conversion window when retiring at/after 72 (clamp collapsed to age 72 with `conversionWindowYrs = 1`) | `hasConvWindow` guard so the window is genuinely empty (`conversionWindowYrs = 0`) when `safeRetAge ≥ RMD_START_AGE−1` | Conversion section visibility, "window closes" arc marker (now `resolvedEndAge`) |

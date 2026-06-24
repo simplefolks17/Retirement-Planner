@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (539 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (540 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -600,18 +600,21 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   **Optimizer suggests start age + amount** — `findOptimalConversionPlan` (sibling of `findOptimalConversion`)
   searches `(startAge, amount)`; the suggestion line shows both. New working-year `convEvent`/`convEventTax`
   row fields flow into the Year-by-year ledger (`accumulation.js`, reconciles `prev+contrib+growth−tax=total`).
-  Default state unchanged (events `[]`, window null, in-service off) → **golden master untouched**. 516 → **539**
-  tests (+23: window-equivalence, working-year conservation/penalty/carry-forward, optimizer-plan, LTCG-bracket
-  with conversion, conversion-event NaN guard). PR #39 reviewed by CodeRabbit + Gemini; real findings fixed
-  (working-year conversion now bumps that year's LTCG bracket; NaN guards in `conversion-events.js` + the panel;
-  `maxSearch` guard in `findOptimalConversionPlan`; panel a11y/empty-state; optimizer suggestion also surfaces a
-  better start age). Skipped with reason: the "displayed cost omits penalty" flag (false positive — `convEventTax`
-  already folds in the penalty) and an optimizer-extraction refactor (deferred follow-up).
+  Default state unchanged (events `[]`, window null, in-service off) → **golden master untouched**. 516 → **540**
+  tests (+24: window-equivalence, working-year conservation/penalty/carry-forward, optimizer-plan, LTCG-bracket
+  with conversion, conversion-event NaN guard, optimizer input-guard). PR #39 reviewed by CodeRabbit + Gemini
+  across multiple rounds; real findings fixed (working-year conversion now bumps that year's LTCG bracket; NaN
+  guards in `conversion-events.js` + the panel; `maxSearch` + `startAgeRange` guards in `findOptimalConversionPlan`;
+  optimizer floor-cache + zero-baseline perf; panel a11y/empty-state; optimizer suggestion also surfaces a better
+  start age). Skipped with reason: the "displayed cost omits penalty" flag (false positive — `convEventTax` already
+  folds in the penalty) and an optimizer-extraction refactor (deferred follow-up). CodeRabbit's full 14-scenario
+  edge-case audit found no bugs. Docs: `FINANCIAL-MODEL.md` Roth Conversion Model section + Correctness Fix Log +
+  Known Simplifications updated; `BUGS.md` BUG-36 scope note added (conversion events now taxed in accumulation).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (539 tests)
+- `npm test` — run model + formatter + render-smoke tests (540 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
