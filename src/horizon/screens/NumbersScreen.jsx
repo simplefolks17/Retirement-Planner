@@ -310,9 +310,9 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
             {/* Plan-health verdict badge */}
             {planView?.drivers && (() => {
-              const allOk = planView.drivers.every(d => d.ok);
               const DRIVER_LABELS = { withdrawal: "withdrawal rate", longevity: "longevity", savings: "savings rate" };
-              const badIssues = planView.drivers.filter(d => !d.ok).map(d => DRIVER_LABELS[d.id] ?? d.id);
+              const badIssues = planView.drivers.filter(d => d.ok === false).map(d => DRIVER_LABELS[d.id] ?? d.id);
+              const allOk = badIssues.length === 0;
               const color = allOk ? t.good : t.warm;
               return (
                 <div style={{
@@ -691,7 +691,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           }}>
                             <span style={{ font: `600 14px ${SERIF}`, color: t.ink }}>Total contributions</span>
                             <span style={{ font: `700 15px ${HM}`, color: t.ink }}>
-                              {fmt(budget.currentContribTotal)}/yr
+                              {fmt(budget.optimizedContribTotal)}/yr
                             </span>
                           </div>
                         </div>

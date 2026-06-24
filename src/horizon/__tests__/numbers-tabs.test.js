@@ -93,6 +93,7 @@ const budget = {
   currentContribTotal: 24_850,  // sum of all contributions
   availableSurplus:   -10_850,  // savingsCapacity − contributions (deficit case)
   surplusFutureValue:      0,   // fvAnnuity(availableSurplus, ...) — 0 when deficit
+  optimizedContribTotal: 30_800, // opt401k(19_500) + optRoth(7_000) + optHSA(4_300) + optTaxable(0)
   // Pre-computed sign/tone fields (rule-10: no comparisons on financial values in src/horizon/)
   savingsCapacityPositive: true,   // savingsCapacity 14_000 >= 0
   surplusPositive:         false,  // availableSurplus -10_850 < 0

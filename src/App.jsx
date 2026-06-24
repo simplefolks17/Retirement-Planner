@@ -796,6 +796,10 @@ export default function App() {
     surplusFutureValue: availableSurplus > 0
       ? Math.round(fvAnnuity(availableSurplus, returnRate / 100, Math.max(0, safeRetAge - currentAge)))
       : 0,
+    // Sum of optimized employee-side allocations — matches the opt* rows displayed in
+    // the allocation stack so the footer total is consistent with the visible rows.
+    optimizedContribTotal: optimizedAllocation.opt401k + optimizedAllocation.optRoth
+      + optimizedAllocation.optHSA + optimizedAllocation.optTaxable,
   }), [grossAfterTax, effectiveLiving, savingsCapacity, currentContribTotal,
        availableSurplus, optimizedAllocation, returnRate, safeRetAge, currentAge]);
 
@@ -861,13 +865,16 @@ export default function App() {
 
   // V9: markerByAge and tablePhases memoized separately so they don't cause
   // horizonProps to re-reference on unrelated dep changes.
-  const markerByAge = useMemo(() => ({
-    [safeRetAge]: "Retire",
-    [RMD_START_AGE]: "RMD start",
-    ...(includeSS && ssClaimingAge > safeRetAge ? { [ssClaimingAge]: "SS claimed" } : {}),
-    ...(conversionWindowYrs > 0 ? { [safeRetAge + conversionWindowYrs]: "Conv. window closes" } : {}),
-    ...(depletionAge != null ? { [depletionAge]: "Portfolio depleted" } : {}),
-  }), [safeRetAge, includeSS, ssClaimingAge, conversionWindowYrs, depletionAge]);
+  const markerByAge = useMemo(() => [
+    [safeRetAge, "Retire"],
+    [RMD_START_AGE, "RMD start"],
+    includeSS && ssClaimingAge > safeRetAge ? [ssClaimingAge, "SS claimed"] : null,
+    conversionWindowYrs > 0 ? [safeRetAge + conversionWindowYrs, "Conv. window closes"] : null,
+    depletionAge != null ? [depletionAge, "Portfolio depleted"] : null,
+  ].filter(Boolean).reduce((acc, [age, label]) => {
+    acc[age] = acc[age] ? `${acc[age]} · ${label}` : label;
+    return acc;
+  }, {}), [safeRetAge, includeSS, ssClaimingAge, conversionWindowYrs, depletionAge]);
 
   const tablePhases = useMemo(() => ({
     accumYears: safeRetAge - currentAge,
