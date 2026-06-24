@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
+import { ASSUMPTIONS } from "../../config/irs-2026.js";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
 
@@ -149,7 +150,7 @@ function IncomeWaterfall({ t, view }) {
 // deep-links here via navigate("numbers", tabId) — e.g. the Plan stat cards
 // and signals strip. The user's own tab clicks still control the state after
 // arrival; plain navigation passes null and leaves the default.
-export default function NumbersScreen({ t, props, isMobile = false, initialTab = null }) {
+export default function NumbersScreen({ t, props, isMobile = false, initialTab = null, navigate = null }) {
   const {
     currentIncome, fedTax, takeHome,
     totalAtRet, spendableAtRet, retVals, effectiveExpenses, balAt90,
@@ -172,10 +173,16 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
     ssClaimingAge,
     markerByAge,        // lifecycle annotation map for Year by year dividers
     tablePhases,        // phase-summary box data for Year by year header strip
+    // Session-4 additions:
+    retirementRowByAge, // { [age]: engineRow } — per-account breakdown for expandable rows
+    milestoneByAge,     // { [age]: tag } — inline milestone badge in portfolio cell
   } = props;
 
   const [tab, setTab] = useState(initialTab ?? "statement");
   const [showAllYears, setShowAllYears] = useState(false);
+  const [expandedRow, setExpandedRow] = useState(null);  // age of expanded ret row
+  const tableScrollRef = useRef(null);                    // outer scroll container
+  const rowRefs = useRef({});                             // { [age]: DOM element }
 
   // Adopt a new deep-link target if one arrives while already mounted
   // (re-navigation to the same screen with a different subView).
@@ -392,6 +399,34 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               }} />
             </div>
 
+            {/* Income replacement ratio — replaces X% of working income (Session 4) */}
+            {sv.incomeReplacementPct != null && (() => {
+              const pct = sv.incomeReplacementPct;
+              const color = pct >= ASSUMPTIONS.INCOME_REPLACEMENT_GOOD_PCT ? t.good
+                : pct >= ASSUMPTIONS.INCOME_REPLACEMENT_WARN_PCT ? t.warm : "#c0392b";
+              return (
+                <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ font: `400 13px ${SERIF}`, color: t.mut }}>
+                    Retirement income replaces{" "}
+                    <span style={{ font: `700 15px ${HM}`, color }}>{pct}%</span>
+                    {" "}of your working take-home.
+                  </div>
+                  {navigate && (
+                    <button
+                      onClick={() => navigate("numbers", "yearly")}
+                      style={{
+                        background: "none", border: "none", cursor: "pointer",
+                        font: `400 12px ${SERIF}`, color: t.accent,
+                        padding: "4px 0", textDecoration: "underline",
+                      }}
+                    >
+                      → Explore all years
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Income waterfall — where each paycheck dollar goes (gross → tax → savings → take-home) */}
             {sv.gross > 0 && (
               <div style={{ marginTop: 20 }}>
@@ -409,6 +444,38 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     ? "Add your income to see where each dollar goes."
                     : `Of every dollar you earn, ${sv.flowKeepPct}% comes home, ${sv.flowSavePct}% builds your future, ${sv.flowTaxPct}% goes to tax.`}
                 </div>
+                {/* Retirement income companion strip — shows how SS/pension/portfolio
+                    combine to fund retirement (mirrors the working-year waterfall).
+                    Bar widths are layout proportion only (val/monthlyTotal * 100%) —
+                    the same precedent as Accounts tab horizontal bars (rule 10). */}
+                {sv.monthlyTotal > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{
+                      font: `500 11px ${SERIF}`, color: t.mut,
+                      letterSpacing: ".05em", textTransform: "uppercase", marginBottom: 8,
+                    }}>
+                      Where retirement income comes from · per month
+                    </div>
+                    {[
+                      { label: "Social Security", val: sv.monthlyHHSS, color: t.good },
+                      ...(sv.monthlyPension > 0 ? [{ label: "Pension", val: sv.monthlyPension, color: t.accent }] : []),
+                      { label: "Portfolio draw", val: sv.monthlyPortDraw, color: t.warm },
+                    ].map(({ label, val, color }) => (
+                      <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <div style={{ font: `400 12px ${SERIF}`, color: t.mut, width: 110 }}>{label}</div>
+                        <div style={{ flex: 1, background: `${color}22`, borderRadius: 3, height: 6, overflow: "hidden" }}>
+                          <div style={{
+                            width: `${Math.round((val / sv.monthlyTotal) * 100)}%`,
+                            background: color, height: "100%",
+                          }} />
+                        </div>
+                        <div style={{ font: `500 12px ${HM}`, color: t.ink, width: 56, textAlign: "right" }}>
+                          {fmtMo(val)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1103,8 +1170,35 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 9 columns → the table scrolls horizontally so each stays readable
                 on desktop and mobile (rule 15 — renders + usable on small screens).
                 signed and null cells are formatted only; all values come from yearlyRows. */}
-            <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+            <div ref={tableScrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
               <div style={{ minWidth: GRID_MIN_W }}>
+                {/* Jump bar — scroll-to-lifecycle shortcuts (Session 4) */}
+                {Object.keys(markerByAge ?? {}).length > 0 && (
+                  <div style={{
+                    display: "flex", flexWrap: "wrap", gap: 6,
+                    padding: "8px 12px", borderBottom: `1px solid ${t.line}`,
+                    background: t.surf2,
+                  }}>
+                    <span style={{ font: `400 11px ${SERIF}`, color: t.mut, alignSelf: "center" }}>
+                      Jump to:
+                    </span>
+                    {Object.entries(markerByAge ?? {}).map(([age, label]) => (
+                      <button
+                        key={age}
+                        onClick={() => rowRefs.current[Number(age)]?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
+                        style={{
+                          background: `${t.accent}14`, border: `1px solid ${t.accent}44`,
+                          borderRadius: 6, cursor: "pointer",
+                          font: `500 11px ${SERIF}`, color: t.accent,
+                          padding: "3px 10px",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {/* column headers */}
                 <div style={{
                   display: "grid", gridTemplateColumns: GRID_COLS,
@@ -1125,6 +1219,15 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 {displayedRows.map((row, i) => {
                   const isRetStart = row.phase === "ret" && displayedRows[i - 1]?.phase === "accum";
                   const marker = markerByAge?.[row.age];
+                  const isRet = row.phase === "ret";
+                  const wr = isRet ? row.withdrawalRatePct : null;
+                  const wrHigh = wr != null && wr > ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT;
+                  const wrColor = wr == null ? t.faint
+                    : wr <= ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT ? t.good
+                    : wr <= 6 ? t.warm : "#c0392b";
+                  const milestone = milestoneByAge?.[row.age];
+                  const isExpanded = expandedRow === row.age;
+                  const engRow = isExpanded && isRet ? retirementRowByAge?.[row.age] : null;
                   return (
                     <React.Fragment key={row.age}>
                       {marker && (
@@ -1144,26 +1247,52 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           </span>
                         </div>
                       )}
-                      <div style={{
-                        display: "grid", gridTemplateColumns: GRID_COLS,
-                        gap: 4, alignItems: "center",
-                        padding: "7px 14px",
-                        borderBottom: `1px solid ${t.line}`,
-                        borderTop: isRetStart ? `1.5px solid ${t.warm}88` : "none",
-                        background: i % 2 === 0 ? "transparent" : `${t.ink}05`,
-                      }}>
-                        <span style={{ font: `600 13px ${HM}`, color: row.phase === "ret" ? t.warm : t.good }}>{row.age}</span>
+                      <div
+                        ref={el => { if (el) rowRefs.current[row.age] = el; }}
+                        onClick={() => isRet ? setExpandedRow(e => e === row.age ? null : row.age) : undefined}
+                        style={{
+                          display: "grid", gridTemplateColumns: GRID_COLS,
+                          gap: 4, alignItems: "center",
+                          padding: "7px 14px",
+                          borderBottom: `1px solid ${t.line}`,
+                          borderTop: isRetStart ? `1.5px solid ${t.warm}88` : "none",
+                          background: wrHigh
+                            ? `${t.warm}08`
+                            : i % 2 === 1 ? `${t.line}08` : "transparent",
+                          cursor: isRet ? "pointer" : "default",
+                        }}
+                      >
+                        <span style={{ font: `600 13px ${HM}`, color: isRet ? t.warm : t.good }}>{row.age}</span>
                         <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{row.year}</span>
-                        <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
-                        <span style={{ font: `400 12px ${HM}`, color: row.contrib > 0 ? t.accent : t.faint }}>
+                        {/* Portfolio cell — with optional milestone badge */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                          <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
+                          {milestone && (
+                            <span style={{
+                              font: `500 10px ${SERIF}`, background: `${t.accent}18`,
+                              color: t.accent, borderRadius: 4, padding: "1px 5px",
+                            }}>
+                              {milestone}
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ font: `400 12px ${HM}`, color: row.contrib != null && row.contrib > 0 ? t.accent : t.faint }}>
                           {row.contrib != null && row.contrib > 0 ? `+${fmt(row.contrib)}` : "—"}
                         </span>
                         <span style={{ font: `400 12px ${HM}`, color: row.growth > 0 ? t.good : t.faint }}>
                           {row.growth > 0 ? `+${fmt(row.growth)}` : "—"}
                         </span>
-                        <span style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
-                          {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
-                        </span>
+                        {/* Draw cell — with WR% sub-label for retirement rows */}
+                        <div>
+                          <div style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
+                            {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
+                          </div>
+                          {isRet && wr != null && (
+                            <div style={{ font: `400 10px ${HM}`, color: wrColor, marginTop: 1 }}>
+                              WR {wr}%
+                            </div>
+                          )}
+                        </div>
                         <span style={{ font: `400 12px ${HM}`, color: row.tax > 0 ? t.mut : t.faint }}>
                           {row.tax > 0 ? `−${fmt(row.tax)}` : "—"}
                         </span>
@@ -1174,6 +1303,34 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           {row.conversion != null && row.conversion > 0 ? fmt(row.conversion) : "—"}
                         </span>
                       </div>
+                      {/* Expandable per-account detail panel (Session 4) */}
+                      {isExpanded && engRow && (
+                        <div style={{
+                          gridColumn: "1 / -1",
+                          background: `${t.accent}0a`,
+                          borderTop: `1px solid ${t.accent}22`,
+                          padding: "8px 14px",
+                          display: "flex", gap: 16, flexWrap: "wrap",
+                          borderBottom: `1px solid ${t.line}`,
+                        }}>
+                          {[
+                            { label: "Trad 401k", val: engRow.trad },
+                            { label: "Roth",      val: engRow.roth },
+                            { label: "Taxable",   val: engRow.taxable },
+                            { label: "HSA",       val: engRow.hsa },
+                          ].filter(a => a.val > 0).map(({ label, val }) => (
+                            <div key={label} style={{ font: `400 12px ${SERIF}`, color: t.mut }}>
+                              {label}{" "}
+                              <span style={{ font: `600 12px ${HM}`, color: t.ink }}>{fmt(val)}</span>
+                            </div>
+                          ))}
+                          {((engRow.rmdTax ?? 0) > 0 || (engRow.drawTax ?? 0) > 0 || (engRow.convTax ?? 0) > 0) && (
+                            <div style={{ font: `400 11px ${SERIF}`, color: t.mut, width: "100%", marginTop: 4 }}>
+                              Tax: RMD {fmt(engRow.rmdTax ?? 0)}{" · "}Draw {fmt(engRow.drawTax ?? 0)}{" · "}Conv. {fmt(engRow.convTax ?? 0)}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </React.Fragment>
                   );
                 })}
