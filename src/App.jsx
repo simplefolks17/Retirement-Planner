@@ -369,10 +369,17 @@ export default function App() {
   // reproduces the old `RMD_START_AGE - 1 - safeRetAge` window exactly.
   const convWindowFloor = safeRetAge + 1;
   const convWindowCeil  = RMD_START_AGE - 1;
-  const resolvedStartAge = Math.min(convWindowCeil,
-    Math.max(convWindowFloor, conversionStartAge ?? convWindowFloor));
-  const resolvedEndAge   = Math.max(resolvedStartAge,
-    Math.min(convWindowCeil, conversionEndAge ?? convWindowCeil));
+  // No window at all when retiring at/after RMD_START_AGE-1 (floor > ceil) — RMDs begin
+  // immediately, leaving no gap years. Force an empty range so conversionWindowYrs === 0,
+  // matching the old `max(0, RMD_START_AGE-1-safeRetAge)` (which was 0 here). Without this
+  // the clamp would collapse to a phantom 1-year window at age 72.
+  const hasConvWindow = convWindowFloor <= convWindowCeil;
+  const resolvedStartAge = hasConvWindow
+    ? Math.min(convWindowCeil, Math.max(convWindowFloor, conversionStartAge ?? convWindowFloor))
+    : convWindowFloor;
+  const resolvedEndAge = hasConvWindow
+    ? Math.max(resolvedStartAge, Math.min(convWindowCeil, conversionEndAge ?? convWindowCeil))
+    : convWindowFloor - 1; // empty: endAge < startAge → buildConversionByAge yields {}
   const conversionWindowYrs = Math.max(0, resolvedEndAge - resolvedStartAge + 1);
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
   // Per-year conversion-window income floors (BUG-25 #3 per-year SS/pension gate):
@@ -705,12 +712,15 @@ export default function App() {
     contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
     calcEmployerMatchFn: employerMatch,
     moneyEvents,
+    // Permanent working-year conversions must travel with the re-sim so the what-if
+    // BASELINE matches the main plan (same class as the BUG-34 money-events fix).
+    conversionEvents: activeConversionEvents, stateRate,
   }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
        contrib401k, contribRoth, contribTaxable, contribHSA,
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-       employerMatch, moneyEvents]);
+       employerMatch, moneyEvents, activeConversionEvents, stateRate]);
 
   // Single entry point for Horizon-initiated mutations to App state.
   // Always called after user confirms in a modal — never fired directly by screens.
@@ -917,12 +927,12 @@ export default function App() {
     [safeRetAge, "Retire"],
     [RMD_START_AGE, "RMD start"],
     includeSS && ssClaimingAge > safeRetAge ? [ssClaimingAge, "SS claimed"] : null,
-    conversionWindowYrs > 0 ? [safeRetAge + conversionWindowYrs, "Conv. window closes"] : null,
+    conversionWindowYrs > 0 ? [resolvedEndAge, "Conv. window closes"] : null,
     depletionAge != null ? [depletionAge, "Portfolio depleted"] : null,
   ].filter(Boolean).reduce((acc, [age, label]) => {
     acc[age] = acc[age] ? `${acc[age]} · ${label}` : label;
     return acc;
-  }, {}), [safeRetAge, includeSS, ssClaimingAge, conversionWindowYrs, depletionAge]);
+  }, {}), [safeRetAge, includeSS, ssClaimingAge, conversionWindowYrs, resolvedEndAge, depletionAge]);
 
   const tablePhases = useMemo(() => ({
     accumYears: safeRetAge - currentAge,
