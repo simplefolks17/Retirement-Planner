@@ -585,18 +585,34 @@ export default function App() {
   const optimizerResult = useMemo(() => {
     if (conversionMode === "bracket" || conversionWindowYrs === 0 || !hasRetRow) return null;
 
+    // The window income floors depend only on startAge (not amount), but getNetBenefit is
+    // called for every (startAge, amount) pair — so memoize the two floor arrays per startAge
+    // to avoid rebuilding them on each amount step (Gemini review). The engine walk dominates
+    // cost, but this removes the redundant recompute cleanly.
+    const floorsByStart = new Map();
+    const floorsFor = (startAge, windowLen) => {
+      let f = floorsByStart.get(startAge);
+      if (!f) {
+        const floorArgs = {
+          conversionWindowYrs: windowLen, startAge, includeSS, ssClaimingAge,
+          pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+        };
+        f = {
+          floors:     buildIncomeFloors({ ...floorArgs, ssAmount: ssTaxableRet }),
+          magiFloors: buildIncomeFloors({ ...floorArgs, ssAmount: householdSS }),
+        };
+        floorsByStart.set(startAge, f);
+      }
+      return f;
+    };
+
     // For each candidate (startAge, amount): rebuild the window floors + schedule for
     // that start, run the SAME engine (retPhaseBase) for the RMD-tax saving + conversion
     // cost, then the SAME evaluateConversionPlan for the IRMAA/ACA costs — so the
     // optimizer can never search a different model than the screen shows (BUG-31/BUG-35).
     const getNetBenefit = (startAge, amount) => {
       const windowLen = Math.max(0, resolvedEndAge - startAge + 1);
-      const floorArgs = {
-        conversionWindowYrs: windowLen, startAge, includeSS, ssClaimingAge,
-        pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-      };
-      const candidateFloors     = buildIncomeFloors({ ...floorArgs, ssAmount: ssTaxableRet });
-      const candidateMAGIFloors = buildIncomeFloors({ ...floorArgs, ssAmount: householdSS });
+      const { floors: candidateFloors, magiFloors: candidateMAGIFloors } = floorsFor(startAge, windowLen);
       const candidateByAge = buildConversionByAge({
         startAge, endAge: resolvedEndAge, annualConversions: null, annualConversion: amount,
       });
