@@ -702,10 +702,10 @@ export default function App() {
   // lifetimeContribROI: scalar extracted from flowData for a stable dep (V9 pattern).
   const flowTotalContrib = flowData.totalContrib;
   const statementView = useMemo(() => calcStatementView({
-    currentIncome, fedTax, fica, stateTax, takeHome,
+    currentIncome: householdIncome, fedTax, fica, stateTax, takeHome,
     currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
     totalAtRet, totalContrib: flowTotalContrib,
-  }), [currentIncome, fedTax, fica, stateTax, takeHome,
+  }), [householdIncome, fedTax, fica, stateTax, takeHome,
        currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
        totalAtRet, flowTotalContrib]);
 
@@ -806,17 +806,16 @@ export default function App() {
   // one source for the retirement-phase tax composition (BUG-35).
   // Memoized so horizonProps stays identity-stable (V9).
   const taxViewBundle = useMemo(() => {
-    // Lifetime tax composition — computed ONCE here (model), so the Taxes tab
-    // formats only (rule 10). Segments carry their own dollar val + integer pct;
-    // the screen keeps the bar widths (flex: val/total) as pure layout math.
-    const workingTax = fedTax ?? 0;
-    const rmdTax     = rmdTaxBite ?? 0;
-    const convTax    = retPhase.conversionCost ?? 0;
-    const total      = workingTax + rmdTax + convTax;
+    // Retirement-phase tax composition — RMD + conversion (both lifetime totals).
+    // Working-year tax is excluded: fedTax is one year, not a lifetime figure,
+    // so mixing it here would distort the bar. Computed ONCE here (rule 10).
+    // Segments carry their own dollar val + integer pct; bar widths are layout math.
+    const rmdTax  = rmdTaxBite ?? 0;
+    const convTax = retPhase.conversionCost ?? 0;
+    const total   = rmdTax + convTax;
     const rawSegs = [
-      { label: "Working tax",    val: workingTax, key: "working" },
-      { label: "RMD tax",        val: rmdTax,     key: "rmd" },
-      { label: "Conversion tax", val: convTax,    key: "conv" },
+      { label: "RMD tax",        val: rmdTax,  key: "rmd" },
+      { label: "Conversion tax", val: convTax, key: "conv" },
     ];
     const segments = total > 0
       ? rawSegs.filter(s => s.val > 0).map(s => ({
@@ -855,10 +854,28 @@ export default function App() {
       },
     };
   }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
-      rmdTaxBite, fedTax, retPhase,
+      rmdTaxBite, retPhase,
       householdIncome, agi, safeDeduc, stateTax, fica, combinedEffRate,
       contrib401k, contribHSA,
       rmdTaxSaved, totalIRMAACost, acaAnnualLoss, adjustedNetConversionBenefit]);
+
+  // V9: markerByAge and tablePhases memoized separately so they don't cause
+  // horizonProps to re-reference on unrelated dep changes.
+  const markerByAge = useMemo(() => ({
+    [safeRetAge]: "Retire",
+    [RMD_START_AGE]: "RMD start",
+    ...(includeSS && ssClaimingAge > safeRetAge ? { [ssClaimingAge]: "SS claimed" } : {}),
+    ...(conversionWindowYrs > 0 ? { [safeRetAge + conversionWindowYrs]: "Conv. window closes" } : {}),
+    ...(depletionAge != null ? { [depletionAge]: "Portfolio depleted" } : {}),
+  }), [safeRetAge, includeSS, ssClaimingAge, conversionWindowYrs, depletionAge]);
+
+  const tablePhases = useMemo(() => ({
+    accumYears: safeRetAge - currentAge,
+    conversionYears: conversionWindowYrs,
+    retirementYears: Number.isFinite(yearsSustained)
+      ? Math.min(Math.round(yearsSustained), safeLifeExp - safeRetAge)
+      : safeLifeExp - safeRetAge,
+  }), [safeRetAge, currentAge, conversionWindowYrs, yearsSustained, safeLifeExp]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
@@ -912,23 +929,9 @@ export default function App() {
     // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
     ssClaimingAge,
     includeSS,
-    // markerByAge: lifecycle annotation map for Year by year divider rows.
-    // Computed inline (pure mapping of existing scalars — no financial arithmetic).
-    markerByAge: {
-      [safeRetAge]: "Retire",
-      [RMD_START_AGE]: "RMD start",
-      ...(includeSS && ssClaimingAge > safeRetAge ? { [ssClaimingAge]: "SS claimed" } : {}),
-      ...(conversionWindowYrs > 0 ? { [safeRetAge + conversionWindowYrs]: "Conv. window closes" } : {}),
-      ...(depletionAge != null ? { [depletionAge]: "Portfolio depleted" } : {}),
-    },
-    // tablePhases: phase-summary header strip for Year by year.
-    tablePhases: {
-      accumYears: safeRetAge - currentAge,
-      conversionYears: conversionWindowYrs,
-      retirementYears: Number.isFinite(yearsSustained)
-        ? Math.min(Math.round(yearsSustained), safeLifeExp - safeRetAge)
-        : safeLifeExp - safeRetAge,
-    },
+    // markerByAge and tablePhases: memoized separately above (V9).
+    markerByAge,
+    tablePhases,
     // Session-4: per-account breakdown + milestone badges for Year-by-year deep layer.
     retirementRowByAge,   // { [age]: engineRow } — Trad/Roth/Taxable/HSA + tax breakdown
     milestoneByAge,       // { [age]: tag } — inline portfolio-cell milestone badge
@@ -947,9 +950,9 @@ export default function App() {
        returnRate,
        // Session-3 additions:
        ssClaimingAge, includeSS,
-       safeRetAge, safeLifeExp,
+       markerByAge, tablePhases,
        // Session-4 additions:
-       depletionAge, retirementRowByAge, milestoneByAge]);
+       retirementRowByAge, milestoneByAge]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

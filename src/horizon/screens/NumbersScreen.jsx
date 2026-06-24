@@ -311,7 +311,8 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
             {/* Plan-health verdict badge */}
             {planView?.drivers && (() => {
               const allOk = planView.drivers.every(d => d.ok);
-              const badIssues = planView.drivers.filter(d => !d.ok).map(d => d.id);
+              const DRIVER_LABELS = { withdrawal: "withdrawal rate", longevity: "longevity", savings: "savings rate" };
+              const badIssues = planView.drivers.filter(d => !d.ok).map(d => DRIVER_LABELS[d.id] ?? d.id);
               const color = allOk ? t.good : t.warm;
               return (
                 <div style={{
@@ -414,6 +415,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   </div>
                   {navigate && (
                     <button
+                      type="button"
                       onClick={() => navigate("numbers", "yearly")}
                       style={{
                         background: "none", border: "none", cursor: "pointer",
@@ -942,11 +944,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       borderRadius: 9, padding: "9px 14px", marginBottom: 14,
                       font: `400 13px ${SERIF}`, color: t.ink,
                     }}>
-                      Total income tax across your lifetime:{" "}
+                      Retirement-phase income tax (RMD + conversion):{" "}
                       <span style={{ font: `700 14px ${HM}`, color: t.warm }}>
                         {fmt(taxView.composition.total)}
                       </span>
-                      <span style={{ font: `400 12px ${SERIF}`, color: t.faint }}>{" "}(working + RMD + conversion)</span>
                     </div>
                   )}
 
@@ -1054,7 +1055,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       letterSpacing: "0.08em", textTransform: "uppercase",
                       marginBottom: 10,
                     }}>
-                      Lifetime tax composition
+                      Retirement-phase tax composition
                     </div>
                     {/* Segment widths (flex: val/total) are pure layout proportion —
                         pixel/layout math (rule 1). Dollar vals + pcts are pre-computed
@@ -1194,6 +1195,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       {visibleMarkers.map(([age, label]) => (
                         <button
                           key={age}
+                          type="button"
                           onClick={() => rowRefs.current[Number(age)]?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
                           style={{
                             background: `${t.accent}14`, border: `1px solid ${t.accent}44`,
@@ -1263,7 +1265,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         tabIndex={isRet ? 0 : undefined}
                         aria-expanded={isRet ? isExpanded : undefined}
                         onClick={isRet ? () => setExpandedRow(e => e === row.age ? null : row.age) : undefined}
-                        onKeyDown={isRet ? e => { if (e.key === "Enter") setExpandedRow(prev => prev === row.age ? null : row.age); } : undefined}
+                        onKeyDown={isRet ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedRow(prev => prev === row.age ? null : row.age); } } : undefined}
                         style={{
                           display: "grid", gridTemplateColumns: GRID_COLS,
                           gap: 4, alignItems: "center",
@@ -1276,7 +1278,9 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           cursor: isRet ? "pointer" : "default",
                         }}
                       >
-                        <span style={{ font: `600 13px ${HM}`, color: isRet ? t.warm : t.good }}>{row.age}</span>
+                        <span style={{ font: `600 13px ${HM}`, color: isRet ? t.warm : t.good }}>
+                          {isRet ? (isExpanded ? "▼ " : "▸ ") : ""}{row.age}
+                        </span>
                         <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{row.year}</span>
                         {/* Portfolio cell — with optional milestone badge */}
                         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>

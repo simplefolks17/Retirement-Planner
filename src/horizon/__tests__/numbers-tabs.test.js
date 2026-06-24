@@ -149,14 +149,13 @@ const taxView = {
   projectedRetBracket:   0.12,   // 12% projected retirement bracket (decimal, not integer — BUG-33 + Phase-1 fix)
   rmdTaxBite:         683_974,   // golden-master rmdTaxBite
   convTaxTotal:        82_765,   // golden-master conversion tax
-  // WI-2.4: lifetime tax composition — pre-computed by the model (App taxViewBundle),
-  // so the Taxes tab formats only (rule 10). Mirrors workingTax/rmdTax/convTax split.
+  // WI-2.4: retirement-phase tax composition (RMD + conversion only) — pre-computed by
+  // the model (App taxViewBundle). Working-year tax excluded (one year ≠ lifetime scope).
   composition: {
-    total: 784_739,             // 18_000 + 683_974 + 82_765
+    total: 766_739,             // 683_974 + 82_765
     segments: [
-      { label: "Working tax",    val:  18_000, key: "working", pct:  2 },
-      { label: "RMD tax",        val: 683_974, key: "rmd",     pct: 87 },
-      { label: "Conversion tax", val:  82_765, key: "conv",    pct: 11 },
+      { label: "RMD tax",        val: 683_974, key: "rmd",  pct: 89 },
+      { label: "Conversion tax", val:  82_765, key: "conv", pct: 11 },
     ],
   },
   // Session-3: conversion breakdown — always surfaced so the verdict is honest (+ or −)
@@ -502,10 +501,10 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
-  it("lifetime composition bar renders all three segments (working / RMD / conversion)", () => {
+  it("retirement-phase composition bar renders RMD and Conversion segments (no Working tax)", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Working tax");
+    expect(allText).not.toContain("Working tax");
     expect(allText).toContain("RMD tax");
     expect(allText).toContain("Conversion tax");
     act(() => renderer.unmount());
@@ -607,11 +606,11 @@ describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
 
 // ── Session-3: Taxes tab new content ─────────────────────────────────────────
 describe("NumbersScreen — Taxes tab (Session-3 additions)", () => {
-  it("lifetime tax anchor shows composition.total", () => {
+  it("retirement-phase tax anchor shows composition.total", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    // composition.total = 784_739 → "$785k"
-    expect(allText).toContain("Total income tax across your lifetime");
+    // composition.total = 766_739 → "$767k"; heading is "Retirement-phase income tax (RMD + conversion):"
+    expect(allText).toContain("Retirement-phase income tax");
     act(() => renderer.unmount());
   });
 
