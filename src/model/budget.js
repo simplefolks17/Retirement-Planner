@@ -148,6 +148,8 @@ export function calcStatementView({
   effectiveExpenses,
   safeDeduc = 0,
   effectivePension = 0,
+  totalAtRet = null,
+  totalContrib = null,
 }) {
   const hasIncome = currentIncome != null && currentIncome > 0;
   const gross     = hasIncome ? currentIncome : 0;
@@ -180,6 +182,12 @@ export function calcStatementView({
   // Effective federal rate footnote (1 decimal place), null when no income
   const effFedRatePct = hasIncome ? Math.round((fedTax / currentIncome) * 1000) / 10 : null;
 
+  // Lifetime compounding multiplier: how many × the user's total contributions becomes
+  // the retirement nest egg. null when either input is missing or contributions = 0.
+  const lifetimeContribROI = (totalAtRet != null && totalContrib != null && totalContrib > 0)
+    ? Math.round((totalAtRet / totalContrib) * 10) / 10
+    : null;
+
   return {
     gross, taxTotal, ficaPlusState,
     saveTotal: currentContribTotal,
@@ -191,5 +199,6 @@ export function calcStatementView({
     afterTaxLevel, flowKeep, flowTaxPct, flowSavePct, flowKeepPct,
     monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
     effFedRatePct,
+    lifetimeContribROI,
   };
 }

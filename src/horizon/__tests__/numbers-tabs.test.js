@@ -41,24 +41,26 @@ const t = {
 
 // ── Minimal statementView shape ───────────────────────────────────────────────
 const statementView = {
-  gross:           100_000,
-  taxTotal:         26_000,
-  saveTotal:        24_850,
-  afterTaxLevel:    74_000,
-  flowKeep:         49_150,
-  keepPct:          49,
-  taxPct:           26,
-  savePct:          25,
-  effFedRatePct:    18,
-  flowTaxPct:       26,
-  flowSavePct:      25,
-  flowKeepPct:      49,
-  ficaPlusState:     8_000,
-  preTaxDeductions: 23_500,
-  monthlyPortDraw:   2_000,
-  monthlyTotal:      5_000,
-  monthlyHHSS:       3_096,
-  monthlyPension:        0,
+  gross:              100_000,
+  taxTotal:            26_000,
+  saveTotal:           24_850,
+  afterTaxLevel:       74_000,
+  flowKeep:            49_150,
+  keepPct:             49,
+  taxPct:              26,
+  savePct:             25,
+  effFedRatePct:       18,
+  flowTaxPct:          26,
+  flowSavePct:         25,
+  flowKeepPct:         49,
+  ficaPlusState:        8_000,
+  preTaxDeductions:    23_500,
+  monthlyPortDraw:      2_000,
+  monthlyTotal:         5_000,
+  monthlyHHSS:          3_096,
+  monthlyPension:           0,
+  // Session-3: lifetime compounding multiplier (totalAtRet / totalContrib)
+  lifetimeContribROI:    7.0,
 };
 
 // ── Minimal chartMilestones shape ─────────────────────────────────────────────
@@ -146,6 +148,14 @@ const taxView = {
       { label: "Conversion tax", val:  82_765, key: "conv",    pct: 11 },
     ],
   },
+  // Session-3: conversion breakdown — always surfaced so the verdict is honest (+ or −)
+  conversionDetail: {
+    rmdTaxSaved:                  100_000,
+    conversionCost:                82_765,
+    irmaaCost:                      5_000,
+    acaLoss:                            0,
+    adjustedNetConversionBenefit:  12_235,  // 100k − 82.7k − 5k
+  },
 };
 
 // ── Composite props object ────────────────────────────────────────────────────
@@ -186,6 +196,25 @@ const minimalProps = {
   ],
   budget,
   taxView,
+  // Session-3: new horizonProps fields
+  flowDown: {
+    totalContrib:  500_000,
+    totalGrowth: 3_000_000,
+    distDraws:   1_500_000,
+  },
+  conversionWindowYrs: 5,
+  ssClaimingAge: 67,
+  includeSS: true,
+  markerByAge: {
+    65: "Retire",
+    73: "RMD start",
+    70: "Conv. window closes",
+  },
+  tablePhases: {
+    accumYears:      20,
+    conversionYears:  5,
+    retirementYears: 25,
+  },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -500,6 +529,142 @@ describe("NumbersScreen — Year by year (WI-2.5 / #95)", () => {
     const allText = textOf(renderer.root);
     // conversion 50_000 → "$50k"
     expect(allText).toContain("$50k");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Session-3: Statement tab new content ──────────────────────────────────────
+describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
+  it("plan-health badge renders when planView.drivers is present", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    // planView.drivers has 1 bad driver (savings) → "1 area to review"
+    expect(allText).toContain("area");
+    act(() => renderer.unmount());
+  });
+
+  it("plan-health badge shows 'On track' when all drivers are ok", () => {
+    const allOkPlanView = {
+      ...planView,
+      drivers: planView.drivers.map(d => ({ ...d, ok: true })),
+    };
+    const renderer = mountTab("statement", { planView: allOkPlanView });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("On track");
+    act(() => renderer.unmount());
+  });
+
+  it("contributions-vs-growth section shows lifetimeContribROI multiplier", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    // lifetimeContribROI = 7.0 → "7×" compounding multiplier
+    expect(allText).toContain("7×");
+    expect(allText).toContain("compounding multiplier");
+    act(() => renderer.unmount());
+  });
+
+  it("contributions-vs-growth section shows flowDown.totalContrib", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    // flowDown.totalContrib = 500_000 → "$500k"
+    expect(allText).toContain("$500k");
+    act(() => renderer.unmount());
+  });
+
+  it("no contrib-vs-growth section when lifetimeContribROI is null", () => {
+    const renderer = mountTab("statement", {
+      statementView: { ...statementView, lifetimeContribROI: null },
+    });
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("compounding multiplier");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Session-3: Taxes tab new content ─────────────────────────────────────────
+describe("NumbersScreen — Taxes tab (Session-3 additions)", () => {
+  it("lifetime tax anchor shows composition.total", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // composition.total = 784_739 → "$785k"
+    expect(allText).toContain("Total income tax across your lifetime");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout renders when conversionWindowYrs > 0 (positive benefit)", () => {
+    // netConversionBenefit = 77_861 (positive) → "Conversions work in your favor"
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Conversions work in your favor");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout renders with negative verdict (honest negative state)", () => {
+    const renderer = mountTab("taxes", { netConversionBenefit: -9_854 });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("net-negative");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout shows RMD tax saved breakdown", () => {
+    const renderer = mountTab("taxes");
+    const allText = textOf(renderer.root);
+    // taxView.conversionDetail.rmdTaxSaved = 100_000 → "$100k"
+    expect(allText).toContain("RMD tax saved");
+    expect(allText).toContain("$100k");
+    act(() => renderer.unmount());
+  });
+
+  it("conversion callout hidden when conversionWindowYrs is 0", () => {
+    const renderer = mountTab("taxes", { conversionWindowYrs: 0 });
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("Conversions work");
+    expect(allText).not.toContain("net-negative");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Session-3: Year by year new content ──────────────────────────────────────
+describe("NumbersScreen — Year by year (Session-3 additions)", () => {
+  it("phase-summary strip renders all three phase boxes", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Accumulation");
+    expect(allText).toContain("Conversion window");
+    expect(allText).toContain("Retirement");
+    act(() => renderer.unmount());
+  });
+
+  it("phase-summary strip shows accumYears count", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // tablePhases.accumYears = 20 → "20 yrs"
+    expect(allText).toContain("20 yr");
+    act(() => renderer.unmount());
+  });
+
+  it("lifecycle annotation divider appears at retirement age", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // markerByAge[65] = "Retire" → "↑ Retire" annotation
+    expect(allText).toContain("↑ Retire");
+    act(() => renderer.unmount());
+  });
+
+  it("lifecycle annotation divider appears at RMD start age", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // markerByAge[73] = "RMD start" → "↑ RMD start"
+    expect(allText).toContain("↑ RMD start");
+    act(() => renderer.unmount());
+  });
+
+  it("footer shows lifetime column totals from flowDown", () => {
+    const renderer = mountTab("yearly");
+    const allText = textOf(renderer.root);
+    // flowDown.totalContrib = 500_000 → "$500k"; totalGrowth = 3_000_000 → "$3M"
+    expect(allText).toContain("Contributions");
+    expect(allText).toContain("Growth");
     act(() => renderer.unmount());
   });
 });

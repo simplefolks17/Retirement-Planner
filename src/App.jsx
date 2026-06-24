@@ -696,11 +696,15 @@ export default function App() {
   // Statement / Money-flow tab numbers (percentages, waterfall residual set,
   // monthly conversions, eff-fed-rate footnote). Percentages are null when
   // currentIncome ≤ 0 — screens render "—".
+  // lifetimeContribROI: scalar extracted from flowData for a stable dep (V9 pattern).
+  const flowTotalContrib = flowData.totalContrib;
   const statementView = useMemo(() => calcStatementView({
     currentIncome, fedTax, fica, stateTax, takeHome,
     currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
+    totalAtRet, totalContrib: flowTotalContrib,
   }), [currentIncome, fedTax, fica, stateTax, takeHome,
-       currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension]);
+       currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
+       totalAtRet, flowTotalContrib]);
 
   // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
   // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE
@@ -814,10 +818,22 @@ export default function App() {
       rmdTaxBite,
       convTaxTotal: retPhase.conversionCost,
       composition: { segments, total },
+      // Conversion breakdown — always surfaced so the Taxes tab can show the
+      // honest verdict (positive OR negative) with a cost breakdown. Fields come
+      // from the same evaluateConversionPlan call that produces netConversionBenefit
+      // (BUG-31 guarantee: one model, one display).
+      conversionDetail: {
+        rmdTaxSaved,
+        conversionCost: retPhase.conversionCost,
+        irmaaCost: totalIRMAACost,
+        acaLoss: acaAnnualLoss,
+        adjustedNetConversionBenefit,
+      },
     };
   }, [fedMarginal, fedEffRate, effectiveRMDTaxRate, projRetBracketPct,
       rmdTaxBite, fedTax, retPhase,
-      householdIncome, agi, safeDeduc, stateTax, fica, combinedEffRate]);
+      householdIncome, agi, safeDeduc, stateTax, fica, combinedEffRate,
+      rmdTaxSaved, totalIRMAACost, acaAnnualLoss, adjustedNetConversionBenefit]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
@@ -868,6 +884,25 @@ export default function App() {
     taxView: taxViewBundle,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
+    // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
+    ssClaimingAge,
+    includeSS,
+    // markerByAge: lifecycle annotation map for Year by year divider rows.
+    // Computed inline (pure mapping of existing scalars — no financial arithmetic).
+    markerByAge: {
+      [safeRetAge]: "Retire",
+      [RMD_START_AGE]: "RMD start",
+      ...(includeSS && ssClaimingAge > safeRetAge ? { [ssClaimingAge]: "SS claimed" } : {}),
+      ...(conversionWindowYrs > 0 ? { [safeRetAge + conversionWindowYrs]: "Conv. window closes" } : {}),
+    },
+    // tablePhases: phase-summary header strip for Year by year.
+    tablePhases: {
+      accumYears: safeRetAge - currentAge,
+      conversionYears: conversionWindowYrs,
+      retirementYears: Number.isFinite(yearsSustained)
+        ? Math.min(Math.round(yearsSustained), safeLifeExp - safeRetAge)
+        : safeLifeExp - safeRetAge,
+    },
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -880,7 +915,10 @@ export default function App() {
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,
-       returnRate]);
+       returnRate,
+       // Session-3 additions:
+       ssClaimingAge, includeSS,
+       safeRetAge, safeLifeExp]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

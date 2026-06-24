@@ -166,6 +166,12 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
     budget, taxView,
     rmdStartAge,
     returnRate,   // raw assumption for the Statement footnote
+    // Session-3 additions:
+    flowDown,           // calcFlowDown — totalContrib / totalGrowth / distDraws
+    conversionWindowYrs,
+    ssClaimingAge,
+    markerByAge,        // lifecycle annotation map for Year by year dividers
+    tablePhases,        // phase-summary box data for Year by year header strip
   } = props;
 
   const [tab, setTab] = useState(initialTab ?? "statement");
@@ -293,6 +299,50 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 with <span style={{ color: t.warm, fontWeight: 700 }}>{fmt(balAt90)}</span> remaining at age 90.
               </div>
             </div>
+
+            {/* Plan-health verdict badge */}
+            {planView?.drivers && (() => {
+              const allOk = planView.drivers.every(d => d.ok);
+              const badIssues = planView.drivers.filter(d => !d.ok).map(d => d.id);
+              const color = allOk ? t.good : t.warm;
+              return (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                  padding: "5px 14px", borderRadius: 999, marginBottom: 14,
+                  border: `1px solid ${color}66`,
+                  background: `${color}14`,
+                }}>
+                  <span style={{ font: `600 12px ${HF}`, color }}>
+                    {allOk ? "✓ On track" : `${badIssues.length} area${badIssues.length > 1 ? "s" : ""} to review`}
+                  </span>
+                  <span style={{ font: `400 11px ${HF}`, color: t.mut }}>
+                    {allOk
+                      ? "withdrawal rate · longevity · savings rate"
+                      : badIssues.join(" · ")}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Contributions vs Growth — the fundamental compounding story */}
+            {sv.lifetimeContribROI != null && flowDown != null && (
+              <div style={{
+                background: `${t.accent}10`, border: `1px solid ${t.accent}33`,
+                borderRadius: 10, padding: "12px 16px", marginBottom: 16,
+              }}>
+                <div style={{ font: `400 13px ${SERIF}`, color: t.mut }}>
+                  You'll contribute{" "}
+                  <span style={{ font: `600 13px ${HM}`, color: t.ink }}>{fmt(flowDown.totalContrib)}</span>
+                  {" "}over your career — compounding grows that to{" "}
+                  <span style={{ font: `700 14px ${HM}`, color: t.accent }}>{fmt(totalAtRet)}</span>.
+                </div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}>
+                  <span style={{ font: `700 26px ${HM}`, color: t.accent }}>{sv.lifetimeContribROI}×</span>
+                  <span style={{ font: `400 13px ${SERIF}`, color: t.mut }}>compounding multiplier</span>
+                </div>
+              </div>
+            )}
+
             <div style={{ flex: 1, display: "flex", gap: 28, minHeight: 0, flexWrap: "wrap" }}>
               <StmtCol t={t} title="Income & tax" items={[
                 ["Gross income",    `$${Math.round(currentIncome).toLocaleString()}`, null, false],
@@ -813,6 +863,21 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     Retirement Tax
                   </div>
 
+                  {/* Lifetime tax anchor */}
+                  {taxView.composition.total > 0 && (
+                    <div style={{
+                      background: `${t.warm}10`, border: `1px solid ${t.warm}33`,
+                      borderRadius: 9, padding: "9px 14px", marginBottom: 14,
+                      font: `400 13px ${SERIF}`, color: t.ink,
+                    }}>
+                      Total income tax across your lifetime:{" "}
+                      <span style={{ font: `700 14px ${HM}`, color: t.warm }}>
+                        {fmt(taxView.composition.total)}
+                      </span>
+                      <span style={{ font: `400 12px ${SERIF}`, color: t.faint }}>{" "}(working + RMD + conversion)</span>
+                    </div>
+                  )}
+
                   {/* Working → Retirement rate transition */}
                   <div style={{
                     display: "flex", gap: 0, borderRadius: 10, overflow: "hidden",
@@ -860,6 +925,55 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       </div>
                     ))}
                   </div>
+
+                  {/* Roth conversion verdict — always shown when a conversion window exists,
+                      regardless of sign (the most decision-relevant signal is the one
+                      the user is missing when it's negative). */}
+                  {conversionWindowYrs > 0 && taxView.conversionDetail != null && (
+                    <div style={{
+                      background: netConversionBenefit >= 0 ? `${t.good}12` : `${t.warm}12`,
+                      border: `1px solid ${netConversionBenefit >= 0 ? t.good : t.warm}44`,
+                      borderRadius: 9, padding: "12px 16px", marginBottom: 14,
+                    }}>
+                      <div style={{
+                        font: `600 12px ${HF}`,
+                        color: netConversionBenefit >= 0 ? t.good : t.warm,
+                        marginBottom: 6,
+                      }}>
+                        {netConversionBenefit >= 0
+                          ? "Conversions work in your favor"
+                          : "Conversions are net-negative at current settings"}
+                      </div>
+                      <div style={{ font: `400 13px ${SERIF}`, color: t.ink, marginBottom: 10 }}>
+                        {netConversionBenefit >= 0 ? (
+                          <>Converting now saves{" "}
+                            <strong style={{ font: `700 13px ${HM}`, color: t.good }}>{fmt(netConversionBenefit)}</strong>
+                            {" "}in lifetime taxes (RMD reduction minus conversion cost).
+                          </>
+                        ) : (
+                          <>At current settings, converting costs{" "}
+                            <strong style={{ font: `700 13px ${HM}`, color: t.warm }}>{fmt(Math.abs(netConversionBenefit))}</strong>
+                            {" "}more than it saves. Reduce the conversion amount or skip conversions entirely.
+                          </>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                        {[
+                          ["RMD tax saved",   taxView.conversionDetail.rmdTaxSaved,   t.good],
+                          ["Conversion cost", taxView.conversionDetail.conversionCost, t.mut],
+                          ...(taxView.conversionDetail.irmaaCost > 0
+                            ? [["IRMAA", taxView.conversionDetail.irmaaCost, t.warm]] : []),
+                          ...(taxView.conversionDetail.acaLoss > 0
+                            ? [["ACA loss", taxView.conversionDetail.acaLoss, t.warm]] : []),
+                        ].map(([label, val, color]) => (
+                          <div key={label} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ font: `400 11px ${HF}`, color: t.faint }}>{label}</span>
+                            <span style={{ font: `600 13px ${HM}`, color }}>{fmt(val)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Lifetime tax composition bar */}
                   <div>
@@ -934,6 +1048,29 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         {/* ── Year by year ── */}
         {tab === "yearly" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+            {/* Phase-summary header strip — accumulation / conversion / retirement */}
+            {tablePhases && (
+              <div style={{
+                display: "flex", gap: 6, marginBottom: 10, flexShrink: 0, flexWrap: "wrap",
+              }}>
+                {[
+                  { label: "Accumulation",      years: tablePhases.accumYears,      color: t.good },
+                  ...(tablePhases.conversionYears > 0
+                    ? [{ label: "Conversion window", years: tablePhases.conversionYears, color: t.accent }]
+                    : []),
+                  { label: "Retirement",        years: tablePhases.retirementYears, color: t.warm },
+                ].map(({ label, years, color }) => (
+                  <div key={label} style={{
+                    padding: "5px 12px", borderRadius: 8,
+                    background: `${color}14`, border: `1px solid ${color}44`,
+                  }}>
+                    <span style={{ font: `600 12px ${HF}`, color }}>{label}</span>
+                    <span style={{ font: `400 12px ${HF}`, color: t.mut }}>{" · "}{years} yr{years !== 1 ? "s" : ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* lifetime milestones strip (from calcChartMilestones — V2/V5);
                 bar widths are pure layout proportion against peakTotal */}
             {milestoneRows.length > 0 && (
@@ -987,60 +1124,100 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 )}
                 {displayedRows.map((row, i) => {
                   const isRetStart = row.phase === "ret" && displayedRows[i - 1]?.phase === "accum";
+                  const marker = markerByAge?.[row.age];
                   return (
-                    <div key={row.age} style={{
-                      display: "grid", gridTemplateColumns: GRID_COLS,
-                      gap: 4, alignItems: "center",
-                      padding: "7px 14px",
-                      borderBottom: `1px solid ${t.line}`,
-                      borderTop: isRetStart ? `1.5px solid ${t.warm}88` : "none",
-                      background: i % 2 === 0 ? "transparent" : `${t.ink}05`,
-                    }}>
-                      <span style={{ font: `600 13px ${HM}`, color: row.phase === "ret" ? t.warm : t.good }}>{row.age}</span>
-                      <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{row.year}</span>
-                      <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
-                      <span style={{ font: `400 12px ${HM}`, color: row.contrib > 0 ? t.accent : t.faint }}>
-                        {row.contrib != null && row.contrib > 0 ? `+${fmt(row.contrib)}` : "—"}
-                      </span>
-                      <span style={{ font: `400 12px ${HM}`, color: row.growth > 0 ? t.good : t.faint }}>
-                        {row.growth > 0 ? `+${fmt(row.growth)}` : "—"}
-                      </span>
-                      <span style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
-                        {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
-                      </span>
-                      <span style={{ font: `400 12px ${HM}`, color: row.tax > 0 ? t.mut : t.faint }}>
-                        {row.tax > 0 ? `−${fmt(row.tax)}` : "—"}
-                      </span>
-                      <span style={{ font: `400 12px ${HM}`, color: row.rmd > 0 ? t.mut : t.faint }}>
-                        {row.rmd != null && row.rmd > 0 ? fmt(row.rmd) : "—"}
-                      </span>
-                      <span style={{ font: `400 12px ${HM}`, color: row.conversion > 0 ? t.mut : t.faint }}>
-                        {row.conversion != null && row.conversion > 0 ? fmt(row.conversion) : "—"}
-                      </span>
-                    </div>
+                    <React.Fragment key={row.age}>
+                      {marker && (
+                        <div style={{
+                          display: "grid", gridTemplateColumns: GRID_COLS,
+                          gap: 4, padding: "4px 14px",
+                          background: `${t.accent}0c`,
+                          borderTop: `1.5px dashed ${t.accent}55`,
+                          borderBottom: `1px solid ${t.line}`,
+                        }}>
+                          <span style={{
+                            gridColumn: "1 / -1",
+                            font: `600 10px ${HF}`, color: t.accent,
+                            letterSpacing: "0.07em", textTransform: "uppercase",
+                          }}>
+                            ↑ {marker}
+                          </span>
+                        </div>
+                      )}
+                      <div style={{
+                        display: "grid", gridTemplateColumns: GRID_COLS,
+                        gap: 4, alignItems: "center",
+                        padding: "7px 14px",
+                        borderBottom: `1px solid ${t.line}`,
+                        borderTop: isRetStart ? `1.5px solid ${t.warm}88` : "none",
+                        background: i % 2 === 0 ? "transparent" : `${t.ink}05`,
+                      }}>
+                        <span style={{ font: `600 13px ${HM}`, color: row.phase === "ret" ? t.warm : t.good }}>{row.age}</span>
+                        <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{row.year}</span>
+                        <span style={{ font: `500 12px ${HM}`, color: t.ink }}>{fmt(row.total)}</span>
+                        <span style={{ font: `400 12px ${HM}`, color: row.contrib > 0 ? t.accent : t.faint }}>
+                          {row.contrib != null && row.contrib > 0 ? `+${fmt(row.contrib)}` : "—"}
+                        </span>
+                        <span style={{ font: `400 12px ${HM}`, color: row.growth > 0 ? t.good : t.faint }}>
+                          {row.growth > 0 ? `+${fmt(row.growth)}` : "—"}
+                        </span>
+                        <span style={{ font: `400 12px ${HM}`, color: row.draw > 0 ? t.mut : t.faint }}>
+                          {row.draw > 0 ? `−${fmt(row.draw)}` : "—"}
+                        </span>
+                        <span style={{ font: `400 12px ${HM}`, color: row.tax > 0 ? t.mut : t.faint }}>
+                          {row.tax > 0 ? `−${fmt(row.tax)}` : "—"}
+                        </span>
+                        <span style={{ font: `400 12px ${HM}`, color: row.rmd > 0 ? t.mut : t.faint }}>
+                          {row.rmd != null && row.rmd > 0 ? fmt(row.rmd) : "—"}
+                        </span>
+                        <span style={{ font: `400 12px ${HM}`, color: row.conversion > 0 ? t.mut : t.faint }}>
+                          {row.conversion != null && row.conversion > 0 ? fmt(row.conversion) : "—"}
+                        </span>
+                      </div>
+                    </React.Fragment>
                   );
                 })}
               </div>
             </div>
 
-            {/* footer / show-all toggle + reconciliation note */}
+            {/* footer: column totals + show-all toggle + reconciliation note */}
             <div style={{
-              padding: "9px 14px", borderTop: `1px solid ${t.line}`,
+              padding: "9px 14px", borderTop: `1.5px solid ${t.line2}`,
               background: t.surf2, flexShrink: 0,
-              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+              display: "flex", flexDirection: "column", gap: 5,
             }}>
-              <span style={{ font: `400 11px ${HF}`, color: t.faint }}>
-                whole life · {allRetirementRows.length} years · growth shown after the tax you'll owe on pre-tax accounts
-              </span>
-              {allRetirementRows.length > YEAR_CAP && (
-                <button onClick={() => setShowAllYears(v => !v)} style={{
-                  font: `500 12px ${HF}`, color: t.accent,
-                  background: "transparent", border: `1px solid ${t.accent}55`,
-                  borderRadius: 7, padding: "4px 12px", cursor: "pointer", flexShrink: 0,
-                }}>
-                  {showAllYears ? "Show first 50" : `Show all ${allRetirementRows.length} years`}
-                </button>
+              {/* Lifetime column totals — ties the table to the bigger story */}
+              {flowDown && (
+                <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+                  {[
+                    ["Contributions", flowDown.totalContrib, "+", t.accent],
+                    ["Growth",        flowDown.totalGrowth,  "+", t.good],
+                    ["Draws",         flowDown.distDraws,    "−", t.mut],
+                    ...(taxView?.composition?.total > 0
+                      ? [["Tax", taxView.composition.total, "−", t.warm]] : []),
+                  ].map(([label, val, sign, color]) => val > 0 ? (
+                    <span key={label} style={{ font: `400 11px ${HF}`, color: t.mut }}>
+                      {label}:{" "}
+                      <span style={{ font: `600 11px ${HM}`, color }}>{sign}{fmt(val)}</span>
+                    </span>
+                  ) : null)}
+                </div>
               )}
+              {/* Bottom row: note + show-all toggle */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <span style={{ font: `400 11px ${HF}`, color: t.faint }}>
+                  whole life · {allRetirementRows.length} years · growth shown after the tax you'll owe on pre-tax accounts
+                </span>
+                {allRetirementRows.length > YEAR_CAP && (
+                  <button onClick={() => setShowAllYears(v => !v)} style={{
+                    font: `500 12px ${HF}`, color: t.accent,
+                    background: "transparent", border: `1px solid ${t.accent}55`,
+                    borderRadius: 7, padding: "4px 12px", cursor: "pointer", flexShrink: 0,
+                  }}>
+                    {showAllYears ? "Show first 50" : `Show all ${allRetirementRows.length} years`}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
