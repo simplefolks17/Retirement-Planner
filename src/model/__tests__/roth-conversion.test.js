@@ -279,4 +279,12 @@ describe("findOptimalConversionPlan (timing + amount)", () => {
     });
     expect(r2.optimalConversion).toBe(0);
   });
+
+  it("a missing / non-array startAgeRange falls back instead of throwing", () => {
+    const gnb = () => ({ rmdTaxSaved: 0, totalTax: 0, irmaaCost: 0 });
+    expect(() => findOptimalConversionPlan({ getNetBenefit: gnb })).not.toThrow();
+    const r = findOptimalConversionPlan({ startAgeRange: null, getNetBenefit: gnb });
+    expect(r.optimalConversion).toBe(0);
+    expect(r.optimalStartAge).toBe(0);
+  });
 });

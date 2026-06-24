@@ -34,21 +34,24 @@ export function findOptimalConversion({ maxSearch = 300_000, step = ASSUMPTIONS.
 //     MUST rebuild the SAME model the display uses (engine + evaluateConversionPlan)
 //     for the candidate (startAge, amount) — divergence here is the BUG-31/BUG-35 class.
 export function findOptimalConversionPlan({
-  startAgeRange, maxSearch = 300_000,
+  startAgeRange = [], maxSearch = 300_000,
   step = ASSUMPTIONS.CONVERSION_STEP,
   ageStep = ASSUMPTIONS.CONVERSION_STARTAGE_STEP ?? 1,
   getNetBenefit,
 }) {
   const netOf = (r) => r.rmdTaxSaved - r.totalTax - r.irmaaCost - (r.acaLoss ?? 0);
-  const [minStart, maxStart] = startAgeRange;
+  // Destructure defensively — a missing / non-array range must hit the fallback below,
+  // not throw before the guard runs.
+  const [minStart, maxStart] = Array.isArray(startAgeRange) ? startAgeRange : [];
 
   // Guard non-finite / non-positive steps (would never terminate). Fall back to the
-  // no-conversion result at the earliest start age.
+  // no-conversion result at the earliest start age (0 when the range itself is invalid).
   if (!Number.isFinite(step) || step <= 0 || !Number.isFinite(maxSearch) || maxSearch < 0
       || !Number.isFinite(ageStep) || ageStep <= 0
       || !Number.isFinite(minStart) || !Number.isFinite(maxStart)) {
-    return { optimalStartAge: minStart, optimalConversion: 0,
-      optimalBenefit: Math.round(netOf(getNetBenefit(minStart, 0))) };
+    const safeStart = Number.isFinite(minStart) ? minStart : 0;
+    return { optimalStartAge: safeStart, optimalConversion: 0,
+      optimalBenefit: Math.round(netOf(getNetBenefit(safeStart, 0))) };
   }
 
   // Baseline: no conversion (start age irrelevant when amount is 0).
