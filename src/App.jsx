@@ -770,6 +770,24 @@ export default function App() {
       incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt,
       totalAtRet, yearsSustained]);
 
+  // Monthly spend write-back: the QuickTune slider works in monthly units;
+  // this callback converts to annual so PlanScreen never does month→year math (rule 10).
+  const setMonthlySpend = useCallback(
+    v => setAnnualExpenses(v * ASSUMPTIONS.MONTHS_PER_YEAR),
+    [setAnnualExpenses]
+  );
+
+  // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
+  // contribEnd ages in sync when they track the retirement age.
+  const setRetirementAgeCoupled = useCallback(v => {
+    setRetirementAge(v);
+    if (contribEnd401k    === retirementAge) setContribEnd401k(v);
+    if (contribEndRoth    === retirementAge) setContribEndRoth(v);
+    if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
+    if (contribEndHSA     === retirementAge) setContribEndHSA(v);
+  }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
+
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
   // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
   // memoized whatIfSimInputs + retDrawShared as deps. Grown by named fields only —
@@ -854,15 +872,17 @@ export default function App() {
         ? Math.round((totalAtRet / currentSaved) * 10) / 10
         : null,
       incomeReplacementPct: takeHome > 0
-        ? Math.min(200, Math.round((effectiveExpenses / (takeHome * ASSUMPTIONS.MONTHS_PER_YEAR)) * 100))
+        ? Math.min(200, Math.round((effectiveExpenses / takeHome) * 100))
         : null,
       retIncomeFlow: {
         ...flow,
+        hasSS:        flow.ss > 0,
+        hasPension:   flow.pension > 0,
         ssPct:        Math.round(flow.ss           / base * 100),
         pensionPct:   Math.round(flow.pension       / base * 100),
         portfolioPct: Math.round(flow.portfolioDraw / base * 100),
       },
-      lifetimeTaxBurden: (retPhase?.rmdTaxBite ?? 0) + (retPhase?.convTaxTotal ?? 0),
+      lifetimeTaxBurden: (retPhase?.rmdTaxBite ?? 0) + (retPhase?.conversionCost ?? 0),
       yearsToRetirement:  Math.max(0, safeRetAge - currentAge),
       retirementDuration: Math.max(0, safeLifeExp - safeRetAge),
     };
@@ -871,11 +891,19 @@ export default function App() {
 
   // Live delta vs the last committed plan — null until the user saves once.
   // Drives the "↑ $X more than your saved plan" badge in the Plan screen Hero block.
-  const planDelta = useMemo(() => !committedOutputs ? null : {
-    atRet: totalAtRet - committedOutputs.totalAtRet,
-    yearsSustained: isFinite(yearsSustained) && isFinite(committedOutputs.yearsSustained)
+  // badge is pre-computed (rule 10: screens must not do sign/abs checks on financial values).
+  const planDelta = useMemo(() => {
+    if (!committedOutputs) return null;
+    const deltaAtRet = totalAtRet - committedOutputs.totalAtRet;
+    const deltaYrs = isFinite(yearsSustained) && isFinite(committedOutputs.yearsSustained)
       ? Math.round((yearsSustained - committedOutputs.yearsSustained) * 10) / 10
-      : null,
+      : null;
+    const badge = Math.abs(deltaAtRet) > 1000 ? {
+      dir:       deltaAtRet > 0 ? "up" : "down",
+      atRetAbs:  Math.abs(deltaAtRet),
+      yearsGain: deltaYrs !== null && deltaYrs > 0 ? deltaYrs : null,
+    } : null;
+    return { atRet: deltaAtRet, yearsSustained: deltaYrs, badge };
   }, [totalAtRet, yearsSustained, committedOutputs]);
 
   // Plan-screen signals strip (WI-1.2): calcSignals ranks nudges from values
@@ -1077,10 +1105,17 @@ export default function App() {
     setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
     setIncomeGrowth, setReturnRate, setInflationRate,
     setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
+    // Coupled callbacks (rule 10 + invariant preservation):
+    //   setRetirementAgeCoupled mirrors the Classic UI's contribEnd tracking.
+    //   setMonthlySpend converts monthly slider units to annual before writing state.
+    //   setConversionMode lets the Roth slider switch to custom mode on first drag.
+    setRetirementAgeCoupled, setMonthlySpend, setConversionMode,
     // Raw input values the sliders need to display (derived display values like
     // effectiveExpenses are already present above; these are the raw state values).
     annualExpenses, inflationRate, incomeGrowth, contrib401k,
     spouseClaimingAge, annualConversionAmt,
+    // Pre-computed monthly display value for the spend slider (rule 10: no month math in screens).
+    monthlySpend: Math.round((annualExpenses ?? effectiveExpenses) / ASSUMPTIONS.MONTHS_PER_YEAR),
     // 401k slider upper bound — age-dependent (catch-up at 50+). Never hardcode.
     trad401kMax: currentAge >= CATCHUP_AGE
       ? TRAD_401K_LIMIT_2026 + CATCHUP_401K_2026
@@ -1114,6 +1149,7 @@ export default function App() {
        setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
        setIncomeGrowth, setReturnRate, setInflationRate,
        setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
+       setRetirementAgeCoupled, setMonthlySpend, setConversionMode,
        annualExpenses, inflationRate, incomeGrowth, contrib401k,
        spouseClaimingAge, annualConversionAmt,
        isMarried, committedPlan,

@@ -3,7 +3,6 @@ import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
-import { ASSUMPTIONS } from "../../config/irs-2026.js";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
 function SignalsStrip({ t, signals, navigate, isMobile }) {
@@ -86,18 +85,18 @@ function PortfolioHero({ t, totalAtRet, planHighlights, planDelta, isDirty }) {
           grows {wealthMultiplier}× from today
         </div>
       )}
-      {isDirty && planDelta && Math.abs(planDelta.atRet) > 1000 && (
+      {isDirty && planDelta?.badge && (
         <div style={{
           marginTop: 8, padding: "5px 10px",
-          background: planDelta.atRet > 0 ? `${t.good}18` : `${t.warm}18`,
+          background: planDelta.badge.dir === "up" ? `${t.good}18` : `${t.warm}18`,
           borderRadius: 8,
           font: `600 12px ${HF}`,
-          color: planDelta.atRet > 0 ? t.good : t.warm,
+          color: planDelta.badge.dir === "up" ? t.good : t.warm,
         }}>
-          {planDelta.atRet > 0 ? "↑" : "↓"} {fmt(Math.abs(planDelta.atRet))} vs saved plan
-          {planDelta.yearsSustained !== null && planDelta.yearsSustained > 0 && (
+          {planDelta.badge.dir === "up" ? "↑" : "↓"} {fmt(planDelta.badge.atRetAbs)} vs saved plan
+          {planDelta.badge.yearsGain != null && (
             <span style={{ fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>
-              · +{planDelta.yearsSustained} yrs
+              · +{planDelta.badge.yearsGain} yrs
             </span>
           )}
         </div>
@@ -114,8 +113,7 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
   const { incomeReplacementPct, retIncomeFlow } = planHighlights ?? {};
   if (!retIncomeFlow) return null;
 
-  const { ss, portfolioDraw, ssPct, pensionPct, portfolioPct } = retIncomeFlow;
-  const hasSS = ss > 0;
+  const { ss, pension, portfolioDraw, hasSS, hasPension, ssPct, pensionPct, portfolioPct } = retIncomeFlow;
 
   return (
     <div style={{
@@ -152,6 +150,19 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
             </span>
           </div>
         )}
+        {hasPension && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ font: `400 11px ${HF}`, color: t.mut, width: 78, flexShrink: 0 }}>
+              Pension
+            </span>
+            <div style={{ flex: 1, height: 5, borderRadius: 3, background: t.line, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${pensionPct}%`, borderRadius: 3, background: t.warm }} />
+            </div>
+            <span style={{ font: `600 11px ${HM}`, color: t.warm, width: 60, textAlign: "right", flexShrink: 0 }}>
+              {fmtMo(pension)}/mo
+            </span>
+          </div>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ font: `400 11px ${HF}`, color: t.mut, width: 78, flexShrink: 0 }}>
             Portfolio
@@ -179,12 +190,16 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
     returnRate, inflationRate, incomeGrowth, contrib401k,
     ssClaimingAge, spouseClaimingAge, annualConversionAmt,
     currentAge, trad401kMax,
+    // Pre-computed monthly display value for spend (rule 10: no month math here)
+    monthlySpend,
     // Conditional flags
     isMarried, conversionWindowYrs,
     // Setters
     setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
     setIncomeGrowth, setReturnRate, setInflationRate,
     setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
+    // Coupled callbacks (invariant-preserving + rule 10 write-backs)
+    setRetirementAgeCoupled, setMonthlySpend, setConversionMode,
     // Save + Reset
     commitPlan, committedPlan,
   } = props;
@@ -193,9 +208,6 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [saved, setSaved]           = useState(false);
 
-  // Monthly display value for the spend slider (store annual, show monthly).
-  const monthlySpend = Math.round((annualExpenses ?? effectiveExpenses) / ASSUMPTIONS.MONTHS_PER_YEAR);
-
   // Build slider definitions — only filtering out conditionally absent ones.
   const sliders = [
     {
@@ -203,27 +215,27 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "Retire at",
       headline: "When do you retire?",
       value: retirementAge,
-      min: currentAge + 1, max: 80, step: 1,
+      // Dynamic bounds: ensure max ≥ current value (guard for out-of-range state).
+      min: Math.min(currentAge + 1, retirementAge), max: Math.max(80, retirementAge), step: 1,
       format: v => `age ${v}`,
-      onChange: v => setRetirementAge(v),
+      onChange: v => setRetirementAgeCoupled(v),
     },
     {
       key: "spend",
       label: "Monthly spend",
       headline: "How much will you spend in retirement?",
       value: monthlySpend,
-      min: 500, max: 30_000, step: 100,
+      min: Math.min(500, monthlySpend), max: Math.max(30_000, monthlySpend), step: 100,
       format: v => `$${v.toLocaleString()}/mo`,
-      onChange: v => setAnnualExpenses(v * ASSUMPTIONS.MONTHS_PER_YEAR),
+      onChange: v => setMonthlySpend(v),
     },
     {
       key: "horizon",
       label: "Plan to age",
       headline: "How long should your money last?",
       value: lifeExpect,
-      // max matches the Classic Life Expectancy slider (115) so a horizon set
-      // there is never silently truncated on the first drag here.
-      min: Math.max(retirementAge + 1, 70), max: 115, step: 1,
+      min: Math.min(Math.max(retirementAge + 1, 70), lifeExpect),
+      max: Math.max(115, lifeExpect), step: 1,
       format: v => `age ${v}`,
       onChange: v => setLifeExpect(v),
     },
@@ -232,7 +244,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "401k savings",
       headline: "How much do you save in your 401k each year?",
       value: contrib401k,
-      min: 0, max: trad401kMax, step: 500,
+      min: 0, max: Math.max(trad401kMax, contrib401k), step: 500,
       format: v => `$${v.toLocaleString()}/yr`,
       onChange: v => setContrib401k(v),
     },
@@ -286,9 +298,10 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "Roth conv.",
       headline: "How much do you convert to Roth each year?",
       value: annualConversionAmt,
-      min: 0, max: 200_000, step: 1_000,
+      min: 0, max: Math.max(200_000, annualConversionAmt), step: 1_000,
       format: v => `$${v.toLocaleString()}/yr`,
-      onChange: v => setAnnualConversionAmt(v),
+      // Switch to custom mode so the amount actually takes effect (bracket mode ignores it).
+      onChange: v => { setConversionMode("custom"); setAnnualConversionAmt(v); },
     },
   ].filter(Boolean);
 
@@ -311,11 +324,17 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
 
   useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
 
+  // Clear the "Plan saved" checkmark after 2 s; cleanup prevents the fire-on-unmount leak.
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [saved]);
+
   const handleSave = useCallback(() => {
     commitPlan({ retirementAge, annualExpenses: annualExpenses ?? effectiveExpenses });
     setShowConfirm(false);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   }, [commitPlan, retirementAge, annualExpenses, effectiveExpenses]);
 
   const handleReset = useCallback(() => {
@@ -630,7 +649,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           sub={planHighlights?.incomeReplacementPct != null ? `${planHighlights.incomeReplacementPct}% replaced` : undefined}
           accent={t.warm} warm
           onClick={() => navigate("numbers", "statement")} />
-        <StatCard t={t} label="Left at 90"
+        <StatCard t={t} label={`Left at ${lifeExpect}`}
           value={fmt(balAt90)}
           sub={planHighlights?.retirementDuration != null ? `after ${planHighlights.retirementDuration} yrs` : undefined}
           accent={t.ink}

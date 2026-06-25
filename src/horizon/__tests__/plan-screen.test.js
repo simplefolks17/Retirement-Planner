@@ -76,17 +76,23 @@ const makeMockProps = (overrides = {}) => ({
   conversionWindowYrs: 0,
   committedPlan:       null,
   // Setters (spies)
-  setRetirementAge:       vi.fn(),
-  setAnnualExpenses:      vi.fn(),
-  setLifeExpect:          vi.fn(),
-  setContrib401k:         vi.fn(),
-  setIncomeGrowth:        vi.fn(),
-  setReturnRate:          vi.fn(),
-  setInflationRate:       vi.fn(),
-  setSsClaimingAge:       vi.fn(),
-  setSpouseClaimingAge:   vi.fn(),
-  setAnnualConversionAmt: vi.fn(),
-  commitPlan:             vi.fn(),
+  setRetirementAge:          vi.fn(),
+  setAnnualExpenses:         vi.fn(),
+  setLifeExpect:             vi.fn(),
+  setContrib401k:            vi.fn(),
+  setIncomeGrowth:           vi.fn(),
+  setReturnRate:             vi.fn(),
+  setInflationRate:          vi.fn(),
+  setSsClaimingAge:          vi.fn(),
+  setSpouseClaimingAge:      vi.fn(),
+  setAnnualConversionAmt:    vi.fn(),
+  // Coupled callbacks passed from App.jsx (rule 10 + invariant-preserving)
+  setRetirementAgeCoupled:   vi.fn(),
+  setMonthlySpend:           vi.fn(),
+  setConversionMode:         vi.fn(),
+  // Pre-computed monthly spend (rule 10: no division in PlanScreen)
+  monthlySpend:              Math.round(57_444 / 12),
+  commitPlan:                vi.fn(),
   ...overrides,
 });
 
@@ -173,7 +179,7 @@ describe("PlanScreen — pill rail renders all core sliders", () => {
 });
 
 describe("PlanScreen — slider onChange fires the correct setter", () => {
-  it("changing the active (retire) slider calls setRetirementAge", () => {
+  it("changing the active (retire) slider calls setRetirementAgeCoupled", () => {
     const props = makeMockProps();
     let renderer;
     act(() => {
@@ -185,7 +191,7 @@ describe("PlanScreen — slider onChange fires the correct setter", () => {
     act(() => {
       inputs[0].props.onChange({ target: { value: "62" } });
     });
-    expect(props.setRetirementAge).toHaveBeenCalledWith(62);
+    expect(props.setRetirementAgeCoupled).toHaveBeenCalledWith(62);
     act(() => renderer.unmount());
   });
 });
@@ -345,6 +351,8 @@ describe("plan screen wow additions", () => {
         ss: 25_200,
         pension: 0,
         portfolioDraw: 44_664,
+        hasSS: true,
+        hasPension: false,
         ssPct: 36,
         pensionPct: 0,
         portfolioPct: 64,
