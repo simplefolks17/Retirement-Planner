@@ -201,14 +201,14 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
         <Headline t={t}
           label="Chapter 1 — Today"
           value={ch1Headline}
-          sub="annual take-home after tax and saving"
+          sub="annual spending budget (after tax and saving)"
         />
         <ProportionBar t={t} segs={ch1Bar} />
         <ToggleDetail t={t}>
           {/* statementView.taxTotal */}
           <DetailRow t={t} label="Total tax (fed + FICA + state)" value={fmt(statementView?.taxTotal)} source="statementView.taxTotal" />
           {/* statementView.flowKeep */}
-          <DetailRow t={t} label="Take-home (residual)" value={fmt(statementView?.flowKeep)} source="statementView.flowKeep" />
+          <DetailRow t={t} label="Spending budget (after all saving)" value={fmt(statementView?.flowKeep)} source="statementView.flowKeep" />
         </ToggleDetail>
       </ChapterCard>
 

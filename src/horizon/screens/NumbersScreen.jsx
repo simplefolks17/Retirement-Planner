@@ -97,7 +97,7 @@ function IncomeWaterfall({ t, view }) {
     { i: 0, label: "Gross income", val: gross, top: gross,    bot: 0,        color: t.accent,  full: true,  pct: pctLabel(view.gross > 0 ? 100 : null) },
     { i: 1, label: "Tax",          val: tax,   top: gross,    bot: afterTax, color: "#b09070",              pct: pctLabel(view.flowTaxPct) },
     { i: 2, label: "Savings",      val: save,  top: afterTax, bot: keep,     color: t.warm,                 pct: pctLabel(view.flowSavePct) },
-    { i: 3, label: "Take-home",    val: keep,  top: keep,     bot: 0,        color: t.good,    full: true,  pct: pctLabel(view.flowKeepPct) },
+    { i: 3, label: "Spending budget", val: keep,  top: keep,   bot: 0,        color: t.good,    full: true,  pct: pctLabel(view.flowKeepPct) },
   ];
 
   // dashed connectors link each running-balance level across the gap

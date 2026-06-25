@@ -230,12 +230,24 @@ function ArcSvg({ t, gid, glow, strokeWidth, chartData, currentAge, retirementAg
 }
 
 function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vmax, compact, s }) {
-  const { stops } = useMemo(
-    () => arcModel({ chartData, currentAge, retirementAge, lifeExpect, compact, s }),
-    [chartData, currentAge, retirementAge, lifeExpect, compact, s]);
-  const endAge = lifeExpect;
-  const endTotal = totalAtAge(chartData, endAge);
-  const xEnd = s.xOf(endAge), yEnd = s.yOf(endTotal);
+  // Pixel positions are computed inside the memo together with stop metadata so that
+  // they're always recomputed atomically when chartData or the scale changes.
+  const { stops, endPos } = useMemo(() => {
+    const model = arcModel({ chartData, currentAge, retirementAge, lifeExpect, compact, s });
+    const stopsWithPos = model.stops.map(({ age, label, above, ck, targetVal }) => {
+      const cx = s.xOf(age);
+      const cy = s.yOf(totalAtAge(chartData, age));
+      const yTop = above ? cy - 26 : cy + 26;
+      return { age, label, above, ck, targetVal, cx, cy, yTop };
+    });
+    const endAge = lifeExpect;
+    const endTotal = totalAtAge(chartData, endAge);
+    return {
+      stops: stopsWithPos,
+      endPos: { xEnd: s.xOf(endAge), yEnd: s.yOf(endTotal), endTotal, endAge },
+    };
+  }, [chartData, currentAge, retirementAge, lifeExpect, compact, s]);
+
   const ticks = (compact ? [40, 55, 70, 85] : [40, 50, 60, 70, 80])
     .filter(a => a > currentAge + 2 && a <= lifeExpect);
 
@@ -247,17 +259,20 @@ function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vma
           transform: "translate(-100%,-50%)", font: `600 10px ${HM}`, color: t.faint, whiteSpace: "nowrap"
         }}>{fmtMoney(gv)}</div>
       ))}
+      {/* currentAge label at arc start — no centering transform so it hugs the left edge */}
+      <div style={{
+        position: "absolute", left: px(s.xOf(currentAge)), top: py(s.bot + 16, H),
+        font: `700 10px ${HM}`, color: t.good
+      }}>{currentAge}</div>
       {ticks.map(a => (
         <div key={a} style={{
           position: "absolute", left: px(s.xOf(a)), top: py(s.bot + 16, H),
           transform: "translateX(-50%)", font: `600 10px ${HM}`, color: t.faint
         }}>{a}</div>
       ))}
-      {stops.map(({ age, label, above, ck, targetVal }) => {
+      {stops.map(({ age, label, above, ck, targetVal, cx, yTop }) => {
         const c = t[ck];
-        const cx = s.xOf(age), cy = s.yOf(totalAtAge(chartData, age));
         const xShift = age === currentAge ? "0%" : "-50%";
-        const yTop = above ? cy - 26 : cy + 26;
         const yShift = above ? "-100%" : "0%";
         return (
           <div key={age} style={{
@@ -275,12 +290,12 @@ function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vma
         );
       })}
       <div style={{
-        position: "absolute", left: px(xEnd), top: py(yEnd, H),
+        position: "absolute", left: px(endPos.xEnd), top: py(endPos.yEnd, H),
         transform: "translate(-100%,-50%)", marginLeft: -14,
         background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 11, padding: "7px 12px",
         boxShadow: "0 4px 16px rgba(0,0,0,.11)", whiteSpace: "nowrap", zIndex: 2
       }}>
-        <div style={{ font: `700 13px ${HM}`, color: t.warm }}>{fmtMoney(endTotal)} at {endAge}</div>
+        <div style={{ font: `700 13px ${HM}`, color: t.warm }}>{fmtMoney(endPos.endTotal)} at {endPos.endAge}</div>
         <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 1 }}>still covered, for life</div>
       </div>
     </>
@@ -294,21 +309,26 @@ function sourcesModel({ chartData, contribSeries, s }) {
   const tPts = chartData.map(d => [s.xOf(d.age), +s.yOf(d.total).toFixed(1)]);
   const cPts = contribSeries?.length
     ? contribSeries.map(d => [s.xOf(d.age), +s.yOf(d.contrib).toFixed(1)]) : [];
-  return { tPts, cPts, hasSplit: cPts.length >= 2 };
+  const hasSplit = cPts.length >= 2;
+  // Clip the total arc to working years only so the growth band closes correctly at
+  // retirement (cPts covers currentAge→retirementAge; tPts covers currentAge→lifeExpect).
+  const workingTLine = hasSplit ? smoothPath(tPts.slice(0, cPts.length)) : null;
+  return { tPts, cPts, hasSplit, workingTLine };
 }
 
 function SourcesSvg({ t, gid, chartData, contribSeries, currentAge, retirementAge, s, vmax }) {
-  const { tPts, cPts, hasSplit } = useMemo(
+  const { tPts, cPts, hasSplit, workingTLine } = useMemo(
     () => sourcesModel({ chartData, contribSeries, s }), [chartData, contribSeries, s]);
   if (tPts.length < 2) return null;
 
   const tLine = smoothPath(tPts);
-  const lastTot = tPts[tPts.length - 1];
-  const lastContrib = cPts.length ? cPts[cPts.length - 1] : tPts[tPts.length - 1];
+  const lastContrib = cPts.length ? cPts[cPts.length - 1] : null;
   const cLine = hasSplit ? smoothPath(cPts) : null;
+  // Growth area: between the working-year total arc and the contribution line.
+  // workingTLine ends at retirementAge; reversed cPts walks back from retirementAge to start.
   const gArea = hasSplit
-    ? tLine + ` L ${lastTot[0]} ${lastContrib[1]} ` +
-      cPts.slice().reverse().map(p => `L ${p[0]} ${p[1]}`).join(" ") + " Z" : null;
+    ? workingTLine + " " + cPts.slice().reverse().map(p => `L ${p[0]} ${p[1]}`).join(" ") + " Z"
+    : null;
   const cArea = hasSplit
     ? cLine + ` L ${lastContrib[0]} ${s.bot} L ${s.xOf(currentAge)} ${s.bot} Z` : null;
 
