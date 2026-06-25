@@ -161,6 +161,50 @@ across sessions so decisions don't have to be re-litigated.
 
 ---
 
+### `horizonProps` setter bundles (WI-3.1 / #98) — Level-3 write plumbing
+
+**Added 2026-06-25.** Horizon writes back to the **shared** App.jsx state through
+eight topic-grouped, memoized bundles on `horizonProps`. Both UIs keep one state,
+so a value changed in Horizon is immediately reflected in Classic and vice-versa
+(no duplicate state, no divergence — principle 11). Each bundle is built in its own
+`useMemo` in `App.jsx` (V9 referential stability) and added by name to `horizonProps`.
+
+**Field shape (self-describing so screens carry no constants/bounds math — rule 1 / rule 10):**
+- numeric input → `{ value, set, min, max, step }` (+ `sliderMax` on account balances,
+  `defaultPct` on `stateRateOverride`, `estimated` on `ssOverride`)
+- toggle (boolean) → `{ value, set }`
+- choice (select / segmented) → `{ value, set, options: [{ value, label }] }`
+
+`min`/`max`/`step` and the option labels are copied **verbatim** from the Classic
+JSX; dynamic bounds (e.g. `livingExpenses.max = max(grossAfterTax, 30_000)`, the
+per-account contribution `step`, the **BUG-17** `ssClaimingAge.min = max(SS_MIN_CLAIM_AGE,
+currentAge)`) are computed in the bundle memo, never in the screen. Setter wrappers
+preserve Classic behaviour: `selectedState` clears `stateRateOverride`; `livingExpenses`
+and `savingsSurplusPct` clear `preApplySnapshot`; `stateRateOverride`, `incomeGrowthEndAge`,
+and `ssOverride` snap to `null` at their defaults; the timeline trio (`currentAge` /
+`retirementAge` / `lifeExpect`) uses the coupled setters that keep the cross-field
+invariants Classic enforces.
+
+| Bundle | Fields |
+|---|---|
+| `profile` | currentIncome, incomeGrowth, incomeGrowthEndAge, spouseIncome, spouseIncomeGrowth, filingStatus, selectedState, stateRateOverride, otherPreTaxDeduc |
+| `spending` | livingExpenses, livingExpenseGrowth, annualExpenses, retirementTarget |
+| `accounts` | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib, contribEnd }`), addlPreTaxBal, matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
+| `ss` | includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge, spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef |
+| `pension` | pensionMonthly, pensionStartAge |
+| `conversion` | conversionMode, conversionBracketTarget, annualConversionAmt, conversionTaxSource |
+| `health` | hasMarketplaceInsurance, householdSize, marketplaceMonthlyPremium, hasMedicare, personOnMedicare |
+| `assumptions` | currentAge, retirementAge, lifeExpect (coupled setters), returnRate, inflationRate, retirementState, savingsSurplusPct |
+
+The Roth-conversion **window** fields (`conversionStartAge`/`conversionEndAge`), the
+in-service toggle, and `conversionEvents` are intentionally **not** in the `conversion`
+bundle — they belong to the WI-3.6 conversion-planner flow. Tests:
+`src/__tests__/setter-bundles.test.js` (round-trip per bundle + the BUG-17 floor,
+dynamic step, and snap-to-null wrappers); `src/__tests__/horizon-props-stability.test.js`
+auto-covers the bundles' referential stability.
+
+---
+
 ### `evaluateConversionPlan` returns a full bundle — the optimizer's "unused" fields are NOT waste
 
 **Decision (2026-06-06):** Leave `evaluateConversionPlan` (`src/model/conversion-evaluation.js`)

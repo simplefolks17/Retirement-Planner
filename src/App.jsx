@@ -54,6 +54,27 @@ import HorizonShell       from "./components/HorizonShell.jsx";
 // them can keep honest, complete dependency arrays).
 const ACCOUNT_DATA_KEYS = ["Trad 401k", "Roth IRA", "Taxable", "HSA"];
 
+// WI-3.1 (#98) setter-bundle options. Built once at module load from the static
+// config maps — referentially stable, so the bundle memos that spread them stay
+// stable and never re-derive labels in a screen (rule 1 / rule 10 / principle 9).
+// Labels mirror the Classic <select> rendering verbatim.
+const FILING_STATUS_OPTIONS = Object.entries(TAX_DATA_2026)
+  .map(([value, { label }]) => ({ value, label }));
+const STATE_OPTIONS = Object.entries(STATE_TAX)
+  .sort((a, b) => a[1].name.localeCompare(b[1].name))
+  .map(([value, { name }]) => ({ value, label: `${name} (${value})` }));
+const RETIREMENT_STATE_OPTIONS = Object.entries(RETIREMENT_STATE_TAX)
+  .sort((a, b) => a[1].name.localeCompare(b[1].name))
+  .map(([value, { name, rate }]) => ({
+    value,
+    label: `${name} (${value}) — ${rate === 0 ? "0%" : `${(rate * 100).toFixed(1)}%`}`,
+  }));
+const CONVERSION_BRACKET_OPTIONS = [
+  { value: 12, label: "12%" }, { value: 22, label: "22%" }, { value: 24, label: "24%" },
+];
+// Per-account contribution-slider step, copied verbatim from the Classic accounts JSX.
+const contribStep = max => (max <= 10_000 ? 100 : max <= 30_000 ? 500 : 1_000);
+
 export default function App() {
 
   const [currentAge,    setCurrentAge]    = useState(30);
@@ -797,6 +818,34 @@ export default function App() {
   }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
 
+  // Current-age coupled update: mirrors the Classic onChange (Tax Rate Phases)
+  // that pushes retirement age, spouse age, and contribEnd ages forward so they
+  // never fall before the new current age.
+  const setCurrentAgeCoupled = useCallback(v => {
+    setCurrentAge(v);
+    if (retirementAge < v) setRetirementAge(v);
+    if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
+    if (contribEnd401k    <= v) setContribEnd401k(v + 1);
+    if (contribEndRoth    <= v) setContribEndRoth(v + 1);
+    if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
+    if (contribEndHSA     <= v) setContribEndHSA(v + 1);
+  }, [setCurrentAge, setRetirementAge, setSpouseCurrentAge, retirementAge, spouseCurrentAge,
+      contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
+
+  // Life-expectancy coupled update: mirrors the Classic onChange that clamps the
+  // retirement age below the new horizon and caps any contribEnd ages above it.
+  const setLifeExpectCoupled = useCallback(v => {
+    setLifeExpect(v);
+    if (retirementAge >= v) setRetirementAge(v - 1);
+    if (contribEnd401k    > v) setContribEnd401k(v);
+    if (contribEndRoth    > v) setContribEndRoth(v);
+    if (contribEndTaxable > v) setContribEndTaxable(v);
+    if (contribEndHSA     > v) setContribEndHSA(v);
+  }, [setLifeExpect, setRetirementAge, retirementAge,
+      contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
+
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
   // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
   // memoized whatIfSimInputs + retDrawShared as deps. Grown by named fields only —
@@ -936,6 +985,137 @@ export default function App() {
     rothMax:    Math.max(200_000, annualConversionAmt),
     canTuneRothConversion: conversionWindowYrs > 0,
   }), [currentAge, retirementAge, monthlySpend, lifeExpect, trad401kMax, contrib401k, annualConversionAmt, conversionWindowYrs]);
+
+  // ── WI-3.1 (#98) setter bundles ─────────────────────────────────────────────
+  // Topic-grouped, self-describing write access to the shared App state, so every
+  // Level-3 Horizon screen can both READ a value and WRITE it back through ONE
+  // field — no Classic input is duplicated, both UIs stay in sync (principle 11).
+  // Each numeric field is { value, set, min, max[, step] }; toggles are
+  // { value, set }; choices are { value, set, options:[{value,label}] }. min/max/
+  // step are copied VERBATIM from the Classic JSX (incl. the BUG-17 SS floor and
+  // the dynamic per-account contribution step), so screens carry zero constants
+  // or bounds math (rule 1 / rule 10). Dynamic bounds are computed here, never in
+  // the screen. Bundle shapes are documented in docs/ARCHITECTURE.md. Plumbing
+  // only — no screen consumes these yet; golden master untouched.
+
+  const profileBundle = useMemo(() => ({
+    currentIncome:      { value: currentIncome, set: setCurrentIncome, min: 20_000, max: 500_000, step: 5_000 },
+    incomeGrowth:       { value: incomeGrowth, set: setIncomeGrowth, min: 0, max: 15, step: 0.5 },
+    incomeGrowthEndAge: { value: incomeGrowthEndAge,
+      set: v => setIncomeGrowthEndAge(v >= safeRetAge ? null : v),
+      min: currentAge + 1, max: safeRetAge, step: 1 },
+    spouseIncome:       { value: spouseIncome, set: setSpouseIncome, min: 0, max: 500_000, step: 5_000 },
+    spouseIncomeGrowth: { value: spouseIncomeGrowth, set: setSpouseIncomeGrowth, min: 0, max: 15, step: 0.5 },
+    filingStatus:       { value: filingStatus, set: setFilingStatus, options: FILING_STATUS_OPTIONS },
+    selectedState:      { value: selectedState,
+      set: v => { setSelectedState(v); setStateRateOverride(null); }, options: STATE_OPTIONS },
+    stateRateOverride:  { value: stateRateOverride, defaultPct: stateRateDefault * 100,
+      set: v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.15 ? null : v / 100),
+      min: 0, max: 13, step: 0.1 },
+    otherPreTaxDeduc:   { value: otherPreTaxDeduc, set: setOtherPreTaxDeduc, min: 0, max: 20_000, step: 250 },
+  }), [currentIncome, incomeGrowth, incomeGrowthEndAge, spouseIncome, spouseIncomeGrowth,
+       filingStatus, selectedState, stateRateOverride, otherPreTaxDeduc, currentAge, safeRetAge,
+       stateRateDefault, setCurrentIncome, setIncomeGrowth, setIncomeGrowthEndAge, setSpouseIncome,
+       setSpouseIncomeGrowth, setFilingStatus, setSelectedState, setStateRateOverride, setOtherPreTaxDeduc]);
+
+  const spendingBundle = useMemo(() => ({
+    livingExpenses:      { value: livingExpenses,
+      set: v => { setLivingExpenses(v); setPreApplySnapshot(null); },
+      min: 10_000, max: Math.max(grossAfterTax, 30_000), step: 1_000 },
+    livingExpenseGrowth: { value: livingExpenseGrowth, set: setLivingExpenseGrowth, min: 0, max: 10, step: 0.5 },
+    annualExpenses:      { value: annualExpenses, set: setAnnualExpenses, min: 10_000, max: 300_000, step: 1_000 },
+    retirementTarget:    { value: retirementTarget, set: setRetirementTarget, min: 100_000, max: 20_000_000 },
+  }), [livingExpenses, livingExpenseGrowth, annualExpenses, retirementTarget, grossAfterTax,
+       setLivingExpenses, setPreApplySnapshot, setLivingExpenseGrowth, setAnnualExpenses, setRetirementTarget]);
+
+  const accountsBundle = useMemo(() => {
+    // Per-account balance slider caps at 1M (Classic range) but the DeferredInput
+    // accepts up to 5M; both bounds are exposed (sliderMax vs max).
+    const acct = (bal, setBal, contrib, setContrib, contribMax, endAge, setEndAge) => ({
+      bal:        { value: bal, set: setBal, min: 0, max: 5_000_000, sliderMax: 1_000_000, step: 10_000 },
+      contrib:    { value: contrib, set: setContrib, min: 0, max: contribMax, step: contribStep(contribMax) },
+      contribEnd: { value: endAge, set: setEndAge, min: currentAge + 1, max: safeLifeExp, step: 1 },
+    });
+    return {
+      trad401k: acct(bal401k, setBal401k, contrib401k, setContrib401k, TRAD_401K_LIMIT_2026, contribEnd401k, setContribEnd401k),
+      roth:     acct(balRoth, setBalRoth, contribRoth, setContribRoth, ROTH_IRA_LIMIT_2026, contribEndRoth, setContribEndRoth),
+      taxable:  acct(balTaxable, setBalTaxable, contribTaxable, setContribTaxable, 100_000, contribEndTaxable, setContribEndTaxable),
+      hsa:      acct(balHSA, setBalHSA, contribHSA, setContribHSA, HSA_LIMIT_2026, contribEndHSA, setContribEndHSA),
+      addlPreTaxBal:    { value: addlPreTaxBal, set: v => setAddlPreTaxBal(Math.max(0, v || 0)), min: 0 },
+      matchMode:        { value: matchMode, set: setMatchMode,
+        options: [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }] },
+      employerMatchPct: { value: employerMatchPct, set: setEmployerMatchPct, min: 0, max: 10, step: 0.5 },
+      matchFormulaRate: { value: matchFormulaRate, set: setMatchFormulaRate, min: 0, max: 200, step: 5 },
+      matchFormulaCap:  { value: matchFormulaCap, set: setMatchFormulaCap, min: 1, max: 15, step: 0.5 },
+    };
+  }, [bal401k, contrib401k, contribEnd401k, balRoth, contribRoth, contribEndRoth,
+      balTaxable, contribTaxable, contribEndTaxable, balHSA, contribHSA, contribEndHSA,
+      addlPreTaxBal, matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap,
+      currentAge, safeLifeExp,
+      setBal401k, setContrib401k, setContribEnd401k, setBalRoth, setContribRoth, setContribEndRoth,
+      setBalTaxable, setContribTaxable, setContribEndTaxable, setBalHSA, setContribHSA, setContribEndHSA,
+      setAddlPreTaxBal, setMatchMode, setEmployerMatchPct, setMatchFormulaRate, setMatchFormulaCap]);
+
+  const ssBundle = useMemo(() => ({
+    includeSS:        { value: includeSS, set: setIncludeSS },
+    // BUG-17: claim age can never precede the user's current age.
+    ssClaimingAge:    { value: ssClaimingAge, set: setSsClaimingAge,
+      min: Math.max(SS_MIN_CLAIM_AGE, currentAge), max: SS_MAX_CLAIM_AGE, step: 1 },
+    ssOverride:       { value: ssOverride, estimated: ssAnnualBenefit,
+      set: v => setSsOverride(v === ssAnnualBenefit ? null : v), min: 0, max: 60_000 },
+    isMarried:        { value: isMarried, set: setIsMarried },
+    spouseSsEstimate: { value: spouseSsEstimate, set: setSpouseSsEstimate, min: 0, max: 60_000, step: 500 },
+    spouseClaimingAge:{ value: spouseClaimingAge, set: setSpouseClaimingAge,
+      min: SS_MIN_CLAIM_AGE, max: SS_MAX_CLAIM_AGE, step: 1 },
+    spouseBenefitBasis:{ value: spouseBenefitBasis, set: setSpouseBenefitBasis,
+      options: [{ value: "own", label: "Own record" }, { value: "spousal", label: "Spousal (50%)" }] },
+    spouseCurrentAge: { value: spouseCurrentAge, set: setSpouseCurrentAge, min: 18, max: currentAge - 1, step: 1 },
+    spouseIsSoleBenef:{ value: spouseIsSoleBenef, set: setSpouseIsSoleBenef },
+  }), [includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge,
+       spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef, currentAge, ssAnnualBenefit,
+       setIncludeSS, setSsClaimingAge, setSsOverride, setIsMarried, setSpouseSsEstimate,
+       setSpouseClaimingAge, setSpouseBenefitBasis, setSpouseCurrentAge, setSpouseIsSoleBenef]);
+
+  const pensionBundle = useMemo(() => ({
+    pensionMonthly:  { value: pensionMonthly, set: setPensionMonthly, min: 0, max: 10_000, step: 100 },
+    pensionStartAge: { value: pensionStartAge, set: setPensionStartAge, min: 50, max: 75, step: 1 },
+  }), [pensionMonthly, pensionStartAge, setPensionMonthly, setPensionStartAge]);
+
+  const conversionBundle = useMemo(() => ({
+    conversionMode:          { value: conversionMode, set: setConversionMode,
+      options: [{ value: "bracket", label: "Fill to bracket" }, { value: "custom", label: "Custom amount" }] },
+    conversionBracketTarget: { value: conversionBracketTarget, set: setConversionBracketTarget, options: CONVERSION_BRACKET_OPTIONS },
+    annualConversionAmt:     { value: annualConversionAmt, set: setAnnualConversionAmt, min: 0, max: 500_000, step: 5_000 },
+    conversionTaxSource:     { value: conversionTaxSource, set: setConversionTaxSource,
+      options: [{ value: "converted", label: "From the conversion" }, { value: "taxable", label: "From taxable" }] },
+  }), [conversionMode, conversionBracketTarget, annualConversionAmt, conversionTaxSource,
+       setConversionMode, setConversionBracketTarget, setAnnualConversionAmt, setConversionTaxSource]);
+
+  const healthBundle = useMemo(() => ({
+    hasMarketplaceInsurance:  { value: hasMarketplaceInsurance, set: setHasMarketplaceInsurance },
+    householdSize:            { value: householdSize, set: setHouseholdSize, min: 1, max: 6, step: 1 },
+    marketplaceMonthlyPremium:{ value: marketplaceMonthlyPremium,
+      set: v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v)) },
+    hasMedicare:              { value: hasMedicare, set: setHasMedicare },
+    personOnMedicare:         { value: personOnMedicare, set: setPersonOnMedicare,
+      options: [{ value: 1, label: "Person 1" }, { value: 2, label: "Person 2" }] },
+  }), [hasMarketplaceInsurance, householdSize, marketplaceMonthlyPremium, hasMedicare, personOnMedicare,
+       setHasMarketplaceInsurance, setHouseholdSize, setMarketplaceMonthlyPremium, setHasMedicare, setPersonOnMedicare]);
+
+  const assumptionsBundle = useMemo(() => ({
+    // Timeline trio uses the coupled setters so the cross-field invariants Classic
+    // enforces (retire ≥ current, contribEnd ages in range) hold from Horizon too.
+    currentAge:        { value: currentAge, set: setCurrentAgeCoupled, min: 18, max: 80, step: 1 },
+    retirementAge:     { value: retirementAge, set: setRetirementAgeCoupled, min: currentAge, max: lifeExpect - 1, step: 1 },
+    lifeExpect:        { value: lifeExpect, set: setLifeExpectCoupled, min: retirementAge + 1, max: 115, step: 1 },
+    returnRate:        { value: returnRate, set: setReturnRate, min: 1, max: 15, step: 1 },
+    inflationRate:     { value: inflationRate, set: setInflationRate, min: 1, max: 8, step: 0.5 },
+    retirementState:   { value: retirementState, set: setRetirementState, options: RETIREMENT_STATE_OPTIONS },
+    savingsSurplusPct: { value: savingsSurplusPct,
+      set: v => { setSavingsSurplusPct(v); setPreApplySnapshot(null); }, min: 0, max: 100, step: 5 },
+  }), [currentAge, retirementAge, lifeExpect, returnRate, inflationRate, retirementState, savingsSurplusPct,
+       setCurrentAgeCoupled, setRetirementAgeCoupled, setLifeExpectCoupled, setReturnRate, setInflationRate,
+       setRetirementState, setSavingsSurplusPct, setPreApplySnapshot]);
 
   // Plan-screen signals strip (WI-1.2): calcSignals ranks nudges from values
   // computed ABOVE (one definition per number — it never recomputes):
@@ -1156,6 +1336,17 @@ export default function App() {
     // Plan screen "command center" additions — hero block + income meter + delta badge.
     planHighlights,
     planDelta,
+    // WI-3.1 (#98): topic-grouped setter bundles (shapes in docs/ARCHITECTURE.md).
+    // Each is memoized separately above (V9 stability). The plumbing for all of
+    // Level 3 — no screen consumes them yet.
+    profile: profileBundle,
+    spending: spendingBundle,
+    accounts: accountsBundle,
+    ss: ssBundle,
+    pension: pensionBundle,
+    conversion: conversionBundle,
+    health: healthBundle,
+    assumptions: assumptionsBundle,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -1183,7 +1374,10 @@ export default function App() {
        spouseClaimingAge, annualConversionAmt,
        isMarried, committedPlan,
        planHighlights, planDelta,
-       monthlySpend, trad401kMax, sliderBounds]);
+       monthlySpend, trad401kMax, sliderBounds,
+       // WI-3.1 setter bundles (each memoized separately above):
+       profileBundle, spendingBundle, accountsBundle, ssBundle, pensionBundle,
+       conversionBundle, healthBundle, assumptionsBundle]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.
