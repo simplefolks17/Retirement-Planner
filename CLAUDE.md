@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (119 items, 51 done, 68 planned)
+- Feature backlog: `feature-tracker.html` (120 items, 52 done, 68 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -610,6 +610,22 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   folds in the penalty) and an optimizer-extraction refactor (deferred follow-up). CodeRabbit's full 14-scenario
   edge-case audit found no bugs. Docs: `FINANCIAL-MODEL.md` Roth Conversion Model section + Correctness Fix Log +
   Known Simplifications updated; `BUGS.md` BUG-36 scope note added (conversion events now taxed in accumulation).
+
+- **Plan screen "Command Center" wow factor (2026-06-25, branch `claude/plan-page-redesign-lcy9sh` → PR #41):**
+  transformed the Plan screen from a static view into an interactive command center with emotional financial narrative. No model changes — all new fields are pre-computed in App.jsx memos and passed via named `horizonProps` fields (rule 10). 560 tests unchanged, golden master untouched.
+  **QuickTunePanel** (shipped earlier on this branch): 10 sliders (income, return, retirement age, spend, life expectancy, SS claiming, 401k/Roth/taxable/HSA contributions), activity pill rail, "Save as my plan" → `commitPlan` callback, "Reset" restores to `committedPlan` snapshot; live arc updates on every drag.
+  **Portfolio Hero block:** large `totalAtRet` in bold with `wealthMultiplier` subtitle ("grows 14× from today") from `planHighlights.wealthMultiplier` = `totalAtRet / currentTotalSaved`. Live `planDelta.badge` shows "↑ $X more" / "↓ $X less" (green/warm) only when `isDirty`; badge pre-computed in App.jsx with `{dir, atRetAbs, yearsGain}` so no sign/abs math in the screen.
+  **Income Replacement Meter:** monthly retirement income + income-replacement % from `planHighlights.incomeReplacementPct`; per-source bars (SS / Pension / Portfolio) with integer `ssPct`/`pensionPct`/`portfolioPct` + `hasSS`/`hasPension` guards from `planHighlights.retIncomeFlow` — all width values model-provided (rule 10). `calcRetIncomeFlow` (drawdown.js) guarantees the three bands sum to `effectiveExpenses`.
+  **Enriched stat cards:** 4 existing cards gain one-line context subtitles (`yearsToRetirement`, `incomeReplacementPct`, `retirementDuration`) from `planHighlights`; new 5th "Retirement taxes" card shows `planHighlights.lifetimeTaxBurden` = `rmdTaxBite + convTaxTotal`.
+  **New App.jsx additions:**
+  - `committedOutputs` state + `shouldSnapshotOutputs` ref + `useEffect` deferred snapshot (avoids reading stale closure values inside `commitPlan`)
+  - `planHighlights` memo: `wealthMultiplier`, `incomeReplacementPct`, `retIncomeFlow` (wraps `calcRetIncomeFlow` + integer `ssPct`/`pensionPct`/`portfolioPct` + `hasSS`/`hasPension` booleans), `lifetimeTaxBurden`, `yearsToRetirement`, `retirementDuration`
+  - `planDelta` memo with pre-computed `badge` sub-object: `{dir, atRetAbs, yearsGain}` — no comparisons in PlanScreen
+  - `sliderBounds` memo: 9 slider min/max values + `canTuneRothConversion` boolean — no bounds math in src/horizon/
+  - `setRetirementAgeCoupled` callback (mirrors Classic's `contribEnd*` coupling)
+  - `setMonthlySpend` callback (month→year conversion in model layer, not the screen)
+  **Bug fix — `isDirty` asymmetry (commit `01960b9`):** comparing `(annualExpenses ?? effectiveExpenses)` vs `committedPlan.annualExpenses` was asymmetric — when a plan was saved from Ideas/onboarding, `committedPlan.annualExpenses` is `null` but the left side resolved `effectiveExpenses` (non-null), making `isDirty = true` immediately after saving. Fixed to compare raw `annualExpenses` state on both sides: `null !== null → false` (correctly not dirty).
+  **Review:** 6 rounds by CodeRabbit + Gemini across multiple sessions; all real findings fixed, noise triaged. Tracker: #120 done (52 done, 68 planned).
 
 ## Commands
 
