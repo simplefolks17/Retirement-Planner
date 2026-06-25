@@ -309,7 +309,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
   // isDirty: any slider value differs from the committed snapshot.
   const isDirty = committedPlan !== null && (
     retirementAge                                !== committedPlan.retirementAge          ||
-    (annualExpenses ?? effectiveExpenses)        !== committedPlan.annualExpenses         ||
+    annualExpenses                               !== committedPlan.annualExpenses         ||
     lifeExpect             !== committedPlan.lifeExpect             ||
     returnRate             !== committedPlan.returnRate             ||
     inflationRate          !== committedPlan.inflationRate          ||
