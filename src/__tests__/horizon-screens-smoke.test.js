@@ -53,6 +53,7 @@ const SCREEN_MARKERS = {
   ideas:    "Your future, explored.", // IdeasScreen page title
   numbers:  "Year by year",           // NumbersScreen tab label (always rendered)
   someday:  "work optional.",         // SomedayScreen display copy
+  details:  "The facts behind your plan", // MyDetailsScreen subtitle (always visible)
   settings: "Theme",                  // SettingsScreen section header
 };
 

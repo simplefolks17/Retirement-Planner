@@ -171,7 +171,8 @@ so a value changed in Horizon is immediately reflected in Classic and vice-versa
 
 **Field shape (self-describing so screens carry no constants/bounds math — rule 1 / rule 10):**
 - numeric input → `{ value, set, min, max, step }` (+ `sliderMax` on account balances,
-  `defaultPct` on `stateRateOverride`, `estimated` on `ssOverride`)
+  `defaultPct`/`pct` on `stateRateOverride` — `pct` is the effective rate as a percent
+  so the screen never multiplies the stored fraction; `estimated` on `ssOverride`)
 - toggle (boolean) → `{ value, set }`
 - choice (select / segmented) → `{ value, set, options: [{ value, label }] }`
 

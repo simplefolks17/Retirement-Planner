@@ -1,0 +1,301 @@
+// MyDetailsScreen — WI-3.2 (#99): the plan-fact destination.
+// LAYOUT/FORMATTING ONLY (rule 10). Every value and every constraint (min/max/
+// step, option labels) comes from the WI-3.1 setter bundles on horizonProps
+// (props.profile / spending / accounts / health / assumptions) — the screen reads
+// a field's `.value` and writes through its `.set`, and never computes a bound or
+// derives a number. Social Security + pension are intentionally NOT here: they
+// live in their Strategies flows (WI-3.4 / WI-3.5).
+//
+// Calm by default: topic cards are collapsed, each showing a one-line summary
+// composed purely by formatting raw bundle values. Open a card to edit; desktop
+// uses sliders, mobile uses ± steppers (the onboarding pattern).
+
+import React, { useState } from "react";
+import { HF, HM } from "../ThemeContext.jsx";
+import { kbActivate } from "../shared.jsx";
+
+// ── formatting helpers (display only) ────────────────────────────────────────
+const money  = v => (v == null || isNaN(v) ? "—" : `$${Math.round(v).toLocaleString()}`);
+const ageFmt = v => (v == null ? "—" : `age ${v}`);
+const pctYr  = v => (v == null ? "—" : `${v}%/yr`);
+const pct    = v => (v == null ? "—" : `${v}%`);
+
+function FieldRow({ t, label, hint, children }) {
+  return (
+    <div style={{
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      gap: 18, padding: "11px 0", borderTop: `1px solid ${t.line}`,
+    }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ font: `500 13px ${HF}`, color: t.ink }}>{label}</div>
+        {hint && <div style={{ font: `400 11px ${HF}`, color: t.faint, marginTop: 2 }}>{hint}</div>}
+      </div>
+      <div style={{ flexShrink: 0 }}>{children}</div>
+    </div>
+  );
+}
+
+function seg(t, on) {
+  return {
+    font: `${on ? 600 : 500} 12.5px ${HF}`,
+    color: on ? t.accent : t.mut,
+    background: on ? `${t.accent}18` : "transparent",
+    border: `1px solid ${on ? t.accent : t.line2}`,
+    borderRadius: 8, padding: "6px 12px", cursor: "pointer", whiteSpace: "nowrap",
+  };
+}
+
+function StepBtn({ t, children, onClick, disabled }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled}
+      style={{
+        width: 34, height: 34, flexShrink: 0, borderRadius: 8,
+        border: `1.5px solid ${t.line2}`, background: t.surf,
+        font: `600 17px ${HF}`, color: disabled ? t.faint : t.accent,
+        cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1,
+      }}>{children}</button>
+  );
+}
+
+// One editable field driven entirely by a bundle field object.
+function DetailField({ t, label, hint, field, isMobile, format = String, seed, nullLabel }) {
+  const { value, set, min, max, step = 1, options } = field;
+
+  // ── choice: many options → <select>, few → segmented buttons ──
+  if (options) {
+    if (options.length > 3) {
+      return (
+        <FieldRow t={t} label={label} hint={hint}>
+          <select value={value} onChange={e => set(e.target.value)}
+            style={{
+              font: `500 13px ${HF}`, color: t.ink, background: t.surf,
+              border: `1px solid ${t.line2}`, borderRadius: 8, padding: "7px 10px",
+              maxWidth: 220, cursor: "pointer",
+            }}>
+            {options.map(o => <option key={String(o.value)} value={o.value}>{o.label}</option>)}
+          </select>
+        </FieldRow>
+      );
+    }
+    return (
+      <FieldRow t={t} label={label} hint={hint}>
+        <div style={{ display: "flex", gap: 6 }}>
+          {options.map(o => (
+            <button key={String(o.value)} type="button" aria-pressed={o.value === value}
+              onClick={() => set(o.value)} style={seg(t, o.value === value)}>{o.label}</button>
+          ))}
+        </div>
+      </FieldRow>
+    );
+  }
+
+  // ── boolean toggle ──
+  if (typeof value === "boolean") {
+    return (
+      <FieldRow t={t} label={label} hint={hint}>
+        <div style={{ display: "flex", gap: 6 }}>
+          {[["Yes", true], ["No", false]].map(([l, v]) => (
+            <button key={l} type="button" aria-pressed={value === v}
+              onClick={() => set(v)} style={seg(t, value === v)}>{l}</button>
+          ))}
+        </div>
+      </FieldRow>
+    );
+  }
+
+  // ── numeric ──
+  const isNull   = value == null;
+  const editVal  = isNull ? (seed ?? min ?? 0) : value;
+  const display  = isNull ? (nullLabel ?? "Auto") : format(value);
+  const hasMax   = typeof max === "number";
+  const clamp = v => {
+    let n = v;
+    if (typeof min === "number") n = Math.max(min, n);
+    if (hasMax) n = Math.min(max, n);
+    return n;
+  };
+  const bump = dir => set(clamp(editVal + dir * step));
+
+  // Stepper for mobile, and for any unbounded field (no max → no slider track).
+  if (isMobile || !hasMax) {
+    return (
+      <FieldRow t={t} label={label} hint={hint}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <StepBtn t={t} onClick={() => bump(-1)}
+            disabled={!isNull && typeof min === "number" && value <= min}>−</StepBtn>
+          <span style={{ minWidth: 96, textAlign: "center", font: `600 15px ${HM}`,
+            color: isNull ? t.faint : t.ink }}>{display}</span>
+          <StepBtn t={t} onClick={() => bump(1)}
+            disabled={!isNull && hasMax && value >= max}>+</StepBtn>
+        </div>
+      </FieldRow>
+    );
+  }
+
+  // Desktop slider.
+  return (
+    <FieldRow t={t} label={label} hint={hint}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, width: 220 }}>
+        <span style={{ textAlign: "right", font: `600 14px ${HM}`, color: isNull ? t.faint : t.ink }}>{display}</span>
+        <input type="range" min={min} max={max} step={step} value={editVal}
+          aria-label={label} aria-valuetext={display}
+          onChange={e => set(Number(e.target.value))}
+          style={{ width: "100%", accentColor: t.accent, height: 6, cursor: "pointer" }} />
+      </div>
+    </FieldRow>
+  );
+}
+
+function Card({ t, title, summary, note, open, onToggle, children }) {
+  return (
+    <div style={{ background: t.surf, border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
+      <div role="button" tabIndex={0} aria-expanded={open}
+        onClick={onToggle} onKeyDown={kbActivate(onToggle)}
+        style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          gap: 14, padding: "16px 18px", cursor: "pointer", minHeight: 44,
+        }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ font: `600 15px ${HF}`, color: t.ink }}>{title}</div>
+          {!open && <div style={{ font: `400 12.5px ${HF}`, color: t.mut, marginTop: 3 }}>{summary}</div>}
+        </div>
+        <span style={{ font: `400 15px ${HF}`, color: t.faint, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
+      </div>
+      {open && (
+        <div style={{ padding: "0 18px 16px" }}>
+          {note && (
+            <div style={{
+              font: `400 12px/1.5 ${HF}`, color: t.mut, background: t.bg,
+              border: `1px solid ${t.line}`, borderRadius: 9, padding: "9px 11px", marginBottom: 4,
+            }}>{note}</div>
+          )}
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function MyDetailsScreen({ t, props, isMobile }) {
+  const { profile, spending, accounts, health, assumptions } = props;
+  const isMarried = props.isMarried;
+  const effLiving = props.budget?.effectiveLiving;
+  const effExp    = props.effectiveExpenses;
+
+  const [openId, setOpenId] = useState(null);
+  const toggle = id => setOpenId(cur => (cur === id ? null : id));
+
+  // State tax rate is stored as a fraction; the bundle exposes `.pct` for display
+  // and its `.set` takes a percent — so the screen does no fraction math (rule 10).
+  const stateRateField = {
+    value: profile.stateRateOverride.pct,
+    set: profile.stateRateOverride.set,
+    min: profile.stateRateOverride.min,
+    max: profile.stateRateOverride.max,
+    step: profile.stateRateOverride.step,
+  };
+
+  const F = (p) => <DetailField t={t} isMobile={isMobile} {...p} />;
+
+  return (
+    <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "20px 16px 40px" : "28px 36px 48px" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        <div style={{ font: `700 24px ${HF}`, color: t.ink, letterSpacing: "-0.02em" }}>My details</div>
+        <div style={{ font: `400 14px ${HF}`, color: t.mut, marginTop: 4, marginBottom: 22 }}>
+          The facts behind your plan. Change anything here and every screen updates.
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* ── Income & job ── */}
+          <Card t={t} title="Income & job" open={openId === "income"} onToggle={() => toggle("income")}
+            summary={`${money(profile.currentIncome.value)} · grows ${profile.incomeGrowth.value}%/yr`}
+            note="Your earnings drive contributions, taxes, and your Social Security estimate.">
+            {F({ label: "Annual income", field: profile.currentIncome, format: money })}
+            {F({ label: "Income growth", field: profile.incomeGrowth, format: pctYr })}
+            {F({ label: "Income plateau age", hint: "income stops growing after this age",
+                 field: profile.incomeGrowthEndAge, format: ageFmt,
+                 seed: profile.incomeGrowthEndAge.min, nullLabel: "No plateau" })}
+            {F({ label: "Filing status", field: profile.filingStatus })}
+            {F({ label: "Home state", field: profile.selectedState })}
+            {F({ label: "State tax rate", field: stateRateField, format: pct })}
+            {F({ label: "Other pre-tax deductions", hint: "FSA, dependent care, transit",
+                 field: profile.otherPreTaxDeduc, format: money })}
+            {isMarried && F({ label: "Spouse income", field: profile.spouseIncome, format: money })}
+            {isMarried && F({ label: "Spouse income growth", field: profile.spouseIncomeGrowth, format: pctYr })}
+          </Card>
+
+          {/* ── Spending ── */}
+          <Card t={t} title="Spending" open={openId === "spending"} onToggle={() => toggle("spending")}
+            summary={spending.livingExpenses.value != null
+              ? `${money(spending.livingExpenses.value)}/yr today`
+              : "auto from income"}
+            note="What you live on today and what you expect to spend in retirement.">
+            {F({ label: "Living expenses (today)", field: spending.livingExpenses, format: money,
+                 seed: effLiving, nullLabel: `Auto · ${money(effLiving)}` })}
+            {F({ label: "Living expense growth", field: spending.livingExpenseGrowth, format: pctYr })}
+            {F({ label: "Retirement spending", field: spending.annualExpenses, format: money,
+                 seed: effExp, nullLabel: `Auto · ${money(effExp)}` })}
+            {F({ label: "Portfolio target", hint: "milestone goal at retirement",
+                 field: spending.retirementTarget, format: money })}
+          </Card>
+
+          {/* ── Accounts & match ── */}
+          <Card t={t} title="Accounts & match" open={openId === "accounts"} onToggle={() => toggle("accounts")}
+            summary={`401k ${money(accounts.trad401k.bal.value)} · match ${accounts.employerMatchPct.value}%`}
+            note="Balances grow with your contributions and returns. Contributions are capped at 2026 IRS limits.">
+            {[
+              ["Traditional 401k", accounts.trad401k],
+              ["Roth IRA",         accounts.roth],
+              ["Taxable",          accounts.taxable],
+              ["HSA",              accounts.hsa],
+            ].map(([name, a]) => (
+              <div key={name} style={{ marginTop: 10 }}>
+                <div style={{ font: `600 12px ${HF}`, color: t.accent, letterSpacing: "0.04em", textTransform: "uppercase" }}>{name}</div>
+                {F({ label: "Balance", field: a.bal, format: money })}
+                {F({ label: "Annual contribution", field: a.contrib, format: money })}
+                {F({ label: "Contribute until", field: a.contribEnd, format: ageFmt })}
+              </div>
+            ))}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ font: `600 12px ${HF}`, color: t.accent, letterSpacing: "0.04em", textTransform: "uppercase" }}>Other & employer match</div>
+              {F({ label: "Additional pre-tax balance", hint: "other IRAs / pensions for RMDs",
+                   field: accounts.addlPreTaxBal, format: money })}
+              {F({ label: "Match type", field: accounts.matchMode })}
+              {F({ label: "Employer match", field: accounts.employerMatchPct, format: pct })}
+              {accounts.matchMode.value === "formula" && F({ label: "Match rate", field: accounts.matchFormulaRate, format: pct })}
+              {accounts.matchMode.value === "formula" && F({ label: "On the first … of salary", field: accounts.matchFormulaCap, format: pct })}
+            </div>
+          </Card>
+
+          {/* ── Health & Medicare ── */}
+          <Card t={t} title="Health & Medicare" open={openId === "health"} onToggle={() => toggle("health")}
+            summary={`${health.hasMarketplaceInsurance.value ? "Marketplace" : "No marketplace"}${health.hasMedicare.value ? " · Medicare" : ""}`}
+            note="Used for ACA subsidy and IRMAA estimates around Roth conversions.">
+            {F({ label: "Marketplace insurance", field: health.hasMarketplaceInsurance })}
+            {F({ label: "Household size", field: health.householdSize })}
+            {F({ label: "Marketplace premium (monthly)", field: health.marketplaceMonthlyPremium, format: money,
+                 seed: 0, nullLabel: "Not set" })}
+            {F({ label: "On Medicare", field: health.hasMedicare })}
+            {F({ label: "People on Medicare", field: health.personOnMedicare })}
+          </Card>
+
+          {/* ── Assumptions ── */}
+          <Card t={t} title="Assumptions" open={openId === "assumptions"} onToggle={() => toggle("assumptions")}
+            summary={`${assumptions.returnRate.value}% return · ${assumptions.inflationRate.value}% inflation · to age ${assumptions.lifeExpect.value}`}
+            note="The dials behind every projection. Conservative returns and realistic inflation keep the plan honest.">
+            {F({ label: "Current age", field: assumptions.currentAge, format: ageFmt })}
+            {F({ label: "Retirement age", field: assumptions.retirementAge, format: ageFmt })}
+            {F({ label: "Plan to age", field: assumptions.lifeExpect, format: ageFmt })}
+            {F({ label: "Annual return", field: assumptions.returnRate, format: pctYr })}
+            {F({ label: "Inflation", field: assumptions.inflationRate, format: pctYr })}
+            {F({ label: "Retirement state", field: assumptions.retirementState })}
+            {F({ label: "Deploy surplus", hint: "share of leftover income to invest",
+                 field: assumptions.savingsSurplusPct, format: pct })}
+          </Card>
+
+        </div>
+      </div>
+    </div>
+  );
+}

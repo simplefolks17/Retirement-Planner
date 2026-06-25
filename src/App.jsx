@@ -1010,6 +1010,9 @@ export default function App() {
     selectedState:      { value: selectedState,
       set: v => { setSelectedState(v); setStateRateOverride(null); }, options: STATE_OPTIONS },
     stateRateOverride:  { value: stateRateOverride, defaultPct: stateRateDefault * 100,
+      // pct: the effective rate as a percent for display/editing (override when set,
+      // else the state default) — so screens never multiply the fraction (rule 10).
+      pct: (stateRateOverride !== null ? stateRateOverride : stateRateDefault) * 100,
       set: v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.15 ? null : v / 100),
       min: 0, max: 13, step: 0.1 },
     otherPreTaxDeduc:   { value: otherPreTaxDeduc, set: setOtherPreTaxDeduc, min: 0, max: 20_000, step: 250 },
@@ -1041,7 +1044,9 @@ export default function App() {
       roth:     acct(balRoth, setBalRoth, contribRoth, setContribRoth, ROTH_IRA_LIMIT_2026, contribEndRoth, setContribEndRoth),
       taxable:  acct(balTaxable, setBalTaxable, contribTaxable, setContribTaxable, 100_000, contribEndTaxable, setContribEndTaxable),
       hsa:      acct(balHSA, setBalHSA, contribHSA, setContribHSA, HSA_LIMIT_2026, contribEndHSA, setContribEndHSA),
-      addlPreTaxBal:    { value: addlPreTaxBal, set: v => setAddlPreTaxBal(Math.max(0, v || 0)), min: 0 },
+      // Unbounded (no Classic max) — rendered as a stepper, so it carries a UI step
+      // but no max; the set wrapper clamps at ≥ 0.
+      addlPreTaxBal:    { value: addlPreTaxBal, set: v => setAddlPreTaxBal(Math.max(0, v || 0)), min: 0, step: 10_000 },
       matchMode:        { value: matchMode, set: setMatchMode,
         options: [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }] },
       employerMatchPct: { value: employerMatchPct, set: setEmployerMatchPct, min: 0, max: 10, step: 0.5 },

@@ -12,6 +12,7 @@ import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
 import IdeasScreen   from "../horizon/screens/IdeasScreen.jsx";
 import NumbersScreen from "../horizon/screens/NumbersScreen.jsx";
 import SomedayScreen from "../horizon/screens/SomedayScreen.jsx";
+import MyDetailsScreen from "../horizon/screens/MyDetailsScreen.jsx";
 import SettingsScreen from "../horizon/screens/SettingsScreen.jsx";
 
 // ── Small shared primitives (nav-only) ────────────────────────────────────────
@@ -418,6 +419,8 @@ export const SCREENS = [
   { id: "ideas",   label: "Ideas",       short: "Ideas",   emoji: "✦",  icon: "✦" },
   { id: "numbers", label: "The numbers", short: "Numbers", emoji: "▦",  icon: "▦" },
   { id: "someday", label: "Someday",     short: "Someday", emoji: "☀",  icon: "☀" },
+  // WI-3.2 (#99): My details — plan-fact destination (a content screen, not Settings).
+  { id: "details", label: "My details",  short: "Details", emoji: "▤",  icon: "▤" },
   { id: "settings",label: "Settings",    short: "Settings",emoji: "⚙",  icon: "⚙" },
 ];
 
@@ -575,6 +578,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} initialMode={subView} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialTab={subView} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} navigate={navigate} />}
+            {screen === "details"  && <MyDetailsScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
             {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} navigate={navigate}
               onResetOnboarding={() => { safeSet("hz-onboarded", ""); setShowOnboarding(true); }} />}
           </div>
