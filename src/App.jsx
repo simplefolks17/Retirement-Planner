@@ -12,7 +12,7 @@ import { runSimulation } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
-import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain } from "./model/drawdown.js";
+import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
 import { buildRetirementPhase, buildConversionByAge } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
@@ -153,6 +153,7 @@ export default function App() {
   // Committed plan snapshot — null until the user explicitly clicks "Save as my plan".
   // Enables the Reset button in the Plan screen's QuickTunePanel (restores all sliders).
   const [committedPlan, setCommittedPlan] = useState(null);
+  const [committedOutputs, setCommittedOutputs] = useState(null);
 
   const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
 
@@ -763,9 +764,11 @@ export default function App() {
       lifeExpect, returnRate, inflationRate, incomeGrowth, contrib401k,
       ssClaimingAge, spouseClaimingAge, annualConversionAmt,
     });
+    setCommittedOutputs({ totalAtRet, yearsSustained });
   }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses,
       retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
-      incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
+      incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt,
+      totalAtRet, yearsSustained]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
   // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
@@ -837,6 +840,43 @@ export default function App() {
     }),
   }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge,
        withdrawalRate, currentContribTotal, takeHome]);
+
+  // Plan screen "wow" highlights — portfolio hero + income replacement meter.
+  // All arithmetic lives here (rule 10: screens only read named fields).
+  // currentSaved is a scalar sum; rawFlow is computed inside the memo (it's a fresh
+  // object on each call, so moving it outside would make it an unstable dep — V9).
+  const currentSaved = bal401k + balRoth + balTaxable + balHSA;
+  const planHighlights = useMemo(() => {
+    const flow = calcRetIncomeFlow({ effectiveExpenses, ss: ssAtRet, pension: effectivePension });
+    const base = Math.max(1, effectiveExpenses);
+    return {
+      wealthMultiplier: currentSaved > 0
+        ? Math.round((totalAtRet / currentSaved) * 10) / 10
+        : null,
+      incomeReplacementPct: takeHome > 0
+        ? Math.min(200, Math.round((effectiveExpenses / (takeHome * ASSUMPTIONS.MONTHS_PER_YEAR)) * 100))
+        : null,
+      retIncomeFlow: {
+        ...flow,
+        ssPct:        Math.round(flow.ss           / base * 100),
+        pensionPct:   Math.round(flow.pension       / base * 100),
+        portfolioPct: Math.round(flow.portfolioDraw / base * 100),
+      },
+      lifetimeTaxBurden: (retPhase?.rmdTaxBite ?? 0) + (retPhase?.convTaxTotal ?? 0),
+      yearsToRetirement:  Math.max(0, safeRetAge - currentAge),
+      retirementDuration: Math.max(0, safeLifeExp - safeRetAge),
+    };
+  }, [currentSaved, totalAtRet, takeHome, effectiveExpenses,
+      ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge]);
+
+  // Live delta vs the last committed plan — null until the user saves once.
+  // Drives the "↑ $X more than your saved plan" badge in the Plan screen Hero block.
+  const planDelta = useMemo(() => !committedOutputs ? null : {
+    atRet: totalAtRet - committedOutputs.totalAtRet,
+    yearsSustained: isFinite(yearsSustained) && isFinite(committedOutputs.yearsSustained)
+      ? Math.round((yearsSustained - committedOutputs.yearsSustained) * 10) / 10
+      : null,
+  }, [totalAtRet, yearsSustained, committedOutputs]);
 
   // Plan-screen signals strip (WI-1.2): calcSignals ranks nudges from values
   // computed ABOVE (one definition per number — it never recomputes):
@@ -1049,6 +1089,9 @@ export default function App() {
     isMarried,
     // Committed plan snapshot for the Reset button (null until first save).
     committedPlan,
+    // Plan screen "command center" additions — hero block + income meter + delta badge.
+    planHighlights,
+    planDelta,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -1073,7 +1116,8 @@ export default function App() {
        setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
        annualExpenses, inflationRate, incomeGrowth, contrib401k,
        spouseClaimingAge, annualConversionAmt,
-       isMarried, committedPlan]);
+       isMarried, committedPlan,
+       planHighlights, planDelta]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

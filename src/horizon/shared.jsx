@@ -25,7 +25,7 @@ export const kbActivate = (fn) => (e) => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
 };
 
-export function StatCard({ t, label, value, accent, warm, large, onClick }) {
+export function StatCard({ t, label, value, accent, warm, large, onClick, sub }) {
   return (
     <div
       onClick={onClick}
@@ -53,6 +53,11 @@ export function StatCard({ t, label, value, accent, warm, large, onClick }) {
       }}>
         {value}
       </div>
+      {sub && (
+        <div style={{ font: `400 11px ${HF}`, color: t.mut, marginTop: 3 }}>
+          {sub}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo } from "../shared.jsx";
@@ -62,11 +62,117 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
   );
 }
 
+// ── Portfolio Hero Block ───────────────────────────────────────────────────────
+// Shows the single most emotionally impactful number: total portfolio at retirement,
+// the wealth multiplier, and a live delta badge when sliders have moved from the
+// committed plan.
+function PortfolioHero({ t, totalAtRet, planHighlights, planDelta, isDirty }) {
+  const { wealthMultiplier } = planHighlights ?? {};
+  return (
+    <div style={{
+      background: t.surf, borderRadius: 14,
+      border: `1px solid ${t.line}`,
+      padding: "16px 18px",
+      marginBottom: 10,
+    }}>
+      <div style={{ font: `500 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
+        Portfolio at retirement
+      </div>
+      <div style={{ font: `700 30px/1.1 ${HM}`, color: t.ink }}>
+        {fmt(totalAtRet)}
+      </div>
+      {wealthMultiplier !== null && wealthMultiplier !== undefined && (
+        <div style={{ font: `500 12px ${HF}`, color: t.good, marginTop: 4 }}>
+          grows {wealthMultiplier}× from today
+        </div>
+      )}
+      {isDirty && planDelta && Math.abs(planDelta.atRet) > 1000 && (
+        <div style={{
+          marginTop: 8, padding: "5px 10px",
+          background: planDelta.atRet > 0 ? `${t.good}18` : `${t.warm}18`,
+          borderRadius: 8,
+          font: `600 12px ${HF}`,
+          color: planDelta.atRet > 0 ? t.good : t.warm,
+        }}>
+          {planDelta.atRet > 0 ? "↑" : "↓"} {fmt(Math.abs(planDelta.atRet))} vs saved plan
+          {planDelta.yearsSustained !== null && planDelta.yearsSustained > 0 && (
+            <span style={{ fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>
+              · +{planDelta.yearsSustained} yrs
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Income Replacement Meter ───────────────────────────────────────────────────
+// Shows retirement monthly income + how much of current income it replaces,
+// with per-source breakdown bars (SS, portfolio). Bar widths use model-provided
+// integer percentages (ssPct, portfolioPct) — no division in JSX (rule 10).
+function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
+  const { incomeReplacementPct, retIncomeFlow } = planHighlights ?? {};
+  if (!retIncomeFlow) return null;
+
+  const { ss, portfolioDraw, ssPct, pensionPct, portfolioPct } = retIncomeFlow;
+  const hasSS = ss > 0;
+
+  return (
+    <div style={{
+      background: t.surf, borderRadius: 14,
+      border: `1px solid ${t.line}`,
+      padding: "14px 18px",
+      marginBottom: 10,
+    }}>
+      <div style={{ font: `500 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
+        Retirement income
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ font: `700 22px/1 ${HM}`, color: t.ink }}>
+          {fmtMo(effectiveExpenses)}/mo
+        </span>
+        {incomeReplacementPct !== null && incomeReplacementPct !== undefined && (
+          <span style={{ font: `500 12px ${HF}`, color: t.mut }}>
+            {incomeReplacementPct}% of current income
+          </span>
+        )}
+      </div>
+
+      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+        {hasSS && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ font: `400 11px ${HF}`, color: t.mut, width: 78, flexShrink: 0 }}>
+              Soc. Security
+            </span>
+            <div style={{ flex: 1, height: 5, borderRadius: 3, background: t.line, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${ssPct}%`, borderRadius: 3, background: t.good }} />
+            </div>
+            <span style={{ font: `600 11px ${HM}`, color: t.good, width: 60, textAlign: "right", flexShrink: 0 }}>
+              {fmtMo(ss)}/mo
+            </span>
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ font: `400 11px ${HF}`, color: t.mut, width: 78, flexShrink: 0 }}>
+            Portfolio
+          </span>
+          <div style={{ flex: 1, height: 5, borderRadius: 3, background: t.line, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${portfolioPct}%`, borderRadius: 3, background: t.accent }} />
+          </div>
+          <span style={{ font: `600 11px ${HM}`, color: t.accent, width: 60, textAlign: "right", flexShrink: 0 }}>
+            {fmtMo(portfolioDraw)}/mo
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Quick Tune Panel ───────────────────────────────────────────────────────────
 // One active slider at a time; pill rail lets the user switch which lever is live.
 // Sliders call App.jsx setters directly — the arc re-renders in the same cycle.
 // Rule 10: no math here; all values come from model-provided horizonProps fields.
-function QuickTunePanel({ t, isMobile, props }) {
+function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
   const {
     // Current values (what the sliders display)
     retirementAge, annualExpenses, effectiveExpenses, lifeExpect,
@@ -202,6 +308,8 @@ function QuickTunePanel({ t, isMobile, props }) {
     spouseClaimingAge      !== committedPlan.spouseClaimingAge      ||
     annualConversionAmt    !== committedPlan.annualConversionAmt
   );
+
+  useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
 
   const handleSave = useCallback(() => {
     commitPlan({ retirementAge, annualExpenses: annualExpenses ?? effectiveExpenses });
@@ -365,9 +473,11 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     takeHome, effectiveExpenses, balAt90,
     contribSeries, activity,
     planView, signals, moneyEvents, retirementWalk,
+    planHighlights, planDelta, statementView,
   } = props;
 
   const [arcView, setArcView] = useState("arc");
+  const [isDirty, setIsDirty] = useState(false);
 
   const { progressPct } = planView;
   const wrOk = planView.drivers.find(d => d.id === "withdrawal")?.ok;
@@ -447,7 +557,22 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
               walkRows={retirementWalk?.rows ?? []}
             />
           </div>
-          <QuickTunePanel t={t} isMobile props={props} />
+          {/* Hero row — 2-up on mobile */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <PortfolioHero
+                t={t}
+                totalAtRet={totalAtRet}
+                planHighlights={planHighlights}
+                planDelta={planDelta}
+                isDirty={isDirty}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
+            </div>
+          </div>
+          <QuickTunePanel t={t} isMobile props={props} onDirtyChange={setIsDirty} />
         </div>
       ) : (
         // Desktop: arc on the left, tune panel fixed-width on the right
@@ -470,8 +595,16 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
               walkRows={retirementWalk?.rows ?? []}
             />
           </div>
-          <div style={{ width: 280, flexShrink: 0, overflowY: "auto" }}>
-            <QuickTunePanel t={t} isMobile={false} props={props} />
+          <div style={{ width: 320, flexShrink: 0, overflowY: "auto" }}>
+            <PortfolioHero
+              t={t}
+              totalAtRet={totalAtRet}
+              planHighlights={planHighlights}
+              planDelta={planDelta}
+              isDirty={isDirty}
+            />
+            <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
+            <QuickTunePanel t={t} isMobile={false} props={props} onDirtyChange={setIsDirty} />
           </div>
         </div>
       )}
@@ -479,17 +612,34 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       {/* ── stat cards ───────────────────────────────────────────────────────── */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)",
+        gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)",
         gap: 10, marginTop: 14, flexShrink: 0,
       }}>
-        <StatCard t={t} label="You keep / mo"   value={fmtMo(takeHome)}          accent={t.good}
+        <StatCard t={t} label="You keep / mo"
+          value={fmtMo(takeHome)}
+          sub={statementView?.takeHomePct != null ? `${statementView.takeHomePct}% of income` : undefined}
+          accent={t.good}
           onClick={() => navigate("numbers", "statement")} />
-        <StatCard t={t} label="Retire at"        value={String(retirementAge)}    accent={t.ink}
+        <StatCard t={t} label="Retire at"
+          value={String(retirementAge)}
+          sub={planHighlights?.yearsToRetirement != null ? `in ${planHighlights.yearsToRetirement} yrs` : undefined}
+          accent={t.ink}
           onClick={() => navigate("ideas", "dials")} />
-        <StatCard t={t} label="Income for life"  value={fmtMo(effectiveExpenses)} accent={t.warm} warm
+        <StatCard t={t} label="Income for life"
+          value={fmtMo(effectiveExpenses)}
+          sub={planHighlights?.incomeReplacementPct != null ? `${planHighlights.incomeReplacementPct}% replaced` : undefined}
+          accent={t.warm} warm
           onClick={() => navigate("numbers", "statement")} />
-        <StatCard t={t} label="Left at 90"       value={fmt(balAt90)}             accent={t.ink}
+        <StatCard t={t} label="Left at 90"
+          value={fmt(balAt90)}
+          sub={planHighlights?.retirementDuration != null ? `after ${planHighlights.retirementDuration} yrs` : undefined}
+          accent={t.ink}
           onClick={() => navigate("numbers", "yearly")} />
+        <StatCard t={t} label="Retirement taxes"
+          value={planHighlights?.lifetimeTaxBurden != null ? fmt(planHighlights.lifetimeTaxBurden) : "—"}
+          sub="RMDs + conversions"
+          accent={t.mut}
+          onClick={() => navigate("numbers", "taxes")} />
       </div>
 
       {/* ── signals strip ────────────────────────────────────────────────────── */}
