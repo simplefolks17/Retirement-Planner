@@ -617,7 +617,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       }}>
         <StatCard t={t} label="You keep / mo"
           value={fmtMo(takeHome)}
-          sub={statementView?.takeHomePct != null ? `${statementView.takeHomePct}% of income` : undefined}
+          sub={statementView?.keepPct != null ? `${statementView.keepPct}% of income` : undefined}
           accent={t.good}
           onClick={() => navigate("numbers", "statement")} />
         <StatCard t={t} label="Retire at"

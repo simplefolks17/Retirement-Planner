@@ -354,7 +354,7 @@ describe("plan screen wow additions", () => {
       retirementDuration: 25,
     },
     planDelta: null,
-    statementView: { takeHomePct: 52 },
+    statementView: { keepPct: 52 },
   };
 
   it("renders portfolio hero with totalAtRet", () => {
