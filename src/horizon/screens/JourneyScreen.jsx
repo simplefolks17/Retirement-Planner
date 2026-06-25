@@ -152,13 +152,13 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
 
   // ── Chapter 1 — Today ──────────────────────────────────────────────────────
   // statementView fields (calcStatementView):
-  //   flowKeep — annual take-home after tax and savings (residual)
-  //   keepPct / taxPct / savePct — proportions (null when no income)
+  //   flowKeep — annual spending budget (residual after tax + all savings)
+  //   flowKeepPct / flowTaxPct / flowSavePct — proportions of gross (null when no income)
   const ch1Headline = statementView?.flowKeep != null ? fmt(statementView.flowKeep) : "—";
   const ch1Bar = [
-    { pct: statementView?.keepPct, color: t.good,   label: "Keep" },
-    { pct: statementView?.taxPct,  color: "#b09070", label: "Tax"  },
-    { pct: statementView?.savePct, color: t.warm,   label: "Save" },
+    { pct: statementView?.flowKeepPct, color: t.good,   label: "Keep" },
+    { pct: statementView?.flowTaxPct,  color: "#b09070", label: "Tax"  },
+    { pct: statementView?.flowSavePct, color: t.warm,   label: "Save" },
   ];
 
   // ── Chapter 2 — Building years ─────────────────────────────────────────────
