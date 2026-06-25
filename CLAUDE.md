@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (540 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (560 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (119 items, 51 done, 68 planned)
+- Feature backlog: `feature-tracker.html` (120 items, 52 done, 68 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -611,10 +611,26 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   edge-case audit found no bugs. Docs: `FINANCIAL-MODEL.md` Roth Conversion Model section + Correctness Fix Log +
   Known Simplifications updated; `BUGS.md` BUG-36 scope note added (conversion events now taxed in accumulation).
 
+- **Plan screen "Command Center" wow factor (2026-06-25, branch `claude/plan-page-redesign-lcy9sh` → PR #41):**
+  transformed the Plan screen from a static view into an interactive command center with emotional financial narrative. No model changes — all new fields are pre-computed in App.jsx memos and passed via named `horizonProps` fields (rule 10). 560 tests unchanged, golden master untouched.
+  **QuickTunePanel** (shipped earlier on this branch): 10 sliders (income, return, retirement age, spend, life expectancy, SS claiming, 401k/Roth/taxable/HSA contributions), activity pill rail, "Save as my plan" → `commitPlan` callback, "Reset" restores to `committedPlan` snapshot; live arc updates on every drag.
+  **Portfolio Hero block:** large `totalAtRet` in bold with `wealthMultiplier` subtitle ("grows 14× from today") from `planHighlights.wealthMultiplier` = `totalAtRet / currentTotalSaved`. Live `planDelta.badge` shows "↑ $X more" / "↓ $X less" (green/warm) only when `isDirty`; badge pre-computed in App.jsx with `{dir, atRetAbs, yearsGain}` so no sign/abs math in the screen.
+  **Income Replacement Meter:** monthly retirement income + income-replacement % from `planHighlights.incomeReplacementPct`; per-source bars (SS / Pension / Portfolio) with integer `ssPct`/`pensionPct`/`portfolioPct` + `hasSS`/`hasPension` guards from `planHighlights.retIncomeFlow` — all width values model-provided (rule 10). `calcRetIncomeFlow` (drawdown.js) guarantees the three bands sum to `effectiveExpenses`.
+  **Enriched stat cards:** 4 existing cards gain one-line context subtitles (`yearsToRetirement`, `incomeReplacementPct`, `retirementDuration`) from `planHighlights`; new 5th "Retirement taxes" card shows `planHighlights.lifetimeTaxBurden` = `rmdTaxBite + convTaxTotal`.
+  **New App.jsx additions:**
+  - `committedOutputs` state + `shouldSnapshotOutputs` ref + `useEffect` deferred snapshot (avoids reading stale closure values inside `commitPlan`)
+  - `planHighlights` memo: `wealthMultiplier`, `incomeReplacementPct`, `retIncomeFlow` (wraps `calcRetIncomeFlow` + integer `ssPct`/`pensionPct`/`portfolioPct` + `hasSS`/`hasPension` booleans), `lifetimeTaxBurden`, `yearsToRetirement`, `retirementDuration`
+  - `planDelta` memo with pre-computed `badge` sub-object: `{dir, atRetAbs, yearsGain}` — no comparisons in PlanScreen
+  - `sliderBounds` memo: 9 slider min/max values + `canTuneRothConversion` boolean — no bounds math in src/horizon/
+  - `setRetirementAgeCoupled` callback (mirrors Classic's `contribEnd*` coupling)
+  - `setMonthlySpend` callback (month→year conversion in model layer, not the screen)
+  **Bug fix — `isDirty` asymmetry (commit `01960b9`):** comparing `(annualExpenses ?? effectiveExpenses)` vs `committedPlan.annualExpenses` was asymmetric — when a plan was saved from Ideas/onboarding, `committedPlan.annualExpenses` is `null` but the left side resolved `effectiveExpenses` (non-null), making `isDirty = true` immediately after saving. Fixed to compare raw `annualExpenses` state on both sides: `null !== null → false` (correctly not dirty).
+  **Review:** 6 rounds by CodeRabbit + Gemini across multiple sessions; all real findings fixed, noise triaged. Tracker: #120 done (52 done, 68 planned).
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (540 tests)
+- `npm test` — run model + formatter + render-smoke tests (560 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

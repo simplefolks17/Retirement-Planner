@@ -188,6 +188,8 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 
 **Level 1 exit gate:** a first-time user can answer "am I on track, and what's my #1 lever?" from Plan alone in ~10 seconds; every Plan number is tappable; `npm test` green with new signals tests.
 
+**Plan screen "Command Center" shipped Jun 25 2026 (PR #41, tracker #120).** The Plan screen is now an interactive financial command center. Three sections added above QuickTunePanel: (1) **Portfolio Hero** — large `totalAtRet` + `wealthMultiplier` subtitle ("grows 14× from today") + live `planDelta.badge` ("↑ $X more" / "↓ $X less") when sliders diverge from the committed plan; (2) **Income Replacement Meter** — monthly retirement income, income-replacement %, and per-source bars (SS / Pension / Portfolio) with model-provided integer `ssPct`/`pensionPct`/`portfolioPct` (rule 10 — no division in screen); (3) **Enriched stat cards** — context subtitles on all 4 cards + a new 5th "Retirement taxes" card (`rmdTaxBite + convTaxTotal`). New App.jsx memos: `planHighlights`, `planDelta` (with pre-computed `badge` sub-object), `sliderBounds`, `committedOutputs` state (deferred snapshot via `useEffect` to avoid stale closure), `setMonthlySpend` + `setRetirementAgeCoupled` callbacks. Bug fixed: `isDirty` asymmetry — when a plan was saved from Ideas/onboarding, `annualExpenses` is null but `effectiveExpenses` (non-null) was being compared to `committedPlan.annualExpenses` (null), making `isDirty = true` immediately after saving; fixed to compare raw state values on both sides. No model changes; 560 tests unchanged, golden master untouched; 6 CodeRabbit + Gemini review rounds.
+
 ---
 
 # Level 2 — Understand (Journey screen + Numbers 3→6 tabs, read-only)
