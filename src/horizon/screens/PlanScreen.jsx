@@ -1,15 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
+import { ASSUMPTIONS } from "../../config/irs-2026.js";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
-// Renders the ≤2 ranked signals from calcSignals (props.signals) — title, body,
-// and dollars verbatim from the model; tapping deep-links via navigate(target).
-// Dismissing persists per-signal via safeSet("hz-signal-dismissed-<id>") so a
-// dismissed signal doesn't reappear on reload. No qualifying signals → renders
-// nothing (no empty chrome).
 function SignalsStrip({ t, signals, navigate, isMobile }) {
   const [dismissedIds, setDismissedIds] = useState(() => new Set());
 
@@ -32,7 +28,6 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
           flex: 1, display: "flex", alignItems: "stretch", gap: 4,
           borderRadius: 13, background: t.surf2, border: `1px solid ${t.line2}`,
         }}>
-          {/* tap target ≥ 44px (minHeight + padding) */}
           <div
             onClick={() => navigate(sig.target.screen, sig.target.subView)}
             role="button"
@@ -67,53 +62,325 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
   );
 }
 
+// ── Quick Tune Panel ───────────────────────────────────────────────────────────
+// One active slider at a time; pill rail lets the user switch which lever is live.
+// Sliders call App.jsx setters directly — the arc re-renders in the same cycle.
+// Rule 10: no math here; all values come from model-provided horizonProps fields.
+function QuickTunePanel({ t, isMobile, props }) {
+  const {
+    // Current values (what the sliders display)
+    retirementAge, annualExpenses, effectiveExpenses, lifeExpect,
+    returnRate, inflationRate, incomeGrowth, contrib401k,
+    ssClaimingAge, spouseClaimingAge, annualConversionAmt,
+    currentAge, trad401kMax,
+    // Conditional flags
+    isMarried, conversionWindowYrs,
+    // Setters
+    setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
+    setIncomeGrowth, setReturnRate, setInflationRate,
+    setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
+    // Save + Reset
+    commitPlan, committedPlan,
+  } = props;
+
+  const [activeKey, setActiveKey] = useState("retire");
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saved, setSaved]           = useState(false);
+
+  // Monthly display value for the spend slider (store annual, show monthly).
+  const monthlySpend = Math.round((annualExpenses ?? effectiveExpenses) / ASSUMPTIONS.MONTHS_PER_YEAR);
+
+  // Build slider definitions — only filtering out conditionally absent ones.
+  const sliders = [
+    {
+      key: "retire",
+      label: "Retire at",
+      headline: "When do you retire?",
+      value: retirementAge,
+      min: currentAge + 1, max: 80, step: 1,
+      format: v => `age ${v}`,
+      onChange: v => setRetirementAge(v),
+    },
+    {
+      key: "spend",
+      label: "Monthly spend",
+      headline: "How much will you spend in retirement?",
+      value: monthlySpend,
+      min: 500, max: 30_000, step: 100,
+      format: v => `$${v.toLocaleString()}/mo`,
+      onChange: v => setAnnualExpenses(v * ASSUMPTIONS.MONTHS_PER_YEAR),
+    },
+    {
+      key: "horizon",
+      label: "Plan to age",
+      headline: "How long should your money last?",
+      value: lifeExpect,
+      min: Math.max(retirementAge + 1, 70), max: 100, step: 1,
+      format: v => `age ${v}`,
+      onChange: v => setLifeExpect(v),
+    },
+    {
+      key: "contrib",
+      label: "401k savings",
+      headline: "How much do you save in your 401k each year?",
+      value: contrib401k,
+      min: 0, max: trad401kMax, step: 500,
+      format: v => `$${v.toLocaleString()}/yr`,
+      onChange: v => setContrib401k(v),
+    },
+    {
+      key: "growth",
+      label: "Income growth",
+      headline: "How fast does your income grow each year?",
+      value: incomeGrowth,
+      min: 0, max: 10, step: 0.5,
+      format: v => `${v}%/yr`,
+      onChange: v => setIncomeGrowth(v),
+    },
+    {
+      key: "return",
+      label: "Growth rate",
+      headline: "How fast will your investments grow?",
+      value: returnRate,
+      min: 1, max: 12, step: 0.5,
+      format: v => `${v}%/yr`,
+      onChange: v => setReturnRate(v),
+    },
+    {
+      key: "inflation",
+      label: "Inflation",
+      headline: "What inflation rate do you want to plan for?",
+      value: inflationRate,
+      min: 0, max: 6, step: 0.5,
+      format: v => `${v}%/yr`,
+      onChange: v => setInflationRate(v),
+    },
+    {
+      key: "ss",
+      label: "SS age",
+      headline: "When will you claim Social Security?",
+      value: ssClaimingAge,
+      min: 62, max: 70, step: 1,
+      format: v => `age ${v}`,
+      onChange: v => setSsClaimingAge(v),
+    },
+    isMarried && {
+      key: "spouseSS",
+      label: "Spouse SS",
+      headline: "When will your spouse claim Social Security?",
+      value: spouseClaimingAge,
+      min: 62, max: 70, step: 1,
+      format: v => `age ${v}`,
+      onChange: v => setSpouseClaimingAge(v),
+    },
+    conversionWindowYrs > 0 && {
+      key: "roth",
+      label: "Roth conv.",
+      headline: "How much do you convert to Roth each year?",
+      value: annualConversionAmt,
+      min: 0, max: 200_000, step: 1_000,
+      format: v => `$${v.toLocaleString()}/yr`,
+      onChange: v => setAnnualConversionAmt(v),
+    },
+  ].filter(Boolean);
+
+  // Guard: if activeKey was for a conditional slider that's now hidden, fall back.
+  const activeSlider = sliders.find(s => s.key === activeKey) ?? sliders[0];
+
+  // isDirty: any slider value differs from the committed snapshot.
+  const isDirty = committedPlan !== null && (
+    retirementAge          !== committedPlan.retirementAge          ||
+    annualExpenses         !== committedPlan.annualExpenses         ||
+    lifeExpect             !== committedPlan.lifeExpect             ||
+    returnRate             !== committedPlan.returnRate             ||
+    inflationRate          !== committedPlan.inflationRate          ||
+    incomeGrowth           !== committedPlan.incomeGrowth           ||
+    contrib401k            !== committedPlan.contrib401k            ||
+    ssClaimingAge          !== committedPlan.ssClaimingAge          ||
+    spouseClaimingAge      !== committedPlan.spouseClaimingAge      ||
+    annualConversionAmt    !== committedPlan.annualConversionAmt
+  );
+
+  const handleSave = useCallback(() => {
+    commitPlan({ retirementAge, annualExpenses: annualExpenses ?? effectiveExpenses });
+    setShowConfirm(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [commitPlan, retirementAge, annualExpenses, effectiveExpenses]);
+
+  const handleReset = useCallback(() => {
+    if (!committedPlan) return;
+    setRetirementAge(committedPlan.retirementAge);
+    setAnnualExpenses(committedPlan.annualExpenses);
+    setLifeExpect(committedPlan.lifeExpect);
+    setReturnRate(committedPlan.returnRate);
+    setInflationRate(committedPlan.inflationRate);
+    setIncomeGrowth(committedPlan.incomeGrowth);
+    setContrib401k(committedPlan.contrib401k);
+    setSsClaimingAge(committedPlan.ssClaimingAge);
+    setSpouseClaimingAge(committedPlan.spouseClaimingAge);
+    setAnnualConversionAmt(committedPlan.annualConversionAmt);
+  }, [committedPlan, setRetirementAge, setAnnualExpenses, setLifeExpect, setReturnRate,
+      setInflationRate, setIncomeGrowth, setContrib401k, setSsClaimingAge,
+      setSpouseClaimingAge, setAnnualConversionAmt]);
+
+  const panelPad = isMobile ? "14px 0 0" : "0";
+
+  return (
+    <div style={{ padding: panelPad, display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* section header */}
+      <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+        Tune your plan
+      </div>
+
+      {/* pill rail — horizontally scrollable, one pill per slider */}
+      <div
+        role="tablist"
+        aria-label="Select a plan lever"
+        style={{
+          display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2,
+          scrollbarWidth: "none",
+        }}>
+        {sliders.map(s => {
+          const isActive = s.key === activeSlider.key;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveKey(s.key)}
+              style={{
+                flexShrink: 0,
+                font: `${isActive ? 600 : 500} 12px ${HF}`,
+                color: isActive ? t.ink : t.mut,
+                background: isActive ? t.surf2 : "transparent",
+                border: `1px solid ${isActive ? t.line2 : t.line}`,
+                borderRadius: 20, padding: "5px 12px",
+                cursor: "pointer", whiteSpace: "nowrap",
+                transition: "all .15s",
+              }}
+            >
+              {s.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* active slider area */}
+      <div style={{
+        background: t.surf, borderRadius: 14,
+        border: `1px solid ${t.line}`,
+        padding: "16px 18px",
+      }}>
+        <div style={{ font: `500 13px ${HF}`, color: t.mut, marginBottom: 6 }}>
+          {activeSlider.headline}
+        </div>
+        <div style={{
+          font: `700 28px/1 ${HM}`, color: t.ink, marginBottom: 14,
+        }}>
+          {activeSlider.format(activeSlider.value)}
+        </div>
+        <input
+          type="range"
+          aria-label={activeSlider.headline}
+          aria-valuetext={activeSlider.format(activeSlider.value)}
+          min={activeSlider.min}
+          max={activeSlider.max}
+          step={activeSlider.step}
+          value={activeSlider.value}
+          onChange={e => activeSlider.onChange(Number(e.target.value))}
+          style={{
+            width: "100%", cursor: "pointer",
+            accentColor: t.accent,
+            height: 6,
+          }}
+        />
+        <div style={{
+          display: "flex", justifyContent: "space-between",
+          font: `400 11px ${HF}`, color: t.faint, marginTop: 6,
+        }}>
+          <span>{activeSlider.format(activeSlider.min)}</span>
+          <span>{activeSlider.format(activeSlider.max)}</span>
+        </div>
+      </div>
+
+      {/* save + reset buttons */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={() => !saved && setShowConfirm(true)}
+          style={{
+            flex: 1, font: `600 13px ${HF}`,
+            color: saved ? t.good : t.ink,
+            background: saved ? "transparent" : t.accent,
+            border: `1px solid ${saved ? t.good : t.accent}`,
+            borderRadius: 10, padding: "9px 16px",
+            cursor: saved ? "default" : "pointer",
+            transition: "all .2s",
+          }}
+        >
+          <span style={{ color: saved ? t.good : "#fff" }}>
+            {saved ? "✓ Plan saved" : "Save as my plan"}
+          </span>
+        </button>
+        {isDirty && (
+          <button
+            type="button"
+            onClick={handleReset}
+            aria-label="Reset to saved plan"
+            style={{
+              font: `500 12px ${HF}`, color: t.mut,
+              background: "transparent",
+              border: `1px solid ${t.line}`,
+              borderRadius: 10, padding: "9px 14px",
+              cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >
+            ↺ Reset
+          </button>
+        )}
+      </div>
+
+      {showConfirm && (
+        <ConfirmModal
+          t={t}
+          title="Save this as your plan?"
+          body={`Retire at ${retirementAge} · ${fmtMo(annualExpenses ?? effectiveExpenses)}/mo spend`}
+          confirmLabel="Save plan"
+          onConfirm={handleSave}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile = false, navigate }) {
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, isSustainable,
     takeHome, effectiveExpenses, balAt90,
     contribSeries, activity,
-    commitPlan,
-    // WI-0.1 (V6): progress % computed by calcPlanProgress in the model
-    // (Infinity / zero-horizon guards live there) — the screen only picks
-    // labels and colors from the provided numbers. WI-1.1: planView.drivers
-    // carries the pill/trend ok booleans (rule 10 — no comparisons here).
-    planView,
-    // WI-1.2: ranked nudges from calcSignals
-    signals,
-    // WI-1.3: committed money events shown as dots on the arc
-    moneyEvents,
-    // WI-2.7: retirement walk rows feed the arc tap-to-scrub chip
-    retirementWalk,
+    planView, signals, moneyEvents, retirementWalk,
   } = props;
 
-  const [arcView, setArcView]       = useState("arc");
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [saved, setSaved]           = useState(false);
+  const [arcView, setArcView] = useState("arc");
 
   const { progressPct } = planView;
-  // Field selection, not math: the withdrawal-rate verdict comes from the model.
   const wrOk = planView.drivers.find(d => d.id === "withdrawal")?.ok;
 
-  const progressLabel = isSustainable
-    ? "self-sustaining ↗"
-    : `${progressPct}% there`;
-
+  const progressLabel = isSustainable ? "self-sustaining ↗" : `${progressPct}% there`;
   const progressColor = isSustainable ? t.good : progressPct >= 75 ? t.good : t.warm;
-
-  const handleConfirm = () => {
-    commitPlan({ retirementAge, annualExpenses: effectiveExpenses });
-    setShowConfirm(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
 
   return (
     <div style={{
-      flex: 1, padding: isMobile ? "14px 16px 12px" : "20px 28px 18px",
-      display: "flex", flexDirection: "column", minHeight: 0
+      flex: 1,
+      padding: isMobile ? "14px 16px 12px" : "20px 28px 18px",
+      display: "flex", flexDirection: "column", minHeight: 0,
     }}>
-      {/* headline row */}
+
+      {/* ── headline row ──────────────────────────────────────────────────────── */}
       <div style={{
         display: "flex",
         flexDirection: isMobile ? "column" : "row",
@@ -121,11 +388,12 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
         alignItems: isMobile ? "stretch" : "flex-start",
         gap: isMobile ? 10 : 0,
         marginBottom: 14,
+        flexShrink: 0,
       }}>
         <div>
           <div style={{
             font: `600 ${isMobile ? "20px" : "28px"}/1.1 ${HF}`, color: t.ink,
-            letterSpacing: "-0.025em"
+            letterSpacing: "-0.025em",
           }}>
             {isSustainable
               ? `On track to retire at ${retirementAge}.`
@@ -138,7 +406,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           </div>
         </div>
         {/* progress bar */}
-        <div style={{ width: isMobile ? "100%" : 210, paddingTop: isMobile ? 0 : 5 }}>
+        <div style={{ width: isMobile ? "100%" : 210, paddingTop: isMobile ? 0 : 5, flexShrink: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
             <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{progressLabel}</span>
             <span style={{ font: `600 11.5px ${HF}`, color: progressColor }}>
@@ -148,41 +416,69 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           <div style={{ height: 7, borderRadius: 6, background: t.line, overflow: "hidden" }}>
             <div style={{
               height: "100%", width: `${progressPct}%`,
-              background: `linear-gradient(90deg, ${t.good}, ${t.warm})`
+              background: `linear-gradient(90deg, ${t.good}, ${t.warm})`,
             }} />
           </div>
         </div>
       </div>
 
-      {/* arc graph — fills the available vertical space so there's no dead gap */}
-      <div style={{ flex: "1 1 0", display: "flex", flexDirection: "column", minHeight: isMobile ? 220 : 260 }}>
-        <ArcGraph
-          t={t}
-          chartData={chartData}
-          currentAge={currentAge}
-          retirementAge={retirementAge}
-          lifeExpect={lifeExpect}
-          contribSeries={contribSeries}
-          fillHeight
-          compact={isMobile}
-          glow={glow}
-          strokeWidth={strokeWidth}
-          activeView={arcView}
-          onViewChange={setArcView}
-          showToggle={!isMobile}
-          events={moneyEvents ?? []}
-          walkRows={retirementWalk?.rows ?? []}
-        />
-      </div>
+      {/* ── main content: arc + Quick Tune panel ─────────────────────────────── */}
+      {isMobile ? (
+        // Mobile: arc stacked above the tune panel
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, flexShrink: 0 }}>
+          <div style={{ minHeight: 220 }}>
+            <ArcGraph
+              t={t}
+              chartData={chartData}
+              currentAge={currentAge}
+              retirementAge={retirementAge}
+              lifeExpect={lifeExpect}
+              contribSeries={contribSeries}
+              height={220}
+              compact
+              glow={glow}
+              strokeWidth={strokeWidth}
+              activeView={arcView}
+              onViewChange={setArcView}
+              showToggle={false}
+              events={moneyEvents ?? []}
+              walkRows={retirementWalk?.rows ?? []}
+            />
+          </div>
+          <QuickTunePanel t={t} isMobile props={props} />
+        </div>
+      ) : (
+        // Desktop: arc on the left, tune panel fixed-width on the right
+        <div style={{ display: "flex", gap: 24, flex: "1 1 0", minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 260 }}>
+            <ArcGraph
+              t={t}
+              chartData={chartData}
+              currentAge={currentAge}
+              retirementAge={retirementAge}
+              lifeExpect={lifeExpect}
+              contribSeries={contribSeries}
+              fillHeight
+              glow={glow}
+              strokeWidth={strokeWidth}
+              activeView={arcView}
+              onViewChange={setArcView}
+              showToggle
+              events={moneyEvents ?? []}
+              walkRows={retirementWalk?.rows ?? []}
+            />
+          </div>
+          <div style={{ width: 280, flexShrink: 0, overflowY: "auto" }}>
+            <QuickTunePanel t={t} isMobile={false} props={props} />
+          </div>
+        </div>
+      )}
 
-      {/* stats row — 2×2 grid on mobile, single row on desktop.
-          WI-1.1: every number is a door — each card navigates to the screen
-          that explains it (take-home & income → Numbers/Statement; retire age
-          → Ideas dials; balance at 90 → Numbers/Year by year). */}
+      {/* ── stat cards ───────────────────────────────────────────────────────── */}
       <div style={{
         display: "grid",
         gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)",
-        gap: 10, marginTop: 14,
+        gap: 10, marginTop: 14, flexShrink: 0,
       }}>
         <StatCard t={t} label="You keep / mo"   value={fmtMo(takeHome)}          accent={t.good}
           onClick={() => navigate("numbers", "statement")} />
@@ -194,35 +490,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           onClick={() => navigate("numbers", "yearly")} />
       </div>
 
-      {/* signals strip (WI-1.2) — renders nothing when no signals qualify */}
+      {/* ── signals strip ────────────────────────────────────────────────────── */}
       <SignalsStrip t={t} signals={signals} navigate={navigate} isMobile={isMobile} />
-
-      {/* plan action */}
-      <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
-        <button
-          onClick={() => !saved && setShowConfirm(true)}
-          style={{
-            font: `600 13px ${HF}`, color: saved ? t.good : t.mut,
-            background: "transparent",
-            border: `1px solid ${saved ? t.good : t.line}`,
-            borderRadius: 8, padding: "8px 16px", cursor: saved ? "default" : "pointer",
-            transition: "all .2s",
-          }}
-        >
-          {saved ? "✓ Plan saved" : "Make this my plan"}
-        </button>
-      </div>
-
-      {showConfirm && (
-        <ConfirmModal
-          t={t}
-          title="Lock in your plan?"
-          body={`Retire at ${retirementAge} · ${fmtMo(effectiveExpenses)}/mo income`}
-          confirmLabel="Save plan"
-          onConfirm={handleConfirm}
-          onCancel={() => setShowConfirm(false)}
-        />
-      )}
     </div>
   );
 }

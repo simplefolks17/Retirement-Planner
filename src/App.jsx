@@ -30,7 +30,7 @@ import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
-  LIMIT_415C_2026, LIMIT_415C_CATCHUP_2026, CATCHUP_AGE,
+  LIMIT_415C_2026, LIMIT_415C_CATCHUP_2026, CATCHUP_AGE, CATCHUP_401K_2026,
   RMD_START_AGE,
   SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE,
   STATE_TAX, RETIREMENT_STATE_TAX,
@@ -149,6 +149,10 @@ export default function App() {
   // { id, label, amount, age, isInflow, isTaxable }
   // Empty default → zero golden master impact.
   const [moneyEvents, setMoneyEvents] = useState([]);
+
+  // Committed plan snapshot — null until the user explicitly clicks "Save as my plan".
+  // Enables the Reset button in the Plan screen's QuickTunePanel (restores all sliders).
+  const [committedPlan, setCommittedPlan] = useState(null);
 
   const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
 
@@ -749,7 +753,19 @@ export default function App() {
     if (ra !== undefined) setRetirementAge(ra);
     if (ae !== undefined) setAnnualExpenses(ae);
     else if (ms !== undefined) setAnnualExpenses(ms * ASSUMPTIONS.MONTHS_PER_YEAR);
-  }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses]);
+    // Snapshot of all Quick Tune slider values at commit time — enables the Reset
+    // button in PlanScreen to restore exactly this state. Uses the new values for
+    // fields being updated, current state for everything else.
+    const snapAe = ae !== undefined ? ae : ms !== undefined ? ms * ASSUMPTIONS.MONTHS_PER_YEAR : annualExpenses;
+    setCommittedPlan({
+      retirementAge: ra ?? retirementAge,
+      annualExpenses: snapAe,
+      lifeExpect, returnRate, inflationRate, incomeGrowth, contrib401k,
+      ssClaimingAge, spouseClaimingAge, annualConversionAmt,
+    });
+  }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses,
+      retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
+      incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
   // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
@@ -1016,6 +1032,23 @@ export default function App() {
     // Session-4: per-account breakdown + milestone badges for Year-by-year deep layer.
     retirementRowByAge,   // { [age]: engineRow } — Trad/Roth/Taxable/HSA + tax breakdown
     milestoneByAge,       // { [age]: tag } — inline portfolio-cell milestone badge
+    // Plan screen Quick Tune panel — setters (React guarantees identity stability,
+    // so adding them does not hurt V9; exhaustive-deps still wants them listed).
+    setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
+    setIncomeGrowth, setReturnRate, setInflationRate,
+    setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
+    // Raw input values the sliders need to display (derived display values like
+    // effectiveExpenses are already present above; these are the raw state values).
+    annualExpenses, inflationRate, incomeGrowth, contrib401k,
+    spouseClaimingAge, annualConversionAmt,
+    // 401k slider upper bound — age-dependent (catch-up at 50+). Never hardcode.
+    trad401kMax: currentAge >= CATCHUP_AGE
+      ? TRAD_401K_LIMIT_2026 + CATCHUP_401K_2026
+      : TRAD_401K_LIMIT_2026,
+    // Conditional slider flags.
+    isMarried,
+    // Committed plan snapshot for the Reset button (null until first save).
+    committedPlan,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -1033,7 +1066,14 @@ export default function App() {
        ssClaimingAge, includeSS,
        markerByAge, tablePhases,
        // Session-4 additions:
-       retirementRowByAge, milestoneByAge]);
+       retirementRowByAge, milestoneByAge,
+       // Quick Tune additions (setters are stable by definition; listed for exhaustive-deps):
+       setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
+       setIncomeGrowth, setReturnRate, setInflationRate,
+       setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
+       annualExpenses, inflationRate, incomeGrowth, contrib401k,
+       spouseClaimingAge, annualConversionAmt,
+       isMarried, committedPlan]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.
