@@ -1492,7 +1492,7 @@ export default function App() {
               { label: "Federal Tax",               val: fmt(fedTax),                                   color: C.orange  },
               { label: `State Tax (${selectedState})`, val: noStateTax ? "-" : fmt(stateTax),           color: noStateTax ? C.muted : C.purple },
               { label: spouseIncome > 0 ? "FICA (both earners)" : "FICA (7.65%)", val: fmt(fica),      color: "#6e7681" },
-              { label: spouseIncome > 0 ? "Est. Household Take-Home" : "Est. Take-Home", val: fmt(takeHome), color: C.green },
+              { label: spouseIncome > 0 ? "Est. Household Paycheck Deposit" : "Est. Paycheck Deposit", val: fmt(takeHome), color: C.green },
             ].map(({ label, val, color }) => (
               <div key={label} className="breakdown-row">
                 <span style={{ color: C.muted }}>{label}</span>
@@ -1527,7 +1527,7 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 6 }}>Budget &amp; Savings Capacity</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted, lineHeight: 1.5 }}>
-          How much of your take-home do you actually need to live on? The gap between your living costs and your take-home
+          How much of your paycheck deposit do you actually need to live on? The gap between your living costs and your paycheck deposit
           is your savings capacity — money you can deploy into tax-advantaged accounts.
         </p>
         <div className="income-grid">
@@ -1542,7 +1542,7 @@ export default function App() {
             <p style={{ margin: "-8px 0 0", fontSize: 10, color: C.muted }}>
               Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveLiving / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}</span>
               {livingExpenses === null && (
-                <span style={{ color: C.muted, fontStyle: "italic" }}> · auto-derived from take-home minus contributions</span>
+                <span style={{ color: C.muted, fontStyle: "italic" }}> · auto-derived from your spending budget</span>
               )}
               {livingExpenses !== null && (
                 <button onClick={() => { setLivingExpenses(null); setPreApplySnapshot(null); }} style={{

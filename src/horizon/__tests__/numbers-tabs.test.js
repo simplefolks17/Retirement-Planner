@@ -709,7 +709,7 @@ describe("NumbersScreen — Statement tab (Session-4: income replacement)", () =
     const allText = textOf(renderer.root);
     // incomeReplacementPct = 72 → "72%"
     expect(allText).toContain("72%");
-    expect(allText).toContain("working take-home");
+    expect(allText).toContain("working paycheck deposit");
     act(() => renderer.unmount());
   });
 

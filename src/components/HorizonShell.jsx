@@ -60,7 +60,7 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
       value: d.savingsRatePct == null ? "—" : `${d.savingsRatePct}%`,
       note: d.savingsRatePct == null
         ? "add your income to see this"
-        : `of take-home saved · guideline ${d.guidelinePct}%`,
+        : `of paycheck deposit saved · guideline ${d.guidelinePct}%`,
     };
   });
 
