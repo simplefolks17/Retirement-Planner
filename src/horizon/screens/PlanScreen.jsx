@@ -115,7 +115,9 @@ function QuickTunePanel({ t, isMobile, props }) {
       label: "Plan to age",
       headline: "How long should your money last?",
       value: lifeExpect,
-      min: Math.max(retirementAge + 1, 70), max: 100, step: 1,
+      // max matches the Classic Life Expectancy slider (115) so a horizon set
+      // there is never silently truncated on the first drag here.
+      min: Math.max(retirementAge + 1, 70), max: 115, step: 1,
       format: v => `age ${v}`,
       onChange: v => setLifeExpect(v),
     },
@@ -233,9 +235,10 @@ function QuickTunePanel({ t, isMobile, props }) {
         Tune your plan
       </div>
 
-      {/* pill rail — horizontally scrollable, one pill per slider */}
+      {/* pill rail — horizontally scrollable, one pill per slider.
+          Toggle buttons with aria-pressed (matches the Numbers tab strip
+          pattern); not an ARIA tablist since there's no arrow-key tab nav. */}
       <div
-        role="tablist"
         aria-label="Select a plan lever"
         style={{
           display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2,
@@ -247,8 +250,7 @@ function QuickTunePanel({ t, isMobile, props }) {
             <button
               key={s.key}
               type="button"
-              role="tab"
-              aria-selected={isActive}
+              aria-pressed={isActive}
               onClick={() => setActiveKey(s.key)}
               style={{
                 flexShrink: 0,
