@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
-import { StatCard, fmt, fmtMo } from "../shared.jsx";
+import { StatCard, fmt, fmtMo, kbActivate } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
@@ -29,7 +29,9 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
         }}>
           <div
             onClick={() => navigate(sig.target.screen, sig.target.subView)}
+            onKeyDown={kbActivate(() => navigate(sig.target.screen, sig.target.subView))}
             role="button"
+            tabIndex={0}
             style={{
               flex: 1, display: "flex", alignItems: "center", gap: 12,
               minHeight: 44, padding: "10px 4px 10px 14px", cursor: "pointer", minWidth: 0,
@@ -49,7 +51,9 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
           </div>
           <span
             onClick={() => dismiss(sig.id)}
+            onKeyDown={kbActivate(() => dismiss(sig.id))}
             role="button"
+            tabIndex={0}
             aria-label={`dismiss ${sig.id} signal`}
             style={{
               display: "flex", alignItems: "flex-start", padding: "10px 12px",
@@ -321,6 +325,9 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
   );
 
   useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
+
+  // Clear the "Plan saved" badge immediately when the user edits a slider after saving.
+  useEffect(() => { if (isDirty) setSaved(false); }, [isDirty]);
 
   // Clear the "Plan saved" checkmark after 2 s; cleanup prevents the fire-on-unmount leak.
   useEffect(() => {

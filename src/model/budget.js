@@ -176,6 +176,12 @@ export function calcStatementView({
   const flowSavePct     = pct(currentContribTotal);   // total (kept for callers that use it)
   const flowKeepPct     = pct(flowKeep);
 
+  // Applicability booleans for the income waterfall — travels with the data (rule 10):
+  // the screen must not do positivity checks on dollar amounts.
+  const showPreTaxBar    = safeDeduc > 0;
+  const showPostTaxBar   = afterTaxSavings > 0;
+  const showPaycheckLine = afterTaxSavings > 0 && takeHome > 0;
+
   // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
   const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
   const pension         = effectivePension ?? 0;
@@ -211,6 +217,7 @@ export function calcStatementView({
     takeHomePay: takeHome,    // paycheck deposit = gross − taxes − pre-tax savings
     keepPct, taxPct, savePct,
     afterTaxLevel, flowKeep, flowTaxPct, flowPreTaxPct, flowPostTaxPct, flowSavePct, flowKeepPct,
+    showPreTaxBar, showPostTaxBar, showPaycheckLine,
     monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
     monthlyTakeHome, incomeReplacementPct,
     effFedRatePct,

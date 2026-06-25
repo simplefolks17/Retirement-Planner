@@ -20,7 +20,7 @@
 //     moneyEvents shown as dots on the arc; inflow = good token, outflow = warm.
 //     events=[] renders pixel-identical to no prop (no extra chrome).
 
-import React, { useMemo, useRef, useState, useLayoutEffect, useId } from "react";
+import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
 
 const VW = 1200;
@@ -621,6 +621,7 @@ export default function ArcGraph({
   // exists. Inverse-scaling x→age is pure layout math; the displayed numbers come
   // straight from chartData / walkRows via scrubPointForAge (no new model math).
   const [scrub, setScrub] = useState(null);
+  useEffect(() => { setScrub(null); }, [activeView]);
   const onScrubMove = (clientX) => {
     const el = boxRef.current;
     if (!el || !validData.length) return;

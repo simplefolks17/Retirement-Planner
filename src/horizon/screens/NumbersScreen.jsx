@@ -82,12 +82,6 @@ function IncomeWaterfall({ t, view }) {
   const axisMax = Math.max(view.gross, 1);
   const y = v => PADT + plotH * (1 - v / axisMax);
 
-  const COLS = 5;
-  const slot = w / COLS;
-  const barW = Math.min(slot * 0.60, 110);
-  const cx = i => slot * i + slot / 2;
-  const bx = i => cx(i) - barW / 2;
-
   const {
     gross,
     taxTotal: tax,
@@ -99,21 +93,30 @@ function IncomeWaterfall({ t, view }) {
   } = view;
   const pctLabel = p => p == null ? "—" : `${p}%`;
 
-  // Each bar: top/bot define the running-balance span (for visual height); val is the amount.
+  // Build bars dynamically: omit zero-value non-full bars so users without
+  // 401k/HSA or Roth/brokerage don't see phantom "$0 Pre-tax savings" stubs.
+  // Each bar: top/bot define the running-balance span; val is the amount deducted.
+  // Applicability flags (showPreTaxBar / showPostTaxBar) come from the model (rule 10).
   const bars = [
-    { i: 0, label: "Gross income",      sub: "",                 val: gross,      top: gross,       bot: 0,        color: t.accent,   full: true  },
-    { i: 1, label: "Taxes",             sub: "fed · FICA",       val: tax,        top: gross,       bot: afterTaxLevel, color: "#b09070"           },
-    { i: 2, label: "Pre-tax savings",   sub: "401k · HSA",       val: preTaxSave, top: afterTaxLevel,bot: paycheck, color: t.warm                  },
-    { i: 3, label: "After-tax savings", sub: "Roth · brokerage", val: postTaxSave,top: paycheck,    bot: keep,     color: t.warm                  },
-    { i: 4, label: "Spending budget",   sub: "after all saving", val: keep,       top: keep,        bot: 0,        color: t.good,     full: true  },
-  ];
+    { label: "Gross income",      sub: "",                 val: gross,      top: gross,         bot: 0,       color: t.accent, full: true,  pct: view.gross > 0 ? 100 : null },
+    { label: "Taxes",             sub: "fed · FICA",       val: tax,        top: gross,         bot: afterTaxLevel, color: "#b09070",        pct: view.flowTaxPct    },
+    ...(view.showPreTaxBar  ? [{ label: "Pre-tax savings",  sub: "401k · HSA",         val: preTaxSave,  top: afterTaxLevel, bot: paycheck, color: t.warm, pct: view.flowPreTaxPct  }] : []),
+    ...(view.showPostTaxBar ? [{ label: "After-tax savings", sub: "Roth · brokerage",  val: postTaxSave, top: paycheck,      bot: keep,     color: t.warm, pct: view.flowPostTaxPct }] : []),
+    { label: "Spending budget",   sub: "after all saving", val: keep,       top: keep,          bot: 0,       color: t.good,  full: true,  pct: view.flowKeepPct   },
+  ].map((b, i) => ({ ...b, i }));
 
-  const connectors = [
-    { yv: gross,       from: 0 },
-    { yv: afterTaxLevel, from: 1 },
-    { yv: paycheck,    from: 2 },
-    { yv: keep,        from: 3 },
-  ];
+  const COLS = bars.length;
+  const slot = w / COLS;
+  const barW = Math.min(slot * 0.60, 110);
+  const cx = i => slot * i + slot / 2;
+  const bx = i => cx(i) - barW / 2;
+
+  // connectors: dashed lines at the shared level between consecutive bars.
+  // Bar 0 (Gross income) connects at its TOP (= gross), not its bot (= 0).
+  const connectors = bars.slice(0, -1).map((b, i) => ({ from: i, yv: i === 0 ? b.top : b.bot }));
+
+  // showPaycheckLine comes from the model so the screen makes no applicability checks (rule 10).
+  const { showPaycheckLine } = view;
 
   const fmtK = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
 
@@ -123,9 +126,9 @@ function IncomeWaterfall({ t, view }) {
         {/* baseline */}
         <line x1={0} y1={y(0)} x2={w} y2={y(0)} stroke={t.line2} strokeWidth={1} />
 
-        {/* paycheck reference line — spans full width so both "before" and "after" halves
-            are visually anchored to this level */}
-        {paycheck > 0 && (
+        {/* paycheck reference line — only shown when after-tax savings exist, so the
+            line marks a meaningful gap between paycheck deposit and spending budget */}
+        {showPaycheckLine && (
           <>
             <line x1={0} x2={w} y1={y(paycheck)} y2={y(paycheck)}
               stroke={t.good} strokeWidth={1} strokeDasharray="4 4" opacity={0.45} />
@@ -162,7 +165,7 @@ function IncomeWaterfall({ t, view }) {
                 style={{ font: `400 9.5px ${HF}` }} fill={t.faint}>{b.sub}</text>
               {/* percentage of gross */}
               <text x={cx(b.i)} y={H - 7} textAnchor="middle"
-                style={{ font: `400 9.5px ${HM}` }} fill={t.faint}>{pctLabel(b.i === 0 ? (view.gross > 0 ? 100 : null) : b.i === 1 ? view.flowTaxPct : b.i === 2 ? view.flowPreTaxPct : b.i === 3 ? view.flowPostTaxPct : view.flowKeepPct)}</text>
+                style={{ font: `400 9.5px ${HM}` }} fill={t.faint}>{pctLabel(b.pct)}</text>
             </g>
           );
         })}
