@@ -627,6 +627,18 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   **Bug fix — `isDirty` asymmetry (commit `01960b9`):** comparing `(annualExpenses ?? effectiveExpenses)` vs `committedPlan.annualExpenses` was asymmetric — when a plan was saved from Ideas/onboarding, `committedPlan.annualExpenses` is `null` but the left side resolved `effectiveExpenses` (non-null), making `isDirty = true` immediately after saving. Fixed to compare raw `annualExpenses` state on both sides: `null !== null → false` (correctly not dirty).
   **Review:** 6 rounds by CodeRabbit + Gemini across multiple sessions; all real findings fixed, noise triaged. Tracker: #120 done (52 done, 68 planned).
 
+- **Paycheck vs spending budget clarification + display fixes (2026-06-25, PRs #42 + #43):**
+  Two-part follow-up pass on the Plan screen wow-factor work.
+  **PR #42 — Arc display bugs + paycheck/spending budget vocabulary sweep:**
+  Fixed 4 arc display bugs (milestone positions, Sources band geometry, start-age label, take-home label). Full vocabulary sweep — renamed all "take-home" labels to either "Paycheck deposit" ($67k = gross − taxes − pre-tax 401k/HSA; what hits your bank account) or "Spending budget" ($57k = gross − taxes − all savings; actual money to spend). Added `afterTaxSavings`, `takeHomePay`, `flowPreTaxPct`, `flowPostTaxPct` to `calcStatementView` return (budget.js). Added a 5-bar dynamic income waterfall (Gross → Taxes → Pre-tax savings → After-tax savings → Spending budget; bars with zero value omitted; reference line shows paycheck level when after-tax savings exist). 560 tests, lint clean, golden master untouched.
+  **PR #43 — Code-review findings (Gemini + CodeRabbit):** 6 findings from post-merge review, all display-only:
+  1. Gemini: waterfall first-bar connector at `y=0` instead of `y=gross`.
+  2. Rule 10: waterfall bar applicability checks (`preTaxSave > 0`, `postTaxSave > 0`) moved from JSX into `calcStatementView` as `showPreTaxBar`/`showPostTaxBar`/`showPaycheckLine` booleans.
+  3. JourneyScreen Ch.1 proportion bar used paycheck-based `keepPct` but headline shows `flowKeep` — switched to `flowKeepPct/flowTaxPct/flowSavePct` (% of gross).
+  4. "Plan saved" badge now cleared immediately when `isDirty` becomes true (was only cleared by 2-second timeout).
+  5. Signal-strip `role="button"` elements gained `tabIndex={0}` + `onKeyDown={kbActivate(...)}` (keyboard a11y).
+  6. CLAUDE.md QuickTunePanel slider list corrected (was listing non-existent sliders). 560 tests, lint clean.
+
 ## Commands
 
 - `npm run dev` — start dev server
