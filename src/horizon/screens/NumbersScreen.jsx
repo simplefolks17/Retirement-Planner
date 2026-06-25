@@ -582,7 +582,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       borderRadius: 10, padding: "10px 16px", marginBottom: 14,
                       font: `500 13px ${HF}`, color: t.warm,
                     }}>
-                      Spending exceeds take-home by {fmt(budget.deficitAmount)} — consider reducing expenses or contributions.
+                      Spending exceeds paycheck deposit by {fmt(budget.deficitAmount)} — consider reducing expenses or contributions.
                     </div>
                   )}
 
