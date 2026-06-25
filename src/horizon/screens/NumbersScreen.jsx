@@ -54,17 +54,16 @@ function StmtCol({ t, title, items, bar }) {
 }
 
 // ── Income Waterfall ──────────────────────────────────────────────────────────
-// Where your paycheck goes, shown as a running-balance waterfall:
-// Gross income, then each deduction (Tax, Savings) drops the balance until
-// what's left is your take-home. Drawn in measured pixel space so the SVG text
-// labels stay crisp at any width.
+// 5-bar waterfall showing exactly where each dollar goes:
+//   Gross income → Taxes → Pre-tax savings (401k/HSA) → PAYCHECK → After-tax
+//   savings (Roth/brokerage) → Spending budget
 //
-// PIXEL/LAYOUT GEOMETRY ONLY (V3/principle 6): every money level comes from the
-// model's statementView bundle — `flowKeep` is the model-computed RESIDUAL
-// (gross − tax − savings) so the waterfall reconciles to 100% of gross (the
-// residual semantics are documented at calcStatementView in src/model/budget.js).
-// Per-bar percentages come from the statementView flow* set; this component only
-// converts values to pixels.
+// The paycheck level is highlighted as a horizontal reference line so the two
+// "savings" concepts are visually distinct: pre-tax savings happen before your
+// paycheck arrives; after-tax savings are transfers you make after.
+//
+// PIXEL/LAYOUT GEOMETRY ONLY (rule 10): all dollar levels and percentages come
+// from statementView; this component only converts values to pixels.
 function IncomeWaterfall({ t, view }) {
   const wrapRef = useRef(null);
   const [w, setW] = useState(520);
@@ -78,33 +77,42 @@ function IncomeWaterfall({ t, view }) {
     return () => ro.disconnect();
   }, []);
 
-  const H = 300, PADT = 30, PADB = 48;
+  const H = 330, PADT = 32, PADB = 62;
   const plotH = H - PADT - PADB;
-  const axisMax = Math.max(view.gross, 1);              // pixel scale only
-  const y = v => PADT + plotH * (1 - v / axisMax);      // value → pixel (axis = gross)
+  const axisMax = Math.max(view.gross, 1);
+  const y = v => PADT + plotH * (1 - v / axisMax);
 
-  const COLS = 4;
+  const COLS = 5;
   const slot = w / COLS;
-  const barW = Math.min(slot * 0.62, 130);
-  const cx = i => slot * i + slot / 2;             // column centre
-  const bx = i => cx(i) - barW / 2;                // column left edge
+  const barW = Math.min(slot * 0.60, 110);
+  const cx = i => slot * i + slot / 2;
+  const bx = i => cx(i) - barW / 2;
 
-  // Money levels straight from the model (no arithmetic here)
-  const { gross, taxTotal: tax, saveTotal: save, afterTaxLevel: afterTax, flowKeep: keep } = view;
+  const {
+    gross,
+    taxTotal: tax,
+    preTaxDeductions: preTaxSave,
+    afterTaxSavings: postTaxSave,
+    afterTaxLevel,
+    takeHomePay: paycheck,
+    flowKeep: keep,
+  } = view;
   const pctLabel = p => p == null ? "—" : `${p}%`;
 
+  // Each bar: top/bot define the running-balance span (for visual height); val is the amount.
   const bars = [
-    { i: 0, label: "Gross income", val: gross, top: gross,    bot: 0,        color: t.accent,  full: true,  pct: pctLabel(view.gross > 0 ? 100 : null) },
-    { i: 1, label: "Tax",          val: tax,   top: gross,    bot: afterTax, color: "#b09070",              pct: pctLabel(view.flowTaxPct) },
-    { i: 2, label: "Savings",      val: save,  top: afterTax, bot: keep,     color: t.warm,                 pct: pctLabel(view.flowSavePct) },
-    { i: 3, label: "Spending budget", val: keep,  top: keep,   bot: 0,        color: t.good,    full: true,  pct: pctLabel(view.flowKeepPct) },
+    { i: 0, label: "Gross income",      sub: "",                 val: gross,      top: gross,       bot: 0,        color: t.accent,   full: true  },
+    { i: 1, label: "Taxes",             sub: "fed · FICA",       val: tax,        top: gross,       bot: afterTaxLevel, color: "#b09070"           },
+    { i: 2, label: "Pre-tax savings",   sub: "401k · HSA",       val: preTaxSave, top: afterTaxLevel,bot: paycheck, color: t.warm                  },
+    { i: 3, label: "After-tax savings", sub: "Roth · brokerage", val: postTaxSave,top: paycheck,    bot: keep,     color: t.warm                  },
+    { i: 4, label: "Spending budget",   sub: "after all saving", val: keep,       top: keep,        bot: 0,        color: t.good,     full: true  },
   ];
 
-  // dashed connectors link each running-balance level across the gap
   const connectors = [
-    { yv: gross,    from: 0 },
-    { yv: afterTax, from: 1 },
-    { yv: keep,     from: 2 },
+    { yv: gross,       from: 0 },
+    { yv: afterTaxLevel, from: 1 },
+    { yv: paycheck,    from: 2 },
+    { yv: keep,        from: 3 },
   ];
 
   const fmtK = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
@@ -115,7 +123,20 @@ function IncomeWaterfall({ t, view }) {
         {/* baseline */}
         <line x1={0} y1={y(0)} x2={w} y2={y(0)} stroke={t.line2} strokeWidth={1} />
 
-        {/* running-balance connectors */}
+        {/* paycheck reference line — spans full width so both "before" and "after" halves
+            are visually anchored to this level */}
+        {paycheck > 0 && (
+          <>
+            <line x1={0} x2={w} y1={y(paycheck)} y2={y(paycheck)}
+              stroke={t.good} strokeWidth={1} strokeDasharray="4 4" opacity={0.45} />
+            <text x={6} y={y(paycheck) - 5}
+              style={{ font: `700 10px ${HM}` }} fill={t.good}>
+              Paycheck deposit: {fmtK(paycheck)}
+            </text>
+          </>
+        )}
+
+        {/* running-balance connectors between bars */}
         {connectors.map(c => (
           <line key={c.from} x1={bx(c.from) + barW} y1={y(c.yv)}
             x2={bx(c.from + 1)} y2={y(c.yv)}
@@ -127,17 +148,21 @@ function IncomeWaterfall({ t, view }) {
           return (
             <g key={b.label}>
               <rect x={bx(b.i)} y={yt} width={barW} height={Math.max(yb - yt, 3)} rx={5}
-                fill={b.color} fillOpacity={b.full ? 0.9 : 0.72} />
-              {/* dollar value above the bar */}
+                fill={b.color} fillOpacity={b.full ? 0.90 : 0.70} />
+              {/* dollar amount above the bar */}
               <text x={cx(b.i)} y={yt - 9} textAnchor="middle"
-                style={{ font: `600 13px ${HM}` }} fill={t.ink}>
+                style={{ font: `600 11.5px ${HM}` }} fill={t.ink}>
                 {(b.full ? "" : "−") + fmtK(b.val)}
               </text>
-              {/* category + percent below the axis */}
-              <text x={cx(b.i)} y={H - 26} textAnchor="middle"
-                style={{ font: `600 12px ${HF}` }} fill={t.mut}>{b.label}</text>
-              <text x={cx(b.i)} y={H - 10} textAnchor="middle"
-                style={{ font: `400 11px ${HM}` }} fill={t.faint}>{b.pct}</text>
+              {/* label */}
+              <text x={cx(b.i)} y={H - 38} textAnchor="middle"
+                style={{ font: `500 10.5px ${HF}` }} fill={t.mut}>{b.label}</text>
+              {/* sub-label (account types or context) */}
+              <text x={cx(b.i)} y={H - 22} textAnchor="middle"
+                style={{ font: `400 9.5px ${HF}` }} fill={t.faint}>{b.sub}</text>
+              {/* percentage of gross */}
+              <text x={cx(b.i)} y={H - 7} textAnchor="middle"
+                style={{ font: `400 9.5px ${HM}` }} fill={t.faint}>{pctLabel(b.i === 0 ? (view.gross > 0 ? 100 : null) : b.i === 1 ? view.flowTaxPct : b.i === 2 ? view.flowPreTaxPct : b.i === 3 ? view.flowPostTaxPct : view.flowKeepPct)}</text>
             </g>
           );
         })}
@@ -358,7 +383,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["Federal tax",     `−$${Math.round(fedTax).toLocaleString()}`,  "1",  false],
                 ["FICA + state",    `−$${Math.round(sv.ficaPlusState).toLocaleString()}`, null, false],
                 ["Pre-tax savings", `−$${Math.round(sv.preTaxDeductions).toLocaleString()}`, null, false],
-                ["Take-home",       `$${Math.round(takeHome).toLocaleString()}`,       null, true],
+                ["Paycheck deposit", `$${Math.round(takeHome).toLocaleString()}`,       null, true],
               ]} bar={sv.keepPct == null ? null : {
                 segs: [
                   { f: sv.keepPct, c: t.good, l: `Keep ${sv.keepPct}%` },
@@ -411,7 +436,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   <div style={{ font: `400 13px ${SERIF}`, color: t.mut }}>
                     Retirement income replaces{" "}
                     <span style={{ font: `700 15px ${HM}`, color }}>{pct}%</span>
-                    {" "}of your working take-home.
+                    {" "}of your working paycheck deposit.
                   </div>
                   {navigate && (
                     <button
@@ -868,7 +893,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         ["Federal tax",              fmtDeduc(fedTax),                  false, false],
                         ["State tax",                fmtDeduc(taxView.stateTax),        false, false],
                         ["FICA",                     fmtDeduc(taxView.fica),            false, false],
-                        ["Take-home",                fmtExact(takeHome),                false, true ],
+                        ["Paycheck deposit",          fmtExact(takeHome),                false, true ],
                       ];
                     })().map(([label, val, , strong]) => (
                       <div key={label} style={{

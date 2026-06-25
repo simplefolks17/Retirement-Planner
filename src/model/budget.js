@@ -164,11 +164,17 @@ export function calcStatementView({
   const savePct = pct(currentContribTotal);
 
   // Waterfall set (residual basis — reconciles to 100% of gross)
-  const afterTaxLevel = gross - taxTotal;
-  const flowKeep      = Math.max(gross - taxTotal - currentContribTotal, 0);
-  const flowTaxPct    = pct(taxTotal);
-  const flowSavePct   = pct(currentContribTotal);
-  const flowKeepPct   = pct(flowKeep);
+  const afterTaxLevel  = gross - taxTotal;
+  // Split savings into pre-tax (401k + HSA — reduce taxable income) and after-tax
+  // (Roth IRA + taxable brokerage — leave the paycheck, then transfer out).
+  // afterTaxLevel − takeHome ≡ safeDeduc; takeHome − flowKeep ≡ afterTaxSavings.
+  const afterTaxSavings = Math.max(0, currentContribTotal - safeDeduc);
+  const flowKeep        = Math.max(gross - taxTotal - currentContribTotal, 0);
+  const flowTaxPct      = pct(taxTotal);
+  const flowPreTaxPct   = pct(safeDeduc);
+  const flowPostTaxPct  = pct(afterTaxSavings);
+  const flowSavePct     = pct(currentContribTotal);   // total (kept for callers that use it)
+  const flowKeepPct     = pct(flowKeep);
 
   // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
   const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
@@ -201,8 +207,10 @@ export function calcStatementView({
     // Statement table so the row arithmetic matches takeHome (rule 2b / rule 10).
     // saveTotal is ALL contributions (for the waterfall chart's allocation view).
     preTaxDeductions: safeDeduc,
+    afterTaxSavings,          // Roth IRA + taxable brokerage contributions (after-tax)
+    takeHomePay: takeHome,    // paycheck deposit = gross − taxes − pre-tax savings
     keepPct, taxPct, savePct,
-    afterTaxLevel, flowKeep, flowTaxPct, flowSavePct, flowKeepPct,
+    afterTaxLevel, flowKeep, flowTaxPct, flowPreTaxPct, flowPostTaxPct, flowSavePct, flowKeepPct,
     monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
     monthlyTakeHome, incomeReplacementPct,
     effFedRatePct,
