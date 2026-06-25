@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Analytics } from "@vercel/analytics/react";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
@@ -154,6 +154,7 @@ export default function App() {
   // Enables the Reset button in the Plan screen's QuickTunePanel (restores all sliders).
   const [committedPlan, setCommittedPlan] = useState(null);
   const [committedOutputs, setCommittedOutputs] = useState(null);
+  const [shouldSnapshotOutputs, setShouldSnapshotOutputs] = useState(false);
 
   const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
 
@@ -764,11 +765,19 @@ export default function App() {
       lifeExpect, returnRate, inflationRate, incomeGrowth, contrib401k,
       ssClaimingAge, spouseClaimingAge, annualConversionAmt,
     });
-    setCommittedOutputs({ totalAtRet, yearsSustained });
+    setShouldSnapshotOutputs(true);
   }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses,
       retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
-      incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt,
-      totalAtRet, yearsSustained]);
+      incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
+
+  // Deferred output snapshot: runs AFTER the plan-state updates from commitPlan have caused
+  // a re-render so that totalAtRet / yearsSustained reflect the newly saved inputs, not
+  // the pre-commit values (stale-baseline fix — Gemini R2).
+  useEffect(() => {
+    if (!shouldSnapshotOutputs) return;
+    setCommittedOutputs({ totalAtRet, yearsSustained });
+    setShouldSnapshotOutputs(false);
+  }, [shouldSnapshotOutputs, totalAtRet, yearsSustained]);
 
   // Monthly spend write-back: the QuickTune slider works in monthly units;
   // this callback converts to annual so PlanScreen never does month→year math (rule 10).
@@ -859,6 +868,14 @@ export default function App() {
   }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge,
        withdrawalRate, currentContribTotal, takeHome]);
 
+  // Pre-computed display scalars shared by sliderBounds and horizonProps directly.
+  // monthlySpend: the QuickTune spend slider value (rule 10 — month↔year in the model).
+  // trad401kMax: catch-up age determines the 401k ceiling (rule 1 — config only).
+  const monthlySpend = Math.round((annualExpenses ?? effectiveExpenses) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const trad401kMax  = currentAge >= CATCHUP_AGE
+    ? TRAD_401K_LIMIT_2026 + CATCHUP_401K_2026
+    : TRAD_401K_LIMIT_2026;
+
   // Plan screen "wow" highlights — portfolio hero + income replacement meter.
   // All arithmetic lives here (rule 10: screens only read named fields).
   // currentSaved is a scalar sum; rawFlow is computed inside the memo (it's a fresh
@@ -905,6 +922,20 @@ export default function App() {
     } : null;
     return { atRet: deltaAtRet, yearsSustained: deltaYrs, badge };
   }, [totalAtRet, yearsSustained, committedOutputs]);
+
+  // QuickTunePanel slider bounds — age/financial math extracted from the screen (rule 10).
+  // canTuneRothConversion: pre-gated eligibility boolean so the screen never does > 0 check.
+  const sliderBounds = useMemo(() => ({
+    retireMin:  Math.min(currentAge + 1, retirementAge),
+    retireMax:  Math.max(80, retirementAge),
+    spendMin:   Math.min(500, monthlySpend),
+    spendMax:   Math.max(30_000, monthlySpend),
+    horizonMin: Math.min(Math.max(retirementAge + 1, 70), lifeExpect),
+    horizonMax: Math.max(115, lifeExpect),
+    contribMax: Math.max(trad401kMax, contrib401k),
+    rothMax:    Math.max(200_000, annualConversionAmt),
+    canTuneRothConversion: conversionWindowYrs > 0,
+  }), [currentAge, retirementAge, monthlySpend, lifeExpect, trad401kMax, contrib401k, annualConversionAmt, conversionWindowYrs]);
 
   // Plan-screen signals strip (WI-1.2): calcSignals ranks nudges from values
   // computed ABOVE (one definition per number — it never recomputes):
@@ -1114,12 +1145,10 @@ export default function App() {
     // effectiveExpenses are already present above; these are the raw state values).
     annualExpenses, inflationRate, incomeGrowth, contrib401k,
     spouseClaimingAge, annualConversionAmt,
-    // Pre-computed monthly display value for the spend slider (rule 10: no month math in screens).
-    monthlySpend: Math.round((annualExpenses ?? effectiveExpenses) / ASSUMPTIONS.MONTHS_PER_YEAR),
-    // 401k slider upper bound — age-dependent (catch-up at 50+). Never hardcode.
-    trad401kMax: currentAge >= CATCHUP_AGE
-      ? TRAD_401K_LIMIT_2026 + CATCHUP_401K_2026
-      : TRAD_401K_LIMIT_2026,
+    // Pre-computed display scalars and slider bounds (rule 10: math in model, not screen).
+    monthlySpend,
+    trad401kMax,
+    sliderBounds,
     // Conditional slider flags.
     isMarried,
     // Committed plan snapshot for the Reset button (null until first save).
@@ -1153,7 +1182,8 @@ export default function App() {
        annualExpenses, inflationRate, incomeGrowth, contrib401k,
        spouseClaimingAge, annualConversionAmt,
        isMarried, committedPlan,
-       planHighlights, planDelta]);
+       planHighlights, planDelta,
+       monthlySpend, trad401kMax, sliderBounds]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.

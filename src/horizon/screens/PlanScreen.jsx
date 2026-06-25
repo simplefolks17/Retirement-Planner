@@ -189,13 +189,13 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
     retirementAge, annualExpenses, effectiveExpenses, lifeExpect,
     returnRate, inflationRate, incomeGrowth, contrib401k,
     ssClaimingAge, spouseClaimingAge, annualConversionAmt,
-    currentAge, trad401kMax,
-    // Pre-computed monthly display value for spend (rule 10: no month math here)
-    monthlySpend,
+    currentAge,
+    // Pre-computed display values and slider bounds (rule 10: no bounds math in screens)
+    monthlySpend, sliderBounds,
     // Conditional flags
-    isMarried, conversionWindowYrs,
+    isMarried,
     // Setters
-    setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
+    setAnnualExpenses, setLifeExpect, setContrib401k,
     setIncomeGrowth, setReturnRate, setInflationRate,
     setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
     // Coupled callbacks (invariant-preserving + rule 10 write-backs)
@@ -215,8 +215,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "Retire at",
       headline: "When do you retire?",
       value: retirementAge,
-      // Dynamic bounds: ensure max ≥ current value (guard for out-of-range state).
-      min: Math.min(currentAge + 1, retirementAge), max: Math.max(80, retirementAge), step: 1,
+      min: sliderBounds.retireMin, max: sliderBounds.retireMax, step: 1,
       format: v => `age ${v}`,
       onChange: v => setRetirementAgeCoupled(v),
     },
@@ -225,7 +224,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "Monthly spend",
       headline: "How much will you spend in retirement?",
       value: monthlySpend,
-      min: Math.min(500, monthlySpend), max: Math.max(30_000, monthlySpend), step: 100,
+      min: sliderBounds.spendMin, max: sliderBounds.spendMax, step: 100,
       format: v => `$${v.toLocaleString()}/mo`,
       onChange: v => setMonthlySpend(v),
     },
@@ -234,8 +233,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "Plan to age",
       headline: "How long should your money last?",
       value: lifeExpect,
-      min: Math.min(Math.max(retirementAge + 1, 70), lifeExpect),
-      max: Math.max(115, lifeExpect), step: 1,
+      min: sliderBounds.horizonMin, max: sliderBounds.horizonMax, step: 1,
       format: v => `age ${v}`,
       onChange: v => setLifeExpect(v),
     },
@@ -244,7 +242,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "401k savings",
       headline: "How much do you save in your 401k each year?",
       value: contrib401k,
-      min: 0, max: Math.max(trad401kMax, contrib401k), step: 500,
+      min: 0, max: sliderBounds.contribMax, step: 500,
       format: v => `$${v.toLocaleString()}/yr`,
       onChange: v => setContrib401k(v),
     },
@@ -293,12 +291,12 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       format: v => `age ${v}`,
       onChange: v => setSpouseClaimingAge(v),
     },
-    conversionWindowYrs > 0 && {
+    sliderBounds.canTuneRothConversion && {
       key: "roth",
       label: "Roth conv.",
       headline: "How much do you convert to Roth each year?",
       value: annualConversionAmt,
-      min: 0, max: Math.max(200_000, annualConversionAmt), step: 1_000,
+      min: 0, max: sliderBounds.rothMax, step: 1_000,
       format: v => `$${v.toLocaleString()}/yr`,
       // Switch to custom mode so the amount actually takes effect (bracket mode ignores it).
       onChange: v => { setConversionMode("custom"); setAnnualConversionAmt(v); },
@@ -310,8 +308,8 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
 
   // isDirty: any slider value differs from the committed snapshot.
   const isDirty = committedPlan !== null && (
-    retirementAge          !== committedPlan.retirementAge          ||
-    annualExpenses         !== committedPlan.annualExpenses         ||
+    retirementAge                                !== committedPlan.retirementAge          ||
+    (annualExpenses ?? effectiveExpenses)        !== committedPlan.annualExpenses         ||
     lifeExpect             !== committedPlan.lifeExpect             ||
     returnRate             !== committedPlan.returnRate             ||
     inflationRate          !== committedPlan.inflationRate          ||
@@ -339,7 +337,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
 
   const handleReset = useCallback(() => {
     if (!committedPlan) return;
-    setRetirementAge(committedPlan.retirementAge);
+    setRetirementAgeCoupled(committedPlan.retirementAge);
     setAnnualExpenses(committedPlan.annualExpenses);
     setLifeExpect(committedPlan.lifeExpect);
     setReturnRate(committedPlan.returnRate);
@@ -349,7 +347,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
     setSsClaimingAge(committedPlan.ssClaimingAge);
     setSpouseClaimingAge(committedPlan.spouseClaimingAge);
     setAnnualConversionAmt(committedPlan.annualConversionAmt);
-  }, [committedPlan, setRetirementAge, setAnnualExpenses, setLifeExpect, setReturnRate,
+  }, [committedPlan, setRetirementAgeCoupled, setAnnualExpenses, setLifeExpect, setReturnRate,
       setInflationRate, setIncomeGrowth, setContrib401k, setSsClaimingAge,
       setSpouseClaimingAge, setAnnualConversionAmt]);
 
@@ -475,7 +473,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
         <ConfirmModal
           t={t}
           title="Save this as your plan?"
-          body={`Retire at ${retirementAge} · ${fmtMo(annualExpenses ?? effectiveExpenses)}/mo spend`}
+          body={`Retire at ${retirementAge} · ${fmt(monthlySpend)}/mo spend`}
           confirmLabel="Save plan"
           onConfirm={handleSave}
           onCancel={() => setShowConfirm(false)}

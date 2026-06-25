@@ -92,6 +92,14 @@ const makeMockProps = (overrides = {}) => ({
   setConversionMode:         vi.fn(),
   // Pre-computed monthly spend (rule 10: no division in PlanScreen)
   monthlySpend:              Math.round(57_444 / 12),
+  // Pre-computed slider bounds (rule 10: no bounds math in PlanScreen)
+  sliderBounds: {
+    retireMin: 36, retireMax: 80,
+    spendMin: 500, spendMax: 30_000,
+    horizonMin: 70, horizonMax: 115,
+    contribMax: 24_500, rothMax: 200_000,
+    canTuneRothConversion: false,
+  },
   commitPlan:                vi.fn(),
   ...overrides,
 });
@@ -285,7 +293,16 @@ describe("PlanScreen — conditional sliders", () => {
   });
 
   it("Roth conv. pill is present when conversionWindowYrs > 0", () => {
-    const props = makeMockProps({ conversionWindowYrs: 7 });
+    const props = makeMockProps({
+      conversionWindowYrs: 7,
+      sliderBounds: {
+        retireMin: 36, retireMax: 80,
+        spendMin: 500, spendMax: 30_000,
+        horizonMin: 70, horizonMax: 115,
+        contribMax: 24_500, rothMax: 200_000,
+        canTuneRothConversion: true,
+      },
+    });
     let renderer;
     act(() => {
       renderer = create(
@@ -333,16 +350,27 @@ describe("plan screen wow additions", () => {
     isMarried:           false,
     conversionWindowYrs: 0,
     committedPlan:       null,
-    setRetirementAge:       vi.fn(),
-    setAnnualExpenses:      vi.fn(),
-    setLifeExpect:          vi.fn(),
-    setContrib401k:         vi.fn(),
-    setIncomeGrowth:        vi.fn(),
-    setReturnRate:          vi.fn(),
-    setInflationRate:       vi.fn(),
-    setSsClaimingAge:       vi.fn(),
-    setSpouseClaimingAge:   vi.fn(),
-    setAnnualConversionAmt: vi.fn(),
+    setRetirementAge:          vi.fn(),
+    setAnnualExpenses:         vi.fn(),
+    setLifeExpect:             vi.fn(),
+    setContrib401k:            vi.fn(),
+    setIncomeGrowth:           vi.fn(),
+    setReturnRate:             vi.fn(),
+    setInflationRate:          vi.fn(),
+    setSsClaimingAge:          vi.fn(),
+    setSpouseClaimingAge:      vi.fn(),
+    setAnnualConversionAmt:    vi.fn(),
+    setRetirementAgeCoupled:   vi.fn(),
+    setMonthlySpend:           vi.fn(),
+    setConversionMode:         vi.fn(),
+    monthlySpend:              Math.round(57_444 / 12),
+    sliderBounds: {
+      retireMin: 36, retireMax: 80,
+      spendMin: 500, spendMax: 30_000,
+      horizonMin: 70, horizonMax: 115,
+      contribMax: 24_500, rothMax: 200_000,
+      canTuneRothConversion: false,
+    },
     commitPlan:             vi.fn(),
     planHighlights: {
       wealthMultiplier: 14.2,
@@ -464,11 +492,20 @@ describe("plan screen wow additions", () => {
     act(() => renderer.unmount());
   });
 
-  it("delta badge shows increase when planDelta.atRet > 1000 and isDirty", () => {
+  it("delta badge shows increase when planDelta.badge.dir is 'up' and isDirty", () => {
     const props = {
       ...wowProps,
-      planDelta: { atRet: 125_000, yearsSustained: 2 },
-      committedPlan: { retirementAge: 65 },
+      retirementAge: 62,  // differs from committedPlan.retirementAge → isDirty = true
+      committedPlan: {
+        retirementAge: 65, annualExpenses: 57_444, lifeExpect: 90,
+        returnRate: 5, inflationRate: 4, incomeGrowth: 3, contrib401k: 10_000,
+        ssClaimingAge: 67, spouseClaimingAge: 67, annualConversionAmt: 20_000,
+      },
+      planDelta: {
+        atRet: 125_000,
+        yearsSustained: 2,
+        badge: { dir: "up", atRetAbs: 125_000, yearsGain: 2 },
+      },
     };
     let renderer;
     act(() => {
@@ -477,9 +514,9 @@ describe("plan screen wow additions", () => {
       );
     });
     const allText = textOf(renderer.root);
-    // Note: isDirty is computed in PlanScreen from committedPlan vs current props
-    // Since we didn't change retirementAge, it should be dirty only if some other value changed.
-    // For now, just check that if we had isDirty=true, the delta would render.
+    expect(allText).toContain("vs saved plan");
+    expect(allText).toContain("$125k");
+    expect(allText).toContain("+2 yrs");
     act(() => renderer.unmount());
   });
 });
