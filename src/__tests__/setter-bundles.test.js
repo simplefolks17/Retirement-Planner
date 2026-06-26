@@ -89,6 +89,13 @@ describe("WI-3.1 setter bundles", () => {
     expect(p.accounts.roth.contrib.step).toBe(100);
     expect(p.accounts.trad401k.contrib.step).toBe(500);
     expect(p.accounts.taxable.contrib.step).toBe(1_000);
+    // Stepper-driven fields carry a min so the ± control can't go negative, and a
+    // sensible step (Gemini review on PR #44).
+    expect(p.health.marketplaceMonthlyPremium.min).toBe(0);
+    expect(p.health.marketplaceMonthlyPremium.step).toBe(50);
+    expect(p.ss.ssOverride.step).toBe(500);
+    // ssOverride max expands to fit a current override above the default cap.
+    expect(p.ss.ssOverride.max).toBeGreaterThanOrEqual(60_000);
     app.unmount();
   });
 
@@ -105,6 +112,44 @@ describe("WI-3.1 setter bundles", () => {
     app.fire(() => app.latest().ss.ssOverride.set(est));
     expect(app.latest().ss.ssOverride.value).toBeNull();
 
+    app.unmount();
+  });
+
+  it("keeps ssClaimingAge.min ≤ max even when current age is past 70", () => {
+    const app = mount();
+    // currentAge ranges to 80; without capping the floor at SS_MAX_CLAIM_AGE the
+    // BUG-17 floor (max(SS_MIN, currentAge)) would exceed max (PR #47 CodeRabbit).
+    app.fire(() => app.latest().assumptions.currentAge.set(78));
+    const ss = app.latest().ss.ssClaimingAge;
+    expect(ss.min).toBeLessThanOrEqual(ss.max);
+    expect(ss.min).toBe(ss.max); // floor clamped down to SS_MAX_CLAIM_AGE
+    // setCurrentAgeCoupled also clamps the STORED value, not just the metadata,
+    // so the slider never holds a value below its own min (PR #46 CodeRabbit).
+    expect(ss.value).toBeGreaterThanOrEqual(ss.min);
+    expect(ss.value).toBe(ss.max);
+    app.unmount();
+  });
+
+  it("keeps lifeExpect ahead of a current age that advances past the horizon", () => {
+    const app = mount();
+    // Lower the horizon, then push current age past it; setCurrentAgeCoupled must
+    // advance lifeExpect so retirementAge/lifeExpect stay within their contracts
+    // (PR #46 CodeRabbit — shared callback also drives the Classic slider).
+    app.fire(() => app.latest().assumptions.lifeExpect.set(70));
+    app.fire(() => app.latest().assumptions.currentAge.set(75));
+    const a = app.latest().assumptions;
+    expect(a.lifeExpect.value).toBeGreaterThan(a.currentAge.value);
+    expect(a.retirementAge.value).toBeLessThan(a.lifeExpect.value);
+    app.unmount();
+  });
+
+  it("lets the state-rate stepper escape the default (snap threshold < step)", () => {
+    const app = mount();
+    // One 0.1 step off the default must NOT snap back to null (PR #46 Gemini fix:
+    // the 0.05 threshold is below the 0.1 step). defaultPct is 0 at the TX default.
+    const dflt = app.latest().profile.stateRateOverride.defaultPct;
+    app.fire(() => app.latest().profile.stateRateOverride.set(dflt + 0.1));
+    expect(app.latest().profile.stateRateOverride.value).not.toBeNull();
     app.unmount();
   });
 });

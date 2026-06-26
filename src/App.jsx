@@ -823,13 +823,22 @@ export default function App() {
   // never fall before the new current age.
   const setCurrentAgeCoupled = useCallback(v => {
     setCurrentAge(v);
+    // Keep the horizon ahead of the (raised) current/retirement age so lifeExpect
+    // and retirementAge never fall outside their own min/max contracts.
+    if (lifeExpect <= v) setLifeExpect(v + 1);
+    // Past age 70 the SS claim floor would otherwise sit above a now-too-low
+    // stored claim age (min > value). Clamp the stored value at the source so
+    // neither the bundle nor the Classic slider ever holds an out-of-range age.
+    const minSsClaimAge = Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, v));
+    if (ssClaimingAge < minSsClaimAge) setSsClaimingAge(minSsClaimAge);
     if (retirementAge < v) setRetirementAge(v);
     if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
     if (contribEnd401k    <= v) setContribEnd401k(v + 1);
     if (contribEndRoth    <= v) setContribEndRoth(v + 1);
     if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
     if (contribEndHSA     <= v) setContribEndHSA(v + 1);
-  }, [setCurrentAge, setRetirementAge, setSpouseCurrentAge, retirementAge, spouseCurrentAge,
+  }, [setCurrentAge, setRetirementAge, setLifeExpect, setSpouseCurrentAge, setSsClaimingAge,
+      retirementAge, lifeExpect, spouseCurrentAge, ssClaimingAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
@@ -1013,7 +1022,9 @@ export default function App() {
       // pct: the effective rate as a percent for display/editing (override when set,
       // else the state default) — so screens never multiply the fraction (rule 10).
       pct: (stateRateOverride !== null ? stateRateOverride : stateRateDefault) * 100,
-      set: v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.15 ? null : v / 100),
+      // Snap-to-default threshold (0.05) is below the 0.1 step so a single stepper
+      // tap escapes the default instead of snapping back (matches the Classic copy).
+      set: v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.05 ? null : v / 100),
       min: 0, max: 13, step: 0.1 },
     otherPreTaxDeduc:   { value: otherPreTaxDeduc, set: setOtherPreTaxDeduc, min: 0, max: 20_000, step: 250 },
   }), [currentIncome, incomeGrowth, incomeGrowthEndAge, spouseIncome, spouseIncomeGrowth,
@@ -1063,11 +1074,18 @@ export default function App() {
 
   const ssBundle = useMemo(() => ({
     includeSS:        { value: includeSS, set: setIncludeSS },
-    // BUG-17: claim age can never precede the user's current age.
+    // BUG-17: claim age can never precede the user's current age — but also cap the
+    // floor at SS_MAX_CLAIM_AGE so min never exceeds max when currentAge > 70
+    // (currentAge ranges to 80). Mirrors the Classic slider's clamp exactly.
     ssClaimingAge:    { value: ssClaimingAge, set: setSsClaimingAge,
-      min: Math.max(SS_MIN_CLAIM_AGE, currentAge), max: SS_MAX_CLAIM_AGE, step: 1 },
+      min: Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge)), max: SS_MAX_CLAIM_AGE, step: 1 },
     ssOverride:       { value: ssOverride, estimated: ssAnnualBenefit,
-      set: v => setSsOverride(v === ssAnnualBenefit ? null : v), min: 0, max: 60_000 },
+      // max expands to fit a current override above the default cap (mirrors the
+      // sliderBounds dynamic-max pattern) so the slider never visually clamps.
+      set: v => setSsOverride(v === ssAnnualBenefit ? null : v),
+      // When null the field seeds from ssAnnualBenefit, so the cap must clear that
+      // too (high earners / delayed claims can exceed 60k) or the slider clamps.
+      min: 0, max: Math.max(60_000, ssOverride || ssAnnualBenefit || 0), step: 500 },
     isMarried:        { value: isMarried, set: setIsMarried },
     spouseSsEstimate: { value: spouseSsEstimate, set: setSpouseSsEstimate, min: 0, max: 60_000, step: 500 },
     spouseClaimingAge:{ value: spouseClaimingAge, set: setSpouseClaimingAge,
@@ -1100,7 +1118,7 @@ export default function App() {
     hasMarketplaceInsurance:  { value: hasMarketplaceInsurance, set: setHasMarketplaceInsurance },
     householdSize:            { value: householdSize, set: setHouseholdSize, min: 1, max: 6, step: 1 },
     marketplaceMonthlyPremium:{ value: marketplaceMonthlyPremium,
-      set: v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v)) },
+      set: v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v)), min: 0, step: 50 },
     hasMedicare:              { value: hasMedicare, set: setHasMedicare },
     personOnMedicare:         { value: personOnMedicare, set: setPersonOnMedicare,
       options: [{ value: 1, label: "Person 1" }, { value: 2, label: "Person 2" }] },
@@ -1654,7 +1672,7 @@ export default function App() {
                           value={stateRate * 100}
                           onChange={e => {
                             const v = Number(e.target.value);
-                            setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.15 ? null : v / 100);
+                            setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.05 ? null : v / 100);
                           }}
                           style={{ flex: 1, accentColor: C.purple, height: 4 }} />
                         <span style={{ fontSize: 11, color: stateRateOverride !== null ? C.purple : C.muted,
@@ -1927,16 +1945,10 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 16 }}>Tax Rate Phases</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+          {/* Shares setCurrentAgeCoupled with Horizon's My details (one handler,
+              both UIs) — keeps the SS-claim clamp + contribEnd coupling in sync. */}
           <Slider label="Current Age" value={currentAge} min={18} max={80}
-            onChange={v => {
-              setCurrentAge(v);
-              if (retirementAge < v) setRetirementAge(v);
-              if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
-              if (contribEnd401k    <= v) setContribEnd401k(v + 1);
-              if (contribEndRoth    <= v) setContribEndRoth(v + 1);
-              if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
-              if (contribEndHSA     <= v) setContribEndHSA(v + 1);
-            }} />
+            onChange={setCurrentAgeCoupled} />
           <Slider label="Retirement Age" value={retirementAge} min={currentAge} max={lifeExpect - 1}
             valueColor={C.green} onChange={v => {
               setRetirementAge(v);

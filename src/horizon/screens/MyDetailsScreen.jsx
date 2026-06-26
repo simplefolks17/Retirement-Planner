@@ -12,7 +12,6 @@
 
 import React, { useState } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
-import { kbActivate } from "../shared.jsx";
 
 // ── formatting helpers (display only) ────────────────────────────────────────
 const money  = v => (v == null || isNaN(v) ? "—" : `$${Math.round(v).toLocaleString()}`);
@@ -59,7 +58,7 @@ function StepBtn({ t, children, onClick, disabled }) {
 
 // One editable field driven entirely by a bundle field object.
 function DetailField({ t, label, hint, field, isMobile, format = String, seed, nullLabel }) {
-  const { value, set, min, max, step = 1, options } = field;
+  const { value, set, min, max, sliderMax, step = 1, options } = field;
 
   // ── choice: many options → <select>, few → segmented buttons ──
   if (options) {
@@ -104,10 +103,15 @@ function DetailField({ t, label, hint, field, isMobile, format = String, seed, n
   }
 
   // ── numeric ──
-  const isNull   = value == null;
-  const editVal  = isNull ? (seed ?? min ?? 0) : value;
-  const display  = isNull ? (nullLabel ?? "Auto") : format(value);
-  const hasMax   = typeof max === "number";
+  const isNull    = value == null;
+  // No "?? 0" fabrication (rule 10): a nullable field becomes editable only when
+  // the model supplies a seed or a min to start from; otherwise it stays a
+  // read-only edge state rather than inventing a 0.
+  const seedValue = seed ?? min;
+  const editVal   = isNull ? seedValue : value;
+  const canEdit   = typeof editVal === "number" && Number.isFinite(editVal);
+  const display   = isNull ? (nullLabel ?? "Auto") : format(value);
+  const hasMax    = typeof max === "number";
   const clamp = v => {
     let n = v;
     if (typeof min === "number") n = Math.max(min, n);
@@ -115,6 +119,15 @@ function DetailField({ t, label, hint, field, isMobile, format = String, seed, n
     return n;
   };
   const bump = dir => set(clamp(editVal + dir * step));
+
+  // Read-only edge state: the model gave neither a value nor a seed to edit from.
+  if (!canEdit) {
+    return (
+      <FieldRow t={t} label={label} hint={hint}>
+        <span style={{ font: `600 15px ${HM}`, color: t.faint }}>{display}</span>
+      </FieldRow>
+    );
+  }
 
   // Stepper for mobile, and for any unbounded field (no max → no slider track).
   if (isMobile || !hasMax) {
@@ -137,7 +150,9 @@ function DetailField({ t, label, hint, field, isMobile, format = String, seed, n
     <FieldRow t={t} label={label} hint={hint}>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, width: 220 }}>
         <span style={{ textAlign: "right", font: `600 14px ${HM}`, color: isNull ? t.faint : t.ink }}>{display}</span>
-        <input type="range" min={min} max={max} step={step} value={editVal}
+        {/* Track top (pure layout): sliderMax gives fine resolution, but never
+            below the current value so a large balance isn't visually clamped. */}
+        <input type="range" min={min} max={Math.max(sliderMax ?? max, editVal)} step={step} value={editVal}
           aria-label={label} aria-valuetext={display}
           onChange={e => set(Number(e.target.value))}
           style={{ width: "100%", accentColor: t.accent, height: 6, cursor: "pointer" }} />
@@ -149,18 +164,18 @@ function DetailField({ t, label, hint, field, isMobile, format = String, seed, n
 function Card({ t, title, summary, note, open, onToggle, children }) {
   return (
     <div style={{ background: t.surf, border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
-      <div role="button" tabIndex={0} aria-expanded={open}
-        onClick={onToggle} onKeyDown={kbActivate(onToggle)}
+      <button type="button" aria-expanded={open} onClick={onToggle}
         style={{
+          width: "100%", textAlign: "left", background: "transparent", border: "none", font: "inherit",
           display: "flex", justifyContent: "space-between", alignItems: "center",
           gap: 14, padding: "16px 18px", cursor: "pointer", minHeight: 44,
         }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ font: `600 15px ${HF}`, color: t.ink }}>{title}</div>
-          {!open && <div style={{ font: `400 12.5px ${HF}`, color: t.mut, marginTop: 3 }}>{summary}</div>}
-        </div>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: "block", font: `600 15px ${HF}`, color: t.ink }}>{title}</span>
+          {!open && <span style={{ display: "block", font: `400 12.5px ${HF}`, color: t.mut, marginTop: 3 }}>{summary}</span>}
+        </span>
         <span style={{ font: `400 15px ${HF}`, color: t.faint, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
-      </div>
+      </button>
       {open && (
         <div style={{ padding: "0 18px 16px" }}>
           {note && (
@@ -185,14 +200,14 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
   const [openId, setOpenId] = useState(null);
   const toggle = id => setOpenId(cur => (cur === id ? null : id));
 
-  // State tax rate is stored as a fraction; the bundle exposes `.pct` for display
-  // and its `.set` takes a percent — so the screen does no fraction math (rule 10).
+  // State tax rate is stored as a fraction; the bundle exposes `.pct` (percent) for
+  // display and its `.set` takes a percent — so the screen does no fraction math
+  // (rule 10). value stays null when no override is set, so the field shows the
+  // "Default" edge state (seeded from defaultPct) like every other nullable field.
+  const sro = profile.stateRateOverride;
   const stateRateField = {
-    value: profile.stateRateOverride.pct,
-    set: profile.stateRateOverride.set,
-    min: profile.stateRateOverride.min,
-    max: profile.stateRateOverride.max,
-    step: profile.stateRateOverride.step,
+    value: sro.value === null ? null : sro.pct,
+    set: sro.set, min: sro.min, max: sro.max, step: sro.step,
   };
 
   const F = (p) => <DetailField t={t} isMobile={isMobile} {...p} />;
@@ -213,16 +228,20 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
             note="Your earnings drive contributions, taxes, and your Social Security estimate.">
             {F({ label: "Annual income", field: profile.currentIncome, format: money })}
             {F({ label: "Income growth", field: profile.incomeGrowth, format: pctYr })}
-            {F({ label: "Income plateau age", hint: "income stops growing after this age",
+            {/* Plateau is only meaningful while income is still growing. */}
+            {profile.incomeGrowth.value > 0 && F({ label: "Income plateau age", hint: "income stops growing after this age",
                  field: profile.incomeGrowthEndAge, format: ageFmt,
                  seed: profile.incomeGrowthEndAge.min, nullLabel: "No plateau" })}
             {F({ label: "Filing status", field: profile.filingStatus })}
             {F({ label: "Home state", field: profile.selectedState })}
-            {F({ label: "State tax rate", field: stateRateField, format: pct })}
+            {/* Override only applies to states that tax income (defaultPct > 0). */}
+            {profile.stateRateOverride.defaultPct > 0 && F({ label: "State tax rate", field: stateRateField, format: pct,
+                 seed: profile.stateRateOverride.defaultPct,
+                 nullLabel: `Default · ${pct(profile.stateRateOverride.defaultPct)}` })}
             {F({ label: "Other pre-tax deductions", hint: "FSA, dependent care, transit",
                  field: profile.otherPreTaxDeduc, format: money })}
             {isMarried && F({ label: "Spouse income", field: profile.spouseIncome, format: money })}
-            {isMarried && F({ label: "Spouse income growth", field: profile.spouseIncomeGrowth, format: pctYr })}
+            {isMarried && profile.spouseIncome.value > 0 && F({ label: "Spouse income growth", field: profile.spouseIncomeGrowth, format: pctYr })}
           </Card>
 
           {/* ── Spending ── */}
@@ -262,7 +281,7 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
               {F({ label: "Additional pre-tax balance", hint: "other IRAs / pensions for RMDs",
                    field: accounts.addlPreTaxBal, format: money })}
               {F({ label: "Match type", field: accounts.matchMode })}
-              {F({ label: "Employer match", field: accounts.employerMatchPct, format: pct })}
+              {accounts.matchMode.value === "flat" && F({ label: "Employer match", field: accounts.employerMatchPct, format: pct })}
               {accounts.matchMode.value === "formula" && F({ label: "Match rate", field: accounts.matchFormulaRate, format: pct })}
               {accounts.matchMode.value === "formula" && F({ label: "On the first … of salary", field: accounts.matchFormulaCap, format: pct })}
             </div>
@@ -273,11 +292,13 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
             summary={`${health.hasMarketplaceInsurance.value ? "Marketplace" : "No marketplace"}${health.hasMedicare.value ? " · Medicare" : ""}`}
             note="Used for ACA subsidy and IRMAA estimates around Roth conversions.">
             {F({ label: "Marketplace insurance", field: health.hasMarketplaceInsurance })}
-            {F({ label: "Household size", field: health.householdSize })}
-            {F({ label: "Marketplace premium (monthly)", field: health.marketplaceMonthlyPremium, format: money,
-                 seed: 0, nullLabel: "Not set" })}
+            {/* Household size + premium only matter with marketplace coverage. */}
+            {health.hasMarketplaceInsurance.value && F({ label: "Household size", field: health.householdSize })}
+            {health.hasMarketplaceInsurance.value && F({ label: "Marketplace premium (monthly)", field: health.marketplaceMonthlyPremium, format: money,
+                 nullLabel: "Not set" })}
             {F({ label: "On Medicare", field: health.hasMedicare })}
-            {F({ label: "People on Medicare", field: health.personOnMedicare })}
+            {/* Which person is on Medicare only applies to a two-person household. */}
+            {health.hasMedicare.value && isMarried && F({ label: "People on Medicare", field: health.personOnMedicare })}
           </Card>
 
           {/* ── Assumptions ── */}
