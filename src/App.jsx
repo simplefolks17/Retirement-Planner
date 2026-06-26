@@ -1013,7 +1013,9 @@ export default function App() {
       // pct: the effective rate as a percent for display/editing (override when set,
       // else the state default) — so screens never multiply the fraction (rule 10).
       pct: (stateRateOverride !== null ? stateRateOverride : stateRateDefault) * 100,
-      set: v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.15 ? null : v / 100),
+      // Snap-to-default threshold (0.05) is below the 0.1 step so a single stepper
+      // tap escapes the default instead of snapping back (matches the Classic copy).
+      set: v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.05 ? null : v / 100),
       min: 0, max: 13, step: 0.1 },
     otherPreTaxDeduc:   { value: otherPreTaxDeduc, set: setOtherPreTaxDeduc, min: 0, max: 20_000, step: 250 },
   }), [currentIncome, incomeGrowth, incomeGrowthEndAge, spouseIncome, spouseIncomeGrowth,
@@ -1070,7 +1072,9 @@ export default function App() {
       // max expands to fit a current override above the default cap (mirrors the
       // sliderBounds dynamic-max pattern) so the slider never visually clamps.
       set: v => setSsOverride(v === ssAnnualBenefit ? null : v),
-      min: 0, max: Math.max(60_000, ssOverride || 0), step: 500 },
+      // When null the field seeds from ssAnnualBenefit, so the cap must clear that
+      // too (high earners / delayed claims can exceed 60k) or the slider clamps.
+      min: 0, max: Math.max(60_000, ssOverride || ssAnnualBenefit || 0), step: 500 },
     isMarried:        { value: isMarried, set: setIsMarried },
     spouseSsEstimate: { value: spouseSsEstimate, set: setSpouseSsEstimate, min: 0, max: 60_000, step: 500 },
     spouseClaimingAge:{ value: spouseClaimingAge, set: setSpouseClaimingAge,
@@ -1657,7 +1661,7 @@ export default function App() {
                           value={stateRate * 100}
                           onChange={e => {
                             const v = Number(e.target.value);
-                            setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.15 ? null : v / 100);
+                            setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.05 ? null : v / 100);
                           }}
                           style={{ flex: 1, accentColor: C.purple, height: 4 }} />
                         <span style={{ fontSize: 11, color: stateRateOverride !== null ? C.purple : C.muted,

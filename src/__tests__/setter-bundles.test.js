@@ -114,4 +114,14 @@ describe("WI-3.1 setter bundles", () => {
 
     app.unmount();
   });
+
+  it("lets the state-rate stepper escape the default (snap threshold < step)", () => {
+    const app = mount();
+    // One 0.1 step off the default must NOT snap back to null (PR #46 Gemini fix:
+    // the 0.05 threshold is below the 0.1 step). defaultPct is 0 at the TX default.
+    const dflt = app.latest().profile.stateRateOverride.defaultPct;
+    app.fire(() => app.latest().profile.stateRateOverride.set(dflt + 0.1));
+    expect(app.latest().profile.stateRateOverride.value).not.toBeNull();
+    app.unmount();
+  });
 });
