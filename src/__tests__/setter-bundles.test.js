@@ -123,6 +123,10 @@ describe("WI-3.1 setter bundles", () => {
     const ss = app.latest().ss.ssClaimingAge;
     expect(ss.min).toBeLessThanOrEqual(ss.max);
     expect(ss.min).toBe(ss.max); // floor clamped down to SS_MAX_CLAIM_AGE
+    // setCurrentAgeCoupled also clamps the STORED value, not just the metadata,
+    // so the slider never holds a value below its own min (PR #46 CodeRabbit).
+    expect(ss.value).toBeGreaterThanOrEqual(ss.min);
+    expect(ss.value).toBe(ss.max);
     app.unmount();
   });
 

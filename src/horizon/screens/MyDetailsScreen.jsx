@@ -295,7 +295,7 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
             {/* Household size + premium only matter with marketplace coverage. */}
             {health.hasMarketplaceInsurance.value && F({ label: "Household size", field: health.householdSize })}
             {health.hasMarketplaceInsurance.value && F({ label: "Marketplace premium (monthly)", field: health.marketplaceMonthlyPremium, format: money,
-                 seed: 0, nullLabel: "Not set" })}
+                 nullLabel: "Not set" })}
             {F({ label: "On Medicare", field: health.hasMedicare })}
             {/* Which person is on Medicare only applies to a two-person household. */}
             {health.hasMedicare.value && isMarried && F({ label: "People on Medicare", field: health.personOnMedicare })}

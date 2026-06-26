@@ -823,13 +823,19 @@ export default function App() {
   // never fall before the new current age.
   const setCurrentAgeCoupled = useCallback(v => {
     setCurrentAge(v);
+    // Past age 70 the SS claim floor would otherwise sit above a now-too-low
+    // stored claim age (min > value). Clamp the stored value at the source so
+    // neither the bundle nor the Classic slider ever holds an out-of-range age.
+    const minSsClaimAge = Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, v));
+    if (ssClaimingAge < minSsClaimAge) setSsClaimingAge(minSsClaimAge);
     if (retirementAge < v) setRetirementAge(v);
     if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
     if (contribEnd401k    <= v) setContribEnd401k(v + 1);
     if (contribEndRoth    <= v) setContribEndRoth(v + 1);
     if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
     if (contribEndHSA     <= v) setContribEndHSA(v + 1);
-  }, [setCurrentAge, setRetirementAge, setSpouseCurrentAge, retirementAge, spouseCurrentAge,
+  }, [setCurrentAge, setRetirementAge, setSpouseCurrentAge, setSsClaimingAge,
+      retirementAge, spouseCurrentAge, ssClaimingAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
@@ -1936,16 +1942,10 @@ export default function App() {
       <div style={{ ...panel, marginBottom: 20 }}>
         <h3 style={{ ...sectionTitle, marginBottom: 16 }}>Tax Rate Phases</h3>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${C.border}` }}>
+          {/* Shares setCurrentAgeCoupled with Horizon's My details (one handler,
+              both UIs) — keeps the SS-claim clamp + contribEnd coupling in sync. */}
           <Slider label="Current Age" value={currentAge} min={18} max={80}
-            onChange={v => {
-              setCurrentAge(v);
-              if (retirementAge < v) setRetirementAge(v);
-              if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
-              if (contribEnd401k    <= v) setContribEnd401k(v + 1);
-              if (contribEndRoth    <= v) setContribEndRoth(v + 1);
-              if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
-              if (contribEndHSA     <= v) setContribEndHSA(v + 1);
-            }} />
+            onChange={setCurrentAgeCoupled} />
           <Slider label="Retirement Age" value={retirementAge} min={currentAge} max={lifeExpect - 1}
             valueColor={C.green} onChange={v => {
               setRetirementAge(v);
