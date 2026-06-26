@@ -835,14 +835,14 @@ var DATA = [
     cx: "Medium", im: "High", af: ["PlanScreen.jsx (Hero, IncomeMeter, enriched cards, QuickTunePanel)", "App.jsx (planHighlights, planDelta, sliderBounds, committedOutputs, setMonthlySpend, setRetirementAgeCoupled)", "plan-screen.test.js (tests for new sections)"], sv: "none (display-only additions over existing model outputs)"
   },
   {
-    id: 98, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 98, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L3 / WI-3.1 — Topic-grouped setter bundles in horizonProps",
     ds: "The plumbing for all Level-3 work: Horizon gains write access to every Classic input via topic-grouped bundles of the existing App.jsx state + setters (profile, spending, accounts, ss, pension, conversion, health, assumptions). Both UIs keep sharing one state.",
     dt: "Extend horizonProps with bundles wrapping existing useState pairs (currentIncome/incomeGrowth/incomeGrowthEndAge/spouseIncome/filingStatus/selectedState/...; bal+contrib+contribEnd ×4 + addlPreTaxBal + match fields; includeSS/ssClaimingAge/ssOverride/isMarried/spouseSsEstimate/spouseClaimingAge/spouseBenefitBasis/spouseCurrentAge/spouseIsSoleBenef; pensionMonthly/pensionStartAge; conversionMode/conversionBracketTarget/annualConversionAmt/conversionTaxSource; hasMarketplaceInsurance/householdSize/marketplaceMonthlyPremium/hasMedicare/personOnMedicare; returnRate/inflationRate/lifeExpect/retirementState/savingsSurplusPct). Copy each input's min/max/step constraints verbatim from Classic JSX (incl. the BUG-17 SS claim-age floor at currentAge). Document bundle shapes in docs/ARCHITECTURE.md. Done when a Horizon change is immediately reflected in Classic (3-field manual round-trip) + a smoke test fires one setter per bundle. See docs/ROADMAP.md WI-3.1.",
     cx: "Medium", im: "High", af: ["App.jsx (horizonProps bundles)", "docs/ARCHITECTURE.md (bundle shapes)"], sv: "none (existing state, regrouped)"
   },
   {
-    id: 99, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 99, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L3 / WI-3.2 — 'My details' screen: plan facts get their own top-level destination",
     ds: "All profile-level inputs as a new top-level My details screen: collapsed topic cards — income & job, spending, accounts & match, health & Medicare, assumptions (growing to ~9 cards at end state) — each showing a one-line summary when closed and steppers/sliders when opened, with inline 'Why this matters' notes from Classic's explainer text. NOT part of Settings (owner decision Jun 12 2026): plan facts are the user's data, not app preferences; Settings stays app-centric (Appearance, About, replay onboarding, Legacy view — and later Sharing #42, login/subscription) and renders as a right-side gear utility on desktop.",
     dt: "New src/horizon/screens/MyDetailsScreen.jsx added to SCREENS (desktop nav position 7; in the mobile More sheet). Topic cards consume the WI-3.1 (#98) bundles; mobile uses the onboarding stepper/preset pattern instead of raw range sliders. Done when every input in the profile/spending/accounts/health/assumptions bundles has exactly one home here, closed-card summaries are accurate, it's usable on mobile, and Settings contains no plan-fact inputs. See docs/ROADMAP.md WI-3.2 + End state (owner decision 4).",

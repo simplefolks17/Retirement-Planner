@@ -251,6 +251,18 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 
 # Level 3 — Control (inputs + Strategies screen)
 
+**WI-3.1 shipped Jun 25 2026.** Eight topic-grouped setter bundles (`profile`,
+`spending`, `accounts`, `ss`, `pension`, `conversion`, `health`, `assumptions`) on
+`horizonProps` give Horizon self-describing write access to the shared App state —
+the plumbing for all Level-3 work. Shapes in `docs/ARCHITECTURE.md`.
+**WI-3.2 shipped Jun 25 2026.** New top-level **My details** screen (`MyDetailsScreen.jsx`)
+— a calm accordion of five plan-fact cards (Income & job / Spending / Accounts & match
+/ Health & Medicare / Assumptions) consuming the `profile`/`spending`/`accounts`/`health`/
+`assumptions` bundles; desktop sliders, mobile ± steppers, segmented/selects for choices.
+SS + pension are deliberately deferred to their Strategies flows (WI-3.4/3.5). Settings
+already held no plan-fact inputs, so it was left as-is; the desktop "Settings → gear
+utility" repositioning (owner decision 4) is a deferred follow-up, not a parity blocker.
+
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.
 **Actions:** extend `horizonProps` with topic-grouped bundles of existing state + setters (names verified in App.jsx):
