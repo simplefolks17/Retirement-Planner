@@ -665,9 +665,20 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     `ROADMAP.md`. Added `details` to `SCREENS` (desktop tab; mobile More sheet) + render-smoke marker.
     New `src/horizon/__tests__/my-details-screen.test.js` (render, summaries, numeric/toggle/choice
     write-through, nullable seed).
+  - **Review (CodeRabbit + Gemini).** PR #44 squash-merged before the bots finished, so the full
+    cumulative Level-3 diff was re-surfaced via a **throwaway whole-diff PR #47** (base = pre-Level-3
+    commit) and all fixes landed on **PR #46** across several rounds (merged 2026-06-26). Real
+    functional bugs caught + fixed: `ssClaimingAge.min > max` past age 70 and the stored-value clamp;
+    `lifeExpect` sync in the shared current-age handler (latent in Classic, surfaced by DRYing the
+    duplicate handler onto `setCurrentAgeCoupled`); the state-rate stepper snap threshold (0.15 ≥ 0.1
+    step → stuck on mobile); `ssOverride` dynamic max; `marketplaceMonthlyPremium` negative-stepper.
+    Plus rule-10 / a11y: removed `?? 0` + `seed:0` fabrication behind a `canEdit` guard, honoured
+    `sliderMax`, native-`<button>` card header, conditional-render declutter matching Classic. One
+    false positive skipped (the "560 → N" regression-history note is internally consistent). **Full
+    root-cause/files/fix log: `docs/BUGS.md` → "Level 3 (Control) review fixes" (2026-06-26).**
   - Docs reconciled: `ROADMAP.md` Level-3 shipped notes + `ARCHITECTURE.md` bundle-shape registry +
-    `feature-tracker.html` #98/#99 done (54 done, 66 planned). Next: WI-3.3 Strategies scaffold +
-    WI-3.9 Apply-with-preview (shared infra for the WI-3.4–3.7 strategy flows).
+    `feature-tracker.html` #98/#99 done (54 done, 66 planned) + `docs/BUGS.md` review batch. Next:
+    WI-3.3 Strategies scaffold + WI-3.9 Apply-with-preview (shared infra for the WI-3.4–3.7 flows).
 
 ## Commands
 

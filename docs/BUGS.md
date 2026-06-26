@@ -114,6 +114,68 @@ residual — removing the clamp let negative real growth through, but the value 
 
 ---
 
+### Level 3 (Control) review fixes — WI-3.1 + WI-3.2, PRs #44 / #46 (2026-06-26)
+
+**Source:** CodeRabbit + Gemini review of the Level-3 setter-bundle plumbing (WI-3.1/#98) and the
+new **My details** screen (WI-3.2/#99). Because PR #44 was squash-merged before the bots finished,
+the full cumulative diff was re-surfaced for a whole-diff review via a throwaway PR (#47, base =
+pre-Level-3 commit), and the fixes landed on PR #46 across several incremental rounds. Suite
+560 → **575** tests, lint clean, build OK, **golden master untouched** (all changes are display /
+input-plumbing only). Files: `src/App.jsx` (the WI-3.1 bundles + coupled setters),
+`src/horizon/screens/MyDetailsScreen.jsx`, `src/__tests__/setter-bundles.test.js`.
+
+Functional-correctness bugs (all in the new Level-3 code unless noted):
+
+1. **`ssClaimingAge.min` could exceed `max` (Major) — FIXED.** The BUG-17 floor
+   `max(SS_MIN_CLAIM_AGE, currentAge)` ignored the upper cap, so for `currentAge > 70` (ages run to
+   80) the bundle handed Horizon/Classic a slider with `min > max`. Now
+   `min: Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge))` — the exact Classic clamp.
+2. **Stored `ssClaimingAge` not clamped when current age advances (Major) — FIXED.** Fix #1 only
+   corrected the slider *metadata*; `setCurrentAgeCoupled` still let `currentAge` rise past 70 while
+   the stored claim age stayed below the new floor (value < min). Now clamps the stored value at the
+   source. Regression test drives `currentAge → 78` and asserts the stored value stays in range.
+3. **`lifeExpect` not synced when current age passes the horizon (Major) — FIXED.**
+   `setCurrentAgeCoupled` pushed `retirementAge` up but left `lifeExpect` behind, so `lifeExpect` /
+   `retirementAge` could fall outside their own min/max contracts. Latent in the original Classic
+   current-age handler; surfaced once that handler was DRY'd onto the shared callback (see #11). Now
+   `if (lifeExpect <= v) setLifeExpect(v + 1)`. Regression test added.
+4. **State-tax-rate stepper stuck on mobile (High) — FIXED.** The snap-to-default threshold (`0.15`)
+   exceeded the stepper step (`0.1`), so a single tap off the default snapped straight back to null —
+   the field was uneditable on mobile. Lowered the threshold to `0.05` in **both** the bundle wrapper
+   and the Classic `onChange` (duplicate copies kept in sync). Real-setter round-trip test added.
+5. **`ssOverride` slider could clamp its own seed (Medium) — FIXED.** When the override is null the
+   field seeds from `ssAnnualBenefit`; a high estimate (> 60k) exceeded the static max. Now
+   `max: Math.max(60_000, ssOverride || ssAnnualBenefit || 0)` (the dynamic-max pattern).
+6. **`marketplaceMonthlyPremium` stepper could go negative (Medium) — FIXED.** The bundle field had
+   no `min`, so the `−` stepper could drive the premium below 0. Added `min: 0, step: 50`.
+
+Rule-10 / quality / a11y fixes on `MyDetailsScreen`:
+
+7. **`?? 0` / `seed: 0` fabrication removed (rule 10) — FIXED.** `DetailField` computed
+   `editVal = isNull ? (seed ?? min ?? 0)` — fabricating a number when the model supplied neither.
+   Replaced with a `canEdit` guard (a nullable field is editable only when a seed/min exists, else a
+   read-only edge state). Separately dropped the screen-owned `seed: 0` on the marketplace-premium
+   field — the bundle's `min: 0` already supplies the seed.
+8. **`sliderMax` honoured for desktop tracks — FIXED.** Account-balance sliders used the 5M
+   DeferredInput hard cap as the track max → coarse $10k steps. Now use `sliderMax` from the bundle,
+   clamp-safe via `Math.max(sliderMax ?? max, editVal)` so a large balance never pins the thumb.
+9. **Card header is a native `<button>` — FIXED.** Was a `role="button"` div; switched to a real
+   button (kept `aria-expanded` + styling) for proper assistive-tech semantics. Dropped the now-unused
+   `kbActivate` import.
+10. **Conditional-render declutter matching Classic — FIXED.** Fields moot given another value are now
+    gated: income plateau only when income grows, state-rate override only for taxed states, spouse
+    income growth only with spouse income, flat employer match only in flat mode, marketplace
+    household/premium only with marketplace coverage, Medicare-person only when on Medicare and married.
+11. **Classic current-age handler DRY'd — FIXED.** The Classic "Current Age" slider had a duplicate
+    inline `onChange` identical to `setCurrentAgeCoupled`; it now reuses the shared callback, so the
+    SS-claim clamp (#2) and lifeExpect sync (#3) apply to both UIs from one definition.
+
+The **CLAUDE.md "560 → 574"** flag (round 2) was a **false positive** and skipped: `560` is the
+pre-Level-3 baseline and the right-hand number is the current locked total — the file is internally
+consistent. (It now reads 575 after the regression tests above.)
+
+---
+
 ### Numbers screen depth build-out review fixes — PR #38 (2026-06-24)
 
 **Source:** CodeRabbit + Gemini review of PR #38 (`claude/kind-euler-rh0qvs`), Sessions 1–4.
