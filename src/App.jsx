@@ -823,6 +823,9 @@ export default function App() {
   // never fall before the new current age.
   const setCurrentAgeCoupled = useCallback(v => {
     setCurrentAge(v);
+    // Keep the horizon ahead of the (raised) current/retirement age so lifeExpect
+    // and retirementAge never fall outside their own min/max contracts.
+    if (lifeExpect <= v) setLifeExpect(v + 1);
     // Past age 70 the SS claim floor would otherwise sit above a now-too-low
     // stored claim age (min > value). Clamp the stored value at the source so
     // neither the bundle nor the Classic slider ever holds an out-of-range age.
@@ -834,8 +837,8 @@ export default function App() {
     if (contribEndRoth    <= v) setContribEndRoth(v + 1);
     if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
     if (contribEndHSA     <= v) setContribEndHSA(v + 1);
-  }, [setCurrentAge, setRetirementAge, setSpouseCurrentAge, setSsClaimingAge,
-      retirementAge, spouseCurrentAge, ssClaimingAge,
+  }, [setCurrentAge, setRetirementAge, setLifeExpect, setSpouseCurrentAge, setSsClaimingAge,
+      retirementAge, lifeExpect, spouseCurrentAge, ssClaimingAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 

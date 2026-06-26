@@ -130,6 +130,19 @@ describe("WI-3.1 setter bundles", () => {
     app.unmount();
   });
 
+  it("keeps lifeExpect ahead of a current age that advances past the horizon", () => {
+    const app = mount();
+    // Lower the horizon, then push current age past it; setCurrentAgeCoupled must
+    // advance lifeExpect so retirementAge/lifeExpect stay within their contracts
+    // (PR #46 CodeRabbit — shared callback also drives the Classic slider).
+    app.fire(() => app.latest().assumptions.lifeExpect.set(70));
+    app.fire(() => app.latest().assumptions.currentAge.set(75));
+    const a = app.latest().assumptions;
+    expect(a.lifeExpect.value).toBeGreaterThan(a.currentAge.value);
+    expect(a.retirementAge.value).toBeLessThan(a.lifeExpect.value);
+    app.unmount();
+  });
+
   it("lets the state-rate stepper escape the default (snap threshold < step)", () => {
     const app = mount();
     // One 0.1 step off the default must NOT snap back to null (PR #46 Gemini fix:
