@@ -627,6 +627,47 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   **Bug fix — `isDirty` asymmetry (commit `01960b9`):** comparing `(annualExpenses ?? effectiveExpenses)` vs `committedPlan.annualExpenses` was asymmetric — when a plan was saved from Ideas/onboarding, `committedPlan.annualExpenses` is `null` but the left side resolved `effectiveExpenses` (non-null), making `isDirty = true` immediately after saving. Fixed to compare raw `annualExpenses` state on both sides: `null !== null → false` (correctly not dirty).
   **Review:** 6 rounds by CodeRabbit + Gemini across multiple sessions; all real findings fixed, noise triaged. Tracker: #120 done (52 done, 68 planned).
 
+- **Level 3 — Control begins: setter bundles + My details (2026-06-26, branch
+  `claude/laughing-galileo-nj8p83` → PR #44, squash-merged to `main`):** opened the Depth
+  Ladder's Level 3 with two work items. Display/plumbing only — **golden master untouched**,
+  560 → **571** tests, lint clean, build OK.
+  - **WI-3.1 (#98) — setter bundles in `horizonProps`.** The write-access plumbing all of
+    Level 3 builds on. Eight topic-grouped, separately-memoized bundles (`profile`, `spending`,
+    `accounts`, `ss`, `pension`, `conversion`, `health`, `assumptions`) let Horizon write back to
+    the **shared** App.jsx state — one state, both UIs in sync, no duplication (principle 11).
+    Self-describing field shapes so screens carry zero constants/bounds math (rule 1 / rule 10):
+    numeric → `{ value, set, min, max, step }` (+ `sliderMax` on balances, `pct`/`defaultPct` on
+    `stateRateOverride`, `estimated` on `ssOverride`); toggle → `{ value, set }`; choice →
+    `{ value, set, options:[{value,label}] }`. `min`/`max`/`step` + option labels copied **verbatim**
+    from Classic; dynamic bounds (`livingExpenses.max`, the per-account contribution step, the
+    **BUG-17** `ssClaimingAge.min = max(SS_MIN_CLAIM_AGE, currentAge)` floor) computed in the bundle
+    memos. Setter wrappers preserve Classic behaviour (snap-to-null on `stateRateOverride`/
+    `incomeGrowthEndAge`/`ssOverride`, `preApplySnapshot` clears, `selectedState` clears its rate
+    override). New coupled setters `setCurrentAgeCoupled`/`setLifeExpectCoupled` mirror Classic's
+    cross-field invariants (`setRetirementAgeCoupled` reused); the `assumptions` bundle includes the
+    timeline trio `currentAge`/`retirementAge`/`lifeExpect`. Shapes documented in `ARCHITECTURE.md`.
+    New `src/__tests__/setter-bundles.test.js` (round-trip per bundle + BUG-17 floor / dynamic step /
+    snap-to-null wrappers); `horizon-props-stability.test.js` (V9) auto-covers the bundles.
+  - **WI-3.2 (#99) — "My details" screen** (`src/horizon/screens/MyDetailsScreen.jsx`), the first
+    real consumer of the bundles. A calm accordion of five plan-fact cards (Income & job / Spending /
+    Accounts & match / Health & Medicare / Assumptions) over the `profile`/`spending`/`accounts`/
+    `health`/`assumptions` bundles. One reusable `DetailField` drives every control off a bundle
+    field's shape: desktop sliders, mobile ± steppers (onboarding pattern), segmented buttons /
+    `<select>` for choices, Yes/No toggles — all bounds/labels from the bundle, never the screen
+    (rule 10). Closed-card summaries are pure formatting of raw bundle values. Nullable fields
+    (living/retirement expenses, income plateau, state-rate override, marketplace premium) render an
+    explicit **"Auto"/"Not set"** edge state seeded from the model's effective value, never a
+    fabricated number (rule 10). SS + pension deliberately excluded — they belong to their Strategies
+    flows (WI-3.4/3.5). **SettingsScreen already held no plan-fact inputs**, so the WI's "Settings has
+    no plan-fact inputs" criterion was already met and Settings was left unchanged; the desktop
+    "Settings → gear utility" repositioning (owner decision 4) is a **deferred follow-up**, noted in
+    `ROADMAP.md`. Added `details` to `SCREENS` (desktop tab; mobile More sheet) + render-smoke marker.
+    New `src/horizon/__tests__/my-details-screen.test.js` (render, summaries, numeric/toggle/choice
+    write-through, nullable seed).
+  - Docs reconciled: `ROADMAP.md` Level-3 shipped notes + `ARCHITECTURE.md` bundle-shape registry +
+    `feature-tracker.html` #98/#99 done (54 done, 66 planned). Next: WI-3.3 Strategies scaffold +
+    WI-3.9 Apply-with-preview (shared infra for the WI-3.4–3.7 strategy flows).
+
 ## Commands
 
 - `npm run dev` — start dev server
