@@ -115,6 +115,17 @@ describe("WI-3.1 setter bundles", () => {
     app.unmount();
   });
 
+  it("keeps ssClaimingAge.min ≤ max even when current age is past 70", () => {
+    const app = mount();
+    // currentAge ranges to 80; without capping the floor at SS_MAX_CLAIM_AGE the
+    // BUG-17 floor (max(SS_MIN, currentAge)) would exceed max (PR #47 CodeRabbit).
+    app.fire(() => app.latest().assumptions.currentAge.set(78));
+    const ss = app.latest().ss.ssClaimingAge;
+    expect(ss.min).toBeLessThanOrEqual(ss.max);
+    expect(ss.min).toBe(ss.max); // floor clamped down to SS_MAX_CLAIM_AGE
+    app.unmount();
+  });
+
   it("lets the state-rate stepper escape the default (snap threshold < step)", () => {
     const app = mount();
     // One 0.1 step off the default must NOT snap back to null (PR #46 Gemini fix:

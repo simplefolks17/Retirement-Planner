@@ -1065,9 +1065,11 @@ export default function App() {
 
   const ssBundle = useMemo(() => ({
     includeSS:        { value: includeSS, set: setIncludeSS },
-    // BUG-17: claim age can never precede the user's current age.
+    // BUG-17: claim age can never precede the user's current age — but also cap the
+    // floor at SS_MAX_CLAIM_AGE so min never exceeds max when currentAge > 70
+    // (currentAge ranges to 80). Mirrors the Classic slider's clamp exactly.
     ssClaimingAge:    { value: ssClaimingAge, set: setSsClaimingAge,
-      min: Math.max(SS_MIN_CLAIM_AGE, currentAge), max: SS_MAX_CLAIM_AGE, step: 1 },
+      min: Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge)), max: SS_MAX_CLAIM_AGE, step: 1 },
     ssOverride:       { value: ssOverride, estimated: ssAnnualBenefit,
       // max expands to fit a current override above the default cap (mirrors the
       // sliderBounds dynamic-max pattern) so the slider never visually clamps.
