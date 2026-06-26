@@ -89,6 +89,13 @@ describe("WI-3.1 setter bundles", () => {
     expect(p.accounts.roth.contrib.step).toBe(100);
     expect(p.accounts.trad401k.contrib.step).toBe(500);
     expect(p.accounts.taxable.contrib.step).toBe(1_000);
+    // Stepper-driven fields carry a min so the ± control can't go negative, and a
+    // sensible step (Gemini review on PR #44).
+    expect(p.health.marketplaceMonthlyPremium.min).toBe(0);
+    expect(p.health.marketplaceMonthlyPremium.step).toBe(50);
+    expect(p.ss.ssOverride.step).toBe(500);
+    // ssOverride max expands to fit a current override above the default cap.
+    expect(p.ss.ssOverride.max).toBeGreaterThanOrEqual(60_000);
     app.unmount();
   });
 

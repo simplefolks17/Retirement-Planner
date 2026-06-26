@@ -1067,7 +1067,10 @@ export default function App() {
     ssClaimingAge:    { value: ssClaimingAge, set: setSsClaimingAge,
       min: Math.max(SS_MIN_CLAIM_AGE, currentAge), max: SS_MAX_CLAIM_AGE, step: 1 },
     ssOverride:       { value: ssOverride, estimated: ssAnnualBenefit,
-      set: v => setSsOverride(v === ssAnnualBenefit ? null : v), min: 0, max: 60_000 },
+      // max expands to fit a current override above the default cap (mirrors the
+      // sliderBounds dynamic-max pattern) so the slider never visually clamps.
+      set: v => setSsOverride(v === ssAnnualBenefit ? null : v),
+      min: 0, max: Math.max(60_000, ssOverride || 0), step: 500 },
     isMarried:        { value: isMarried, set: setIsMarried },
     spouseSsEstimate: { value: spouseSsEstimate, set: setSpouseSsEstimate, min: 0, max: 60_000, step: 500 },
     spouseClaimingAge:{ value: spouseClaimingAge, set: setSpouseClaimingAge,
@@ -1100,7 +1103,7 @@ export default function App() {
     hasMarketplaceInsurance:  { value: hasMarketplaceInsurance, set: setHasMarketplaceInsurance },
     householdSize:            { value: householdSize, set: setHouseholdSize, min: 1, max: 6, step: 1 },
     marketplaceMonthlyPremium:{ value: marketplaceMonthlyPremium,
-      set: v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v)) },
+      set: v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v)), min: 0, step: 50 },
     hasMedicare:              { value: hasMedicare, set: setHasMedicare },
     personOnMedicare:         { value: personOnMedicare, set: setPersonOnMedicare,
       options: [{ value: 1, label: "Person 1" }, { value: 2, label: "Person 2" }] },

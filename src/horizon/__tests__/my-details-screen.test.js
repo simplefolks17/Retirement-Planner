@@ -39,7 +39,7 @@ function makeProps() {
         { value: "mfs", label: "MFS" }, { value: "hoh", label: "HoH" },
       ]),
       selectedState: choice("TX", [{ value: "TX", label: "Texas (TX)" }, { value: "CA", label: "California (CA)" }]),
-      stateRateOverride: { value: null, pct: 0, defaultPct: 0, set: vi.fn(), min: 0, max: 13, step: 0.1 },
+      stateRateOverride: { value: null, pct: 5, defaultPct: 5, set: vi.fn(), min: 0, max: 13, step: 0.1 },
       otherPreTaxDeduc: num(0, 0, 20_000, 250),
     },
     spending: {
@@ -132,6 +132,14 @@ describe("MyDetailsScreen", () => {
     app.click(n => textOf(n).startsWith("Accounts & match"));
     app.clickText("Formula");                                  // match mode → formula
     expect(props.accounts.matchMode.set).toHaveBeenCalledWith("formula");
+    act(() => app.r.unmount());
+  });
+
+  it("shows the Default edge state for an unset state-tax override", () => {
+    const props = makeProps();
+    const app = mount(props);
+    app.click(n => textOf(n).startsWith("Income & job"));
+    expect(app.text()).toContain("Default · 5%");             // null override → defaultPct
     act(() => app.r.unmount());
   });
 

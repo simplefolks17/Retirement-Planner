@@ -185,14 +185,14 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
   const [openId, setOpenId] = useState(null);
   const toggle = id => setOpenId(cur => (cur === id ? null : id));
 
-  // State tax rate is stored as a fraction; the bundle exposes `.pct` for display
-  // and its `.set` takes a percent — so the screen does no fraction math (rule 10).
+  // State tax rate is stored as a fraction; the bundle exposes `.pct` (percent) for
+  // display and its `.set` takes a percent — so the screen does no fraction math
+  // (rule 10). value stays null when no override is set, so the field shows the
+  // "Default" edge state (seeded from defaultPct) like every other nullable field.
+  const sro = profile.stateRateOverride;
   const stateRateField = {
-    value: profile.stateRateOverride.pct,
-    set: profile.stateRateOverride.set,
-    min: profile.stateRateOverride.min,
-    max: profile.stateRateOverride.max,
-    step: profile.stateRateOverride.step,
+    value: sro.value === null ? null : sro.pct,
+    set: sro.set, min: sro.min, max: sro.max, step: sro.step,
   };
 
   const F = (p) => <DetailField t={t} isMobile={isMobile} {...p} />;
@@ -218,7 +218,9 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
                  seed: profile.incomeGrowthEndAge.min, nullLabel: "No plateau" })}
             {F({ label: "Filing status", field: profile.filingStatus })}
             {F({ label: "Home state", field: profile.selectedState })}
-            {F({ label: "State tax rate", field: stateRateField, format: pct })}
+            {F({ label: "State tax rate", field: stateRateField, format: pct,
+                 seed: profile.stateRateOverride.defaultPct,
+                 nullLabel: `Default · ${pct(profile.stateRateOverride.defaultPct)}` })}
             {F({ label: "Other pre-tax deductions", hint: "FSA, dependent care, transit",
                  field: profile.otherPreTaxDeduc, format: money })}
             {isMarried && F({ label: "Spouse income", field: profile.spouseIncome, format: money })}
