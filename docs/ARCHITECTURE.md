@@ -206,6 +206,38 @@ auto-covers the bundles' referential stability.
 
 ---
 
+### `horizonProps.strategiesView` (WI-3.3 / #100) — the Strategies card-face index
+
+**Added 2026-06-28.** The Strategies screen's read-data bundle (separately memoized for
+V9). It is deliberately **thin**: per-card `applicable` flags plus only the headline
+scalars that do **not** already have a `horizonProps` home. Cards whose number is already
+wired read it **directly** in the screen — `props.netConversionBenefit` (Roth),
+`props.yr1TaxSavings` (Withdrawal order), `props.budget.availableSurplus` (Surplus) — so
+there is one source per number (principle 11). Every `applicable` boolean and the `> 0`
+comparisons behind them are computed in the App memo (rule 10 — no comparisons on financial
+values in JSX); `rmd.firstRMDAmount/Age` are pre-extracted behind the `firstRMD ? … : null`
+guard so the screen never dereferences `firstRMD.rmd` (which can be `undefined`).
+
+| Card id | Shape | Headline source |
+|---|---|---|
+| `conversion` | `{ applicable }` | `props.netConversionBenefit` (sign-aware; default −9,854) |
+| `rmd` | `{ applicable, firstRMDAmount, firstRMDAge }` (null when no RMD) | `firstRMDAmount` |
+| `ss` | `{ applicable, ssMonthly, ssAnnual, claimAge, breakEven, delayGainYrs }` (`breakEven`/`delayGainYrs` null → "—") | `ssMonthly` |
+| `withdrawal` | `{ applicable }` | `props.yr1TaxSavings` |
+| `surplus` | `{ applicable }` | `props.budget.availableSurplus` |
+| `mega` | `{ applicable, capacity, growth: [{ yrs, val }] }` | `capacity` |
+
+**Forward contract:** the interactive flow bundles `ssView` / `rmdView` / `conversionView`
+(WI-3.4–3.7) attach as **sibling** `horizonProps` fields keyed by the same strategy id;
+`strategiesView[id]` stays the card-face/applicability index and reads the same source vars
+the flow bundles will, so the catalogue can scale (SP-1, 6 → ~15 cards) without the bundle
+becoming a god-object and without the two surfaces ever diverging. Premium **locking** is
+NOT modelled here — it arrives as the WI-5.2 `entitlements` bundle + `LockedCard` (a third,
+additive card state). Test: `src/horizon/__tests__/strategies-screen.test.js`;
+`horizon-props-stability.test.js` auto-covers stability.
+
+---
+
 ### `evaluateConversionPlan` returns a full bundle — the optimizer's "unused" fields are NOT waste
 
 **Decision (2026-06-06):** Leave `evaluateConversionPlan` (`src/model/conversion-evaluation.js`)

@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (575 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (581 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -680,10 +680,51 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     `feature-tracker.html` #98/#99 done (54 done, 66 planned) + `docs/BUGS.md` review batch. Next:
     WI-3.3 Strategies scaffold + WI-3.9 Apply-with-preview (shared infra for the WI-3.4–3.7 flows).
 
+- **Level 3 — WI-3.3 (#100): Strategies screen scaffold (2026-06-28, branch
+  `claude/wi-3-3-plan-review-18861e`):** the decide-here destination — a registry-driven card
+  grid (editorial sections **Taxes / Income timing / Accounts**) where each strategy shows its
+  dollar stakes and opens a back-button detail flow. Display/plumbing only — **golden master
+  untouched**, 575 → **581** tests, lint clean, build OK. The plan was leak-tested by two
+  adversarial reviews (interconnectivity + future-usability) before coding; their must-fixes are
+  folded in below.
+  - **`strategiesView` bundle** (new, separately-memoized for V9; shape in `ARCHITECTURE.md`):
+    per-card `applicable` flags + ONLY the not-yet-wired card scalars (`rmd.firstRMDAmount/Age`,
+    the SS scalars `ssMonthly/ssAnnual/claimAge/breakEven/delayGainYrs`, `mega.capacity/growth`).
+    Cards whose headline already has a `horizonProps` home read it **directly**
+    (`netConversionBenefit`, `yr1TaxSavings`, `budget.availableSurplus`) — one number, one source
+    (principle 11), no duplication. Every `applicable` boolean + the `> 0` comparisons behind them
+    are computed in the App memo, never in JSX (rule 10); `firstRMDAmount/Age` pre-extracted behind
+    the `firstRMD ? … : null` guard so the screen never derefs `firstRMD.rmd`.
+  - **`StrategiesScreen.jsx`** (new): a `STRATEGIES` registry (mirrors `SCREENS`) drives layout and
+    reserves a per-entry `Flow` slot — **null at L3** — so WI-3.4–3.7 attach an interactive flow to
+    an id without reshaping the registry. The detail body is a single swappable slot
+    (`entry.Flow ?? <ReadOnlyStub/>`); the WI-3.9 ApplyPreviewModal + interactive controls mount
+    there later, so the container + read-only data path survive. **Two card states only**
+    (`active` / `notset` = free-but-unconfigured) — premium **locking is deferred to WI-5.2's
+    `entitlements` + `LockedCard`** (a third, additive branch) to avoid a second source of truth.
+    **Sign-aware Roth headline:** the golden-master default `netConversionBenefit = −9,854` shows as
+    "−$9,854 — not worth it at this spend" (value-locked in the test). Deep-link via
+    `initialStrategy={subView}` (mirrors Numbers' `initialTab` / Ideas' `initialMode`).
+  - **HorizonShell:** Strategies added to `SCREENS` at desktop **position 5**; mobile bottom bar
+    swapped per owner decision 1 to **Plan · Ideas · Numbers · Strategies · More** (Journey moves to
+    the More sheet) — `MOBILE_BAR_SCREENS`/`MORE_SCREENS` are now **explicit id lists**, not
+    `slice(0,4)`/`slice(4)`, updated across all three consumers (bar render, More-active highlight,
+    MoreSheet). Side fix: `megaGrowth` memoized at its definition (returned a fresh array each
+    render → would have broken V9 stability for `strategiesView`).
+  - **Deferred to later WIs** (recorded so they aren't re-litigated): the interactive flow bundles
+    `ssView`/`rmdView`/`conversionView` attach as **sibling** `horizonProps` fields keyed by the
+    same strategy id (WI-3.4–3.7); the "For you" signals strip + applicability *hiding*
+    (`notset`-renders-a-teaser → may-not-render) + the 4th "Assets" section → WI-5.5; premium
+    locking → WI-5.2.
+  - Tests: new `src/horizon/__tests__/strategies-screen.test.js` (6-card render, three sections,
+    headline value-locks incl. the negative Roth, `notset` edge state, flow open/back, deep-link);
+    smoke `SCREEN_MARKERS` gains a `strategies` entry (the new screen is auto-driven by the
+    `it.each(SCREENS)` loop). V9 auto-covered by `horizon-props-stability.test.js`.
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (575 tests)
+- `npm test` — run model + formatter + render-smoke tests (581 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

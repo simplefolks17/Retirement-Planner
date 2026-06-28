@@ -52,6 +52,7 @@ const SCREEN_MARKERS = {
   journey:  "Building years",         // JourneyScreen Chapter 2 headline
   ideas:    "Your future, explored.", // IdeasScreen page title
   numbers:  "Year by year",           // NumbersScreen tab label (always rendered)
+  strategies: "Ways to keep more of what you've built", // StrategiesScreen subtitle (card-grid root)
   someday:  "work optional.",         // SomedayScreen display copy
   details:  "The facts behind your plan", // MyDetailsScreen subtitle (always visible)
   settings: "Theme",                  // SettingsScreen section header

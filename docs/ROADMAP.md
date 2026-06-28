@@ -262,6 +262,19 @@ the plumbing for all Level-3 work. Shapes in `docs/ARCHITECTURE.md`.
 SS + pension are deliberately deferred to their Strategies flows (WI-3.4/3.5). Settings
 already held no plan-fact inputs, so it was left as-is; the desktop "Settings → gear
 utility" repositioning (owner decision 4) is a deferred follow-up, not a parity blocker.
+**WI-3.3 shipped Jun 28 2026.** New top-level **Strategies** screen
+(`StrategiesScreen.jsx`) — a `STRATEGIES`-registry-driven card grid in SP-1's editorial
+sections (Taxes / Income timing / Accounts), each card opening a back-button detail flow
+whose body is a single swappable slot (`entry.Flow ?? ReadOnlyStub`, `Flow` null at L3).
+New thin **`strategiesView`** bundle = per-card `applicable` flags + only the not-yet-wired
+scalars (RMD first-year, SS scalars, mega capacity/growth); already-wired headlines
+(`netConversionBenefit`/`yr1TaxSavings`/`budget.availableSurplus`) are read directly
+(principle 11). Mobile bar swapped per owner decision 1 (Plan · Ideas · Numbers ·
+Strategies · More). **Deliberate deferrals** (don't re-litigate): the interactive flow
+bundles `ssView`/`rmdView`/`conversionView` attach as siblings keyed by id in WI-3.4–3.7;
+premium **locking** → WI-5.2 `entitlements` (only two card states now: `active`/`notset`);
+the "For you" strip + applicability *hiding* (`notset`-renders-teaser → may-not-render) +
+the 4th "Assets" section → WI-5.5. 575 → 581 tests, golden master untouched.
 
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.

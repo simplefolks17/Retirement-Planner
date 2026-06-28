@@ -671,7 +671,11 @@ export default function App() {
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
   const megaCapacity     = Math.max(0, limit415c - contrib401k - employerMatchAmt);
-  const megaGrowth       = calcMegaBackdoorGrowth({ megaCapacity, returnRate });
+  // Memoized (V9): returns a new array each call, which would make strategiesView
+  // (and any other consumer listing it as a dep) re-reference every render.
+  const megaGrowth       = useMemo(
+    () => calcMegaBackdoorGrowth({ megaCapacity, returnRate }),
+    [megaCapacity, returnRate]);
 
   // Year-1 withdrawal-order tax (tax-optimal taxable→trad→Roth vs worst-case
   // all-pre-tax) — extracted to src/model/retirement-tax.js. Drives the
@@ -1276,6 +1280,44 @@ export default function App() {
       : safeLifeExp - safeRetAge,
   }), [safeRetAge, currentAge, conversionWindowYrs, yearsSustained, safeLifeExp]);
 
+  // WI-3.3 (#100): Strategies screen — per-card applicability flags + the scalars
+  // not already on horizonProps. Cards whose headline is ALREADY wired read it
+  // directly in the screen (props.netConversionBenefit, props.yr1TaxSavings,
+  // props.budget.{availableSurplus,optimizedAllocation}) — one number, one source
+  // (principle 11). All `applicable` booleans and the comparisons behind them are
+  // computed HERE, never in JSX (rule 10). firstRMDAmount/Age are pre-extracted
+  // behind the same guard App uses (firstRMD may be undefined → null), so the
+  // screen never dereferences firstRMD.rmd.
+  // Forward contract (docs/ARCHITECTURE.md): the interactive flow bundles
+  // ssView / rmdView / conversionView attach in WI-3.4–3.7 as SIBLING horizonProps
+  // fields keyed by the same strategy id; strategiesView[id] stays a thin
+  // card-face/applicability index and reads the same source vars the flow bundles
+  // will, so the two surfaces can never diverge as the catalogue scales (SP-1).
+  const strategiesView = useMemo(() => ({
+    conversion: { applicable: conversionWindowYrs > 0 },              // headline: props.netConversionBenefit (sign-aware)
+    rmd: {
+      applicable: !!firstRMD,
+      firstRMDAmount: firstRMD ? firstRMD.rmd : null,
+      firstRMDAge:    firstRMD ? firstRMD.age : null,
+    },
+    ss: {
+      applicable:   includeSS,
+      ssMonthly:    ssMonthlyBenefit,
+      ssAnnual:     ssAnnualBenefit,
+      claimAge:     ssClaimingAge,
+      breakEven:    ssBreakEven,     // null when no crossover within the horizon → "—"
+      delayGainYrs: ssDelayGainYrs,  // null when delay-to-70 is not applicable → "—"
+    },
+    withdrawal: { applicable: true },                                 // headline: props.yr1TaxSavings
+    surplus:    { applicable: availableSurplus > 0 },                 // headline: props.budget.availableSurplus
+    mega: {
+      applicable: megaCapacity > 0,
+      capacity:   megaCapacity,
+      growth:     megaGrowth,        // [{ yrs, val }] FV at 5/10/20 yrs
+    },
+  }), [conversionWindowYrs, firstRMD, includeSS, ssMonthlyBenefit, ssAnnualBenefit,
+       ssClaimingAge, ssBreakEven, ssDelayGainYrs, availableSurplus, megaCapacity, megaGrowth]);
+
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
   // so the bundle reference only changes when an input actually changes.
@@ -1323,6 +1365,10 @@ export default function App() {
     // WI-2.4 (#94): Taxes tab — phase rates + lifetime composition.
     // Memoized separately as taxViewBundle (V9) so this object reference is stable.
     taxView: taxViewBundle,
+    // WI-3.3 (#100): Strategies screen — applicability flags + not-yet-wired card
+    // scalars (memoized separately for V9). Cards whose headline is already wired
+    // read it directly: netConversionBenefit / yr1TaxSavings (above) and budget.*.
+    strategiesView,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
     // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
@@ -1382,6 +1428,8 @@ export default function App() {
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,
+       // WI-3.3 strategies bundle (memoized separately for V9 stability):
+       strategiesView,
        returnRate,
        // Session-3 additions:
        ssClaimingAge, includeSS,

@@ -849,7 +849,7 @@ var DATA = [
     cx: "Medium", im: "High", af: ["MyDetailsScreen.jsx (new)", "SettingsScreen.jsx (slims to app-centric)", "HorizonShell.jsx (SCREENS + gear placement)"], sv: "none (UI over #98 bundles)"
   },
   {
-    id: 100, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 100, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L3 / WI-3.3 — Strategies screen scaffold",
     ds: "New top-level screen: a card grid where each strategy shows its current status and dollar stakes — Roth conversion, RMD outlook, SS timing, Withdrawal order, Surplus deployment, Mega backdoor — opening a guided detail flow. Unconfigured cards show 'Not set up — see what this could be worth'. This is also the natural surface for the future premium tier (#29/#30/#31).",
     dt: "Add {id:'strategies'} to SCREENS; new src/horizon/screens/StrategiesScreen.jsx with card grid + detail-flow container (back button). Status lines all from existing props (adjustedNetConversionBenefit, rmdDataWithTax first row, ssMonthlyBenefit, yr1TaxSavings, availableSurplus, mega capacity). Done when it renders at golden-master defaults with correct headline dollars on every card + smoke test. See docs/ROADMAP.md WI-3.3.",

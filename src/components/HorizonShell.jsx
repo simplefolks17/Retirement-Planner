@@ -1,6 +1,6 @@
-// HorizonShell — Horizon UI shell (6-screen navigation).
+// HorizonShell — Horizon UI shell (8-screen navigation).
 // Additive: does not replace App.jsx — receives all computed values as props.
-// Screens: Plan · Journey · Ideas · The numbers · Settings · Someday
+// Screens: Plan · Journey · Ideas · The numbers · Strategies · Someday · My details · Settings
 // LAYOUT/STYLING ONLY — no calculation logic lives here.
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -11,6 +11,7 @@ import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
 import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
 import IdeasScreen   from "../horizon/screens/IdeasScreen.jsx";
 import NumbersScreen from "../horizon/screens/NumbersScreen.jsx";
+import StrategiesScreen from "../horizon/screens/StrategiesScreen.jsx";
 import SomedayScreen from "../horizon/screens/SomedayScreen.jsx";
 import MyDetailsScreen from "../horizon/screens/MyDetailsScreen.jsx";
 import SettingsScreen from "../horizon/screens/SettingsScreen.jsx";
@@ -414,19 +415,26 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 // of truth — adding a screen here automatically pulls it into that test's
 // coverage loop (and trips the "every screen has a marker" guard if untested).
 export const SCREENS = [
-  { id: "plan",    label: "Plan",        short: "Plan",    emoji: "◎",  icon: "◎" },
-  { id: "journey", label: "Journey",     short: "Journey", emoji: "🗺", icon: "🗺" },
-  { id: "ideas",   label: "Ideas",       short: "Ideas",   emoji: "✦",  icon: "✦" },
-  { id: "numbers", label: "The numbers", short: "Numbers", emoji: "▦",  icon: "▦" },
-  { id: "someday", label: "Someday",     short: "Someday", emoji: "☀",  icon: "☀" },
+  { id: "plan",       label: "Plan",        short: "Plan",     emoji: "◎",  icon: "◎" },
+  { id: "journey",    label: "Journey",     short: "Journey",  emoji: "🗺", icon: "🗺" },
+  { id: "ideas",      label: "Ideas",       short: "Ideas",    emoji: "✦",  icon: "✦" },
+  { id: "numbers",    label: "The numbers", short: "Numbers",  emoji: "▦",  icon: "▦" },
+  // WI-3.3 (#100): Strategies — the decide-here destination (desktop position 5).
+  { id: "strategies", label: "Strategies",  short: "Strategy", emoji: "♟",  icon: "♟" },
+  { id: "someday",    label: "Someday",     short: "Someday",  emoji: "☀",  icon: "☀" },
   // WI-3.2 (#99): My details — plan-fact destination (a content screen, not Settings).
-  { id: "details", label: "My details",  short: "Details", emoji: "▤",  icon: "▤" },
-  { id: "settings",label: "Settings",    short: "Settings",emoji: "⚙",  icon: "⚙" },
+  { id: "details",    label: "My details",  short: "Details",  emoji: "▤",  icon: "▤" },
+  { id: "settings",   label: "Settings",    short: "Settings", emoji: "⚙",  icon: "⚙" },
 ];
 
-// The first 4 screens occupy the mobile bar; the rest live in the More sheet.
-const MOBILE_BAR_SCREENS = SCREENS.slice(0, 4);
-const MORE_SCREENS        = SCREENS.slice(4);
+// Mobile bottom bar holds the four habitual intents — glance / explore / verify /
+// decide (owner decision 1, ROADMAP "End state"): Strategies swaps in at Level 3,
+// Journey moves to the More sheet. These are EXPLICIT id lists, not slices, because
+// the bar is no longer the first N screens (Strategies is desktop position 5).
+const MOBILE_BAR_IDS = ["plan", "ideas", "numbers", "strategies"];
+const byId = id => SCREENS.find(s => s.id === id);
+const MOBILE_BAR_SCREENS = MOBILE_BAR_IDS.map(byId);
+const MORE_SCREENS        = SCREENS.filter(s => !MOBILE_BAR_IDS.includes(s.id));
 
 // ── MoreSheet — mobile bottom sheet for overflow screens ──────────────────────
 // Shown when the user taps the "More" tab in the mobile bottom bar.
@@ -577,6 +585,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             {screen === "journey"  && <JourneyScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
             {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} initialMode={subView} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialTab={subView} />}
+            {screen === "strategies" && <StrategiesScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialStrategy={subView} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} navigate={navigate} />}
             {screen === "details"  && <MyDetailsScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
             {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} navigate={navigate}
