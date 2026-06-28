@@ -25,6 +25,9 @@
 
 import React, { useState, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
+// IRS ages come from config even in display copy (rule 1 / principle 9) — never
+// hardcode "73"/"67" in strings (the BUG-25 / WI-0.1 anti-pattern).
+import { RMD_START_AGE, SS_FRA } from "../../config/irs-2026.js";
 
 // ── formatting helpers (display only) ────────────────────────────────────────
 // Sign-aware money: a negative figure (e.g. the default Roth net benefit,
@@ -57,7 +60,7 @@ const BLURB = {
   conversion: "Move pre-tax savings to Roth in low-income years to cut lifetime tax.",
   withdrawal: "Draw accounts in the tax-smart order to keep more each year.",
   ss:         "When you claim sets your monthly benefit for life.",
-  rmd:        "Required withdrawals from your 401k start at age 73.",
+  rmd:        `Required withdrawals from your 401k start at age ${RMD_START_AGE}.`,
   surplus:    "Put money you're not yet investing to work, in IRS-priority order.",
   mega:       "Extra after-tax 401k space, converted to Roth.",
 };
@@ -68,13 +71,19 @@ function faceFor(id, props) {
   const sv = props.strategiesView;
   switch (id) {
     case "conversion": {
-      const nb  = props.netConversionBenefit;
-      const pos = (nb ?? 0) >= 0;
+      // Healthcare-adjusted verdict (after IRMAA/ACA) with a model-precomputed
+      // sign — the SAME field Numbers→Taxes uses (one source, principle 11). No
+      // arithmetic or `?? 0` sign-guess in the screen (rule 10): isPositive is
+      // pre-gated, nb is the signed adjusted dollar.
+      const cd = props.taxView?.conversionDetail;
+      const nb = cd?.adjustedNetConversionBenefit;
       return {
         applicable: sv.conversion.applicable,
         headline: money(nb),
-        sub: pos ? "est. lifetime benefit, after healthcare" : "not worth it at this spend",
-        tone: pos ? "good" : "warm",
+        sub: nb == null
+          ? "estimate unavailable"
+          : cd.isPositive ? "est. lifetime benefit, after healthcare" : "not worth it at this spend",
+        tone: nb == null ? "accent" : cd.isPositive ? "good" : "warm",
       };
     }
     case "withdrawal":
@@ -123,7 +132,7 @@ function detailRows(id, props) {
   switch (id) {
     case "conversion":
       return [
-        ["Est. lifetime net benefit", money(props.netConversionBenefit)],
+        ["Est. net benefit (after healthcare)", money(props.taxView?.conversionDetail?.adjustedNetConversionBenefit)],
         ["Conversion window", `${props.conversionWindowYrs} yr${props.conversionWindowYrs === 1 ? "" : "s"}`],
       ];
     case "withdrawal":
@@ -133,7 +142,7 @@ function detailRows(id, props) {
         ["Monthly benefit", money(sv.ss.ssMonthly)],
         ["Annual benefit", money(sv.ss.ssAnnual)],
         ["Claiming age", `age ${sv.ss.claimAge}`],
-        ["Break-even vs claiming at 67", sv.ss.breakEven != null ? `age ${sv.ss.breakEven}` : "—"],
+        [`Break-even vs claiming at ${SS_FRA}`, sv.ss.breakEven != null ? `age ${sv.ss.breakEven}` : "—"],
         ["Years gained by delaying to 70", sv.ss.delayGainYrs != null ? `${sv.ss.delayGainYrs} yr${sv.ss.delayGainYrs === 1 ? "" : "s"}` : "—"],
       ];
     case "rmd":
@@ -246,8 +255,10 @@ function StrategyDetail({ t, entry, props, isMobile, onBack }) {
 // initialTab / initialMode pattern used by Numbers / Ideas.
 export default function StrategiesScreen({ t, props, isMobile = false, initialStrategy = null }) {
   const [selected, setSelected] = useState(initialStrategy ?? null);
-  // Adopt a deep-link target that arrives while already mounted.
-  useEffect(() => { if (initialStrategy) setSelected(initialStrategy); }, [initialStrategy]);
+  // Keep the open card in sync with the deep-link target BOTH ways: open it when a
+  // target arrives, and return to the grid when the tab is re-selected without one
+  // (navigate("strategies") clears subView → initialStrategy null).
+  useEffect(() => { setSelected(initialStrategy ?? null); }, [initialStrategy]);
 
   const entry = selected ? STRATEGIES.find(s => s.id === selected) : null;
   if (entry) {

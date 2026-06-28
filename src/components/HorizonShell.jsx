@@ -433,7 +433,9 @@ export const SCREENS = [
 // the bar is no longer the first N screens (Strategies is desktop position 5).
 const MOBILE_BAR_IDS = ["plan", "ideas", "numbers", "strategies"];
 const byId = id => SCREENS.find(s => s.id === id);
-const MOBILE_BAR_SCREENS = MOBILE_BAR_IDS.map(byId);
+// filter(Boolean) guards against a typo'd id in MOBILE_BAR_IDS (byId → undefined
+// → crash on the bar's destructuring map); the two sets stay exhaustive + disjoint.
+const MOBILE_BAR_SCREENS = MOBILE_BAR_IDS.map(byId).filter(Boolean);
 const MORE_SCREENS        = SCREENS.filter(s => !MOBILE_BAR_IDS.includes(s.id));
 
 // ── MoreSheet — mobile bottom sheet for overflow screens ──────────────────────

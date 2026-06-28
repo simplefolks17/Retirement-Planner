@@ -1302,21 +1302,28 @@ export default function App() {
     },
     ss: {
       applicable:   includeSS,
-      ssMonthly:    ssMonthlyBenefit,
-      ssAnnual:     ssAnnualBenefit,
+      // Override-aware, mirroring the Classic SS panel (App.jsx ~2598/2604): a
+      // pinned ssOverride (an ANNUAL figure) wins, so the card never diverges from
+      // Plan / Numbers / Classic (principle 11). effectiveSS already folds in the
+      // override + includeSS gate.
+      ssMonthly:    ssOverride !== null ? Math.round(ssOverride / ASSUMPTIONS.MONTHS_PER_YEAR) : ssMonthlyBenefit,
+      ssAnnual:     effectiveSS > 0 ? effectiveSS : ssAnnualBenefit,
       claimAge:     ssClaimingAge,
       breakEven:    ssBreakEven,     // null when no crossover within the horizon → "—"
       delayGainYrs: ssDelayGainYrs,  // null when delay-to-70 is not applicable → "—"
     },
     withdrawal: { applicable: true },                                 // headline: props.yr1TaxSavings
+    // > 0 (has surplus to deploy), deliberately stricter than budgetView's
+    // surplusPositive (>= 0 = "not a deficit"): a $0 surplus = nothing to deploy.
     surplus:    { applicable: availableSurplus > 0 },                 // headline: props.budget.availableSurplus
     mega: {
       applicable: megaCapacity > 0,
       capacity:   megaCapacity,
       growth:     megaGrowth,        // [{ yrs, val }] FV at 5/10/20 yrs
     },
-  }), [conversionWindowYrs, firstRMD, includeSS, ssMonthlyBenefit, ssAnnualBenefit,
-       ssClaimingAge, ssBreakEven, ssDelayGainYrs, availableSurplus, megaCapacity, megaGrowth]);
+  }), [conversionWindowYrs, firstRMD, includeSS, ssOverride, effectiveSS,
+       ssMonthlyBenefit, ssAnnualBenefit, ssClaimingAge, ssBreakEven, ssDelayGainYrs,
+       availableSurplus, megaCapacity, megaGrowth]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),

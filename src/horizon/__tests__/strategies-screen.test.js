@@ -15,7 +15,10 @@ const t = new Proxy({}, { get: () => "#334155" });
 function makeProps(overrides = {}) {
   return {
     // already-wired headlines (read directly by the screen):
-    netConversionBenefit: -9_854,   // golden-master default — negative on purpose
+    // Conversion card reads the healthcare-adjusted verdict from taxView (the same
+    // field Numbers→Taxes uses). At golden-master default healthcare costs are 0,
+    // so adjusted == netConversionBenefit == −9,854 (negative on purpose).
+    taxView: { conversionDetail: { adjustedNetConversionBenefit: -9_854, isPositive: false, benefitAbs: 9_854 } },
     conversionWindowYrs: 7,
     yr1TaxSavings: 12_400,
     budget: { availableSurplus: 18_000 },
@@ -103,5 +106,15 @@ describe("StrategiesScreen", () => {
     expect(txt).toContain("First RMD age");           // stub row only in detail
     expect(txt).toContain("age 73");
     act(() => app.r.unmount());
+  });
+
+  it("returns to the grid when the deep-link target is cleared (re-selecting the tab)", () => {
+    let r;
+    act(() => { r = create(React.createElement(StrategiesScreen, { t, props: makeProps(), isMobile: false, initialStrategy: "ss" })); });
+    expect(textOf(r.toJSON())).toContain("All strategies");                  // detail open via deep-link
+    // navigate("strategies") with no subView → initialStrategy becomes null.
+    act(() => { r.update(React.createElement(StrategiesScreen, { t, props: makeProps(), isMobile: false, initialStrategy: null })); });
+    expect(textOf(r.toJSON())).toContain("Ways to keep more of what you've built");  // back at the grid
+    act(() => r.unmount());
   });
 });

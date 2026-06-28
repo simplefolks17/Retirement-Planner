@@ -274,7 +274,7 @@ Strategies · More). **Deliberate deferrals** (don't re-litigate): the interacti
 bundles `ssView`/`rmdView`/`conversionView` attach as siblings keyed by id in WI-3.4–3.7;
 premium **locking** → WI-5.2 `entitlements` (only two card states now: `active`/`notset`);
 the "For you" strip + applicability *hiding* (`notset`-renders-teaser → may-not-render) +
-the 4th "Assets" section → WI-5.5. 575 → 581 tests, golden master untouched.
+the 4th "Assets" section → WI-5.5. 575 → 582 tests, golden master untouched.
 
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.

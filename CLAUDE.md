@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (581 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (582 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -684,7 +684,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   `claude/wi-3-3-plan-review-18861e`):** the decide-here destination — a registry-driven card
   grid (editorial sections **Taxes / Income timing / Accounts**) where each strategy shows its
   dollar stakes and opens a back-button detail flow. Display/plumbing only — **golden master
-  untouched**, 575 → **581** tests, lint clean, build OK. The plan was leak-tested by two
+  untouched**, 575 → **582** tests, lint clean, build OK. The plan was leak-tested by two
   adversarial reviews (interconnectivity + future-usability) before coding; their must-fixes are
   folded in below.
   - **`strategiesView` bundle** (new, separately-memoized for V9; shape in `ARCHITECTURE.md`):
@@ -717,14 +717,28 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     (`notset`-renders-a-teaser → may-not-render) + the 4th "Assets" section → WI-5.5; premium
     locking → WI-5.2.
   - Tests: new `src/horizon/__tests__/strategies-screen.test.js` (6-card render, three sections,
-    headline value-locks incl. the negative Roth, `notset` edge state, flow open/back, deep-link);
-    smoke `SCREEN_MARKERS` gains a `strategies` entry (the new screen is auto-driven by the
-    `it.each(SCREENS)` loop). V9 auto-covered by `horizon-props-stability.test.js`.
+    headline value-locks incl. the negative Roth, `notset` edge state, flow open/back, deep-link,
+    deep-link-clear); smoke `SCREEN_MARKERS` gains a `strategies` entry (the new screen is
+    auto-driven by the `it.each(SCREENS)` loop). V9 auto-covered by `horizon-props-stability.test.js`.
+  - **Review fixes (PR #49 — CodeRabbit + Gemini + the two pre-code agents), all display-only,
+    golden master untouched:** (1) **Roth card now shows the healthcare-adjusted verdict** —
+    `taxView.conversionDetail.{adjustedNetConversionBenefit,isPositive}` (the same field
+    Numbers→Taxes uses), not the pre-healthcare `netConversionBenefit` the label claimed; removes a
+    `?? 0` sign-guess from the screen (CodeRabbit 🟠). Inert at default (healthcare costs 0 → still
+    −9,854). (2) **Deep-link clears both ways** — `useEffect` now `setSelected(initialStrategy ?? null)`
+    so re-selecting the tab returns to the grid (CodeRabbit 🟡; regression-tested). (3) **SS card is
+    override-aware** — `ssMonthly`/`ssAnnual` mirror Classic (`ssOverride`/`effectiveSS`) so the card
+    can't diverge from Plan/Numbers when an SS override is pinned (agent finding). (4) **RMD 73 / SS
+    FRA 67 in copy** now come from `RMD_START_AGE`/`SS_FRA` in `irs-2026.js` (rule 1 / principle 9).
+    (5) `MOBILE_BAR_SCREENS` gets `.filter(Boolean)` guarding a typo'd id; `surplus.applicable` (`> 0`)
+    documented as intentionally stricter than `budget.surplusPositive` (`>= 0`). **Skipped:** Gemini's
+    blanket optional-chaining / `props={}` / `?? false` (props are shell-guaranteed; rule 10 forbids
+    the `?? 0`/`?? false` fabrication, and real nullables are already guarded).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (581 tests)
+- `npm test` — run model + formatter + render-smoke tests (582 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
