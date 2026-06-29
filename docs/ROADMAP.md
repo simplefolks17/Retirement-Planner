@@ -275,6 +275,16 @@ bundles `ssView`/`rmdView`/`conversionView` attach as siblings keyed by id in WI
 premium **locking** → WI-5.2 `entitlements` (only two card states now: `active`/`notset`);
 the "For you" strip + applicability *hiding* (`notset`-renders-teaser → may-not-render) +
 the 4th "Assets" section → WI-5.5. 575 → 582 tests, golden master untouched.
+**WI-3.4 + WI-3.5 shipped Jun 28 2026 (same PR #49 for continuity).** The first two interactive
+flows mounted into the scaffold's reserved `Flow` slots, proving the slot-in path end to end.
+New sibling bundles `ssView` (#101) + `rmdView` (#102) on `horizonProps` (keyed by strategy id;
+`strategiesView.ss`/`.rmd` shrank to `{ applicable }`). New flow components
+`src/horizon/screens/strategies/SSTimingFlow.jsx` (include/claim-age/override, benefit stats,
+delay-to-70, spouse section, pension card — writes `ss`/`pension`) and `RMDOutlookFlow.jsx`
+(table selection, `addlPreTaxBal`, outlook stats, first-10-yr schedule — writes `ss`/`accounts`).
+Field primitives extracted to `src/horizon/fields.jsx`; flow UI helpers in
+`strategies/flow-ui.jsx`. **WI-3.9 deferred** to the WI-3.6 PR (no Apply consumer yet; SS/RMD use
+live setters). 582 → 583 tests, golden master untouched.
 
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.

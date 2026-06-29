@@ -209,32 +209,52 @@ auto-covers the bundles' referential stability.
 ### `horizonProps.strategiesView` (WI-3.3 / #100) — the Strategies card-face index
 
 **Added 2026-06-28.** The Strategies screen's read-data bundle (separately memoized for
-V9). It is deliberately **thin**: per-card `applicable` flags plus only the headline
-scalars that do **not** already have a `horizonProps` home. Cards whose number is already
-wired read it **directly** in the screen — `props.netConversionBenefit` (Roth),
-`props.yr1TaxSavings` (Withdrawal order), `props.budget.availableSurplus` (Surplus) — so
-there is one source per number (principle 11). Every `applicable` boolean and the `> 0`
-comparisons behind them are computed in the App memo (rule 10 — no comparisons on financial
-values in JSX); `rmd.firstRMDAmount/Age` are pre-extracted behind the `firstRMD ? … : null`
-guard so the screen never dereferences `firstRMD.rmd` (which can be `undefined`).
+V9). It is deliberately **thin**: per-card `applicable` flags only (plus the `mega` summary
+until its flow lands in WI-3.7). Every card reads its headline from the bundle that **owns**
+the number, so there is one source per number (principle 11). Every `applicable` boolean and
+the `> 0` comparisons behind them are computed in the App memo (rule 10 — no comparisons on
+financial values in JSX).
 
-| Card id | Shape | Headline source |
+| Card id | `strategiesView` shape | Headline source |
 |---|---|---|
-| `conversion` | `{ applicable }` | `props.netConversionBenefit` (sign-aware; default −9,854) |
-| `rmd` | `{ applicable, firstRMDAmount, firstRMDAge }` (null when no RMD) | `firstRMDAmount` |
-| `ss` | `{ applicable, ssMonthly, ssAnnual, claimAge, breakEven, delayGainYrs }` (`breakEven`/`delayGainYrs` null → "—") | `ssMonthly` |
+| `conversion` | `{ applicable }` | `props.taxView.conversionDetail.adjustedNetConversionBenefit` (+ `isPositive`; healthcare-adjusted, sign-aware; default −9,854) |
+| `rmd` | `{ applicable }` | `props.rmdView.firstRMDAmount` |
+| `ss` | `{ applicable }` | `props.ssView.ssMonthly` |
 | `withdrawal` | `{ applicable }` | `props.yr1TaxSavings` |
-| `surplus` | `{ applicable }` | `props.budget.availableSurplus` |
+| `surplus` | `{ applicable }` | `props.budget.availableSurplus` (flag is `> 0`, stricter than `budget.surplusPositive` `>= 0`) |
 | `mega` | `{ applicable, capacity, growth: [{ yrs, val }] }` | `capacity` |
 
-**Forward contract:** the interactive flow bundles `ssView` / `rmdView` / `conversionView`
-(WI-3.4–3.7) attach as **sibling** `horizonProps` fields keyed by the same strategy id;
+**Forward contract:** the interactive flow bundles (`ssView`, `rmdView`, and the future
+`conversionView`) attach as **sibling** `horizonProps` fields keyed by the same strategy id;
 `strategiesView[id]` stays the card-face/applicability index and reads the same source vars
-the flow bundles will, so the catalogue can scale (SP-1, 6 → ~15 cards) without the bundle
+the flow bundles do, so the catalogue can scale (SP-1, 6 → ~15 cards) without the bundle
 becoming a god-object and without the two surfaces ever diverging. Premium **locking** is
 NOT modelled here — it arrives as the WI-5.2 `entitlements` bundle + `LockedCard` (a third,
 additive card state). Test: `src/horizon/__tests__/strategies-screen.test.js`;
 `horizon-props-stability.test.js` auto-covers stability.
+
+### `horizonProps.ssView` / `rmdView` (WI-3.4 / #101 · WI-3.5 / #102) — Strategy flow bundles
+
+**Added 2026-06-28.** The interactive Strategy flows mount in the StrategiesScreen detail
+slot (`STRATEGIES[id].Flow`). Each flow reads its sibling view bundle (display scalars,
+separately memoized for V9, built from already-computed App scalars — no new model math) and
+**writes through the WI-3.1 setter bundles**: SS timing writes `ss` + `pension`; RMD outlook
+writes `ss` + `accounts`. Values that already live on `horizonProps` (`householdSS`,
+`withdrawalRate`, `effectivePension`, `effectiveExpenses`) are read directly, not duplicated.
+
+- **`ssView`** — `{ ssMonthly, ssAnnual, ssEstimateAnnual, ssAIME, claimAge, breakEven,
+  ssCoveragePct, delayApplicable, ss70DrawReduction, wr70, delayGainYrs, spouseSsBenefit,
+  spouseAlt, spouseAltHigher, householdCoveragePct }`. `ssMonthly`/`ssAnnual` are
+  override-aware (mirror the Classic SS panel: a pinned `ssOverride` wins). `breakEven` /
+  `delayGainYrs` are null when inapplicable (→ "—"); coverage %s are null when no expenses.
+- **`rmdView`** — `{ firstRMDAmount, firstRMDAge, totalRMDs, rmdTaxBite, effectiveRMDTaxRate,
+  rows, rowCount, retAtOrAfterRMD, activeTableLabel, qualifiesTable2, spouseAgeGap }`.
+  `rows` is the ONE engine schedule (`retPhase.rmdSchedule`, `{age,rmd,bal,divisor,tax}[]`);
+  the flow renders the first 10. `firstRMDAmount/Age` are null when there is no RMD year.
+
+The shared editable-field primitives live in `src/horizon/fields.jsx` (extracted from
+MyDetailsScreen) and the flow presentation helpers in
+`src/horizon/screens/strategies/flow-ui.jsx`.
 
 ---
 

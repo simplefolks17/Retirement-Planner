@@ -27,7 +27,9 @@ import React, { useState, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 // IRS ages come from config even in display copy (rule 1 / principle 9) — never
 // hardcode "73"/"67" in strings (the BUG-25 / WI-0.1 anti-pattern).
-import { RMD_START_AGE, SS_FRA } from "../../config/irs-2026.js";
+import { RMD_START_AGE } from "../../config/irs-2026.js";
+import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
+import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
 
 // ── formatting helpers (display only) ────────────────────────────────────────
 // Sign-aware money: a negative figure (e.g. the default Roth net benefit,
@@ -45,14 +47,16 @@ const SECTIONS = [
   { id: "accounts", label: "Accounts" },
 ];
 
-// Flow: null at L3 (read-only stub). WI-3.4–3.7 set it to the interactive flow.
+// Flow: the interactive flow component, or null for a read-only stub (slot filled
+// by WI-3.4+). SS timing (3.4) and RMD outlook (3.5) are live; the rest stub until
+// their WI lands.
 const STRATEGIES = [
-  { id: "conversion", section: "taxes",    title: "Roth conversion",       wi: "3.6", Flow: null },
-  { id: "withdrawal", section: "taxes",    title: "Withdrawal order",      wi: "3.7", Flow: null },
-  { id: "ss",         section: "income",   title: "Social Security timing", wi: "3.4", Flow: null },
-  { id: "rmd",        section: "accounts", title: "RMD outlook",           wi: "3.5", Flow: null },
-  { id: "surplus",    section: "accounts", title: "Surplus deployment",    wi: "3.7", Flow: null },
-  { id: "mega",       section: "accounts", title: "Mega backdoor",         wi: "3.7", Flow: null },
+  { id: "conversion", section: "taxes",    title: "Roth conversion",        wi: "3.6", Flow: null },
+  { id: "withdrawal", section: "taxes",    title: "Withdrawal order",       wi: "3.7", Flow: null },
+  { id: "ss",         section: "income",   title: "Social Security timing", wi: "3.4", Flow: SSTimingFlow },
+  { id: "rmd",        section: "accounts", title: "RMD outlook",            wi: "3.5", Flow: RMDOutlookFlow },
+  { id: "surplus",    section: "accounts", title: "Surplus deployment",     wi: "3.7", Flow: null },
+  { id: "mega",       section: "accounts", title: "Mega backdoor",          wi: "3.7", Flow: null },
 ];
 
 // One-line "what it is" copy — static, no model values (rule 10 safe).
@@ -93,20 +97,26 @@ function faceFor(id, props) {
         sub: "saved in year-1 tax",
         tone: "good",
       };
-    case "ss":
+    case "ss": {
+      // applicable from strategiesView; headline from the ssView flow bundle
+      // (one source — same data the SS flow renders).
+      const v = props.ssView;
       return {
         applicable: sv.ss.applicable,
-        headline: `${money(sv.ss.ssMonthly)}/mo`,
-        sub: `claiming at age ${sv.ss.claimAge}`,
+        headline: `${money(v.ssMonthly)}/mo`,
+        sub: `claiming at age ${v.claimAge}`,
         tone: "accent",
       };
-    case "rmd":
+    }
+    case "rmd": {
+      const v = props.rmdView;
       return {
         applicable: sv.rmd.applicable,
-        headline: money(sv.rmd.firstRMDAmount),
-        sub: sv.rmd.firstRMDAge != null ? `first RMD at age ${sv.rmd.firstRMDAge}` : "first RMD",
+        headline: money(v.firstRMDAmount),
+        sub: v.firstRMDAge != null ? `first RMD at age ${v.firstRMDAge}` : "first RMD",
         tone: "accent",
       };
+    }
     case "surplus":
       return {
         applicable: sv.surplus.applicable,
@@ -137,19 +147,7 @@ function detailRows(id, props) {
       ];
     case "withdrawal":
       return [["Year-1 tax saved", money(props.yr1TaxSavings)]];
-    case "ss":
-      return [
-        ["Monthly benefit", money(sv.ss.ssMonthly)],
-        ["Annual benefit", money(sv.ss.ssAnnual)],
-        ["Claiming age", `age ${sv.ss.claimAge}`],
-        [`Break-even vs claiming at ${SS_FRA}`, sv.ss.breakEven != null ? `age ${sv.ss.breakEven}` : "—"],
-        ["Years gained by delaying to 70", sv.ss.delayGainYrs != null ? `${sv.ss.delayGainYrs} yr${sv.ss.delayGainYrs === 1 ? "" : "s"}` : "—"],
-      ];
-    case "rmd":
-      return [
-        ["First RMD", money(sv.rmd.firstRMDAmount)],
-        ["First RMD age", sv.rmd.firstRMDAge != null ? `age ${sv.rmd.firstRMDAge}` : "—"],
-      ];
+    // ss + rmd render their own interactive Flow (WI-3.4/3.5), never this stub.
     case "surplus":
       return [["Available surplus", `${money(props.budget?.availableSurplus)}/yr`]];
     case "mega": {

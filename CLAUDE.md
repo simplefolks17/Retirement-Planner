@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (582 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (583 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -735,10 +735,44 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     blanket optional-chaining / `props={}` / `?? false` (props are shell-guaranteed; rule 10 forbids
     the `?? 0`/`?? false` fabrication, and real nullables are already guarded).
 
+- **Level 3 — WI-3.4 (#101) SS timing + WI-3.5 (#102) RMD outlook flows (2026-06-28, same PR #49
+  for continuity):** the first two interactive flows mounted into the WI-3.3 scaffold's reserved
+  `Flow` slots — proving the slot-in path end to end. Display/plumbing only — **golden master
+  untouched**, 582 → **583** tests, lint clean, build OK. **WI-3.9 (Apply-with-preview) was
+  deliberately deferred** to the WI-3.6 conversion PR where its first Apply button appears (building
+  it now would ship unused infra against principle 5; SS/RMD write live through setter bundles).
+  - **Foundation refactor:** the editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg`
+    + the `money`/`ageFmt`/`pctYr`/`pct` formatters) were extracted from `MyDetailsScreen.jsx` into
+    new **`src/horizon/fields.jsx`** so the flows reuse one implementation (no duplication). Small
+    flow presentation helpers (`SectionLabel`/`NoteBox`/`StatTile`) live in new
+    **`src/horizon/screens/strategies/flow-ui.jsx`**.
+  - **Sibling flow bundles** (forward contract realized): `ssView` (#101) + `rmdView` (#102) added
+    to `horizonProps`, each memoized separately (V9), keyed by the same id as their `strategiesView`
+    card. Consequently `strategiesView.ss`/`.rmd` shrank to `{ applicable }` only — the card face now
+    reads its headline from the flow bundle (one number, one source, principle 11), matching how the
+    conversion/withdrawal/surplus cards already read `taxView`/`yr1TaxSavings`/`budget`. Both bundles
+    are built from already-computed App scalars (no new model math); `householdSS`/`withdrawalRate`/
+    `effectivePension`/`effectiveExpenses` are read directly from `horizonProps` by the flows.
+  - **`SSTimingFlow.jsx`** (#101): include toggle, claim-age stepper/slider (FRA/early/delayed
+    label), override (seeded from the PIA estimate), 3 benefit stats + AIME note + coverage %,
+    delay-to-70 impact box (gated `delayApplicable`), married spouse section (basis toggle, spouse
+    estimate + claim age, `spouseAltHigher` advisory, household stats), and a pension income card.
+    Writes via the `ss` + `pension` setter bundles. Mirrors the Classic SS + Spouse SS + Pension
+    sections value-for-value.
+  - **`RMDOutlookFlow.jsx`** (#102): explainer; IRS-table selection (married / spouse-sole-benef /
+    spouse-age with the Table II >10-yr-gap note + active-table label); `addlPreTaxBal` input;
+    3 outlook stats (first RMD / lifetime total / est. tax) with the retire-after-73 edge note;
+    first-10-years schedule (Age/Divisor/Balance/RMD/Tax) from the ONE engine `rmdSchedule`. Writes
+    via the `ss` + `accounts` bundles. IRS start age from `RMD_START_AGE` (config).
+  - Tests: `strategies-screen.test.js` extended (flow open/back, a setter write-through, RMD
+    deep-link, deep-link-clear) — the flows render off synthetic view+setter bundles. `ARCHITECTURE.md`
+    documents the `ssView`/`rmdView` shapes. Next: WI-3.6 (conversion planner) + WI-3.9
+    (Apply-with-preview) + WI-3.7 (withdrawal order / surplus / mega flows).
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (582 tests)
+- `npm test` — run model + formatter + render-smoke tests (583 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
