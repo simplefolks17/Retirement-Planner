@@ -11,8 +11,6 @@ import { DetailField, money } from "../../fields.jsx";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW } from "./flow-ui.jsx";
 import { RMD_START_AGE } from "../../../config/irs-2026.js";
 
-const ratePct = r => `${(r * 100).toFixed(1)}%`;
-
 export default function RMDOutlookFlow({ t, props, isMobile = false }) {
   const rv = props.rmdView;
   const ss = props.ss;            // isMarried / spouseIsSoleBenef / spouseCurrentAge
@@ -76,7 +74,7 @@ export default function RMDOutlookFlow({ t, props, isMobile = false }) {
           <StatTile t={t} label="Lifetime RMD total" value={money(rv.totalRMDs)}
             sub="forced out of the 401k" tone="warm" />
           <StatTile t={t} label="Est. total tax on RMDs" value={money(rv.rmdTaxBite)}
-            sub={`at ${ratePct(rv.effectiveRMDTaxRate)} effective`} tone="warm" />
+            sub={`at ${rv.effectiveRMDTaxRateLabel} effective`} tone="warm" />
         </div>
       )}
 
@@ -86,17 +84,21 @@ export default function RMDOutlookFlow({ t, props, isMobile = false }) {
           <SectionLabel t={t}>Year-by-year (first 10)</SectionLabel>
           <div style={{ overflowX: "auto" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, auto)", gap: "4px 18px", minWidth: 420 }}>
-              {["Age", "Divisor", "Est. 401k bal.", "RMD", `Tax (~${ratePct(rv.effectiveRMDTaxRate)})`].map(h => (
+              {["Age", "Divisor", "Est. 401k bal.", "RMD", `Tax (~${rv.effectiveRMDTaxRateLabel})`].map(h => (
                 <span key={h} style={{ font: `500 10px ${HF}`, color: t.mut, textTransform: "uppercase",
                   letterSpacing: "0.05em", borderBottom: `1px solid ${t.line}`, paddingBottom: 4 }}>{h}</span>
               ))}
-              {rows.map(({ age, rmd, bal, divisor, tax }) => ([
-                <span key={`a${age}`} style={{ font: `600 12px ${HM}`, color: t.accent }}>{age}</span>,
-                <span key={`d${age}`} style={{ font: `400 12px ${HM}`, color: t.mut }}>{divisor ?? "—"}</span>,
-                <span key={`b${age}`} style={{ font: `400 12px ${HM}`, color: t.ink }}>{money(bal)}</span>,
-                <span key={`r${age}`} style={{ font: `600 12px ${HM}`, color: t.warm }}>{money(rmd)}</span>,
-                <span key={`t${age}`} style={{ font: `400 12px ${HM}`, color: t.mut }}>{money(tax)}</span>,
-              ]))}
+              {/* Fragment groups each row's cells (keyed by age) while keeping them
+                  direct grid children — preserves column alignment, no key warning. */}
+              {rows.map(({ age, rmd, bal, divisor, tax }) => (
+                <React.Fragment key={age}>
+                  <span style={{ font: `600 12px ${HM}`, color: t.accent }}>{age}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.mut }}>{divisor ?? "—"}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.ink }}>{money(bal)}</span>
+                  <span style={{ font: `600 12px ${HM}`, color: t.warm }}>{money(rmd)}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.mut }}>{money(tax)}</span>
+                </React.Fragment>
+              ))}
             </div>
           </div>
           {rv.rowCount > 10 && (

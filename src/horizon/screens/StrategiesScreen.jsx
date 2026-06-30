@@ -28,17 +28,9 @@ import { HF, HM } from "../ThemeContext.jsx";
 // IRS ages come from config even in display copy (rule 1 / principle 9) — never
 // hardcode "73"/"67" in strings (the BUG-25 / WI-0.1 anti-pattern).
 import { RMD_START_AGE } from "../../config/irs-2026.js";
+import { money } from "../fields.jsx";   // shared sign-aware money formatter
 import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
 import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
-
-// ── formatting helpers (display only) ────────────────────────────────────────
-// Sign-aware money: a negative figure (e.g. the default Roth net benefit,
-// −$9,854 at golden-master spend) reads as "−$9,854", never "$-10k".
-const money = v => {
-  if (v == null || isNaN(v)) return "—";
-  const r = Math.round(v);
-  return r < 0 ? `−$${Math.abs(r).toLocaleString()}` : `$${r.toLocaleString()}`;
-};
 
 // ── strategy catalogue ───────────────────────────────────────────────────────
 const SECTIONS = [

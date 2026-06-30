@@ -228,7 +228,10 @@ financial values in JSX).
 `conversionView`) attach as **sibling** `horizonProps` fields keyed by the same strategy id;
 `strategiesView[id]` stays the card-face/applicability index and reads the same source vars
 the flow bundles do, so the catalogue can scale (SP-1, 6 → ~15 cards) without the bundle
-becoming a god-object and without the two surfaces ever diverging. Premium **locking** is
+becoming a god-object and without the two surfaces ever diverging. **Note for WI-3.6:** the
+conversion **card face** already reads its headline from `taxView.conversionDetail` (above), so
+`conversionView` should carry the flow's window/sim/optimizer/healthcare detail — *not* re-expose
+the headline benefit (which would duplicate `taxView`, the principle-11 trap). Premium **locking** is
 NOT modelled here — it arrives as the WI-5.2 `entitlements` bundle + `LockedCard` (a third,
 additive card state). Test: `src/horizon/__tests__/strategies-screen.test.js`;
 `horizon-props-stability.test.js` auto-covers stability.

@@ -8,7 +8,7 @@
 // monthly/annual figures are model-provided.
 
 import React from "react";
-import { HF } from "../../ThemeContext.jsx";
+import { HF, HM } from "../../ThemeContext.jsx";
 import { DetailField, money } from "../../fields.jsx";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW } from "./flow-ui.jsx";
 import { SS_FRA, SS_MAX_CLAIM_AGE } from "../../../config/irs-2026.js";
@@ -40,8 +40,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
         {F({ label: "Include Social Security", field: ss.includeSS })}
         {includeSS && F({ label: "Claiming age", field: ss.ssClaimingAge, format: claimAgeFmt })}
         {includeSS && F({ label: "Override estimate", hint: "your own SSA.gov annual figure",
-          field: { value: ss.ssOverride.value, set: ss.ssOverride.set,
-                   min: ss.ssOverride.min, max: ss.ssOverride.max, step: ss.ssOverride.step },
+          field: ss.ssOverride,   // already { value, set, min, max, step } — extra `estimated` is ignored by DetailField
           format: money, seed: sv.ssEstimateAnnual,
           nullLabel: `Estimate · ${money(sv.ssEstimateAnnual)}` })}
       </div>
@@ -83,7 +82,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
             </div>
           )}
           <div style={{ font: `400 10.5px/1.5 ${HF}`, color: t.faint, marginTop: 6, fontStyle: "italic" }}>
-            Longevity estimate assumes the {SS_MAX_CLAIM_AGE - sv.claimAge}-year gap before claiming is covered by other income, not this portfolio.
+            Longevity estimate assumes the {sv.delayGapYrs}-year gap before claiming is covered by other income, not this portfolio.
           </div>
         </NoteBox>
       )}
@@ -110,7 +109,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
             <StatTile t={t} label="Spouse benefit" value={`${money(sv.spouseSsBenefit)}/yr`}
               sub={ss.spouseBenefitBasis.value === "own" ? "own record" : "spousal (50%)"} tone="good" dim={!includeSS} />
             <StatTile t={t} label="Household SS" value={`${money(props.householdSS)}/yr`}
-              sub={`${money(props.householdSS / 12)}/mo`} tone="good" dim={!includeSS} />
+              sub={`${money(sv.householdSSMonthly)}/mo`} tone="good" dim={!includeSS} />
             <StatTile t={t} label="SS coverage"
               value={sv.householdCoveragePct != null ? `${sv.householdCoveragePct}%` : "—"}
               sub="of annual expenses" />

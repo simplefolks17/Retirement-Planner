@@ -1329,12 +1329,14 @@ export default function App() {
     ssCoveragePct: effectiveExpenses > 0 ? Math.round((effectiveSS / effectiveExpenses) * 100) : null,
     // Delay-to-70 impact (gated exactly as Classic: only when delaying still helps)
     delayApplicable:  ss70DrawReduction > 0 && includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE,
+    delayGapYrs:  Math.max(0, SS_MAX_CLAIM_AGE - ssClaimingAge),   // years until age 70 (model-side, not JSX age math)
     ss70DrawReduction,
     wr70,
     delayGainYrs: ssDelayGainYrs,        // null when delay-to-70 is not applicable → "—"
     // Spouse (rendered only when isMarried, read from the ss bundle)
     spouseSsBenefit,
     spouseAlt, spouseAltHigher,
+    householdSSMonthly: Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR),  // monthly split in the model (rule 10), not householdSS/12 in JSX
     householdCoveragePct: effectiveExpenses > 0 ? Math.round((householdSS / effectiveExpenses) * 100) : null,
   }), [ssOverride, ssMonthlyBenefit, effectiveSS, ssAnnualBenefit, ssAIME, ssClaimingAge,
        ssBreakEven, effectiveExpenses, ss70DrawReduction, includeSS, wr70, ssDelayGainYrs,
@@ -1350,6 +1352,8 @@ export default function App() {
     totalRMDs,
     rmdTaxBite,
     effectiveRMDTaxRate,
+    // Preformatted so the screen never multiplies a model rate by 100 (rule 10).
+    effectiveRMDTaxRateLabel: `${(effectiveRMDTaxRate * 100).toFixed(1)}%`,
     rows:        rmdData,                 // {age,rmd,bal,divisor,tax}[] — screen renders first 10
     rowCount:    rmdData.length,
     retAtOrAfterRMD: safeRetAge >= RMD_START_AGE,   // RMDs begin at retirement → no countdown stats

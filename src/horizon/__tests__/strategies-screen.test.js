@@ -139,6 +139,20 @@ describe("StrategiesScreen", () => {
     act(() => app.r.unmount());
   });
 
+  it("renders the SS flow's delay-to-70 box without crashing (delayApplicable)", () => {
+    // Regression: the delay box uses the HM monospace token; a missing import
+    // crashed the flow at the golden-master default (claiming < 70 → delayApplicable).
+    const props = makeProps();
+    props.ssView = { ...props.ssView, delayApplicable: true, ss70DrawReduction: 9_200, wr70: 2.4, delayGainYrs: 3, delayGapYrs: 3 };
+    props.withdrawalRate = 3.2;
+    const app = mount(props, { initialStrategy: "ss" });
+    const txt = app.text();
+    expect(txt).toContain("Delay to 70");
+    expect(txt).toContain("+$9,200/yr");
+    expect(txt).toContain("3.2% → 2.4%");
+    act(() => app.r.unmount());
+  });
+
   it("a flow control writes through its setter bundle", () => {
     const props = makeProps();
     const app = mount(props);

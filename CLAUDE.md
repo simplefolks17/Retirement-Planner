@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (583 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (584 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -765,14 +765,29 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     first-10-years schedule (Age/Divisor/Balance/RMD/Tax) from the ONE engine `rmdSchedule`. Writes
     via the `ss` + `accounts` bundles. IRS start age from `RMD_START_AGE` (config).
   - Tests: `strategies-screen.test.js` extended (flow open/back, a setter write-through, RMD
-    deep-link, deep-link-clear) — the flows render off synthetic view+setter bundles. `ARCHITECTURE.md`
-    documents the `ssView`/`rmdView` shapes. Next: WI-3.6 (conversion planner) + WI-3.9
-    (Apply-with-preview) + WI-3.7 (withdrawal order / surplus / mega flows).
+    deep-link, deep-link-clear, + a `delayApplicable` regression) — the flows render off synthetic
+    view+setter bundles. `ARCHITECTURE.md` documents the `ssView`/`rmdView` shapes.
+  - **Review fixes (PR #49 — 3 Gemini passes + 3 Opus agents + CodeRabbit), all display-only,
+    golden master untouched (582 → 584 tests):** (1) **`HM` crash** — `SSTimingFlow` referenced the
+    monospace token after the shared-helper extraction dropped it from the import; the delay-to-70
+    box throws at the *default* state (claiming < 70). Fixed + a `delayApplicable: true` regression
+    test (it slipped past lint — no `no-undef` rule — and the smoke only renders the grid).
+    (2) **rule-10 math out of JSX** — `householdSS/12` → `ssView.householdSSMonthly`;
+    `SS_MAX_CLAIM_AGE − claimAge` → `ssView.delayGapYrs`; RMD `(rate*100)` → preformatted
+    `rmdView.effectiveRMDTaxRateLabel`. (3) `fields.jsx` `money` made sign-aware (one formatter;
+    StrategiesScreen's local copy removed). (4) `<select>` got `aria-label`. (5) RMD table rows
+    wrapped in `<React.Fragment key>`. (6) `ss.ssOverride` passed directly (no redundant rebuild).
+    **Skipped (with reason):** the `addlPreTaxBal.value > 0` note-gate (a raw-input UI conditional,
+    identical to the accepted `pensionMonthly.value > 0` / `incomeGrowth.value > 0` pattern — rule
+    10 targets derived-number applicability, not raw-input toggles) and Gemini's blanket
+    optional-chaining / `props={}` (props are shell-guaranteed; rule 10 forbids `?? 0`/`?? false`).
+  - Next: WI-3.6 (conversion planner) + WI-3.9 (Apply-with-preview) + WI-3.7 (withdrawal order /
+    surplus / mega flows).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (583 tests)
+- `npm test` — run model + formatter + render-smoke tests (584 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
