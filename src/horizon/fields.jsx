@@ -69,7 +69,11 @@ export function DetailField({ t, label, hint, field, isMobile, format = String, 
     if (options.length > 3) {
       return (
         <FieldRow t={t} label={label} hint={hint}>
-          <select value={value} aria-label={label} onChange={e => set(e.target.value)}
+          {/* Pass the option's ORIGINAL typed value (e.target.value is always a
+              string) so numeric/boolean choices don't get coerced — parity with
+              the segmented-button path below. */}
+          <select value={value} aria-label={label}
+            onChange={e => { const o = options.find(o => String(o.value) === e.target.value); if (o) set(o.value); }}
             style={{
               font: `500 13px ${HF}`, color: t.ink, background: t.surf,
               border: `1px solid ${t.line2}`, borderRadius: 8, padding: "7px 10px",
