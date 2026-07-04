@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (575 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (584 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -680,10 +680,122 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     `feature-tracker.html` #98/#99 done (54 done, 66 planned) + `docs/BUGS.md` review batch. Next:
     WI-3.3 Strategies scaffold + WI-3.9 Apply-with-preview (shared infra for the WI-3.4–3.7 flows).
 
+- **Level 3 — WI-3.3 (#100): Strategies screen scaffold (2026-06-28, branch
+  `claude/wi-3-3-plan-review-18861e`):** the decide-here destination — a registry-driven card
+  grid (editorial sections **Taxes / Income timing / Accounts**) where each strategy shows its
+  dollar stakes and opens a back-button detail flow. Display/plumbing only — **golden master
+  untouched**, 575 → **582** tests, lint clean, build OK. The plan was leak-tested by two
+  adversarial reviews (interconnectivity + future-usability) before coding; their must-fixes are
+  folded in below.
+  - **`strategiesView` bundle** (new, separately-memoized for V9; shape in `ARCHITECTURE.md`):
+    per-card `applicable` flags + ONLY the not-yet-wired card scalars (`rmd.firstRMDAmount/Age`,
+    the SS scalars `ssMonthly/ssAnnual/claimAge/breakEven/delayGainYrs`, `mega.capacity/growth`).
+    Cards whose headline already has a `horizonProps` home read it **directly**
+    (`netConversionBenefit`, `yr1TaxSavings`, `budget.availableSurplus`) — one number, one source
+    (principle 11), no duplication. Every `applicable` boolean + the `> 0` comparisons behind them
+    are computed in the App memo, never in JSX (rule 10); `firstRMDAmount/Age` pre-extracted behind
+    the `firstRMD ? … : null` guard so the screen never derefs `firstRMD.rmd`.
+  - **`StrategiesScreen.jsx`** (new): a `STRATEGIES` registry (mirrors `SCREENS`) drives layout and
+    reserves a per-entry `Flow` slot — **null at L3** — so WI-3.4–3.7 attach an interactive flow to
+    an id without reshaping the registry. The detail body is a single swappable slot
+    (`entry.Flow ?? <ReadOnlyStub/>`); the WI-3.9 ApplyPreviewModal + interactive controls mount
+    there later, so the container + read-only data path survive. **Two card states only**
+    (`active` / `notset` = free-but-unconfigured) — premium **locking is deferred to WI-5.2's
+    `entitlements` + `LockedCard`** (a third, additive branch) to avoid a second source of truth.
+    **Sign-aware Roth headline:** the golden-master default `netConversionBenefit = −9,854` shows as
+    "−$9,854 — not worth it at this spend" (value-locked in the test). Deep-link via
+    `initialStrategy={subView}` (mirrors Numbers' `initialTab` / Ideas' `initialMode`).
+  - **HorizonShell:** Strategies added to `SCREENS` at desktop **position 5**; mobile bottom bar
+    swapped per owner decision 1 to **Plan · Ideas · Numbers · Strategies · More** (Journey moves to
+    the More sheet) — `MOBILE_BAR_SCREENS`/`MORE_SCREENS` are now **explicit id lists**, not
+    `slice(0,4)`/`slice(4)`, updated across all three consumers (bar render, More-active highlight,
+    MoreSheet). Side fix: `megaGrowth` memoized at its definition (returned a fresh array each
+    render → would have broken V9 stability for `strategiesView`).
+  - **Deferred to later WIs** (recorded so they aren't re-litigated): the interactive flow bundles
+    `ssView`/`rmdView`/`conversionView` attach as **sibling** `horizonProps` fields keyed by the
+    same strategy id (WI-3.4–3.7); the "For you" signals strip + applicability *hiding*
+    (`notset`-renders-a-teaser → may-not-render) + the 4th "Assets" section → WI-5.5; premium
+    locking → WI-5.2.
+  - Tests: new `src/horizon/__tests__/strategies-screen.test.js` (6-card render, three sections,
+    headline value-locks incl. the negative Roth, `notset` edge state, flow open/back, deep-link,
+    deep-link-clear); smoke `SCREEN_MARKERS` gains a `strategies` entry (the new screen is
+    auto-driven by the `it.each(SCREENS)` loop). V9 auto-covered by `horizon-props-stability.test.js`.
+  - **Review fixes (PR #49 — CodeRabbit + Gemini + the two pre-code agents), all display-only,
+    golden master untouched:** (1) **Roth card now shows the healthcare-adjusted verdict** —
+    `taxView.conversionDetail.{adjustedNetConversionBenefit,isPositive}` (the same field
+    Numbers→Taxes uses), not the pre-healthcare `netConversionBenefit` the label claimed; removes a
+    `?? 0` sign-guess from the screen (CodeRabbit 🟠). Inert at default (healthcare costs 0 → still
+    −9,854). (2) **Deep-link clears both ways** — `useEffect` now `setSelected(initialStrategy ?? null)`
+    so re-selecting the tab returns to the grid (CodeRabbit 🟡; regression-tested). (3) **SS card is
+    override-aware** — `ssMonthly`/`ssAnnual` mirror Classic (`ssOverride`/`effectiveSS`) so the card
+    can't diverge from Plan/Numbers when an SS override is pinned (agent finding). (4) **RMD 73 / SS
+    FRA 67 in copy** now come from `RMD_START_AGE`/`SS_FRA` in `irs-2026.js` (rule 1 / principle 9).
+    (5) `MOBILE_BAR_SCREENS` gets `.filter(Boolean)` guarding a typo'd id; `surplus.applicable` (`> 0`)
+    documented as intentionally stricter than `budget.surplusPositive` (`>= 0`). **Skipped:** Gemini's
+    blanket optional-chaining / `props={}` / `?? false` (props are shell-guaranteed; rule 10 forbids
+    the `?? 0`/`?? false` fabrication, and real nullables are already guarded).
+
+- **Level 3 — WI-3.4 (#101) SS timing + WI-3.5 (#102) RMD outlook flows (2026-06-28, same PR #49
+  for continuity):** the first two interactive flows mounted into the WI-3.3 scaffold's reserved
+  `Flow` slots — proving the slot-in path end to end. Display/plumbing only — **golden master
+  untouched**, 582 → **583** tests, lint clean, build OK. **WI-3.9 (Apply-with-preview) was
+  deliberately deferred** to the WI-3.6 conversion PR where its first Apply button appears (building
+  it now would ship unused infra against principle 5; SS/RMD write live through setter bundles).
+  - **Foundation refactor:** the editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg`
+    + the `money`/`ageFmt`/`pctYr`/`pct` formatters) were extracted from `MyDetailsScreen.jsx` into
+    new **`src/horizon/fields.jsx`** so the flows reuse one implementation (no duplication). Small
+    flow presentation helpers (`SectionLabel`/`NoteBox`/`StatTile`) live in new
+    **`src/horizon/screens/strategies/flow-ui.jsx`**.
+  - **Sibling flow bundles** (forward contract realized): `ssView` (#101) + `rmdView` (#102) added
+    to `horizonProps`, each memoized separately (V9), keyed by the same id as their `strategiesView`
+    card. Consequently `strategiesView.ss`/`.rmd` shrank to `{ applicable }` only — the card face now
+    reads its headline from the flow bundle (one number, one source, principle 11), matching how the
+    conversion/withdrawal/surplus cards already read `taxView`/`yr1TaxSavings`/`budget`. Both bundles
+    are built from already-computed App scalars (no new model math); `householdSS`/`withdrawalRate`/
+    `effectivePension`/`effectiveExpenses` are read directly from `horizonProps` by the flows.
+  - **`SSTimingFlow.jsx`** (#101): include toggle, claim-age stepper/slider (FRA/early/delayed
+    label), override (seeded from the PIA estimate), 3 benefit stats + AIME note + coverage %,
+    delay-to-70 impact box (gated `delayApplicable`), married spouse section (basis toggle, spouse
+    estimate + claim age, `spouseAltHigher` advisory, household stats), and a pension income card.
+    Writes via the `ss` + `pension` setter bundles. Mirrors the Classic SS + Spouse SS + Pension
+    sections value-for-value.
+  - **`RMDOutlookFlow.jsx`** (#102): explainer; IRS-table selection (married / spouse-sole-benef /
+    spouse-age with the Table II >10-yr-gap note + active-table label); `addlPreTaxBal` input;
+    3 outlook stats (first RMD / lifetime total / est. tax) with the retire-after-73 edge note;
+    first-10-years schedule (Age/Divisor/Balance/RMD/Tax) from the ONE engine `rmdSchedule`. Writes
+    via the `ss` + `accounts` bundles. IRS start age from `RMD_START_AGE` (config).
+  - Tests: `strategies-screen.test.js` extended (flow open/back, a setter write-through, RMD
+    deep-link, deep-link-clear, + a `delayApplicable` regression) — the flows render off synthetic
+    view+setter bundles. `ARCHITECTURE.md` documents the `ssView`/`rmdView` shapes.
+  - **Review fixes (PR #49 — 3 Gemini passes + 3 Opus agents + CodeRabbit), all display-only,
+    golden master untouched (582 → 584 tests):** (1) **`HM` crash** — `SSTimingFlow` referenced the
+    monospace token after the shared-helper extraction dropped it from the import; the delay-to-70
+    box throws at the *default* state (claiming < 70). Fixed + a `delayApplicable: true` regression
+    test (it slipped past lint — no `no-undef` rule — and the smoke only renders the grid).
+    (2) **rule-10 math out of JSX** — `householdSS/12` → `ssView.householdSSMonthly`;
+    `SS_MAX_CLAIM_AGE − claimAge` → `ssView.delayGapYrs`; RMD `(rate*100)` → preformatted
+    `rmdView.effectiveRMDTaxRateLabel`. (3) `fields.jsx` `money` made sign-aware (one formatter;
+    StrategiesScreen's local copy removed). (4) `<select>` got `aria-label`. (5) RMD table rows
+    wrapped in `<React.Fragment key>`. (6) `ss.ssOverride` passed directly (no redundant rebuild).
+    **Skipped (with reason):** the `addlPreTaxBal.value > 0` note-gate (a raw-input UI conditional,
+    identical to the accepted `pensionMonthly.value > 0` / `incomeGrowth.value > 0` pattern — rule
+    10 targets derived-number applicability, not raw-input toggles) and Gemini's blanket
+    optional-chaining / `props={}` (props are shell-guaranteed; rule 10 forbids `?? 0`/`?? false`).
+  - **Review fixes (round 3 — CodeRabbit on b78aebd; Gemini came back clean):** more render-only
+    (rule 10) + a11y polish, all display-only, golden master untouched: (1) FRA age-comparison labels
+    moved out of `SSTimingFlow` JSX into `ssView.claimAgeLabel` / `ssView.breakEvenContext`
+    (`claimAgeFmt` stays only as the editable claim-age field's live formatter); (2) the DERIVED
+    `effectivePension > 0` gate → model flag `ssView.showEffectivePension` (the raw-input
+    `pensionMonthly.value > 0` gate stays — accepted pattern); (3) `fields.jsx` ± steppers +
+    segmented/boolean buttons got `aria-label`s (parity with the `<select>`/slider). **Skipped:**
+    conversion-window `${n} yr${n===1?…}` pluralization (display formatting, not model arithmetic).
+  - Next: WI-3.6 (conversion planner) + WI-3.9 (Apply-with-preview) + WI-3.7 (withdrawal order /
+    surplus / mega flows).
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (575 tests)
+- `npm test` — run model + formatter + render-smoke tests (584 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

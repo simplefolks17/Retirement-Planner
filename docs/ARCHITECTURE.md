@@ -206,6 +206,65 @@ auto-covers the bundles' referential stability.
 
 ---
 
+### `horizonProps.strategiesView` (WI-3.3 / #100) — the Strategies card-face index
+
+**Added 2026-06-28.** The Strategies screen's read-data bundle (separately memoized for
+V9). It is deliberately **thin**: per-card `applicable` flags only (plus the `mega` summary
+until its flow lands in WI-3.7). Every card reads its headline from the bundle that **owns**
+the number, so there is one source per number (principle 11). Every `applicable` boolean and
+the `> 0` comparisons behind them are computed in the App memo (rule 10 — no comparisons on
+financial values in JSX).
+
+| Card id | `strategiesView` shape | Headline source |
+|---|---|---|
+| `conversion` | `{ applicable }` | `props.taxView.conversionDetail.adjustedNetConversionBenefit` (+ `isPositive`; healthcare-adjusted, sign-aware; default −9,854) |
+| `rmd` | `{ applicable }` | `props.rmdView.firstRMDAmount` |
+| `ss` | `{ applicable }` | `props.ssView.ssMonthly` |
+| `withdrawal` | `{ applicable }` | `props.yr1TaxSavings` |
+| `surplus` | `{ applicable }` | `props.budget.availableSurplus` (flag is `> 0`, stricter than `budget.surplusPositive` `>= 0`) |
+| `mega` | `{ applicable, capacity, growth: [{ yrs, val }] }` | `capacity` |
+
+**Forward contract:** the interactive flow bundles (`ssView`, `rmdView`, and the future
+`conversionView`) attach as **sibling** `horizonProps` fields keyed by the same strategy id;
+`strategiesView[id]` stays the card-face/applicability index and reads the same source vars
+the flow bundles do, so the catalogue can scale (SP-1, 6 → ~15 cards) without the bundle
+becoming a god-object and without the two surfaces ever diverging. **Note for WI-3.6:** the
+conversion **card face** already reads its headline from `taxView.conversionDetail` (above), so
+`conversionView` should carry the flow's window/sim/optimizer/healthcare detail — *not* re-expose
+the headline benefit (which would duplicate `taxView`, the principle-11 trap). Premium **locking** is
+NOT modelled here — it arrives as the WI-5.2 `entitlements` bundle + `LockedCard` (a third,
+additive card state). Test: `src/horizon/__tests__/strategies-screen.test.js`;
+`horizon-props-stability.test.js` auto-covers stability.
+
+### `horizonProps.ssView` / `rmdView` (WI-3.4 / #101 · WI-3.5 / #102) — Strategy flow bundles
+
+**Added 2026-06-28.** The interactive Strategy flows mount in the StrategiesScreen detail
+slot (`STRATEGIES[id].Flow`). Each flow reads its sibling view bundle (display scalars,
+separately memoized for V9, built from already-computed App scalars — no new model math) and
+**writes through the WI-3.1 setter bundles**: SS timing writes `ss` + `pension`; RMD outlook
+writes `ss` + `accounts`. Values that already live on `horizonProps` (`householdSS`,
+`withdrawalRate`, `effectivePension`, `effectiveExpenses`) are read directly, not duplicated.
+
+- **`ssView`** — `{ ssMonthly, ssAnnual, ssEstimateAnnual, ssAIME, claimAge, claimAgeLabel,
+  breakEven, breakEvenContext, ssCoveragePct, delayApplicable, delayGapYrs, ss70DrawReduction,
+  wr70, delayGainYrs, spouseSsBenefit, spouseAlt, spouseAltHigher, householdSSMonthly,
+  householdCoveragePct, showEffectivePension }`. `ssMonthly`/`ssAnnual` are override-aware
+  (mirror the Classic SS panel: a pinned `ssOverride` wins). `claimAgeLabel`/`breakEvenContext`
+  are model-provided display strings so the screen does no FRA age-comparison; `delayGapYrs`/
+  `householdSSMonthly` are precomputed so the screen does no age/month math (rule 10).
+  `showEffectivePension` is the applicability flag for the derived `effectivePension`. `breakEven`/
+  `delayGainYrs` are null when inapplicable (→ "—"); coverage %s are null when no expenses.
+- **`rmdView`** — `{ firstRMDAmount, firstRMDAge, totalRMDs, rmdTaxBite, effectiveRMDTaxRate,
+  rows, rowCount, retAtOrAfterRMD, activeTableLabel, qualifiesTable2, spouseAgeGap }`.
+  `rows` is the ONE engine schedule (`retPhase.rmdSchedule`, `{age,rmd,bal,divisor,tax}[]`);
+  the flow renders the first 10. `firstRMDAmount/Age` are null when there is no RMD year.
+
+The shared editable-field primitives live in `src/horizon/fields.jsx` (extracted from
+MyDetailsScreen) and the flow presentation helpers in
+`src/horizon/screens/strategies/flow-ui.jsx`.
+
+---
+
 ### `evaluateConversionPlan` returns a full bundle — the optimizer's "unused" fields are NOT waste
 
 **Decision (2026-06-06):** Leave `evaluateConversionPlan` (`src/model/conversion-evaluation.js`)

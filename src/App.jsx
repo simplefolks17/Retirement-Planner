@@ -671,7 +671,11 @@ export default function App() {
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
   const megaCapacity     = Math.max(0, limit415c - contrib401k - employerMatchAmt);
-  const megaGrowth       = calcMegaBackdoorGrowth({ megaCapacity, returnRate });
+  // Memoized (V9): returns a new array each call, which would make strategiesView
+  // (and any other consumer listing it as a dep) re-reference every render.
+  const megaGrowth       = useMemo(
+    () => calcMegaBackdoorGrowth({ megaCapacity, returnRate }),
+    [megaCapacity, returnRate]);
 
   // Year-1 withdrawal-order tax (tax-optimal taxable→trad→Roth vs worst-case
   // all-pre-tax) — extracted to src/model/retirement-tax.js. Drives the
@@ -1276,6 +1280,99 @@ export default function App() {
       : safeLifeExp - safeRetAge,
   }), [safeRetAge, currentAge, conversionWindowYrs, yearsSustained, safeLifeExp]);
 
+  // WI-3.3 (#100): Strategies screen — per-card applicability flags + the scalars
+  // not already on horizonProps. Cards whose headline is ALREADY wired read it
+  // directly in the screen (props.netConversionBenefit, props.yr1TaxSavings,
+  // props.budget.{availableSurplus,optimizedAllocation}) — one number, one source
+  // (principle 11). All `applicable` booleans and the comparisons behind them are
+  // computed HERE, never in JSX (rule 10). firstRMDAmount/Age are pre-extracted
+  // behind the same guard App uses (firstRMD may be undefined → null), so the
+  // screen never dereferences firstRMD.rmd.
+  // Forward contract (docs/ARCHITECTURE.md): the interactive flow bundles
+  // ssView / rmdView / conversionView attach in WI-3.4–3.7 as SIBLING horizonProps
+  // fields keyed by the same strategy id; strategiesView[id] stays a thin
+  // card-face/applicability index and reads the same source vars the flow bundles
+  // will, so the two surfaces can never diverge as the catalogue scales (SP-1).
+  const strategiesView = useMemo(() => ({
+    // applicable flags only; each card reads its headline from the bundle that
+    // owns the number — conversion → taxView.conversionDetail, withdrawal →
+    // yr1TaxSavings, surplus → budget, ss → ssView, rmd → rmdView (siblings keyed
+    // by the same id, WI-3.4/3.5). mega keeps its summary until its flow lands
+    // (WI-3.7). One number, one source (principle 11).
+    conversion: { applicable: conversionWindowYrs > 0 },
+    rmd:        { applicable: !!firstRMD },
+    ss:         { applicable: includeSS },
+    withdrawal: { applicable: true },
+    // > 0 (has surplus to deploy), deliberately stricter than budgetView's
+    // surplusPositive (>= 0 = "not a deficit"): a $0 surplus = nothing to deploy.
+    surplus:    { applicable: availableSurplus > 0 },
+    mega: {
+      applicable: megaCapacity > 0,
+      capacity:   megaCapacity,
+      growth:     megaGrowth,        // [{ yrs, val }] FV at 5/10/20 yrs
+    },
+  }), [conversionWindowYrs, firstRMD, includeSS, availableSurplus, megaCapacity, megaGrowth]);
+
+  // WI-3.4 (#101): Social Security timing flow bundle. Sibling of strategiesView
+  // keyed by the "ss" strategy id (forward contract in docs/ARCHITECTURE.md). All
+  // display scalars the SS card face + flow need, computed here (rule 10 — the
+  // coverage %s and the override-aware monthly/annual mirror the Classic SS panel
+  // exactly). householdSS / withdrawalRate / effectivePension / effectiveExpenses
+  // are read directly from horizonProps by the flow (already wired — no dup).
+  const ssView = useMemo(() => ({
+    ssMonthly:    ssOverride !== null ? Math.round(ssOverride / ASSUMPTIONS.MONTHS_PER_YEAR) : ssMonthlyBenefit,
+    ssAnnual:     effectiveSS > 0 ? effectiveSS : ssAnnualBenefit,
+    ssEstimateAnnual: ssAnnualBenefit,   // the PIA estimate (override seed / "estimated was")
+    ssAIME,
+    claimAge:     ssClaimingAge,
+    // Age labels precomputed in the model so the screen does no FRA age-comparison
+    // (rule 10 / principle 8). claimAgeFmt stays in the screen ONLY as the editable
+    // claim-age field's live formatter.
+    claimAgeLabel: ssClaimingAge === SS_FRA ? `age ${ssClaimingAge} (FRA)`
+                 : ssClaimingAge < SS_FRA ? `age ${ssClaimingAge} (early)` : `age ${ssClaimingAge} (delayed)`,
+    breakEven:    ssBreakEven,           // null when no crossover within the horizon → "—"
+    breakEvenContext: ssClaimingAge < SS_FRA ? "when FRA catches up"
+                    : ssClaimingAge > SS_FRA ? "when delay pays off" : "claiming at FRA",
+    ssCoveragePct: effectiveExpenses > 0 ? Math.round((effectiveSS / effectiveExpenses) * 100) : null,
+    // Delay-to-70 impact (gated exactly as Classic: only when delaying still helps)
+    delayApplicable:  ss70DrawReduction > 0 && includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE,
+    delayGapYrs:  Math.max(0, SS_MAX_CLAIM_AGE - ssClaimingAge),   // years until age 70 (model-side, not JSX age math)
+    ss70DrawReduction,
+    wr70,
+    delayGainYrs: ssDelayGainYrs,        // null when delay-to-70 is not applicable → "—"
+    // Spouse (rendered only when isMarried, read from the ss bundle)
+    spouseSsBenefit,
+    spouseAlt, spouseAltHigher,
+    householdSSMonthly: Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR),  // monthly split in the model (rule 10), not householdSS/12 in JSX
+    householdCoveragePct: effectiveExpenses > 0 ? Math.round((householdSS / effectiveExpenses) * 100) : null,
+    // Pension applicability (a DERIVED value → the flag travels with the data, not a
+    // `> 0` comparison in JSX); effectivePension itself is read directly for display.
+    showEffectivePension: effectivePension > 0,
+  }), [ssOverride, ssMonthlyBenefit, effectiveSS, ssAnnualBenefit, ssAIME, ssClaimingAge,
+       ssBreakEven, effectiveExpenses, ss70DrawReduction, includeSS, wr70, ssDelayGainYrs,
+       spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS, effectivePension]);
+
+  // WI-3.5 (#102): RMD outlook flow bundle. Sibling keyed by "rmd". firstRMD*
+  // pre-extracted behind the same guard App uses (firstRMD may be undefined →
+  // null) so the screen never derefs firstRMD.rmd. rows = the ONE engine schedule
+  // (retPhase.rmdSchedule), already display-ready ({age,rmd,bal,divisor,tax}).
+  const rmdView = useMemo(() => ({
+    firstRMDAmount: firstRMD ? firstRMD.rmd : null,
+    firstRMDAge:    firstRMD ? firstRMD.age : null,
+    totalRMDs,
+    rmdTaxBite,
+    effectiveRMDTaxRate,
+    // Preformatted so the screen never multiplies a model rate by 100 (rule 10).
+    effectiveRMDTaxRateLabel: `${(effectiveRMDTaxRate * 100).toFixed(1)}%`,
+    rows:        rmdData,                 // {age,rmd,bal,divisor,tax}[] — screen renders first 10
+    rowCount:    rmdData.length,
+    retAtOrAfterRMD: safeRetAge >= RMD_START_AGE,   // RMDs begin at retirement → no countdown stats
+    activeTableLabel,                                // "Table II (Joint Life)" / "Table III (Uniform Lifetime)"
+    qualifiesTable2: useTable2,
+    spouseAgeGap:    currentAge - spouseCurrentAge, // meaningful only when isMarried (the flow gates it)
+  }), [firstRMD, totalRMDs, rmdTaxBite, effectiveRMDTaxRate, rmdData, safeRetAge,
+       activeTableLabel, useTable2, currentAge, spouseCurrentAge]);
+
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
   // so the bundle reference only changes when an input actually changes.
@@ -1323,6 +1420,14 @@ export default function App() {
     // WI-2.4 (#94): Taxes tab — phase rates + lifetime composition.
     // Memoized separately as taxViewBundle (V9) so this object reference is stable.
     taxView: taxViewBundle,
+    // WI-3.3 (#100): Strategies screen — applicability flags + not-yet-wired card
+    // scalars (memoized separately for V9). Cards whose headline is already wired
+    // read it directly: netConversionBenefit / yr1TaxSavings (above) and budget.*.
+    strategiesView,
+    // WI-3.4 (#101) / WI-3.5 (#102): interactive flow bundles, siblings of
+    // strategiesView keyed by strategy id. Memoized separately above (V9).
+    ssView,
+    rmdView,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
     // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
@@ -1382,6 +1487,10 @@ export default function App() {
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,
+       // WI-3.3 strategies bundle (memoized separately for V9 stability):
+       strategiesView,
+       // WI-3.4 / WI-3.5 flow bundles (memoized separately for V9 stability):
+       ssView, rmdView,
        returnRate,
        // Session-3 additions:
        ssClaimingAge, includeSS,

@@ -849,21 +849,21 @@ var DATA = [
     cx: "Medium", im: "High", af: ["MyDetailsScreen.jsx (new)", "SettingsScreen.jsx (slims to app-centric)", "HorizonShell.jsx (SCREENS + gear placement)"], sv: "none (UI over #98 bundles)"
   },
   {
-    id: 100, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 100, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L3 / WI-3.3 — Strategies screen scaffold",
     ds: "New top-level screen: a card grid where each strategy shows its current status and dollar stakes — Roth conversion, RMD outlook, SS timing, Withdrawal order, Surplus deployment, Mega backdoor — opening a guided detail flow. Unconfigured cards show 'Not set up — see what this could be worth'. This is also the natural surface for the future premium tier (#29/#30/#31).",
     dt: "Add {id:'strategies'} to SCREENS; new src/horizon/screens/StrategiesScreen.jsx with card grid + detail-flow container (back button). Status lines all from existing props (adjustedNetConversionBenefit, rmdDataWithTax first row, ssMonthlyBenefit, yr1TaxSavings, availableSurplus, mega capacity). Done when it renders at golden-master defaults with correct headline dollars on every card + smoke test. See docs/ROADMAP.md WI-3.3.",
     cx: "Medium", im: "High", af: ["HorizonShell.jsx (SCREENS)", "StrategiesScreen.jsx (new)"], sv: "activeFlow (local StrategiesScreen state)"
   },
   {
-    id: 101, pr: 1, sec: "Horizon Depth Ladder", st: "planned",
+    id: 101, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L3 / WI-3.4 — Social Security timing flow (incl. spouse)",
     ds: "The full Classic SS section as a guided flow: claim-age stepper with live benefit, break-even age, delay-to-70 impact, override input, and the married section (own-record vs spousal basis, spouse claim age, advisory note when the spousal benefit beats the own record).",
     dt: "Pass horizonProps.ssView from calcRetirementIncome + calcSSBreakEven + calcSSDelayGain (already computed in App): ssMonthlyBenefit, ssAnnualBenefit, ss67Monthly, ssBreakEven, ss70Annual, ss70DrawReduction, delayGainYears, spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS. Claim stepper 62–70 with min currentAge (BUG-17 guard); writes via the ss bundle (#98). Done when every value equals Classic's SS + Spouse SS sections at the same state (default + one delayed-claim state) and changes round-trip to Classic. See docs/ROADMAP.md WI-3.4.",
     cx: "Medium", im: "High", af: ["StrategiesScreen.jsx (SS flow)", "App.jsx (horizonProps.ssView)", "retirement-income.js / drawdown.js (consumed, unchanged)"], sv: "none (ss bundle from #98)"
   },
   {
-    id: 102, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    id: 102, pr: 2, sec: "Horizon Depth Ladder", st: "done",
     ti: "L3 / WI-3.5 — RMD outlook flow",
     ds: "Classic's RMD section as a guided flow: what-is-an-RMD explainer, IRS table selection (married / sole-beneficiary spouse / spouse age), outside pre-tax balances input, first-RMD / lifetime-total / est-tax stat cards, and the first-10-years table.",
     dt: "Pass horizonProps.rmdView = { rmdDataWithTax, rmdTaxBite, effectiveRMDTaxRate, firstRMD, lifetimeRMDTotal } (from calcRMDTaxSchedule; aggregates computed in the model/App memo, not JSX). Controls write isMarried/spouseIsSoleBenef/spouseCurrentAge/addlPreTaxBal via bundles (#98). Done when it equals Classic's RMD section at the same state and the Table II/III switch changes the schedule identically in both UIs. See docs/ROADMAP.md WI-3.5.",

@@ -262,6 +262,29 @@ the plumbing for all Level-3 work. Shapes in `docs/ARCHITECTURE.md`.
 SS + pension are deliberately deferred to their Strategies flows (WI-3.4/3.5). Settings
 already held no plan-fact inputs, so it was left as-is; the desktop "Settings → gear
 utility" repositioning (owner decision 4) is a deferred follow-up, not a parity blocker.
+**WI-3.3 shipped Jun 28 2026.** New top-level **Strategies** screen
+(`StrategiesScreen.jsx`) — a `STRATEGIES`-registry-driven card grid in SP-1's editorial
+sections (Taxes / Income timing / Accounts), each card opening a back-button detail flow
+whose body is a single swappable slot (`entry.Flow ?? ReadOnlyStub`, `Flow` null at L3).
+New thin **`strategiesView`** bundle = per-card `applicable` flags + only the not-yet-wired
+scalars (RMD first-year, SS scalars, mega capacity/growth); already-wired headlines
+(`netConversionBenefit`/`yr1TaxSavings`/`budget.availableSurplus`) are read directly
+(principle 11). Mobile bar swapped per owner decision 1 (Plan · Ideas · Numbers ·
+Strategies · More). **Deliberate deferrals** (don't re-litigate): the interactive flow
+bundles `ssView`/`rmdView`/`conversionView` attach as siblings keyed by id in WI-3.4–3.7;
+premium **locking** → WI-5.2 `entitlements` (only two card states now: `active`/`notset`);
+the "For you" strip + applicability *hiding* (`notset`-renders-teaser → may-not-render) +
+the 4th "Assets" section → WI-5.5. 575 → 582 tests, golden master untouched.
+**WI-3.4 + WI-3.5 shipped Jun 28 2026 (same PR #49 for continuity).** The first two interactive
+flows mounted into the scaffold's reserved `Flow` slots, proving the slot-in path end to end.
+New sibling bundles `ssView` (#101) + `rmdView` (#102) on `horizonProps` (keyed by strategy id;
+`strategiesView.ss`/`.rmd` shrank to `{ applicable }`). New flow components
+`src/horizon/screens/strategies/SSTimingFlow.jsx` (include/claim-age/override, benefit stats,
+delay-to-70, spouse section, pension card — writes `ss`/`pension`) and `RMDOutlookFlow.jsx`
+(table selection, `addlPreTaxBal`, outlook stats, first-10-yr schedule — writes `ss`/`accounts`).
+Field primitives extracted to `src/horizon/fields.jsx`; flow UI helpers in
+`strategies/flow-ui.jsx`. **WI-3.9 deferred** to the WI-3.6 PR (no Apply consumer yet; SS/RMD use
+live setters). 582 → 583 tests, golden master untouched.
 
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.
