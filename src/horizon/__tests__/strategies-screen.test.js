@@ -44,9 +44,11 @@ function makeProps(overrides = {}) {
     // ── WI-3.4 ssView flow bundle ──
     ssView: {
       ssMonthly: 4_010, ssAnnual: 48_120, ssEstimateAnnual: 48_120, ssAIME: 9_500,
-      claimAge: 67, breakEven: null, ssCoveragePct: 80,
-      delayApplicable: false, ss70DrawReduction: 0, wr70: 0, delayGainYrs: null,
-      spouseSsBenefit: 0, spouseAlt: 0, spouseAltHigher: false, householdCoveragePct: 80,
+      claimAge: 67, claimAgeLabel: "age 67 (FRA)", breakEven: null, breakEvenContext: "claiming at FRA",
+      ssCoveragePct: 80,
+      delayApplicable: false, delayGapYrs: 3, ss70DrawReduction: 0, wr70: 0, delayGainYrs: null,
+      spouseSsBenefit: 0, spouseAlt: 0, spouseAltHigher: false,
+      householdSSMonthly: 4_010, householdCoveragePct: 80, showEffectivePension: false,
     },
     // ── WI-3.5 rmdView flow bundle ──
     rmdView: {

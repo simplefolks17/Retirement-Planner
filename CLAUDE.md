@@ -781,6 +781,14 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     identical to the accepted `pensionMonthly.value > 0` / `incomeGrowth.value > 0` pattern — rule
     10 targets derived-number applicability, not raw-input toggles) and Gemini's blanket
     optional-chaining / `props={}` (props are shell-guaranteed; rule 10 forbids `?? 0`/`?? false`).
+  - **Review fixes (round 3 — CodeRabbit on b78aebd; Gemini came back clean):** more render-only
+    (rule 10) + a11y polish, all display-only, golden master untouched: (1) FRA age-comparison labels
+    moved out of `SSTimingFlow` JSX into `ssView.claimAgeLabel` / `ssView.breakEvenContext`
+    (`claimAgeFmt` stays only as the editable claim-age field's live formatter); (2) the DERIVED
+    `effectivePension > 0` gate → model flag `ssView.showEffectivePension` (the raw-input
+    `pensionMonthly.value > 0` gate stays — accepted pattern); (3) `fields.jsx` ± steppers +
+    segmented/boolean buttons got `aria-label`s (parity with the `<select>`/slider). **Skipped:**
+    conversion-window `${n} yr${n===1?…}` pluralization (display formatting, not model arithmetic).
   - Next: WI-3.6 (conversion planner) + WI-3.9 (Apply-with-preview) + WI-3.7 (withdrawal order /
     surplus / mega flows).
 

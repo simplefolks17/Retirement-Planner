@@ -1325,7 +1325,14 @@ export default function App() {
     ssEstimateAnnual: ssAnnualBenefit,   // the PIA estimate (override seed / "estimated was")
     ssAIME,
     claimAge:     ssClaimingAge,
+    // Age labels precomputed in the model so the screen does no FRA age-comparison
+    // (rule 10 / principle 8). claimAgeFmt stays in the screen ONLY as the editable
+    // claim-age field's live formatter.
+    claimAgeLabel: ssClaimingAge === SS_FRA ? `age ${ssClaimingAge} (FRA)`
+                 : ssClaimingAge < SS_FRA ? `age ${ssClaimingAge} (early)` : `age ${ssClaimingAge} (delayed)`,
     breakEven:    ssBreakEven,           // null when no crossover within the horizon → "—"
+    breakEvenContext: ssClaimingAge < SS_FRA ? "when FRA catches up"
+                    : ssClaimingAge > SS_FRA ? "when delay pays off" : "claiming at FRA",
     ssCoveragePct: effectiveExpenses > 0 ? Math.round((effectiveSS / effectiveExpenses) * 100) : null,
     // Delay-to-70 impact (gated exactly as Classic: only when delaying still helps)
     delayApplicable:  ss70DrawReduction > 0 && includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE,
@@ -1338,9 +1345,12 @@ export default function App() {
     spouseAlt, spouseAltHigher,
     householdSSMonthly: Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR),  // monthly split in the model (rule 10), not householdSS/12 in JSX
     householdCoveragePct: effectiveExpenses > 0 ? Math.round((householdSS / effectiveExpenses) * 100) : null,
+    // Pension applicability (a DERIVED value → the flag travels with the data, not a
+    // `> 0` comparison in JSX); effectivePension itself is read directly for display.
+    showEffectivePension: effectivePension > 0,
   }), [ssOverride, ssMonthlyBenefit, effectiveSS, ssAnnualBenefit, ssAIME, ssClaimingAge,
        ssBreakEven, effectiveExpenses, ss70DrawReduction, includeSS, wr70, ssDelayGainYrs,
-       spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS]);
+       spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS, effectivePension]);
 
   // WI-3.5 (#102): RMD outlook flow bundle. Sibling keyed by "rmd". firstRMD*
   // pre-extracted behind the same guard App uses (firstRMD may be undefined →

@@ -48,9 +48,9 @@ export function seg(t, on) {
   };
 }
 
-export function StepBtn({ t, children, onClick, disabled }) {
+export function StepBtn({ t, children, onClick, disabled, ariaLabel }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled}
+    <button type="button" onClick={onClick} disabled={disabled} aria-label={ariaLabel}
       style={{
         width: 34, height: 34, flexShrink: 0, borderRadius: 8,
         border: `1.5px solid ${t.line2}`, background: t.surf,
@@ -89,6 +89,7 @@ export function DetailField({ t, label, hint, field, isMobile, format = String, 
         <div style={{ display: "flex", gap: 6 }}>
           {options.map(o => (
             <button key={String(o.value)} type="button" aria-pressed={o.value === value}
+              aria-label={`${label}: ${o.label}`}
               onClick={() => set(o.value)} style={seg(t, o.value === value)}>{o.label}</button>
           ))}
         </div>
@@ -103,6 +104,7 @@ export function DetailField({ t, label, hint, field, isMobile, format = String, 
         <div style={{ display: "flex", gap: 6 }}>
           {[["Yes", true], ["No", false]].map(([l, v]) => (
             <button key={l} type="button" aria-pressed={value === v}
+              aria-label={`${label}: ${l}`}
               onClick={() => set(v)} style={seg(t, value === v)}>{l}</button>
           ))}
         </div>
@@ -142,11 +144,11 @@ export function DetailField({ t, label, hint, field, isMobile, format = String, 
     return (
       <FieldRow t={t} label={label} hint={hint}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <StepBtn t={t} onClick={() => bump(-1)}
+          <StepBtn t={t} ariaLabel={`decrease ${label}`} onClick={() => bump(-1)}
             disabled={!isNull && typeof min === "number" && value <= min}>−</StepBtn>
           <span style={{ minWidth: 96, textAlign: "center", font: `600 15px ${HM}`,
             color: isNull ? t.faint : t.ink }}>{display}</span>
-          <StepBtn t={t} onClick={() => bump(1)}
+          <StepBtn t={t} ariaLabel={`increase ${label}`} onClick={() => bump(1)}
             disabled={!isNull && hasMax && value >= max}>+</StepBtn>
         </div>
       </FieldRow>

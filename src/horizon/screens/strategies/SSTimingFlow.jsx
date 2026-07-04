@@ -47,14 +47,14 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
 
       <div style={row3}>
         <StatTile t={t} label="Monthly benefit" value={`${money(sv.ssMonthly)}/mo`}
-          sub={`at ${claimAgeFmt(sv.claimAge)}`} tone="good" dim={!includeSS} />
+          sub={`at ${sv.claimAgeLabel}`} tone="good" dim={!includeSS} />
         <StatTile t={t} label="Annual benefit" value={money(sv.ssAnnual)}
           sub={!includeSS ? "excluded from calcs"
             : sv.ssCoveragePct != null ? `${sv.ssCoveragePct}% of expenses` : "—"}
           tone="good" dim={!includeSS} />
         <StatTile t={t} label={`Break-even vs ${SS_FRA}`}
           value={sv.breakEven != null ? `age ${sv.breakEven}` : "—"}
-          sub={sv.claimAge < SS_FRA ? "when FRA catches up" : sv.claimAge > SS_FRA ? "when delay pays off" : "claiming at FRA"} />
+          sub={sv.breakEvenContext} />
       </div>
 
       <div style={{ font: `400 11px ${HF}`, color: t.faint }}>
@@ -128,7 +128,8 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
           format: v => (v === 0 ? "None" : `${money(v)}/mo`) })}
         {pension.pensionMonthly.value > 0 &&
           F({ label: "Pension start age", field: pension.pensionStartAge, format: v => `age ${v}` })}
-        {props.effectivePension > 0 && (
+        {/* Applicability of the DERIVED effectivePension travels with the data (model flag). */}
+        {sv.showEffectivePension && (
           <div style={{ font: `400 11px ${HF}`, color: t.faint }}>
             Counts as {money(props.effectivePension)}/yr of retirement income.
           </div>

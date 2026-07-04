@@ -245,10 +245,14 @@ separately memoized for V9, built from already-computed App scalars — no new m
 writes `ss` + `accounts`. Values that already live on `horizonProps` (`householdSS`,
 `withdrawalRate`, `effectivePension`, `effectiveExpenses`) are read directly, not duplicated.
 
-- **`ssView`** — `{ ssMonthly, ssAnnual, ssEstimateAnnual, ssAIME, claimAge, breakEven,
-  ssCoveragePct, delayApplicable, ss70DrawReduction, wr70, delayGainYrs, spouseSsBenefit,
-  spouseAlt, spouseAltHigher, householdCoveragePct }`. `ssMonthly`/`ssAnnual` are
-  override-aware (mirror the Classic SS panel: a pinned `ssOverride` wins). `breakEven` /
+- **`ssView`** — `{ ssMonthly, ssAnnual, ssEstimateAnnual, ssAIME, claimAge, claimAgeLabel,
+  breakEven, breakEvenContext, ssCoveragePct, delayApplicable, delayGapYrs, ss70DrawReduction,
+  wr70, delayGainYrs, spouseSsBenefit, spouseAlt, spouseAltHigher, householdSSMonthly,
+  householdCoveragePct, showEffectivePension }`. `ssMonthly`/`ssAnnual` are override-aware
+  (mirror the Classic SS panel: a pinned `ssOverride` wins). `claimAgeLabel`/`breakEvenContext`
+  are model-provided display strings so the screen does no FRA age-comparison; `delayGapYrs`/
+  `householdSSMonthly` are precomputed so the screen does no age/month math (rule 10).
+  `showEffectivePension` is the applicability flag for the derived `effectivePension`. `breakEven`/
   `delayGainYrs` are null when inapplicable (→ "—"); coverage %s are null when no expenses.
 - **`rmdView`** — `{ firstRMDAmount, firstRMDAge, totalRMDs, rmdTaxBite, effectiveRMDTaxRate,
   rows, rowCount, retAtOrAfterRMD, activeTableLabel, qualifiesTable2, spouseAgeGap }`.
