@@ -285,6 +285,14 @@ delay-to-70, spouse section, pension card — writes `ss`/`pension`) and `RMDOut
 Field primitives extracted to `src/horizon/fields.jsx`; flow UI helpers in
 `strategies/flow-ui.jsx`. **WI-3.9 deferred** to the WI-3.6 PR (no Apply consumer yet; SS/RMD use
 live setters). 582 → 583 tests, golden master untouched.
+**Pre-L3c review (Jul 4 2026, docs-only):** before building WI-3.6 + 3.9, both specs were
+re-verified against the shipped base and refreshed in place (see the "Refreshed Jul 4 2026"
+notes inside each): WI-3.6 absorbs feature **#118** (window start/stop ages, pre-retirement
+`conversionEvents` + in-service toggle, `(startAge, amount)` optimizer) and drops the
+pre-BUG-35 `rmdDataPostConversion` shape; WI-3.9 is rescoped so the modal **renders** a
+model-computed preview payload instead of calling `calcWhatIfDelta` itself (which cannot
+represent a conversion override — BUG-36). Stale golden-master references updated
+(77,861 → the current −9,854 adjusted verdict). Parity table gained the two #118 surfaces.
 
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.
@@ -322,8 +330,15 @@ Copy each input's min/max/step constraints verbatim from the Classic JSX (e.g., 
 
 ### WI-3.6 (#103) Roth conversion planner flow
 **Target:** the full conversion pipeline — Classic's deepest feature — interactive in Horizon.
-**Actions:** pass `horizonProps.conversionView` = the display path's `evaluateConversionPlan` result (`conversionSim, rmdDataPostConversion, rmdTaxSaved, netConversionBenefit, irmaaCost, acaLoss, cliffYears, adjustedNetConversionBenefit`) + `calcBracketFillTargets` outputs (`convSteadyTarget/convPeakTarget/targetsVary`) + the existing optimizer suggestion. Flow sections: window summary; mode toggle (bracket 12/22/24 vs custom amount); tax-source toggle; outcome cards (conversion, tax cost, RMD tax saved, net); healthcare impact (ACA cliff years, IRMAA cost, adjusted net); year-by-year conversion table + RMD before/after; **optimizer suggestion with Apply** (sets `annualConversionAmt` + `conversionMode="custom"` through the WI-3.9 preview modal).
-**Done when:** all values equal Classic's conversion section at the same state (incl. the locked default `netConversionBenefit` = 77,861 path); Apply round-trips and the suggestion clears once applied.
+**Refreshed Jul 4 2026 (pre-build review):** the original text predated two shipped changes — **BUG-35** (per-account engine: `rmdDataPostConversion` no longer exists; the RMD before/after comparison is the ONE engine's `rmdSchedule` vs `rmdScheduleNoConv` from `buildRetirementPhase`) and **feature #118** (user-controlled conversion timing: window start/stop ages, pre-retirement one-time `conversionEvents` + in-service toggle, and an optimizer that suggests `(startAge, amount)`). Scope and field names below are current.
+**Actions:** pass `horizonProps.conversionView` as a **sibling bundle** keyed by the card id (the WI-3.4/3.5 pattern; the card face keeps reading `taxView.conversionDetail` — one number, one source, principle 11):
+- *Window:* `hasConvWindow`, resolved `startAge`/`endAge`, `conversionWindowYrs`, bounds — plus the #118 start/stop-age **setters**, which live in this flow bundle, not the `conversion` setter bundle (already documented in `ARCHITECTURE.md`).
+- *Evaluation:* the display path's `evaluateConversionPlan` result (`conversionSim, rmdTaxSaved, conversionCost, netConversionBenefit, irmaaCost, acaLoss, cliffYears, adjustedNetConversionBenefit`) + the engine's `rmdSchedule`/`rmdScheduleNoConv` for the before/after table.
+- *Targets:* `calcBracketFillTargets` outputs (`convSteadyTarget/convPeakTarget/targetsVary`).
+- *Optimizer:* `optimizerResult` — `(optimalStartAge, optimalConversion, optimalBenefit)` per #118. **Apply sets `conversionStartAge` + `annualConversionAmt` + `conversionMode="custom"`** through the WI-3.9 preview modal; the suggestion clears once applied.
+Flow sections: window summary **+ start/stop steppers**; mode toggle (bracket 12/22/24 vs custom amount); tax-source toggle (**BUG-37 note:** the engine walk currently ignores `conversionTaxSource` — keep the flow's copy honest about what the toggle changes); outcome cards (conversion, tax cost, RMD tax saved, net — **sign-aware**, matching the card's healthcare-adjusted verdict); healthcare impact (ACA cliff years, IRMAA cost, adjusted net); year-by-year conversion table + RMD before/after (engine schedules); **pre-retirement one-time conversions** — port `ConversionEventsPanel`'s controls (events + in-service toggle) into this flow, with the honest limitation note that an early conversion's payoff shows in longevity/`rmdTaxBite`, not the window headline, until **#119** ships its dedicated benefit figure.
+Consistency note: Plan's QuickTune Roth slider already writes the same state (`conversionMode="custom"` + amount, live, Reset-revertible) — that pattern stays; the flow, the card face, and QuickTune all read/write the same fields so they cannot diverge.
+**Done when:** all values equal Classic's conversion section at the same state (incl. the locked default `adjustedNetConversionBenefit` = **−9,854**, rendered sign-aware); window steppers + conversion events round-trip to Classic; Apply (start age + amount) round-trips and the suggestion clears once applied.
 **Forward note (End state, stress test 1):** the per-year bracket-headroom table this flow displays ships as a shared model view **`bracketRoomByYear`** (the #57 conversion calendar), because the rental-sale (#59), concentrated-stock (#67), and DAF (#68) flows must consume the *same* room — strategies that each assume an empty bracket would jointly over-fill it.
 
 ### WI-3.7 (#104) Withdrawal order, Surplus deployment, Mega backdoor flows
@@ -332,6 +347,7 @@ Copy each input's min/max/step constraints verbatim from the Classic JSX (e.g., 
 - *Withdrawal order* (read-only): render `calcWithdrawalOrderTax` fields (`yr1FromTaxable/Trad/Roth, yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings`) as the ordered sequence + savings card.
 - *Surplus deployment*: `calcOptimizedAllocation` outputs + `savingsSurplusPct` stepper + **Apply/Revert** — extract Classic's existing apply handler (writes `opt401k/optRoth/optHSA/optTaxable` into contributions, snapshots into `preApplySnapshot`) into `applyAllocation`/`revertAllocation` callbacks passed via `horizonProps`, so both UIs share one implementation.
 - *Mega backdoor*: match-mode inputs (via the `accounts` bundle) + 415(c) capacity stats + `calcMegaBackdoorGrowth` projections.
+Each flow attaches its own sibling bundle keyed by the card id (the WI-3.4/3.5 pattern); `strategiesView.mega` then shrinks to `{ applicable }` like `ss`/`rmd` did. The Surplus Apply/Revert routes through the WI-3.9 preview modal.
 **Done when:** parity with the three Classic sections; Apply in Horizon → Classic shows the same applied/revert state (shared mechanism); revert restores the snapshot exactly.
 
 ### WI-3.8 (#105) Ideas growth: events editor + affordability mode
@@ -339,14 +355,19 @@ Copy each input's min/max/step constraints verbatim from the Classic JSX (e.g., 
 **Actions:**
 - Events editor: Horizon-styled equivalent of `MoneyEventsPanel` (max 6 events; label/amount/age/inflow-outflow/taxable/delete) using `moneyEvents`/`setMoneyEvents` already in props — same state, no new mechanism.
 - Affordability: new Ideas panel calling `calcAffordabilityMax` (what-if.js — currently unused by Horizon) with the existing `whatIfSimInputs` bundle; purchase-age + target-age steppers; result sentence ("You could spend up to $X at age Y and still last to Z").
-**Done when:** an event added in Horizon appears in Classic's panel and moves the arc; affordability result equals Classic `WhatIfPanel`'s for identical inputs.
+- Layout: Ideas already has a segmented mode mechanism (`mode` state + mode buttons) — both additions land as **new modes of that one control** (pre-adopting SP-5's Dials · Events · Scenarios · Solvers naming), never as stacked panels.
+**Done when:** an event added in Horizon appears in Classic's panel and moves the arc; affordability result equals Classic `WhatIfPanel`'s for identical inputs; one mode visible at a time (SP-5).
 
 ### WI-3.9 (#106) Apply-with-preview pattern
 **Target:** no Apply button changes headline numbers without showing the consequence first.
-**Actions:** shared `src/horizon/ApplyPreviewModal.jsx` wrapping `ConfirmModal`: given an override, computes before/after via `calcWhatIfDelta`/`calcWhatIfChart` (years sustained, balance at 90) and renders the delta; commit only on confirm. Used by every Apply in WI-3.6/3.7 and by `commitPlan` call sites.
-**Done when:** all Strategies Apply buttons route through it (review checklist); a cancel leaves state untouched (smoke test asserts no setter called).
+**Refreshed Jul 4 2026 (pre-build review):** the original design ("the modal computes before/after via `calcWhatIfDelta`/`calcWhatIfChart`") cannot serve its **first consumer**: `calcWhatIfDelta` only accepts money-event / expense / retirement-age overrides and deliberately reuses the baseline conversion tax maps (the BUG-36 blended walk) — a conversion-amount change is exactly the override it cannot represent. Rescoped: **the modal renders, the model computes** (rule 10).
+**Actions:** shared `src/horizon/ApplyPreviewModal.jsx` wrapping `ConfirmModal` — a pure renderer of a model-computed `preview` payload (`{ before, after }` per metric: years sustained / depletion age, balance at the reference age, plus per-strategy lines); commit only on confirm. Each Apply site supplies the preview from an App-side memo/callback computed by the engine that owns its number:
+- *Conversion Apply (WI-3.6):* two `buildRetirementPhase` runs (current vs candidate) — the same mechanism the optimizer's `getNetBenefit` already uses, and `optimalBenefit` is already computed.
+- *Allocation/surplus Apply (WI-3.7):* re-run the accumulation sim with candidate contributions — may need a small, test-locked `calcWhatIfDelta` extension (contribution overrides / forced re-sim), a model change per principle 4.
+- *`commitPlan` call sites:* the existing `calcWhatIfDelta`/`calcWhatIfChart` path suffices (retirement age / expenses are overrides it already supports).
+**Done when:** all Strategies Apply buttons route through it (review checklist); a cancel leaves state untouched (smoke test asserts no setter called); the modal itself contains zero model calls and zero arithmetic on model values (review — rule 10).
 
-**Level 3 exit gate:** the complete Classic plan — spouse, SS timing, pension, RMD settings, conversion plan with healthcare costs, mega backdoor, withdrawal order, money events — can be built end-to-end in Horizon without opening Classic; every Classic input has exactly one Horizon home (parity checklist); all optimizer suggestions applyable with preview; `npm test` green including new smoke tests.
+**Level 3 exit gate:** the complete Classic plan — spouse, SS timing, pension, RMD settings, conversion plan with timing + healthcare costs (#118), mega backdoor, withdrawal order, money events — can be built end-to-end in Horizon without opening Classic; every Classic input has exactly one Horizon home (parity checklist); all optimizer suggestions applyable with preview; `npm test` green including new smoke tests.
 
 ---
 
@@ -425,6 +446,8 @@ The End state section's patterns, turned into work items. Sequencing: Level 5 fo
 | Pension inputs | Strategies → SS timing (income card) | 3.4 |
 | RMD section (table selection, outside balances, schedule, tax) | Strategies → RMD outlook | 3.5 |
 | Roth conversion section (mode, bracket fill, tax source, sim, net benefit) | Strategies → Conversion planner | 3.6 |
+| Conversion window start/stop sliders (#118) | Strategies → Conversion planner (window section) | 3.6 |
+| Pre-retirement one-time conversions + in-service toggle (`ConversionEventsPanel`, #118) | Strategies → Conversion planner (events section) | 3.6 |
 | ACA cliff + IRMAA exposure | Strategies → Conversion planner (healthcare impact) | 3.6 |
 | Healthcare inputs (marketplace, household size, premium, Medicare persons) | My details + Conversion flow | 3.2 / 3.6 |
 | Conversion optimizer suggestion | Signals strip + Conversion planner Apply | 1.2 / 3.6 |
@@ -443,7 +466,7 @@ Rows not covered by a WI by the time Level 3 ships get an explicit *merge* or *d
 ## Testing strategy (cross-cutting)
 
 - **Render-smoke tests** (new, vitest): each new screen/tab mounts with golden-master-default props without crashing — one file per screen in `src/horizon/__tests__/`, pattern established in WI-2.1.
-- **Value-lock tests** where a screen displays an already-locked model number (e.g., `netConversionBenefit` 77,861; `rmdTaxBite` 683,974) — assert the prop wiring passes the same value.
+- **Value-lock tests** where a screen displays an already-locked model number (e.g., `adjustedNetConversionBenefit` −9,854; `rmdTaxBite` 207,557 — these move with the golden master; always mirror the current locked values) — assert the prop wiring passes the same value.
 - **Anti-divergence rule:** never re-derive in UI. If a per-year/derived number is needed, add it to the model function and lock it there first (see WI-2.5's growth column).
 - Test count references in `CLAUDE.md` (rule 7 + Commands) updated every batch.
 
