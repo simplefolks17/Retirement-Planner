@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -27,6 +27,8 @@ import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.j
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
 import { fvAnnuity } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
+import { buildConversionPreview, isSuggestionApplicable } from "./model/apply-preview.js";
+import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
@@ -580,16 +582,13 @@ export default function App() {
     () => [...accumChart, ...retirementWalk.rows.map(r => ({ age: r.age, total: r.total }))],
     [accumChart, retirementWalk]);
 
-  // Balance at life expectancy — used by Horizon "Left at 90" stat card
-  const balAt90 = useMemo(() => {
-    const rows = retirementWalk.rows;
-    if (!rows || rows.length === 0) return 0;
-    const target = safeLifeExp;
-    const exact = rows.find(r => r.age === target);
-    if (exact) return Math.max(0, exact.total);
-    const last = rows[rows.length - 1];
-    return Math.max(0, last?.total ?? 0);
-  }, [retirementWalk, safeLifeExp]);
+  // Balance at life expectancy — used by Horizon "Left at 90" stat card. The
+  // accessor (exact-age row, else last row, else 0 — never negative) is the
+  // shared `walkBalanceAt` in retirement-phase.js, also used by the WI-3.9
+  // Apply-preview builder below so both read the exact same rule.
+  const balAt90 = useMemo(
+    () => walkBalanceAt(retirementWalk.rows, safeLifeExp),
+    [retirementWalk, safeLifeExp]);
 
   // Approximate contribution series for Horizon Sources view (cumulative contributions, no growth)
   const contribSeries = useMemo(() => {
@@ -667,6 +666,64 @@ export default function App() {
       includeSS, ssClaimingAge, ssTaxableRet, householdSS, pensionMonthly, pensionStartAge,
       hasMedicare, personOnMedicare,
       hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
+
+  // ── WI-3.9 Apply-with-preview: the conversion-optimizer Apply site ─────────
+  // The writes an "Apply" click performs — mirrors what the optimizer suggestion
+  // line already implies (App.jsx:3300-3308 Classic copy): pin the suggested
+  // start age, switch to custom mode (a flat searched amount isn't a bracket
+  // target), and set the suggested amount. Making these writes is what falsifies
+  // isSuggestionApplicable's gate on the next render (candidate === current) —
+  // the "suggestion clears once applied" guarantee.
+  const applyConversionSuggestion = useCallback(() => {
+    if (!optimizerResult) return;
+    setConversionStartAge(optimizerResult.optimalStartAge);
+    setConversionMode("custom");
+    setAnnualConversionAmt(optimizerResult.optimalConversion);
+  }, [optimizerResult, setConversionStartAge, setConversionMode, setAnnualConversionAmt]);
+
+  // The Apply-site object (docs/ARCHITECTURE.md "Apply-with-preview contract"):
+  // `available` pre-gated here (never compared in the flow/modal), `preview` built
+  // from ONE candidate engine run — the same buildRetirementPhase call the optimizer
+  // itself uses (retPhaseBase + a candidateByAge schedule) — so the preview and the
+  // search can never diverge (extends the BUG-31/BUG-35 anti-divergence guarantee).
+  // Gating composition point (for WI-5.2): entitlements/readOnly flags will be
+  // AND-ed into `available` here, App-side — the flow and ApplyPreviewModal never
+  // import or test entitlements.
+  const conversionApplySite = useMemo(() => {
+    const available = isSuggestionApplicable({
+      optimizerResult, annualConversion, resolvedStartAge, hasMedicare, hasMarketplaceInsurance,
+    });
+    if (!available) return { available: false, preview: null, apply: applyConversionSuggestion };
+
+    const candidateByAge = buildConversionByAge({
+      startAge: optimizerResult.optimalStartAge, endAge: resolvedEndAge,
+      annualConversions: null, annualConversion: optimizerResult.optimalConversion,
+    });
+    const rp = buildRetirementPhase({ ...retPhaseBase, conversionByAge: candidateByAge });
+
+    return {
+      available: true,
+      preview: buildConversionPreview({
+        current: {
+          adjustedNetConversionBenefit, yearsSustained, depletionAge,
+          balAtRef: balAt90, rmdTaxBite, annualConversion, startAge: resolvedStartAge,
+        },
+        candidate: {
+          netBenefit: optimizerResult.optimalBenefit,
+          yearsSustained: rp.yearsSustained, depletionAge: rp.depletionAge,
+          balAtRef: walkBalanceAt(rp.rows, safeLifeExp), rmdTaxBite: rp.rmdTaxBite,
+        },
+        suggestion: {
+          optimalStartAge: optimizerResult.optimalStartAge,
+          optimalConversion: optimizerResult.optimalConversion,
+        },
+        refAge: safeLifeExp,
+      }),
+      apply: applyConversionSuggestion,
+    };
+  }, [optimizerResult, annualConversion, resolvedStartAge, hasMedicare, hasMarketplaceInsurance,
+      resolvedEndAge, retPhaseBase, adjustedNetConversionBenefit, yearsSustained, depletionAge,
+      balAt90, rmdTaxBite, safeLifeExp, applyConversionSuggestion]);
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
@@ -1373,6 +1430,147 @@ export default function App() {
   }), [firstRMD, totalRMDs, rmdTaxBite, effectiveRMDTaxRate, rmdData, safeRetAge,
        activeTableLabel, useTable2, currentAge, spouseCurrentAge]);
 
+  // WI-3.6 (#103): Roth-conversion planner flow bundle. Sibling of strategiesView
+  // keyed by the "conversion" strategy id (same forward contract as ssView/rmdView
+  // above). Carries ONLY what no existing bundle already owns (principle 11):
+  //   - mode / bracketTarget / amount / taxSource stay in the `conversion` setter
+  //     bundle (conversionBundle, above) — this flow reads/writes them there.
+  //   - the healthcare ON/OFF toggles stay in the `health` bundle — this flow only
+  //     carries the DERIVED healthcare detail (cliff ages, IRMAA rows, thresholds).
+  //   - the verdict AND its components (rmdTaxSaved, conversionCost, irmaaCost,
+  //     acaLoss, adjustedNetConversionBenefit, isPositive) stay in
+  //     taxView.conversionDetail — the flow's healthcare strip reads them there,
+  //     the SAME source the Taxes tab and the Strategies card face already read
+  //     (one number, one source — ARCHITECTURE.md's strategiesView note forbids
+  //     re-exposing adjustedNetConversionBenefit here even though an earlier
+  //     roadmap draft listed it; we side with ARCHITECTURE).
+  //   - netConversionBenefit is already a top-level horizonProps field — not
+  //     duplicated here (only `outcome.netIsPositive`, a NEW sign flag, is new).
+  // events.rows are APP-BUILT row objects (id/ageField/amountField/estTaxLabel/
+  // remove), not a raw array + setter: a raw setConversionEvents handed to the
+  // screen would be a write surface WI-5.2's readOnly wrapper can't see, and the
+  // map/filter/clamp logic the Classic panel (ConversionEventsPanel.jsx) does
+  // inline would become data transformation in JSX (rule 10). One wrappable
+  // write path per field, built here where setConversionEvents lives.
+  const conversionView = useMemo(() => ({
+    window: {
+      hasConvWindow,
+      startAge: resolvedStartAge, endAge: resolvedEndAge, windowYrs: conversionWindowYrs,
+      windowLabel: `${conversionWindowYrs}-year window · age ${resolvedStartAge} → ${resolvedEndAge}`,
+      startAgeField: {
+        value: resolvedStartAge,
+        set: v => setConversionStartAge(Math.min(v, resolvedEndAge)),
+        min: convWindowFloor, max: convWindowCeil, step: 1,
+      },
+      endAgeField: {
+        value: resolvedEndAge,
+        set: v => setConversionEndAge(Math.max(v, resolvedStartAge)),
+        min: convWindowFloor, max: convWindowCeil, step: 1,
+      },
+      isDefaultWindow: conversionStartAge === null && conversionEndAge === null,
+    },
+    targets: {
+      convSteadyTarget, convPeakTarget, targetsVary,
+      // Peak → steady order, matching Classic's "Suggested annual conversion" note
+      // (App.jsx ~3090) — this reflects the bracket-fill computation itself
+      // (mode-independent), unlike outcome.annualConversionLabel below.
+      bracketFillLabel: targetsVary
+        ? `${fmt(convPeakTarget)} → ${fmt(convSteadyTarget)}`
+        : fmt(bracketFillConversion),
+      assumesPension: effectivePension > 0,
+    },
+    outcome: {
+      // Mode-gated (mirrors Classic's stat-row value, App.jsx ~3147): what the
+      // engine is ACTUALLY converting right now, not the bracket suggestion.
+      annualConversionLabel: convTargetVaries
+        ? `${fmt(convPeakTarget)} → ${fmt(convSteadyTarget)}`
+        : fmt(annualConversion),
+      netIsPositive: netConversionBenefit >= 0,
+      rothBalEndConv: conversionSim.rothBalEnd_conv,
+      rothBalEndTax: conversionSim.rothBalEnd_tax,
+      rothAdvantage: conversionSim.rothAdvantage,
+      showTaxSourceComparison: conversionSim.rothAdvantage > 0,
+    },
+    healthcare: {
+      cliffAges: acaCliffYears.map(e => e.age),
+      cliffCount: acaCliffYears.length,
+      cliffThreshold: acaCliffThreshold(householdSize),
+      acaAnnualLoss,
+      showAcaWarning: hasMarketplaceInsurance && acaCliffYears.length > 0,
+      showNoCliffNote: hasMarketplaceInsurance && safeRetAge < MEDICARE_AGE && acaCliffYears.length === 0,
+      irmaaCost: totalIRMAACost,
+      irmaaRows: healthcareExposure
+        .filter(e => (e.irmaa?.surcharge ?? 0) > 0)
+        .map(e => ({ age: e.age, cost: e.irmaa.surcharge * personOnMedicare })),
+      showIrmaa: hasMedicare && totalIRMAACost > 0,
+    },
+    tables: {
+      simYears: conversionSim.years,               // {age,conversion,tradBal,tax}[] — flow slices first 12
+      rmdCompare: buildRmdComparison(retPhase.rmdScheduleNoConv, retPhase.rmdSchedule), // flow slices first 8
+    },
+    events: {
+      rows: conversionEvents.map(ev => ({
+        id: ev.id,
+        ageField: {
+          value: ev.age,
+          // Clamp-in-setter (simpler than Classic's free-type-then-blur-clamp —
+          // a single field-object write path, per the header note above).
+          set: v => {
+            const n = Number(v);
+            const clamped = Number.isFinite(n)
+              ? Math.min(safeRetAge - 1, Math.max(currentAge + 1, n))
+              : currentAge + 1;
+            setConversionEvents(evs => evs.map(e => e.id === ev.id ? { ...e, age: clamped } : e));
+          },
+          min: currentAge + 1, max: safeRetAge - 1, step: 1,
+        },
+        amountField: {
+          value: ev.amount,
+          set: v => {
+            const n = Number(v);
+            const amt = Number.isFinite(n) ? Math.max(0, n) : 0;
+            setConversionEvents(evs => evs.map(e => e.id === ev.id ? { ...e, amount: amt } : e));
+          },
+          min: 0, step: 5_000,
+        },
+        estTaxLabel: convEventTaxByAge[ev.age] != null && ev.amount > 0
+          ? `est. tax ${fmt(convEventTaxByAge[ev.age])} this year`
+          : "401k → Roth, taxed as income",
+        remove: () => setConversionEvents(evs => evs.filter(e => e.id !== ev.id)),
+      })),
+      add: () => {
+        if (conversionEvents.length >= MAX_CONVERSION_EVENTS) return;
+        // Mirrors ConversionEventsPanel's emptyEvent: default to a year mid-career,
+        // clamped inside the working window.
+        const mid = Math.round((currentAge + safeRetAge) / 2);
+        const age = Math.min(Math.max(currentAge + 1, mid), Math.max(currentAge + 1, safeRetAge - 1));
+        setConversionEvents(evs => [...evs, { id: Date.now() + Math.random(), age, amount: 0 }]);
+      },
+      atMax: conversionEvents.length >= MAX_CONVERSION_EVENTS,
+      inServiceField: { value: conversionInService, set: setConversionInService },
+      hasWorkingYears: currentAge + 1 <= safeRetAge - 1,
+      totalPlannedLabel: fmt(conversionEvents.reduce(
+        (s, e) => s + (Number.isFinite(e.amount) ? Math.max(0, e.amount) : 0), 0)),
+    },
+    optimizer: {
+      suggestedAmount: optimizerResult?.optimalConversion ?? null,
+      suggestedStartAge: optimizerResult?.optimalStartAge ?? null,
+      suggestedBenefit: optimizerResult?.optimalBenefit ?? null,
+      currentAmountLabel: fmt(annualConversion),
+      currentStartAge: resolvedStartAge,
+      applySuggestion: conversionApplySite,
+    },
+  }), [hasConvWindow, resolvedStartAge, resolvedEndAge, conversionWindowYrs,
+       setConversionStartAge, setConversionEndAge, convWindowFloor, convWindowCeil,
+       conversionStartAge, conversionEndAge,
+       convSteadyTarget, convPeakTarget, targetsVary, bracketFillConversion, effectivePension,
+       convTargetVaries, annualConversion, netConversionBenefit, conversionSim,
+       acaCliffYears, householdSize, acaAnnualLoss, hasMarketplaceInsurance, safeRetAge,
+       totalIRMAACost, healthcareExposure, personOnMedicare, hasMedicare,
+       retPhase, conversionEvents, convEventTaxByAge, setConversionEvents, currentAge,
+       conversionInService, setConversionInService,
+       optimizerResult, conversionApplySite]);
+
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
   // so the bundle reference only changes when an input actually changes.
@@ -1424,10 +1622,11 @@ export default function App() {
     // scalars (memoized separately for V9). Cards whose headline is already wired
     // read it directly: netConversionBenefit / yr1TaxSavings (above) and budget.*.
     strategiesView,
-    // WI-3.4 (#101) / WI-3.5 (#102): interactive flow bundles, siblings of
-    // strategiesView keyed by strategy id. Memoized separately above (V9).
+    // WI-3.4 (#101) / WI-3.5 (#102) / WI-3.6 (#103): interactive flow bundles,
+    // siblings of strategiesView keyed by strategy id. Memoized separately above (V9).
     ssView,
     rmdView,
+    conversionView,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
     // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
@@ -1489,8 +1688,8 @@ export default function App() {
        budgetView, taxViewBundle,
        // WI-3.3 strategies bundle (memoized separately for V9 stability):
        strategiesView,
-       // WI-3.4 / WI-3.5 flow bundles (memoized separately for V9 stability):
-       ssView, rmdView,
+       // WI-3.4 / WI-3.5 / WI-3.6 flow bundles (memoized separately for V9 stability):
+       ssView, rmdView, conversionView,
        returnRate,
        // Session-3 additions:
        ssClaimingAge, includeSS,
