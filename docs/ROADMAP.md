@@ -293,6 +293,57 @@ pre-BUG-35 `rmdDataPostConversion` shape; WI-3.9 is rescoped so the modal **rend
 model-computed preview payload instead of calling `calcWhatIfDelta` itself (which cannot
 represent a conversion override — BUG-36). Stale golden-master references updated
 (77,861 → the current −9,854 adjusted verdict). Parity table gained the two #118 surfaces.
+**WI-3.9 + WI-3.6 shipped Jul 8 2026 (L3c, same PR).** The Apply-with-preview shell
+(WI-3.9/#106) and the Roth-conversion planner flow (WI-3.6/#103) — Classic's deepest
+feature, now fully interactive in Horizon.
+- **The shell.** `src/model/apply-preview.js` — pure payload builders: `buildPreviewMetric`
+  (signed delta + `dir`/`tone` + money/longevity formatting with Infinity/null edges),
+  `isSuggestionApplicable` (the machine-checked "suggestion clears once applied" gate —
+  false when candidate === current), `buildConversionPreview`. `src/horizon/ApplyPreviewModal.jsx`
+  wraps `ConfirmModal` as a pure renderer of the `preview` payload; exports `PreviewMetricRow` +
+  `VerdictBadge` for WI-5.4 reuse; a null-guarded `verdict` slot is reserved for #85. The
+  **payload shape**, the **Apply-site shape** (`{ available, preview, apply, revert? }`), the
+  **Apply-site registry** (row 1 = `conversionView.optimizer.applySuggestion`), and the
+  **gating-composition paragraph** (entitlements/`readOnly` AND into `available` App-side —
+  WI-5.2's future mechanical wrap-at-construction point) are all documented in
+  `docs/ARCHITECTURE.md` — not repeated here.
+- **The conversion flow.** New `conversionView` sibling bundle (App.jsx, keyed like
+  `ssView`/`rmdView`) covers window (start/stop-age fields + cross-clamps + `isDefaultWindow`),
+  bracket targets, outcome + tax-source comparison, a healthcare breakdown (pre-mapped
+  `cliffAges`, pre-multiplied `irmaaRows`), tables (`buildRmdComparison`, `walkBalanceAt`),
+  **#118 working-year conversion events as App-built row objects** (one wrappable write path
+  per field — `{ id, ageField, amountField, estTaxLabel, remove }` — readOnly-ready for WI-5.2,
+  not a raw array setter for ad-hoc JSX closures), and the optimizer's display fields + Apply
+  site. `ConversionPlannerFlow.jsx` (`src/horizon/screens/strategies/`) renders it in 10 sections
+  mirroring Classic: explainer, no-window edge state, window steppers, strategy (mode/bracket/
+  amount), tax-source (with the BUG-37 honesty note), outcome stat row (GROSS `netConversionBenefit`,
+  sign-aware), healthcare impact (ACA/IRMAA + the healthcare-**adjusted** verdict), conversion +
+  RMD tables, working-year events (in-service gate + the #119 limitation note), and the optimizer
+  suggestion → `ApplyPreviewModal`. Registered in the `STRATEGIES` registry — the conversion card
+  now opens a live flow instead of the read-only stub.
+- **Signals retarget.** The conversion nudge in `src/model/signals.js` now deep-links
+  `{ screen: "strategies", subView: "conversion" }` (was the Numbers/yearly stopgap from before
+  the flow existed).
+- **Three resolutions recorded** (so they aren't re-litigated): (i) `adjustedNetConversionBenefit`
+  stays in `taxView.conversionDetail`, **not** re-exposed on `conversionView` — an earlier roadmap
+  draft listed it among the bundle's fields, but `docs/ARCHITECTURE.md`'s principle-11 rule (one
+  number, one source) wins; the card face and the flow both read the same field. (ii) `commitPlan`
+  call sites stay on plain `ConfirmModal` in this PR — deferred to L3d, with a named home added to
+  WI-3.8's Actions above (this residual is the only unfinished piece of WI-3.9's original scope).
+  (iii) **#57 `bracketRoomByYear` remains open** — no per-year bracket-headroom table shipped; the
+  attachment point (additive onto `conversionView.tables.simYears` rows) is documented in
+  `ARCHITECTURE.md` for when the rental-sale/stock/DAF flows need it.
+- **Tests:** 584 → **642** (all green), lint clean, build OK, **golden master untouched**.
+  New: `apply-preview.test.js` (31), `apply-preview-modal.test.js` (8),
+  `conversion-view-wiring.test.js` (6, incl. the preview-vs-optimizer anti-divergence lock),
+  `apply-site-contract.test.js` (6, registry-driven); `strategies-screen.test.js` +7; signals +1
+  target lock.
+- **Browser verification:** verifier-browser passed every Horizon screen + the Classic round-trip
+  + the new flow renders (screenshot-verified). One **pre-existing** failure was found and
+  baseline-confirmed (reproduces at commit `9ba231b`, before this build): the verifier's
+  "Numbers / Money flow" tab click times out — the tab renders fine in the jsdom suite and
+  manually, so this looks like a verifier-script locator/viewport defect, not a product bug.
+  Filed as **BUG-41** (tooling-only) in `docs/BUGS.md`.
 
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.
@@ -356,6 +407,7 @@ Each flow attaches its own sibling bundle keyed by the card id (the WI-3.4/3.5 p
 - Events editor: Horizon-styled equivalent of `MoneyEventsPanel` (max 6 events; label/amount/age/inflow-outflow/taxable/delete) using `moneyEvents`/`setMoneyEvents` already in props — same state, no new mechanism.
 - Affordability: new Ideas panel calling `calcAffordabilityMax` (what-if.js — currently unused by Horizon) with the existing `whatIfSimInputs` bundle; purchase-age + target-age steppers; result sentence ("You could spend up to $X at age Y and still last to Z").
 - Layout: Ideas already has a segmented mode mechanism (`mode` state + mode buttons) — both additions land as **new modes of that one control** (pre-adopting SP-5's Dials · Events · Scenarios · Solvers naming), never as stacked panels.
+- **`commitPlan` call sites (deferred from WI-3.9 — the L3c shell shipped only the conversion Apply):** route the existing `commitPlan` sites (Plan/Ideas "Save as my plan") through `ApplyPreviewModal` for consistency with the Strategies Apply pattern; they stay on plain `ConfirmModal` until this lands.
 **Done when:** an event added in Horizon appears in Classic's panel and moves the arc; affordability result equals Classic `WhatIfPanel`'s for identical inputs; one mode visible at a time (SP-5).
 
 ### WI-3.9 (#106) Apply-with-preview pattern

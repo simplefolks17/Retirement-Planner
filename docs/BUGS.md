@@ -7,6 +7,40 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-41 — verifier-browser.cjs "Numbers / Money flow" tab click times out (found 2026-07-08, L3c verification pass; tooling-only)
+
+**Owner:** me_theguy. **Found by:** the orchestrator during the WI-3.6/WI-3.9 (L3c) manual
+verification pass, running `.claude/skills/verifier-browser.cjs` after the conversion planner
+flow shipped.
+**What:** the visual verifier's walk of the Numbers screen's 6 sub-tabs hangs on the "Money flow"
+tab — the Playwright `locator.click()` for that tab times out (30s) and the run reports it as a
+failed screen.
+**Baseline-confirmed pre-existing:** checked out commit `9ba231b` (the state of the tree *before*
+this session's L3c build — no conversion/Apply-preview code present yet) and re-ran the same
+verifier script; the same "Numbers / Money flow" click timeout reproduces there too. This build
+did not introduce it.
+**Not a rendering bug:** the tab renders correctly in the jsdom suite —
+`src/horizon/__tests__/numbers-tabs.test.js` drives all 6 Numbers sub-tabs including Money flow
+and passes — and it also renders correctly when clicked manually in a real browser during ad hoc
+checks. The failure is isolated to this one automated locator/click path.
+**Suspected root cause:** a verifier-script defect in the "Money flow" tab's locator (possibly a
+viewport/scroll issue — the tab may sit below the fold at the verifier's default viewport size, or
+the button label/selector used for that specific tab may not uniquely resolve) rather than a
+product defect. Not yet root-caused to a specific line in `.claude/skills/verifier-browser.cjs`.
+**Impact:** tooling-only. No model, display, or user-facing behavior is affected; `npm test` and
+`npm run lint` are unaffected; the production build is unaffected.
+**Repro:**
+```bash
+npm run dev -- --port 5174 &
+sleep 4
+node .claude/skills/verifier-browser.cjs
+# → fails on the "Numbers / Money flow" sub-tab with a 30s locator.click() timeout
+```
+**Fix path:** instrument or step through `verifier-browser.cjs`'s Numbers-sub-tab loop for the
+"Money flow" entry specifically (log the resolved selector/bounding box before clicking; try
+scrolling the tab into view first); compare its selector construction against the other 5
+Numbers sub-tabs, which all pass, to find what's different about this one.
+
 ### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
 
 **Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
