@@ -371,9 +371,14 @@ currently covered by `conversion-view-wiring.test.js` + `apply-preview.test.js`)
 **Gating composition point (for WI-5.2):** all gating composes in the App memo that
 computes `available` — entitlements/`readOnly` flags will be AND-ed into `available` and
 into field `.set` wrappers App-side; flows and the modal never import or test entitlements.
-Companion convention: **every writable thing on a view bundle is either a `{ value, set }`
-field object or a registry-listed callback** — WI-5.2's "all setters inert" becomes a
-mechanical wrap-at-construction job.
+Companion convention: **every writable thing on a view bundle is one of three shapes** —
+a `{ value, set }` field object, a registry-listed Apply callback, or a **list-mutation
+callback** (`add` / `remove` on a collection like `conversionView.events`). All three are
+write surfaces WI-5.2 must neuter: the field `.set` and the registry callbacks compose
+gating as above; list-mutation callbacks compose it the same way (App-side, at
+construction), so `readOnly` disabling "add/delete a conversion event" is mechanical too.
+The rule is: **no bundle exposes a raw setter or a bare mutation the App memo hasn't wrapped**
+— that is what makes "all setters inert" a wrap-at-construction job rather than a per-surface hunt.
 
 **Anti-divergence guarantee (BUG-31/BUG-35 class):** the conversion Apply site builds its
 candidate via `buildConversionByAge` + `buildRetirementPhase({ ...retPhaseBase, … })` — the
@@ -393,7 +398,11 @@ built now (needs the multi-strategy claim semantics from the SP-1 stress test).
 auto-tested); no household-scope axis in `conversionView` (SP-6: strategy flows are
 household-scope by default); no reserved #119 benefit slot in `events` (bundle fields are
 additive; only `verdict` needs a day-one render slot because the modal LAYOUT must
-accommodate it); no `verdict` population (#85's model field doesn't exist yet).
+accommodate it); no `verdict` population (#85's model field doesn't exist yet). `buildPreviewMetric`
+ships only `money` and `longevity` format kinds — a `percent` kind (savings rate, withdrawal
+rate, income-replacement %) is the **expected additive extension** for the WI-3.7 / WI-3.8 /
+WI-5.4 Apply sites; add it to the builder (so delta/tone/edge logic stays in one place) rather
+than formatting a percentage inline at a call site.
 
 ---
 

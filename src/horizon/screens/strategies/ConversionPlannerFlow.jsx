@@ -174,7 +174,11 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                     subsidy cliff — at this household size, the threshold is {money(cv.healthcare.cliffThreshold)}
                     {" "}MAGI. Conversions push you over at age{cv.healthcare.cliffCount === 1 ? "" : "s"}{" "}
                     {cv.healthcare.cliffAges.join(", ")}
-                    {" "}— an estimated {money(cv.healthcare.acaAnnualLoss)} in lost subsidy.
+                    {/* Only claim a dollar loss when the premium is set (Classic parity) —
+                        a crossed cliff with an unset premium isn't "$0 lost", it's unknown. */}
+                    {cv.healthcare.hasAcaLoss
+                      ? <> — an estimated {money(cv.healthcare.acaAnnualLoss)} in lost subsidy.</>
+                      : <>. Add your monthly premium above to estimate the subsidy lost.</>}
                   </NoteBox>
                 ) : cv.healthcare.showNoCliffNote ? (
                   <NoteBox t={t} tone="good">
@@ -206,12 +210,15 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
               </div>
             )}
 
-            {(cv.healthcare.showIrmaa || cv.healthcare.showAcaWarning) && (
+            {/* Strip appears only when a real cost applies (Classic gates on
+                totalIRMAACost > 0 || acaAnnualLoss > 0) — a crossed cliff with a
+                $0 loss must not render a "−$0" tile or a gross==adjusted strip. */}
+            {cv.healthcare.showAdjustedStrip && (
               <div style={STAT_ROW}>
                 <StatTile t={t} label="Gross benefit" value={money(props.netConversionBenefit)}
                   tone={cv.outcome.netIsPositive ? "good" : "warm"} />
                 {cv.healthcare.showIrmaa && <StatTile t={t} label="IRMAA" value={`−${money(cv.healthcare.irmaaCost)}`} tone="warm" />}
-                {cv.healthcare.showAcaWarning && <StatTile t={t} label="ACA loss" value={`−${money(cv.healthcare.acaAnnualLoss)}`} tone="warm" />}
+                {cv.healthcare.hasAcaLoss && <StatTile t={t} label="ACA loss" value={`−${money(cv.healthcare.acaAnnualLoss)}`} tone="warm" />}
                 <StatTile t={t} label="Adjusted net benefit" value={money(cd.adjustedNetConversionBenefit)}
                   tone={cd.isPositive ? "good" : "warm"} />
               </div>

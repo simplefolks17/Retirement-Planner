@@ -1497,12 +1497,20 @@ export default function App() {
       cliffThreshold: acaCliffThreshold(householdSize),
       acaAnnualLoss,
       showAcaWarning: hasMarketplaceInsurance && acaCliffYears.length > 0,
+      // A cliff can be CROSSED (showAcaWarning) yet carry a $0 loss when the
+      // marketplace premium is left unset — Classic gates the loss clause + the
+      // adjusted-net strip on acaAnnualLoss > 0 so it never prints "$0 lost" /
+      // "−$0" as if it were a real zero. Pre-computed here (rule 10).
+      hasAcaLoss: acaAnnualLoss > 0,
       showNoCliffNote: hasMarketplaceInsurance && safeRetAge < MEDICARE_AGE && acaCliffYears.length === 0,
       irmaaCost: totalIRMAACost,
       irmaaRows: healthcareExposure
         .filter(e => (e.irmaa?.surcharge ?? 0) > 0)
         .map(e => ({ age: e.age, cost: e.irmaa.surcharge * personOnMedicare })),
       showIrmaa: hasMedicare && totalIRMAACost > 0,
+      // The adjusted-net-benefit strip only means something when a real cost
+      // applies — matches Classic's `totalIRMAACost > 0 || acaAnnualLoss > 0`.
+      showAdjustedStrip: (hasMedicare && totalIRMAACost > 0) || acaAnnualLoss > 0,
     },
     tables: {
       simYears: conversionSim.years,               // {age,conversion,tradBal,tax}[] — flow slices first 12

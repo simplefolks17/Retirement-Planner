@@ -338,6 +338,17 @@ feature, now fully interactive in Horizon.
   `conversion-view-wiring.test.js` (6, incl. the preview-vs-optimizer anti-divergence lock),
   `apply-site-contract.test.js` (6, registry-driven); `strategies-screen.test.js` +7; signals +1
   target lock.
+- **Parity disposition (done-when "all values equal Classic's conversion section"):** met
+  **structurally, not by a field-by-field equality test** — `conversionView` reads the same
+  App-computed scalars Classic's JSX renders (one source), so they cannot diverge by
+  construction; backed by the headline value-lock (`−9,854`, card face + flow) and a browser
+  render pass. `conversion-view-wiring.test.js` is deliberately self-consistency-only (so a
+  future golden-master move doesn't break it). The "round-trip to Classic" / "Apply
+  round-trips" clauses are manual-by-nature and were dispositioned by the browser Classic
+  round-trip below. A post-ship adversarial review (Opus, 2026-07-08) traced the preview
+  basis, the applicability gate, the event-editor semantics, and the join/accessor helpers
+  and found them apples-to-apples with Classic; its one confirmed display divergence (ACA
+  "$0 lost" copy when the premium is unset) was fixed on this branch.
 - **Browser verification:** verifier-browser passed every Horizon screen + the Classic round-trip
   + the new flow renders (screenshot-verified). One **pre-existing** failure was found and
   baseline-confirmed (reproduces at commit `9ba231b`, before this build): the verifier's

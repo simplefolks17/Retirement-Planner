@@ -66,9 +66,9 @@ function makeProps(overrides = {}) {
       },
       healthcare: {
         cliffAges: [67, 68], cliffCount: 2, cliffThreshold: 84_600, acaAnnualLoss: 5_200,
-        showAcaWarning: true, showNoCliffNote: false,
+        showAcaWarning: true, hasAcaLoss: true, showNoCliffNote: false,
         irmaaCost: 3_100, irmaaRows: [{ age: 73, cost: 1_550 }, { age: 74, cost: 1_550 }],
-        showIrmaa: true,
+        showIrmaa: true, showAdjustedStrip: true,
       },
       tables: {
         simYears: [{ age: 66, conversion: 82_765, tradBal: 900_000, tax: 18_000 }],
@@ -295,6 +295,26 @@ describe("StrategiesScreen", () => {
       expect(txt).not.toContain("7-year window");                   // hasConvWindow-gated window label absent
       expect(txt).not.toContain("Suggested annual conversion");     // strategy section (bracket mode) absent
       expect(txt).toContain("Working-year conversions");            // section 9 still renders
+      act(() => app.r.unmount());
+    });
+
+    it("ACA cliff crossed with premium unset: no '$0 lost' claim and no adjusted-net strip (Classic parity)", () => {
+      // showAcaWarning true (cliff crossed) but acaAnnualLoss 0 / hasAcaLoss false
+      // (premium "Not set") and no IRMAA → the loss clause and the whole adjusted
+      // strip must be suppressed, exactly as Classic gates them (LOW-1 fix).
+      const props = makeProps();
+      props.conversionView.healthcare = {
+        ...props.conversionView.healthcare,
+        acaAnnualLoss: 0, hasAcaLoss: false,
+        irmaaCost: 0, irmaaRows: [], showIrmaa: false,
+        showAdjustedStrip: false,
+      };
+      const app = mount(props, { initialStrategy: "conversion" });
+      const txt = app.text();
+      expect(txt).toContain("exceed the ACA");         // the cliff warning still shows
+      expect(txt).not.toContain("in lost subsidy");    // but not a fabricated "$0 lost"
+      expect(txt).not.toContain("Adjusted net benefit"); // and no gross==adjusted strip
+      expect(txt).not.toContain("−$0");
       act(() => app.r.unmount());
     });
 
