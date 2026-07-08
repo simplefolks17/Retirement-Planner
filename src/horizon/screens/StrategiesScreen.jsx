@@ -31,6 +31,7 @@ import { RMD_START_AGE } from "../../config/irs-2026.js";
 import { money } from "../fields.jsx";   // shared sign-aware money formatter
 import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
 import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
+import ConversionPlannerFlow from "./strategies/ConversionPlannerFlow.jsx";
 
 // ── strategy catalogue ───────────────────────────────────────────────────────
 const SECTIONS = [
@@ -40,10 +41,10 @@ const SECTIONS = [
 ];
 
 // Flow: the interactive flow component, or null for a read-only stub (slot filled
-// by WI-3.4+). SS timing (3.4) and RMD outlook (3.5) are live; the rest stub until
-// their WI lands.
+// by WI-3.4+). SS timing (3.4), RMD outlook (3.5), and Roth conversion (3.6) are
+// live; the rest stub until their WI lands.
 const STRATEGIES = [
-  { id: "conversion", section: "taxes",    title: "Roth conversion",        wi: "3.6", Flow: null },
+  { id: "conversion", section: "taxes",    title: "Roth conversion",        wi: "3.6", Flow: ConversionPlannerFlow },
   { id: "withdrawal", section: "taxes",    title: "Withdrawal order",       wi: "3.7", Flow: null },
   { id: "ss",         section: "income",   title: "Social Security timing", wi: "3.4", Flow: SSTimingFlow },
   { id: "rmd",        section: "accounts", title: "RMD outlook",            wi: "3.5", Flow: RMDOutlookFlow },
@@ -132,14 +133,9 @@ function faceFor(id, props) {
 function detailRows(id, props) {
   const sv = props.strategiesView;
   switch (id) {
-    case "conversion":
-      return [
-        ["Est. net benefit (after healthcare)", money(props.taxView?.conversionDetail?.adjustedNetConversionBenefit)],
-        ["Conversion window", `${props.conversionWindowYrs} yr${props.conversionWindowYrs === 1 ? "" : "s"}`],
-      ];
     case "withdrawal":
       return [["Year-1 tax saved", money(props.yr1TaxSavings)]];
-    // ss + rmd render their own interactive Flow (WI-3.4/3.5), never this stub.
+    // conversion + ss + rmd render their own interactive Flow (WI-3.4/3.5/3.6), never this stub.
     case "surplus":
       return [["Available surplus", `${money(props.budget?.availableSurplus)}/yr`]];
     case "mega": {

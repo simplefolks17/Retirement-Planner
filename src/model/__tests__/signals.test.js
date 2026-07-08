@@ -32,6 +32,9 @@ describe("calcSignals — thresholds (each signal on/off independently)", () => 
     expect(above).toHaveLength(1);
     expect(above[0].id).toBe("conversion");
     expect(above[0].dollars).toBe(ASSUMPTIONS.CONVERSION_STEP + 1);
+    // WI-3.6: deep-links into the Strategies conversion flow (the decision
+    // surface), not the old Numbers → Year-by-year stopgap.
+    expect(above[0].target).toEqual({ screen: "strategies", subView: "conversion" });
   });
 
   it("deficit signal fires only when budgetDeficit > 0, with dollars = the deficit", () => {

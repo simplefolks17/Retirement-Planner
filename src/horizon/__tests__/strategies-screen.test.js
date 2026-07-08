@@ -21,7 +21,13 @@ const choice = (value, options) => ({ value, set: vi.fn(), options });
 function makeProps(overrides = {}) {
   return {
     // ── already-wired headlines (read directly) ──
-    taxView: { conversionDetail: { adjustedNetConversionBenefit: -9_854, isPositive: false, benefitAbs: 9_854 } },
+    taxView: {
+      conversionDetail: {
+        adjustedNetConversionBenefit: -9_854, isPositive: false, benefitAbs: 9_854,
+        conversionCost: 18_000, rmdTaxSaved: 8_100, irmaaCost: 3_100, acaLoss: 5_200,
+      },
+    },
+    netConversionBenefit: -9_854,
     conversionWindowYrs: 7,
     yr1TaxSavings: 12_400,
     budget: { availableSurplus: 18_000 },
@@ -40,6 +46,75 @@ function makeProps(overrides = {}) {
       withdrawal: { applicable: true },
       surplus:    { applicable: true },
       mega:       { applicable: true, capacity: 30_000, growth: [{ yrs: 5, val: 170_000 }] },
+    },
+    // ── WI-3.6 conversionView flow bundle ──
+    conversionView: {
+      window: {
+        hasConvWindow: true, startAge: 66, endAge: 72, windowYrs: 7,
+        windowLabel: "7-year window · age 66 → 72",
+        startAgeField: num(66, 66, 72, 1), endAgeField: num(72, 66, 72, 1),
+        isDefaultWindow: true,
+      },
+      targets: {
+        convSteadyTarget: 82_765, convPeakTarget: 121_800, targetsVary: false,
+        bracketFillLabel: "$82,765", assumesPension: false,
+      },
+      outcome: {
+        annualConversionLabel: "$82,765", netIsPositive: false,
+        rothBalEndConv: 500_000, rothBalEndTax: 520_000, rothAdvantage: 20_000,
+        showTaxSourceComparison: true,
+      },
+      healthcare: {
+        cliffAges: [67, 68], cliffCount: 2, cliffThreshold: 84_600, acaAnnualLoss: 5_200,
+        showAcaWarning: true, showNoCliffNote: false,
+        irmaaCost: 3_100, irmaaRows: [{ age: 73, cost: 1_550 }, { age: 74, cost: 1_550 }],
+        showIrmaa: true,
+      },
+      tables: {
+        simYears: [{ age: 66, conversion: 82_765, tradBal: 900_000, tax: 18_000 }],
+        rmdCompare: [
+          { age: 73, noConv: 62_508, withConv: 40_000, improved: true },
+          { age: 74, noConv: 64_000, withConv: null, improved: false },
+        ],
+      },
+      events: {
+        rows: [], add: vi.fn(), atMax: false,
+        inServiceField: bool(false), hasWorkingYears: true, totalPlannedLabel: "$0",
+      },
+      optimizer: {
+        suggestedAmount: 85_000, suggestedStartAge: 61, suggestedBenefit: 12_400,
+        currentAmountLabel: "$82,765", currentStartAge: 61,
+        applySuggestion: {
+          available: true,
+          preview: {
+            title: "Apply optimizer suggestion",
+            action: "Convert $85,000/yr starting at age 61 (now: $82,765/yr from age 61)",
+            confirmLabel: "Apply",
+            metrics: [{
+              id: "netBenefit", label: "Net benefit after healthcare",
+              before: "−$9,854", after: "$12,400",
+              delta: { dir: "up", label: "+$22,254", tone: "good" },
+            }],
+            note: "Preview uses the same per-account engine as your headline numbers.",
+            verdict: null,
+          },
+          apply: vi.fn(),
+        },
+      },
+    },
+    // ── WI-3.1 conversion / health setter bundles ──
+    conversion: {
+      conversionMode: choice("bracket", [{ value: "bracket", label: "Fill to bracket" }, { value: "custom", label: "Custom amount" }]),
+      conversionBracketTarget: choice(12, [{ value: 12, label: "12%" }, { value: 22, label: "22%" }, { value: 24, label: "24%" }]),
+      annualConversionAmt: num(82_765, 0, 500_000, 5_000),
+      conversionTaxSource: choice("converted", [{ value: "converted", label: "From the conversion" }, { value: "taxable", label: "From taxable" }]),
+    },
+    health: {
+      hasMarketplaceInsurance: bool(true),
+      householdSize: num(2, 1, 6, 1),
+      marketplaceMonthlyPremium: { value: null, set: vi.fn(), min: 0, step: 50 },
+      hasMedicare: bool(true),
+      personOnMedicare: choice(1, [{ value: 1, label: "Person 1" }, { value: 2, label: "Person 2" }]),
     },
     // ── WI-3.4 ssView flow bundle ──
     ssView: {
@@ -182,5 +257,104 @@ describe("StrategiesScreen", () => {
     act(() => { r.update(React.createElement(StrategiesScreen, { t, props: makeProps(), isMobile: false, initialStrategy: null })); });
     expect(textOf(r.toJSON())).toContain("Ways to keep more of what you've built");  // back at the grid
     act(() => r.unmount());
+  });
+
+  // ── WI-3.6 (#103): Roth conversion planner flow ───────────────────────────
+  describe("ConversionPlannerFlow (WI-3.6)", () => {
+    it("opens the conversion planner from the card and returns via back", () => {
+      const app = mount(makeProps());
+      app.click(n => textOf(n).startsWith("Roth conversion"));   // open the card
+      const txt = app.text();
+      expect(txt).toContain("All strategies");                    // back affordance present
+      expect(txt).toContain("7-year window · age 66 → 72");       // conversionView.window.windowLabel
+      app.click(n => textOf(n) === "‹ All strategies");
+      expect(app.text()).toContain("Ways to keep more of what you've built");
+      act(() => app.r.unmount());
+    });
+
+    it("value-locks: the sign-aware adjusted verdict and the synthetic window label", () => {
+      const app = mount(makeProps(), { initialStrategy: "conversion" });
+      const txt = app.text();
+      expect(txt).toContain("−$9,854");                // adjusted net benefit (taxView.conversionDetail)
+      expect(txt).toContain("Adjusted net benefit");
+      expect(txt).toContain("7-year window · age 66 → 72");
+      act(() => app.r.unmount());
+    });
+
+    it("no-window edge state: hasConvWindow false hides window/strategy sections but keeps working-year conversions", () => {
+      const props = makeProps();
+      props.conversionView.window = {
+        hasConvWindow: false, startAge: 74, endAge: 73, windowYrs: 0,
+        windowLabel: "0-year window · age 74 → 73",
+        startAgeField: num(74, 74, 73, 1), endAgeField: num(73, 74, 73, 1),
+        isDefaultWindow: true,
+      };
+      const app = mount(props, { initialStrategy: "conversion" });
+      const txt = app.text();
+      expect(txt).toContain("No conversion window is available");   // the designed edge message
+      expect(txt).not.toContain("7-year window");                   // hasConvWindow-gated window label absent
+      expect(txt).not.toContain("Suggested annual conversion");     // strategy section (bracket mode) absent
+      expect(txt).toContain("Working-year conversions");            // section 9 still renders
+      act(() => app.r.unmount());
+    });
+
+    it("window write-through: firing the start-age stepper calls the synthetic startAgeField.set", () => {
+      const props = makeProps();
+      const app = mount(props, { initialStrategy: "conversion", isMobile: true });
+      app.click(n => n.props["aria-label"] === "increase Start converting at age");
+      expect(props.conversionView.window.startAgeField.set).toHaveBeenCalled();
+      act(() => app.r.unmount());
+    });
+
+    it("events: a row renders with its estTaxLabel, atMax hides the add button, and a field writes through", () => {
+      const props = makeProps();
+      props.conversionView.events = {
+        rows: [{
+          id: 1,
+          ageField: num(45, 31, 59, 1),
+          amountField: num(20_000, 0, undefined, 5_000),
+          estTaxLabel: "est. tax $3,200 this year",
+          remove: vi.fn(),
+        }],
+        add: vi.fn(), atMax: true,
+        inServiceField: bool(true), hasWorkingYears: true, totalPlannedLabel: "$20,000",
+      };
+      const app = mount(props, { initialStrategy: "conversion", isMobile: true });
+      const txt = app.text();
+      expect(txt).toContain("est. tax $3,200 this year");
+      expect(txt).not.toContain("+ Add conversion year");   // atMax hides the add affordance
+      app.click(n => n.props["aria-label"] === "increase Amount");
+      expect(props.conversionView.events.rows[0].amountField.set).toHaveBeenCalled();
+      act(() => app.r.unmount());
+    });
+
+    it("events: in-service off shows the plan-dependent disclaimer, not the event rows", () => {
+      const props = makeProps();
+      props.conversionView.events.inServiceField = bool(false);
+      const app = mount(props, { initialStrategy: "conversion" });
+      expect(app.text()).toContain("plan-dependent");
+      act(() => app.r.unmount());
+    });
+
+    it("optimizer suggestion → Apply opens the preview modal; cancel doesn't apply, confirm does", () => {
+      const props = makeProps();
+      const app = mount(props, { initialStrategy: "conversion" });
+
+      app.click(n => textOf(n) === "Apply suggestion");
+      let txt = app.text();
+      expect(txt).toContain("Apply optimizer suggestion");                          // preview.title
+      expect(txt).toContain("Convert $85,000/yr starting at age 61");               // preview.action
+
+      // Cancel: no write happens, and the modal closes.
+      app.click(n => textOf(n) === "Cancel");
+      expect(props.conversionView.optimizer.applySuggestion.apply).not.toHaveBeenCalled();
+      expect(app.text()).not.toContain("Apply optimizer suggestion");
+
+      // Reopen and confirm: apply fires exactly once.
+      app.click(n => textOf(n) === "Apply suggestion");
+      app.click(n => textOf(n) === "Apply");
+      expect(props.conversionView.optimizer.applySuggestion.apply).toHaveBeenCalledTimes(1);
+      act(() => app.r.unmount());
+    });
   });
 });

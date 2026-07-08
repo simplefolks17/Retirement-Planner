@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
 import { fmtMoney } from "../model/apply-preview.js";
+import ConversionPlannerFlow from "../horizon/screens/strategies/ConversionPlannerFlow.jsx";
 
 // ── WI-3.6 (#103) conversionView wiring + WI-3.9 Apply-site self-consistency ──
 // Renders App (HorizonShell mocked to capture its props, same harness as
@@ -114,6 +115,35 @@ describe("conversionView wiring (WI-3.6)", () => {
     // on two surfaces, so they can never diverge.
     const netRow = site.preview.metrics.find(m => m.id === "netBenefit");
     expect(netRow.after).toBe(fmtMoney(optimizer.suggestedBenefit));
+
+    app.unmount();
+  });
+
+  // The strategies-screen tests drive ConversionPlannerFlow with SYNTHETIC
+  // bundles; this test closes the shape gap by rendering the real flow with the
+  // REAL captured horizonProps — if a bundle field's actual shape (e.g. the
+  // health bundle's personOnMedicare) drifts from what DetailField expects,
+  // this catches it where the synthetic tests can't.
+  it("ConversionPlannerFlow renders with the real captured props (both healthcare branches)", () => {
+    const app = mount();
+    const t = new Proxy({}, { get: () => "#334155" });
+
+    let flow;
+    act(() => { flow = create(React.createElement(ConversionPlannerFlow, { t, props: app.latest() })); });
+    let txt = JSON.stringify(flow.toJSON());
+    expect(txt).toContain("Conversion window");
+    expect(txt).toContain("Working-year conversions");
+    act(() => flow.unmount());
+
+    // Flip both healthcare toggles on through the real setter bundle and
+    // re-render — exercises the Medicare/marketplace branches (householdSize,
+    // personOnMedicare, premium fields) against their real shapes.
+    app.fire(() => app.latest().health.hasMedicare.set(true));
+    app.fire(() => app.latest().health.hasMarketplaceInsurance.set(true));
+    act(() => { flow = create(React.createElement(ConversionPlannerFlow, { t, props: app.latest() })); });
+    txt = JSON.stringify(flow.toJSON());
+    expect(txt).toContain("Healthcare impact");
+    act(() => flow.unmount());
 
     app.unmount();
   });
