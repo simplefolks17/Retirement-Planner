@@ -50,7 +50,10 @@ export function calcSignals({
       title: "A Roth conversion window is open",
       body: "Converting in your low-income years beats paying RMD tax later — even after healthcare costs.",
       dollars: Math.round(adjustedNetConversionBenefit),
-      target: { screen: "numbers", subView: "yearly" },
+      // WI-3.6: the conversion planner flow is now the decision surface for this
+      // nudge (was Numbers → Year by year, a pre-flow stopgap before the
+      // Strategies screen's interactive flow existed).
+      target: { screen: "strategies", subView: "conversion" },
     });
   }
 

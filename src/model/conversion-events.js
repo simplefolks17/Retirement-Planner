@@ -12,6 +12,13 @@
 // any early-withdrawal penalty, and decides the tax-funding source — only the caller
 // knows the balances and the wage floor.
 
+// Lifetime cap on pre-retirement conversion events — sporadic by nature (a job
+// change, a sabbatical, a handful of low-income years, not a recurring plan).
+// Shared by the Classic panel (ConversionEventsPanel.jsx) and the Horizon
+// conversion flow (WI-3.6) so the cap has ONE definition (the BUG-25 shape:
+// two copies of the same constant drifting apart).
+export const MAX_CONVERSION_EVENTS = 3;
+
 export function applyConversionEvents(conversionEvents = [], age) {
   let convAmount = 0;
   for (const ev of conversionEvents) {

@@ -134,3 +134,40 @@ export function buildRetirementPhase({
     planWalk: plan, noConvWalk: noConv,
   };
 }
+
+// Balance at a given age from a walk's `rows` — the accessor behind App's
+// "Left at {lifeExp}" stat card (formerly inlined as `balAt90`, App.jsx:584-592)
+// and now reused by the WI-3.9 Apply-preview builder so both read the exact
+// same rule: exact-age row if present, else the LAST row (the walk ended before
+// the target age — e.g. depletion), else 0 when there are no rows at all.
+// Never negative — a depleted account displays as $0, not a negative balance.
+export function walkBalanceAt(rows, age) {
+  if (!rows || rows.length === 0) return 0;
+  const exact = rows.find(r => r.age === age);
+  if (exact) return Math.max(0, exact.total);
+  const last = rows[rows.length - 1];
+  return Math.max(0, last.total);
+}
+
+// Pre/post-conversion RMD comparison table (replaces the JSX join at
+// App.jsx:3341-3358). Iterates the NO-CONVERSION baseline schedule (parameter
+// order reflects this — it's the "what RMDs would be without converting" list)
+// and looks up the matching plan-schedule row by age. A baseline age with no
+// corresponding plan row (the conversion plan depleted, changed longevity, or
+// simply has no RMD that year) reports `withConv: null` — never a synthesized
+// 0 (principle 10) — so the screen renders "—" instead of a fake improvement.
+// `improved` is true only when the plan actually lowered that year's RMD.
+export function buildRmdComparison(rmdScheduleNoConv, rmdSchedule) {
+  const baseline = rmdScheduleNoConv ?? [];
+  const plan = rmdSchedule ?? [];
+  return baseline.map(({ age, rmd }) => {
+    const planRow = plan.find(d => d.age === age);
+    const withConv = planRow ? planRow.rmd : null;
+    return {
+      age,
+      noConv: rmd,
+      withConv,
+      improved: withConv != null && withConv < rmd,
+    };
+  });
+}

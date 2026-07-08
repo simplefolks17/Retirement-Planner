@@ -5,8 +5,7 @@
 
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
-
-const MAX_CONVERSION_EVENTS = 3; // sporadic by nature — a handful of lifetime events
+import { MAX_CONVERSION_EVENTS } from "../model/conversion-events.js";
 
 function emptyEvent(currentAge, safeRetAge) {
   // Default to a year mid-career, clamped inside the working window.

@@ -16,14 +16,20 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 |---|---|
 | `src/horizon/ThemeContext.jsx` | Design token system, palette context, `useTheme()` hook; exports `safeGet`/`safeSet` |
 | `src/horizon/ConfirmModal.jsx` | Shared confirm dialog + toast pattern (used by PlanScreen and IdeasScreen) |
-| `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views and optional scenario overlay |
-| `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard; imports per-screen files |
-| `src/horizon/screens/PlanScreen.jsx` | Plan screen (arc graph, stats, "Make this my plan") |
+| `src/horizon/ApplyPreviewModal.jsx` | Apply-with-preview shell (WI-3.9): pure renderer of a model-computed before/after payload, wraps `ConfirmModal`; exports `PreviewMetricRow` + `VerdictBadge`. Contract in `ARCHITECTURE.md` |
+| `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape |
+| `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views, scenario overlay, event markers, tap-to-scrub |
+| `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard + mobile bar/MoreSheet; exports `SCREENS`; imports per-screen files |
+| `src/horizon/screens/PlanScreen.jsx` | Plan screen (arc, hero, income meter, QuickTune, signals strip, "Make this my plan") |
+| `src/horizon/screens/JourneyScreen.jsx` | Journey screen — the Flow-Down port (3-chapter narrative) |
 | `src/horizon/screens/IdeasScreen.jsx` | Ideas screen (dials, scenario cards, life events) |
-| `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen (Statement, Year by year, Money flow) |
+| `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen — 6 tabs (Statement, Budget, Accounts, Taxes, Year by year, Money flow) |
+| `src/horizon/screens/StrategiesScreen.jsx` | Strategies catalogue (WI-3.3) — `STRATEGIES` registry of cards; each opens a `Flow` in the detail slot |
+| `src/horizon/screens/strategies/` | The interactive strategy flows: `SSTimingFlow.jsx` (WI-3.4), `RMDOutlookFlow.jsx` (WI-3.5), `ConversionPlannerFlow.jsx` (WI-3.6); `flow-ui.jsx` = shared `SectionLabel`/`NoteBox`/`StatTile` |
+| `src/horizon/screens/MyDetailsScreen.jsx` | My details (WI-3.2) — plan-fact topic cards over the setter bundles |
 | `src/horizon/screens/SomedayScreen.jsx` | Someday screen (activity selector, photo placeholder) |
-| `src/horizon/screens/SettingsScreen.jsx` | Settings screen (palette, theme, arc style) |
-| `src/App.jsx` | `showHorizon` state, `horizonProps` bundle, Classic↔Horizon toggle |
+| `src/horizon/screens/SettingsScreen.jsx` | Settings screen (palette, theme, arc style, activity) |
+| `src/App.jsx` | `showHorizon` state, `horizonProps` bundle (display + setter + flow-view bundles), Classic↔Horizon toggle |
 
 ---
 
@@ -181,7 +187,9 @@ Scenario exploration — the arc is always the hero.
 
 ### The Numbers screen
 
-**3 tabs:**
+> **Now 6 tabs** (Statement · Budget · Accounts · Taxes · Year by year · Money flow) as of the Level-2 build-out (WI-2.2–2.6); the Budget/Accounts/Taxes bundles and the Year-by-year/Money-flow upgrades are documented in `docs/ROADMAP.md` (Level 2). The 3-tab description below is the original Level-1 shape, kept for history.
+
+**3 tabs (original):**
 
 - **Statement** — editorial 3-column layout (Income & tax / What you're building / Income for life), each column with a proportion bar. Footnotes with real effective federal rate.
 - **Year by year** — full scrollable table sourced from `retirementWalk.rows` (retirement phase). Columns: Age | Year | Portfolio | Draw | Growth | Tax. Year computed as `currentYear + (row.age − currentAge)`. First 50 rows shown; "Show all N years" toggle renders the rest. Zebra rows with `t.surf`/`t.line` alternating, `HM` monospace for all numbers.

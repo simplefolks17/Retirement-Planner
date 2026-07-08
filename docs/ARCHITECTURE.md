@@ -263,6 +263,147 @@ The shared editable-field primitives live in `src/horizon/fields.jsx` (extracted
 MyDetailsScreen) and the flow presentation helpers in
 `src/horizon/screens/strategies/flow-ui.jsx`.
 
+### `horizonProps.conversionView` (WI-3.6 / #103) — Roth-conversion planner flow bundle
+
+**Added 2026-07-08.** Sibling keyed by the `"conversion"` strategy id (same forward contract
+as `ssView`/`rmdView`). Separately memoized (V9); built from already-computed App values —
+no new model math. Six sections:
+
+- **`window`** — `{ hasConvWindow, startAge, endAge, windowYrs, windowLabel, startAgeField,
+  endAgeField, isDefaultWindow }`. `windowLabel` preformatted ("7-year window · age 66 → 72");
+  the two fields are `{ value, set, min, max, step }` with setters wrapping Classic's
+  cross-clamps (start ≤ end, end ≥ start); `isDefaultWindow` = both window state fields
+  null → the "Auto — fills the whole window" edge state.
+- **`targets`** — `{ convSteadyTarget, convPeakTarget, targetsVary, bracketFillLabel,
+  assumesPension }`. `bracketFillLabel` is peak → steady order (Classic parity);
+  `assumesPension` pre-gated (`effectivePension > 0`).
+- **`outcome`** — `{ annualConversionLabel, netIsPositive, rothBalEndConv, rothBalEndTax,
+  rothAdvantage, showTaxSourceComparison }`. `netIsPositive` is the only NEW flag; the
+  dollar verdict renders from `props.netConversionBenefit` + `taxView.conversionDetail`.
+- **`healthcare`** — breakdown detail only: `{ cliffAges, cliffCount, cliffThreshold,
+  acaAnnualLoss, showAcaWarning, showNoCliffNote, irmaaCost, irmaaRows, showIrmaa }`.
+  `cliffAges` pre-mapped from the `cliffYears` objects; `irmaaRows` pre-multiplied
+  (`surcharge × personOnMedicare`) — never raw objects for JSX re-mapping (rule 10).
+- **`tables`** — `{ simYears, rmdCompare }`. `simYears` = `conversionSim.years`
+  (`{age,conversion,tradBal,tax}[]`, flow slices first 12); `rmdCompare` pre-joined by
+  `buildRmdComparison(rmdScheduleNoConv, rmdSchedule)` (`retirement-phase.js`) →
+  `[{ age, noConv, withConv, improved }]` with `withConv: null` for a missing plan row
+  (never a synthesized 0); flow shows first 8.
+- **`events`** (#118) — `{ rows, add, atMax, inServiceField, hasWorkingYears,
+  totalPlannedLabel }`. `rows` are **App-built row objects** (`{ id, ageField, amountField,
+  estTaxLabel, remove }`), NOT a raw array + `setConversionEvents`: a raw setter consumed by
+  ad-hoc JSX closures would be a write surface WI-5.2's `readOnly` wrapper can't see, and
+  the map/filter/clamp logic would be data transformation in JSX (rule 10). One wrappable
+  write path per field, built where `setConversionEvents` lives. `atMax` pre-gated against
+  `MAX_CONVERSION_EVENTS` (`conversion-events.js`).
+- **`optimizer`** — display fields `{ suggestedAmount, suggestedStartAge, suggestedBenefit,
+  currentAmountLabel, currentStartAge }` (null when no optimizer result) + `applySuggestion`,
+  the WI-3.9 Apply site (contract below).
+
+**What it deliberately does NOT carry (principle 11):** mode / bracket target / amount /
+tax source live in the `conversion` setter bundle; the healthcare ON/OFF toggles live in
+`health`; the verdict and its components (`rmdTaxSaved`, `conversionCost`, `irmaaCost`,
+`acaLoss`, `adjustedNetConversionBenefit`, `isPositive`) live in `taxView.conversionDetail`
+(the SAME source the Taxes tab and the Strategies card face read); `netConversionBenefit`
+is already a top-level prop. The strategiesView note above (do not re-expose the headline
+benefit) stands — an earlier roadmap draft listed `adjustedNetConversionBenefit` among
+conversionView fields; ARCHITECTURE wins. The window/events setters live HERE (not in the
+`conversion` bundle) per the WI-3.1 note above — they belong to this flow.
+Tests: `src/__tests__/conversion-view-wiring.test.js` (self-consistency + the WI-3.9
+anti-divergence lock); `horizon-props-stability.test.js` auto-covers stability.
+
+---
+
+### Apply-with-preview contract (WI-3.9 / #106)
+
+**Added 2026-07-08.** The shared pattern for every "Apply this suggestion" affordance:
+the App memo runs the candidate through the SAME engine mechanism the suggestion's search
+used, a pure builder (`src/model/apply-preview.js`) turns the two runs into a display-ready
+payload, and the modal (`src/horizon/ApplyPreviewModal.jsx`) renders it VERBATIM — no
+arithmetic, no comparisons, not even a sign (rule 10).
+
+**Payload shape** (built by `buildConversionPreview` / future per-site builders):
+
+```js
+preview = {
+  title:  "Apply optimizer suggestion",
+  action: "Convert $85,000/yr starting at age 61 (now: $82,765/yr from age 61)",
+  confirmLabel: "Apply",       // per-site copy lives in the payload, NOT the modal —
+                               //   L3d's commitPlan sites pass "Save as my plan"
+                               //   without touching the modal component
+  metrics: [
+    { id: "netBenefit",        // stable id (tests key on it)
+      label: "Net benefit after healthcare",
+      before: "−$9,854",       // display-ready strings; builder owns Infinity/null edges
+      after:  "$12,400",       //   (longevity renders "depletes at 87 (21.3 yrs)" /
+                               //    "lasts beyond your plan" — one row, two views of one fact)
+      delta: { dir: "up",      // "up" | "down" | "none"
+               label: "+$22,254",
+               tone: "good" } },  // "good" | "warm" | "neutral"
+  ],
+  note: "Preview uses the same per-account engine as your headline numbers.",  // optional
+  verdict: null,               // RESERVED render slot — WI-5.4 (#85) attaches
+}                              //   { label, tone }; null-guarded from day one
+```
+
+**Apply-site shape** — every Apply on every view bundle, now and later:
+
+```js
+someView.<siteName> = {
+  available: bool,   // pre-gated App-side; never compared in JSX
+  preview,           // null when !available
+  apply,             // useCallback performing the writes
+  // revert?         // OPTIONAL additive sibling (WI-3.7 surplus): restores a
+}                    //   preApplySnapshot; does NOT route through the modal
+                     //   (an exact restore needs no preview); modal never renders it
+```
+
+**Apply-site registry** (the contract: a generic payload well-formedness test iterates
+these rows — future sites get coverage by adding a line here, not a test file; row 1 is
+currently covered by `conversion-view-wiring.test.js` + `apply-preview.test.js`):
+
+| Apply site | Ships | Gate (`available`) | Writes |
+|---|---|---|---|
+| `conversionView.optimizer.applySuggestion` | WI-3.6/3.9 | `isSuggestionApplicable` (healthcare toggle on AND the suggestion differs: \|amount diff\| > $4,999 OR start age differs) | `conversionStartAge`, `conversionMode → "custom"`, `annualConversionAmt` |
+| `surplusView.applyAllocation` | WI-3.7 (future) | — | — |
+| commitPlan sites | L3d (future) | — | — |
+
+**Gating composition point (for WI-5.2):** all gating composes in the App memo that
+computes `available` — entitlements/`readOnly` flags will be AND-ed into `available` and
+into field `.set` wrappers App-side; flows and the modal never import or test entitlements.
+Companion convention: **every writable thing on a view bundle is one of three shapes** —
+a `{ value, set }` field object, a registry-listed Apply callback, or a **list-mutation
+callback** (`add` / `remove` on a collection like `conversionView.events`). All three are
+write surfaces WI-5.2 must neuter: the field `.set` and the registry callbacks compose
+gating as above; list-mutation callbacks compose it the same way (App-side, at
+construction), so `readOnly` disabling "add/delete a conversion event" is mechanical too.
+The rule is: **no bundle exposes a raw setter or a bare mutation the App memo hasn't wrapped**
+— that is what makes "all setters inert" a wrap-at-construction job rather than a per-surface hunt.
+
+**Anti-divergence guarantee (BUG-31/BUG-35 class):** the conversion Apply site builds its
+candidate via `buildConversionByAge` + `buildRetirementPhase({ ...retPhaseBase, … })` — the
+optimizer's own `getNetBenefit` mechanism — and the preview's netBenefit "after" IS
+`optimizerResult.optimalBenefit`. One objective, two surfaces; locked by
+`conversion-view-wiring.test.js`. `isSuggestionApplicable` returning false once the writes
+land is the machine-checked "suggestion clears once applied" guarantee
+(`apply-preview.test.js`).
+
+**#57 attachment note:** when `bracketRoomByYear` ships, per-year bracket headroom attaches
+**additively** to `conversionView.tables.simYears` rows (or as a model-joined sibling
+array) — the same view consumed by the future rental-sale / stock-option / DAF flows; not
+built now (needs the multi-strategy claim semantics from the SP-1 stress test).
+
+**Explicit YAGNI (recorded so it isn't re-litigated):** no lazy `getPreview` variant
+(additive later if a site is genuinely expensive; eager memos are V9-stable and
+auto-tested); no household-scope axis in `conversionView` (SP-6: strategy flows are
+household-scope by default); no reserved #119 benefit slot in `events` (bundle fields are
+additive; only `verdict` needs a day-one render slot because the modal LAYOUT must
+accommodate it); no `verdict` population (#85's model field doesn't exist yet). `buildPreviewMetric`
+ships only `money` and `longevity` format kinds — a `percent` kind (savings rate, withdrawal
+rate, income-replacement %) is the **expected additive extension** for the WI-3.7 / WI-3.8 /
+WI-5.4 Apply sites; add it to the builder (so delta/tone/edge logic stays in one place) rather
+than formatting a percentage inline at a call site.
+
 ---
 
 ### `evaluateConversionPlan` returns a full bundle — the optimizer's "unused" fields are NOT waste
