@@ -333,11 +333,11 @@ feature, now fully interactive in Horizon.
   (iii) **#57 `bracketRoomByYear` remains open** — no per-year bracket-headroom table shipped; the
   attachment point (additive onto `conversionView.tables.simYears` rows) is documented in
   `ARCHITECTURE.md` for when the rental-sale/stock/DAF flows need it.
-- **Tests:** 584 → **642** (all green), lint clean, build OK, **golden master untouched**.
+- **Tests:** 584 → **643** (all green), lint clean, build OK, **golden master untouched**.
   New: `apply-preview.test.js` (31), `apply-preview-modal.test.js` (8),
   `conversion-view-wiring.test.js` (6, incl. the preview-vs-optimizer anti-divergence lock),
-  `apply-site-contract.test.js` (6, registry-driven); `strategies-screen.test.js` +7; signals +1
-  target lock.
+  `apply-site-contract.test.js` (6, registry-driven); `strategies-screen.test.js` +8 (incl. the
+  LOW-1 regression test below); signals +1 target lock.
 - **Parity disposition (done-when "all values equal Classic's conversion section"):** met
   **structurally, not by a field-by-field equality test** — `conversionView` reads the same
   App-computed scalars Classic's JSX renders (one source), so they cannot diverge by
@@ -355,6 +355,26 @@ feature, now fully interactive in Horizon.
   "Numbers / Money flow" tab click times out — the tab renders fine in the jsdom suite and
   manually, so this looks like a verifier-script locator/viewport defect, not a product bug.
   Filed as **BUG-41** (tooling-only) in `docs/BUGS.md`.
+- **Post-ship review fixes (Jul 8 2026, same PR #50 — two follow-up commits).** The
+  adversarial review's one confirmed finding (**LOW-1**): a conversion crossing the ACA
+  subsidy cliff with the marketplace premium left unset showed "\$0 in lost subsidy" and a
+  "−\$0" tile with a gross==adjusted strip — a fabricated zero (Classic gates both on
+  `acaAnnualLoss > 0`). Fixed with pre-computed `conversionView.healthcare.hasAcaLoss` /
+  `showAdjustedStrip` flags (comparisons stay in the App memo, rule 10); the flow now shows
+  an "add your premium to estimate" prompt instead. Also from that review pass: the
+  gating-composition convention in `ARCHITECTURE.md` gained a third write-surface category
+  (list-mutation callbacks like `events.add`/`remove` — bare callbacks the original
+  "`{value,set}` or registry callback" rule didn't cover, which would have left them live
+  under WI-5.2's future `readOnly`); a `percent` `buildPreviewMetric` format kind was noted
+  as the expected additive extension for WI-3.7/3.8; `docs/HORIZON.md`'s stale file registry
+  was refreshed (Journey/Strategies/flow files/`ApplyPreviewModal`/`fields.jsx` were missing,
+  cumulative drift from several prior sessions) and its "Numbers 3 tabs" line corrected to 6.
+  Separately, **Gemini Code Assist** (re-triggered after an initial error) found and fixed
+  three small robustness issues: `apply-preview.js`'s money/longevity deltas now diff the
+  *rounded/formatted* values instead of raw floats (a sub-dollar or sub-0.1yr gap could
+  otherwise render a "+\$0"/"−0.1 yrs" delta beside two identically-displayed before/after
+  strings); `walkBalanceAt` dropped an unreachable `?? 0` fallback (the empty-rows guard
+  above it already makes `last.total` safe). 642 → **643** tests; golden master untouched.
 
 ### WI-3.1 (#98) Setter bundles — the plumbing for all Level-3 work
 **Target:** Horizon can write every Classic input to shared App.jsx state.
