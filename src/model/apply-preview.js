@@ -44,7 +44,10 @@ function moneyMetric({ id, label, before, after, betterDir }) {
     // been computed yet). Never fabricate a delta from a half-known pair.
     delta = { dir: "none", label: "—", tone: "neutral" };
   } else {
-    const d = after - before;
+    // Round before differencing — matches what fmtMoney actually displays, so a
+    // sub-dollar float gap between before/after can never render a "+$0"/"−$0"
+    // delta beside two identical-looking dollar figures (Gemini review).
+    const d = Math.round(after) - Math.round(before);
     if (d === 0) {
       delta = { dir: "none", label: "no change", tone: "neutral" };
     } else {
@@ -83,7 +86,10 @@ function longevityMetric({ id, label, before, after, betterDir }) {
     // age where it didn't before. Always framed as "shorter".
     delta = { dir: "down", label: "shorter", tone: betterDir === "up" ? "warm" : "good" };
   } else {
-    const d = after.years - before.years;
+    // Diff the SAME one-decimal rounding renderLongevity displays (Gemini
+    // review) — a raw-float gap smaller than 0.05yr would otherwise show a
+    // nonzero delta beside two identically-displayed "X.X yrs" figures.
+    const d = Number(after.years.toFixed(1)) - Number(before.years.toFixed(1));
     if (d === 0) {
       delta = { dir: "none", label: "no change", tone: "neutral" };
     } else {

@@ -146,7 +146,7 @@ export function walkBalanceAt(rows, age) {
   const exact = rows.find(r => r.age === age);
   if (exact) return Math.max(0, exact.total);
   const last = rows[rows.length - 1];
-  return Math.max(0, last?.total ?? 0);
+  return Math.max(0, last.total);
 }
 
 // Pre/post-conversion RMD comparison table (replaces the JSX join at
