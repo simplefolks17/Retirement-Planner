@@ -2,7 +2,7 @@
 
 Drives the **real browser** (what the jsdom render-smoke can't): runtime
 console / page errors, real failed network requests, actual paint, and
-screenshots. Walks every Horizon screen, the six Numbers sub-tabs, and a
+screenshots. Walks every Horizon screen, the five Numbers sub-tabs, and a
 Classic-view round-trip — asserting a screen-specific marker and a non-blank
 content area for each. Run it after any UI or model change that could affect
 what the screens display.
@@ -23,7 +23,9 @@ Prints a structured report, saves screenshots to `/tmp/ss_<screen>.png`, and
 
 - **Horizon screens:** Plan · Journey · Ideas · The numbers · Someday · Settings
   (driven by the same labels + markers as `src/__tests__/horizon-screens-smoke.test.js`).
-- **Numbers sub-tabs:** Statement · Budget · Accounts · Taxes · Year by year · Money flow.
+- **Numbers sub-tabs:** Statement · Budget · Accounts · Taxes · Year by year. (The
+  former standalone "Money flow" tab was consolidated into Statement as a
+  "Retirement income companion strip" in PR #38 — see `docs/BUGS.md` BUG-41.)
 - **Classic view:** toggles to the original dashboard (3 tabs) and back to Horizon.
 - **Runtime health:** console errors, page errors (uncaught exceptions), and 4xx
   responses across the whole walk.

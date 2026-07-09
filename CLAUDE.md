@@ -853,3 +853,6 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
   three tabs (start dev server on port 5174 first; see the skill's `.md`)
+- **post-ship review** — ask "run the post-ship review" (or similar) after merging a
+  PR to launch two parallel Opus agents (adversarial correctness + forward-compat
+  retrospective) against the diff; no arguments needed, see `.claude/skills/post-ship-review.md`
