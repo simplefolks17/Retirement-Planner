@@ -296,7 +296,14 @@ function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vma
         boxShadow: "0 4px 16px rgba(0,0,0,.11)", whiteSpace: "nowrap", zIndex: 2
       }}>
         <div style={{ font: `700 13px ${HM}`, color: t.warm }}>{fmtMoney(endPos.endTotal)} at {endPos.endAge}</div>
-        <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 1 }}>still covered, for life</div>
+        {/* Review fix: this used to claim "still covered, for life" unconditionally,
+            including when endTotal is $0 — a depleted plan showing a fabricated
+            reassurance beside its own $0 figure. Only claim coverage when the
+            balance shown is actually positive; otherwise the $0 figure speaks
+            for itself (no invented warning copy, per rule 10 — don't fabricate). */}
+        {endPos.endTotal > 0 && (
+          <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 1 }}>still covered, for life</div>
+        )}
       </div>
     </>
   );
@@ -485,6 +492,12 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax }) {
   const last = chartData[chartData.length - 1];
   if (!labelData || !last) return null;
   const sp = spread(labelAge);
+  // Review fix: "Even lean: covered" used to render unconditionally, regardless of
+  // whether the band's own lean-market line (the same formula bandModel's loPts
+  // uses for the lower cone boundary) actually stays positive — a fabricated
+  // reassurance next to a band that could show the lower line hitting $0.
+  const leanFinalTotal = Math.max(last.total * (1 - spread(last.age) * CONE_LOWER_ASYMMETRY), 0);
+  const leanCovered = leanFinalTotal > 0;
   return (
     <>
       <div style={{
@@ -501,8 +514,12 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax }) {
         background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 11, padding: "7px 12px",
         boxShadow: "0 4px 16px rgba(0,0,0,.11)", whiteSpace: "nowrap", zIndex: 2
       }}>
-        <div style={{ font: `700 13px ${HM}`, color: t.warm }}>Even lean: covered</div>
-        <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 1 }}>even in a lean market</div>
+        <div style={{ font: `700 13px ${HM}`, color: leanCovered ? t.warm : t.mut }}>
+          {leanCovered ? "Even lean: covered" : `${fmtMoney(leanFinalTotal)} in a lean market`}
+        </div>
+        {leanCovered && (
+          <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 1 }}>even in a lean market</div>
+        )}
       </div>
     </>
   );

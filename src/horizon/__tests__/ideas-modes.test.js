@@ -126,6 +126,10 @@ function makeBaseProps(overrides = {}) {
       step: 10_000,
     },
     buildScenarioCommitSite: vi.fn(() => null),
+    sliderBounds: {
+      retireMin: Math.min(currentAge + 1, safeRetAge), retireMax: Math.max(80, safeRetAge),
+      spendMin: 500, spendMax: 30_000,
+    },
     ...overrides,
   };
 }
@@ -396,6 +400,51 @@ describe("IdeasScreen — life-event pill state (review-fix regression)", () => 
     clickByText(renderer.root, `✓  ${life.l}`);
 
     expect(removeFn).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
+  });
+});
+
+describe("IdeasScreen — dial bounds (review-fix regression)", () => {
+  // Before the fix, the dial +/- controls had no bounds at all: the retire-age dial
+  // could be driven below currentAge (a degenerate scenario the model guards against
+  // by returning null, with zero user feedback), and the spend dial could go negative
+  // ("$-100/mo"). Both now reuse the same floor PlanScreen's QuickTune sliders enforce.
+  const minusButtons = root => root.findAll(
+    n => typeof n.props?.onClick === "function" && textOf(n) === "−"
+  );
+
+  it("retire-age dial cannot go below sliderBounds.retireMin", () => {
+    const props = makeBaseProps({
+      currentAge: 63, retirementAge: 65,
+      sliderBounds: { retireMin: 64, retireMax: 80, spendMin: 500, spendMax: 30_000 },
+    });
+    const renderer = mount(props);
+    clickByText(renderer.root, "Dial your future");
+
+    const retireMinus = minusButtons(renderer.root)[0]; // retire dial renders first
+    act(() => { retireMinus.props.onClick(); });
+    act(() => { retireMinus.props.onClick(); });
+    act(() => { retireMinus.props.onClick(); }); // 3 clicks from 65 would reach 62 unclamped
+
+    const txt = textOf(renderer.root);
+    expect(txt).toContain("64"); // clamped at retireMin
+    expect(txt).not.toContain("62");
+    act(() => renderer.unmount());
+  });
+
+  it("monthly spend dial cannot go negative", () => {
+    const props = makeBaseProps({ statementView: { monthlyTotal: 250, keepPct: 50 } });
+    const renderer = mount(props);
+    clickByText(renderer.root, "Dial your future");
+
+    const spendMinus = minusButtons(renderer.root)[1]; // spend dial renders second
+    act(() => { spendMinus.props.onClick(); });
+    act(() => { spendMinus.props.onClick(); });
+    act(() => { spendMinus.props.onClick(); }); // 3 x -$100 from $250 would reach -$50 unclamped
+
+    const txt = textOf(renderer.root);
+    expect(txt).toContain("$0");
+    expect(txt).not.toMatch(/-\$\d/);
     act(() => renderer.unmount());
   });
 });

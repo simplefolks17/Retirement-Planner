@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (707 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (709 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -932,11 +932,52 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     `buildScenarioCommitSite` site-builder shape — recorded in the PR/BUGS.md, not blocking.
   - 702 → **707** tests (+5: BUG-44's clamp test, BUG-47's rewritten 4-test life-event-pill block),
     lint clean, build OK, golden master untouched.
+  - **Fable UI/UX review of PR #51 (2026-07-09), by request — separate from the correctness-focused
+    reviews above.** With the WI-3.7/3.8 build, post-ship review, and in-house code-review pass all
+    done, ran a Fable agent adversarially against the Horizon UI specifically (not model math),
+    scoped first to this PR's new screens then the surrounding Horizon shell/Ideas/Plan/arc, asked
+    to surface "a few bugs worth fixing" in the UI as it stands — not limited to this session's
+    diff — so they could ship in the same package. The agent read broadly, then ran a live
+    Playwright session to verify its top candidates rather than reporting from static reading alone.
+    10 findings; 7 fixed, 3 logged as Open (BUG-49/50/51) with reasoning for deferring each:
+    **BUG-52** — QuickTune's SS-age slider had drifted to a hardcoded flat `62-70`, regressing
+    BUG-17's `currentAge` floor (browser-verified: a 66-year-old could drag the slider to 62).
+    **BUG-53** — the Events editor's age field (new this PR) had the exact clamp-on-every-keystroke
+    defect BUG-48 had just fixed in `AffordabilityPanel`, but at its actual origin site — typing
+    "70" produced "120" (browser-verified); fixed with the same draft-then-commit-on-blur pattern.
+    **BUG-54** — the arc's hero-endpoint and band-view end labels unconditionally claimed "still
+    covered, for life" / "Even lean: covered" regardless of the actual balance shown (browser-
+    verified for the depleted-plan case) — the same class of fabricated-verdict bug this codebase
+    has fixed before (the removed "9 in 10 markets" copy); both gated on values the component
+    already computes locally, no new props. **BUG-55** — Ideas' "Left at 90" stat compared the
+    baseline (already `safeLifeExp`-based, despite the name) against a scenario value hardcoded to
+    literal age 90 in `calcWhatIfScenario` — an apples-to-oranges comparison whenever
+    `lifeExpect != 90`; fixed at the model layer (the hardcoded `BAL_REFERENCE_AGE` constant
+    removed, now uses `safeLifeExp`) plus the stale "Left at 90" label, matching a fix PlanScreen
+    already had. **BUG-56** — the "Dial your future" ± controls were completely unbounded
+    (browser-verified: a far-enough retire-age dial silently failed to show on the arc with zero
+    feedback, since the model returns `null` for a degenerate retirement-age override); fixed by
+    reusing PlanScreen's own `sliderBounds` for the retire dial (bases match exactly) and a
+    self-contained $0 floor for the spend dial (investigated and found `sliderBounds.spendMin`
+    would have been a subtly WRONG bound to reuse there — it's based on `annualExpenses ??
+    effectiveExpenses`, which diverges from the dial's own `effectiveExpenses`-only base once a
+    user has ever touched Plan's spend slider). **BUG-57** — a defensive one-liner
+    (`showMakePlan` now clears alongside `activeScen`) for a currently-unreachable but
+    easy-to-strand state. **BUG-58** — ported PlanScreen's already-correct `setTimeout`-cleanup +
+    dirty-reset pattern for the "✓ Saved" badge to Ideas, which had shipped without either.
+    Deferred: **BUG-49** (most of Horizon's nav/Ideas controls are keyboard-unreachable — broad,
+    mechanical, needs its own dedicated pass applying the `kbActivate` pattern already used
+    correctly elsewhere, not a single contained fix); **BUG-50** (`OnTrackPill` popover has no
+    outside-click dismissal — minor polish); **BUG-51** (Events editor amount-field zero-render +
+    an `findPlacedRow` matching-semantics question that needs an owner call, not a code fix).
+  - 707 → **709** tests (+2: the two new dial-bounds regression tests), lint clean, build OK,
+    golden master untouched throughout (checked explicitly — `calcWhatIfScenario` isn't invoked at
+    the default App state, so the `scenarioBalAt90` model fix has zero default-state impact).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (707 tests)
+- `npm test` — run model + formatter + render-smoke tests (709 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

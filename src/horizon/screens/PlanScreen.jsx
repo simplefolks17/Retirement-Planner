@@ -283,7 +283,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "SS age",
       headline: "When will you claim Social Security?",
       value: ssClaimingAge,
-      min: 62, max: 70, step: 1,
+      min: sliderBounds.ssMin, max: sliderBounds.ssMax, step: 1,
       format: v => `age ${v}`,
       onChange: v => setSsClaimingAge(v),
     },

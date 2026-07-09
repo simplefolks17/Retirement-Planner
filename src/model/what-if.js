@@ -138,11 +138,6 @@ export function calcWhatIfDelta({
   };
 }
 
-// Reference age for the "Left at 90" stat — the Ideas scenario stat row compares
-// the scenario's balance at this age against the baseline card. Not an IRS value;
-// a product-level display anchor.
-const BAL_REFERENCE_AGE = 90;
-
 // ── calcWhatIfScenario ───────────────────────────────────────────────────────
 // ONE model run returning BOTH the arc chart series and the real stat scalars
 // for a scenario override, so a screen showing them side by side can never show
@@ -168,10 +163,14 @@ const BAL_REFERENCE_AGE = 90;
 //     scenarioExpenses,   // annual retirement spending under the scenario
 //     scenarioYears,      // years sustained (far-horizon walk; Infinity = never depletes)
 //     deltaYears,         // scenarioYears − baseYearsSustained (±Infinity handled)
-//     scenarioBalAt90,    // balance at age 90 from the walk rows.
-//                         //   null  → the walk never reaches 90 (e.g. life expectancy < 90):
-//                         //           "not applicable", NOT zero — screens render "—".
-//                         //   0     → a genuine depletion at/before 90 (a real $0).
+//     scenarioBalAt90,    // balance at safeLifeExp from the walk rows (field keeps its
+//                         //   historical "90" name — matches App.jsx's balAt90, which
+//                         //   is also lifeExp-based despite the name; review fix — this
+//                         //   used to be hardcoded to literal age 90, comparing against
+//                         //   the already-lifeExp-based baseline at a DIFFERENT age).
+//                         //   null  → the walk never reaches safeLifeExp: "not applicable",
+//                         //           NOT zero — screens render "—".
+//                         //   0     → a genuine depletion at/before safeLifeExp (a real $0).
 //     scenarioDepletionAge, // age the far-horizon walk hits $0, or null if it never does.
 //   }
 //
@@ -254,14 +253,20 @@ export function calcWhatIfScenario({
 
   const chart = (lifeWalk.rows ?? []).map(r => ({ age: r.age, total: r.total }));
 
-  // Balance at age 90 — null means "the walk never reaches 90" (not applicable,
-  // NOT zero); a genuine depletion at/before 90 is a real 0.
+  // Balance at safeLifeExp (the field keeps its historical "90" name, matching
+  // App.jsx's balAt90 — both were literally age-90 once; both now use the user's
+  // actual plan-to-age). Review fix: this used to be a hardcoded age-90 lookup,
+  // comparing against baseTotalAtRet's balAt90 (already lifeExp-based) at a
+  // DIFFERENT age whenever lifeExpect != 90 — an apples-to-oranges "Left at 90"
+  // stat. null means "the walk never reaches safeLifeExp" (not applicable, NOT
+  // zero — can't happen in practice since lifeWalk's endAge is >= safeLifeExp,
+  // but kept as a guard); a genuine depletion at/before safeLifeExp is a real 0.
   let scenarioBalAt90;
-  if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= BAL_REFERENCE_AGE) {
+  if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= safeLifeExp) {
     scenarioBalAt90 = 0;
   } else {
-    const row90 = (lifeWalk.rows ?? []).find(r => r.age === BAL_REFERENCE_AGE);
-    scenarioBalAt90 = row90 ? row90.total : null;
+    const refRow = (lifeWalk.rows ?? []).find(r => r.age === safeLifeExp);
+    scenarioBalAt90 = refRow ? refRow.total : null;
   }
 
   const scenarioYears = farWalk.yearsSustained;

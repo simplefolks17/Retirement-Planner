@@ -381,23 +381,29 @@ describe("calcWhatIfScenario", () => {
     expect(s.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
   });
 
-  it("scenarioBalAt90 reads the age-90 row of the SAME walk the chart shows", () => {
-    const s = calcWhatIfScenario(baseArgs);
-    const row90 = s.chart.find(r => r.age === 90);
-    expect(row90).toBeDefined();
-    expect(s.scenarioBalAt90).toBe(row90.total);
+  it("scenarioBalAt90 reads the safeLifeExp row of the SAME walk the chart shows", () => {
+    const s = calcWhatIfScenario(baseArgs); // baseArgs.safeLifeExp === 90
+    const rowAtLifeExp = s.chart.find(r => r.age === safeLifeExp);
+    expect(rowAtLifeExp).toBeDefined();
+    expect(s.scenarioBalAt90).toBe(rowAtLifeExp.total);
   });
 
-  it("scenarioBalAt90 is null (not 0) when the walk never reaches 90", () => {
-    // Life expectancy 85 → walk ends at 85; age 90 is NOT APPLICABLE, not zero.
+  it("scenarioBalAt90 tracks safeLifeExp, not a hardcoded age 90 (review fix)", () => {
+    // Before the fix, this field always read literal age 90, so a user with
+    // lifeExpect=85 got a "not applicable" null here while the baseline card
+    // (balAt90 in App.jsx, already lifeExp-based) showed a real balance at 85 —
+    // an apples-to-oranges comparison. It must now read the SAME reference age
+    // the baseline uses: the walk's own safeLifeExp, whatever that is.
     const s = calcWhatIfScenario({ ...baseArgs, safeLifeExp: 85 });
     expect(s.chart[s.chart.length - 1].age).toBe(85);
-    expect(s.scenarioBalAt90).toBeNull();
+    const rowAt85 = s.chart.find(r => r.age === 85);
+    expect(s.scenarioBalAt90).toBe(rowAt85.total);
+    expect(s.scenarioBalAt90).not.toBeNull();
   });
 
-  it("scenarioBalAt90 is a real 0 on genuine depletion at/before 90", () => {
+  it("scenarioBalAt90 is a real 0 on genuine depletion at/before safeLifeExp", () => {
     const s = calcWhatIfScenario(depletingArgs);
-    expect(s.scenarioYears).toBeLessThan(90 - safeRetAge); // depletes before 90
+    expect(s.scenarioYears).toBeLessThan(safeLifeExp - safeRetAge); // depletes before safeLifeExp
     expect(s.scenarioBalAt90).toBe(0);
   });
 

@@ -7,6 +7,71 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell,
+requested specifically to find "a few bugs worth fixing" in the UI as it stands (not scoped to
+this session's diff).
+**What:** the desktop `TabBar` and mobile bottom bar (`src/components/HorizonShell.jsx:130-148,
+604-638`), the `MoreSheet` rows (`:467-487`), `OnTrackPill` (`:73-80` — has `role="button"` but no
+`tabIndex`/`onKeyDown`), onboarding's next/back/save controls (`:345-390`), and in `IdeasScreen.jsx`
+the 6 mode buttons, both dial ± pairs, both "Show on arc" buttons, the life-event pills, the
+scenario cards, and "Make this my plan" (`:245, 280, 309-328, 333, 356, 388, 421` — line numbers as
+of the pre-fix commit; several shifted slightly after this session's dial-bounds fix) are all
+`<div>`/`<span onClick>` with no keyboard path (`tabIndex`, `onKeyDown`, or a real `<button>`). A
+keyboard-only user cannot change Horizon screens at all, let alone use most of Ideas.
+**Why not fixed this pass:** this is a broad, mechanical retrofit (dozens of call sites across the
+nav shell and Ideas) rather than a single contained bug — the session's other Fable-review findings
+were fixable as isolated, verifiable patches; this one needs its own dedicated pass to do properly
+(convert each surface to a real `<button>` or add `role="button"` + `tabIndex={0}` + a `kbActivate`
+Enter/Space handler, matching the pattern already used correctly elsewhere in this codebase —
+`StatCard`, `SignalsStrip`, per PR #38's fix 4). Doing it piecemeal here risked missing surfaces and
+under-delivering on what should be a complete, verifiable a11y pass.
+**Precedent this codebase already has for the fix:** `src/horizon/shared.jsx`'s `kbActivate` helper
++ the `role`/`tabIndex` pattern already applied to `StatCard` and `SignalsStrip` — the fix is
+"apply the existing pattern everywhere it's missing," not invent a new one.
+**Fix path:** a dedicated WI/session auditing every interactive `<div>`/`<span onClick>` in
+`src/horizon/` and `src/components/HorizonShell.jsx` against the `kbActivate` pattern, with a
+render-smoke-style test asserting every clickable surface has a keyboard path.
+
+### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review as BUG-49.
+**What:** `HorizonShell.jsx:91-125`'s `OnTrackPill` popover closes only via its own ✕ button or by
+re-clicking the pill — clicking anywhere else in the app, including navigating to a different
+screen, leaves it pinned over the top-right corner. Every other overlay in the app (`ConfirmModal`,
+`ApplyPreviewModal`, `MoreSheet`) closes on backdrop click; this one doesn't have a backdrop at all.
+**Why not fixed this pass:** minor polish, not a correctness bug; lower priority than the findings
+fixed this session, and deferred rather than rushed.
+**Fix path:** add a document-level click listener (or a transparent full-screen backdrop matching
+`ConfirmModal`'s pattern) that closes the popover on any click outside it, plus an `Escape` key
+handler for keyboard parity (ties into BUG-49's broader keyboard-access gap).
+
+### BUG-51 — Events editor: amount-field zero-render and pill-unchecking on edit (found 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review as BUG-49/50.
+**What:** two related, minor rough edges in the Events editor (`EventsEditorPanel.jsx:48`,
+`App.jsx`'s `eventsView.rows[].amountField`): (1) `value={row.amountField.value || ""}` renders a
+legitimate $0 draft as the empty placeholder rather than "0"; (2) because the setter coerces per
+keystroke (`Number(v) || 0`), clearing the amount field to retype it briefly sets the row's amount
+to 0, and since the life-event pill's "placed" match (`findPlacedRow`, added this session for
+BUG-47) matches on exact amount, editing a placed event's amount in the Events tab momentarily (or
+permanently, if the new amount differs) un-checks its corresponding pill even though the event row
+still exists — arguably correct for a genuine edit (the event no longer matches the pill's preset
+shape), but surprising for a transient mid-edit state.
+**Why not fixed this pass:** low severity, and the "correct behavior" isn't obvious without a
+product decision (should editing a placed event's amount in the Events tab keep the pill checked,
+since it's "the same event, just adjusted," or unchecked, since it no longer matches the preset
+exactly? `findPlacedRow`'s value-equality match was a deliberate, documented choice — see BUG-47 —
+and CodeRabbit separately flagged the same tradeoff on the label-edit case as a "cosmetic quirk,"
+not a bug, when reviewing the `findPlacedRow` fix this same session).
+**Fix path:** an owner call on the intended semantics before changing `findPlacedRow`'s matching
+rule; the zero-render display nit is separately fixable (`value={row.amountField.value === 0 ? "0"
+: row.amountField.value || ""}` or, more simply, a draft-state pattern like the age field just
+got — but is genuinely minor and not urgent on its own).
+
+---
+
 ### BUG-46 — `buildScenarioCommitSite` preview omits the scenario's `scenarioEvents`/expense overrides (found 2026-07-09, in-house 8-angle diff review on PR #51)
 
 **Owner:** me_theguy. **Found by:** an in-house 8-finder-angle code review (line-by-line +
@@ -195,6 +260,157 @@ Still reproduces; `flow-down.js` was not touched by this session's build.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-52 — QuickTunePanel's SS-age slider had a flat 62-70 floor, regressing BUG-17 (found + fixed 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI review, browser-verified live.
+**What:** `PlanScreen.jsx`'s QuickTune "SS age" slider hardcoded `min: 62, max: 70`, while the `ss`
+setter bundle's `ssClaimingAge` field (`App.jsx`) has correctly floored the minimum at
+`max(SS_MIN_CLAIM_AGE, currentAge)` since BUG-17. QuickTunePanel built its own slider config
+independently instead of reading the bundle's bounds, so it never picked up that fix.
+**Reachable how:** verified live — set current age to 66 in My Details, open Plan, drag the SS-age
+pill to 62: the slider accepted it, letting a 66-year-old claim Social Security 4 years in the
+past, which every downstream drawdown loop treats as already-claimed history.
+**Fixed:** added `ssMin`/`ssMax` to App.jsx's existing `sliderBounds` memo (mirroring
+`ssBundle.ssClaimingAge`'s exact formula — one definition, not a second copy) and pointed
+QuickTunePanel's SS slider at `sliderBounds.ssMin`/`sliderBounds.ssMax` instead of the hardcoded
+values. Spouse SS's hardcoded `62/70` was checked and left as-is — it already matches
+`ssBundle.spouseClaimingAge`'s flat (non-dynamic) bounds, so it wasn't actually a bug.
+**Where:** `src/App.jsx` (`sliderBounds`), `src/horizon/screens/PlanScreen.jsx` (SS slider config).
+**Tests:** none added — the fix is a direct pointer-swap to an already-tested bundle field; no new
+branch or edge case was introduced.
+
+### BUG-53 — Events editor age field was unusable — typing "70" produced "120" (found + fixed 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review, reproduced live in a browser session.
+**What:** `EventsEditorPanel.jsx`'s age `<input>` committed every keystroke straight through
+`row.ageField.set`, whose setter (`App.jsx`) clamps immediately:
+`max(currentAge, min(120, Number(v) || currentAge))`. With `currentAge=30`, typing "70" clamps the
+first digit ("7" &lt; 30) back to 30, then the second digit appends onto "30" making "300", which
+clamps to 120 — the field is effectively impossible to type a 2-digit age into that starts below
+`currentAge`'s first digit. The exact failure mode was already documented — and fixed — 30 lines
+away in this same PR's `AffordabilityPanel.jsx` `AgeControl` (BUG-48's "clamping on every onChange
+locks the input"), but the Events editor shipped without the same draft-then-commit-on-blur pattern.
+**Fixed:** `EventRow` (in `EventsEditorPanel.jsx`) now holds a local uncommitted `ageDraft` string
+state — `onChange` writes the raw typed text with no clamp, `onBlur` computes the clamped value and
+calls `row.ageField.set`. Same pattern as `AgeControl`, applied to its actual origin site.
+**Where:** `src/horizon/EventsEditorPanel.jsx` (`EventRow`'s age `<input>`).
+**Tests:** none added directly (no existing render harness stages keystroke-by-keystroke typing for
+this specific component); covered indirectly by the full test suite staying green and by the same
+pattern's existing coverage in `ideas-modes.test.js`'s `AgeControl` regression test.
+
+### BUG-54 — Arc fabricated "still covered, for life" / "Even lean: covered" regardless of the actual balance shown (found + fixed 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review, browser-verified for the hero-arc case.
+**What:** two unconditional reassurance labels in `ArcGraph.jsx`: (1) the hero/scenario arc's
+endpoint label always rendered "still covered, for life" beside `fmtMoney(endPos.endTotal)`, even
+when `endTotal` is $0 (a depleted plan) — verified live: Plan → QuickTune "Monthly spend" → raise
+to an unsustainable level → the arc pill still claimed lifetime coverage beside its own "$0 at 90."
+(2) The band/Scenarios view's end-of-chart pill always rendered "Even lean: covered" — hardcoded
+text with no check against the band's own lower (lean-market) boundary, which `bandModel`'s `loPts`
+already computes and floors at 0 for the plotted line itself; the label just never consulted it.
+Same class of bug this codebase has fixed before (the removed fabricated "9 in 10 markets"
+probability, per CLAUDE.md's status log) — an invented verdict with no model computation behind it.
+**Fixed:** both labels now gate on a value already computed locally in the same function (no new
+props, no new model calls): the hero label only renders "still covered, for life" when
+`endPos.endTotal > 0` (otherwise the `$0 at {age}` figure stands alone — no invented warning copy);
+the band label computes `leanFinalTotal` using the exact same formula `bandModel`'s own lower band
+line uses, and only shows "Even lean: covered" when that's positive — otherwise it shows the honest
+lean-market dollar figure instead of a redundant/wrong claim (also fixes a minor redundancy: the
+old copy repeated itself with "even in a lean market" directly under "Even lean: covered").
+**Where:** `src/components/ArcGraph.jsx` (`ArcLabels`'s endpoint label, `BandLabels`'s end pill).
+**Tests:** none added — no existing test harness renders the full `ArcGraph` component (only the
+exported pure `scrubPointForAge` helper has coverage); both fixes are simple, directly-traced
+conditionals reusing values the surrounding code already computes, verified by reading and (for the
+hero-arc case) live browser reproduction before and after.
+
+### BUG-55 — Ideas "Left at 90" compared balances at two different ages, and its label ignored the actual plan horizon (found + fixed 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review, confirmed by tracing both code paths.
+**What:** the Ideas screen's "Left at 90" stat card compared `balAt90` (App.jsx — despite the
+name, already computed at the user's actual `safeLifeExp`, not literal age 90) against
+`scenario.scenarioBalAt90` (`calcWhatIfScenario`, `what-if.js` — genuinely hardcoded to a module
+constant `BAL_REFERENCE_AGE = 90`), an apples-to-oranges comparison whenever `lifeExpect != 90`.
+The card's label was also hardcoded `"Left at 90"` regardless of the user's actual plan-to-age;
+`PlanScreen.jsx` had already fixed its own equivalent label (`Left at ${lifeExpect}`) but Ideas
+never got the same fix.
+**Fixed at the model layer** (the correct fix — both consumers must share one reference age, per
+principle 11): `calcWhatIfScenario` (`what-if.js`) now computes `scenarioBalAt90` at `safeLifeExp`
+(the same bundle field `balAt90` already uses) instead of the hardcoded `BAL_REFERENCE_AGE`
+constant, which was removed. The field keeps its historical "90" name (matching `balAt90`'s own
+precedent of an intentionally-stale name with a corrected value — both document why in comments).
+Ideas' stat card label changed to `` `Left at ${lifeExpect}` ``, matching `PlanScreen`'s pattern.
+**Golden master impact:** none — `calcWhatIfScenario` isn't invoked at the default App state (no
+active scenario); this only affects screens actively showing a scenario comparison.
+**Where:** `src/model/what-if.js` (`calcWhatIfScenario`'s `scenarioBalAt90` computation, doc
+comment), `src/horizon/screens/IdeasScreen.jsx` (stat card label).
+**Tests:** `src/model/__tests__/what-if.test.js` — rewrote the test that had asserted the OLD
+(hardcoded-90) behavior into one that locks the NEW behavior (`scenarioBalAt90` tracks a
+`safeLifeExp` override, e.g. 85, rather than going null because "the walk never reaches 90"); the
+depletion test's comparison also switched from a hardcoded `90 - safeRetAge` to `safeLifeExp -
+safeRetAge` for correctness. 707 tests (net-zero: one test rewritten, not added).
+
+### BUG-56 — Ideas "Dial your future" was unbounded, with silent failure on invalid values (found + fixed 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review, browser-verified live.
+**What:** `IdeasScreen.jsx`'s dial ± controls had no bounds: the retire-at dial could be driven
+below `currentAge` (or negative), and the monthly-spend dial could go negative (rendering
+"$-100/mo"). Verified live: dialing retire-at far enough down, then clicking "Show on arc →",
+produced no overlay and no error — `calcWhatIfScenario` returns `null` for a degenerate
+retirement-age override (retiring at/before current age has no accumulation phase), and the handler
+silently no-ops on `null` with zero user feedback. Every other numeric input in this codebase
+(`fields.jsx`, `AgeControl`, onboarding) clamps; these two dials were the exception.
+**Fixed:** the retire-at dial's offset is now clamped to the same `sliderBounds.retireMin/retireMax`
+range PlanScreen's own QuickTune slider already enforces (both read `retirementAge` directly, so
+the bases match exactly — no duplicate bounds logic). The spend dial floors at $0, computed against
+its OWN base (`statementView.monthlyTotal`) rather than `sliderBounds.spendMin` — investigated and
+found that `sliderBounds.spendMin/spendMax` is based on `annualExpenses ?? effectiveExpenses`, which
+diverges from `statementView`'s `effectiveExpenses`-only base once a user has ever set an explicit
+spend override via Plan's own slider, which would have made a cross-referenced bound silently
+wrong; the self-contained floor avoids that basis mismatch entirely. With the retire-age dial now
+structurally prevented from reaching a degenerate value, the silent-failure path is unreachable by
+construction — a stronger fix than adding an error message after the fact.
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (dial offset bounds + click handlers).
+**Tests:** 2 new in `src/horizon/__tests__/ideas-modes.test.js` — the retire dial can't be driven
+below `sliderBounds.retireMin` after repeated clicks past the limit; the spend dial can't go
+negative after repeated clicks past $0.
+
+### BUG-57 — `showMakePlan` could strand `true` with no modal to show (defensive fix, found + fixed 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review (flagged PLAUSIBLE, not yet reachable).
+**What:** the "make this scenario my plan" modal renders only when `showMakePlan && scenarioCommitSite`;
+`scenarioCommitSite` is `null` whenever `scenario` is `null` (i.e., no `activeScen`). Today the
+modal's own full-screen backdrop blocks any interaction that would clear `activeScen` while it's
+open, so this isn't reachable yet — but any future code path that clears `activeScen` out from
+under an open modal (without going through the guarded "Make this my plan" button) would leave
+`showMakePlan=true` invisibly stranded, and the next scenario activation would pop the modal
+unprompted.
+**Fixed:** `clearScen()` now also resets `showMakePlan` to `false`, so the two pieces of state can
+never drift apart regardless of which code path clears the scenario in the future.
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (`clearScen`).
+**Tests:** none added — defensive fix for a currently-unreachable path; the existing modal-open/
+cancel/confirm tests continue to cover the reachable behavior unchanged.
+
+### BUG-58 — Ideas "✓ Saved" badge: uncleaned `setTimeout` and no dirty-reset (found + fixed 2026-07-09, Fable UI review of PR #51)
+
+**Owner:** me_theguy. **Found by:** the same Fable UI review, confirmed by comparing against
+`PlanScreen.jsx`'s already-correct equivalent.
+**What:** two gaps in `IdeasScreen.jsx`'s "✓ Saved" badge, both already fixed in `PlanScreen.jsx`'s
+QuickTunePanel for the identical "✓ Plan saved" badge but never ported to Ideas: (1) the inline
+`setTimeout(() => setPlanSaved(false), 2000)` had no cleanup — navigating away from Ideas within the
+2-second window calls `setState` after unmount (a React warning / potential leak); (2) the badge
+didn't reset if the user switched to a different scenario within the 2-second window, so "✓ Saved"
+could keep labeling a scenario that was never actually saved.
+**Fixed:** ported PlanScreen's exact two-`useEffect` pattern: one resets `planSaved` whenever
+`activeScen` changes (calling `setPlanSaved(false)` unconditionally is a no-op when already false,
+so it's safe to run on mount too — no guard needed, avoiding a lint escape hatch); the other runs
+the 2-second timeout inside a `useEffect` with a `clearTimeout` cleanup, keyed on `planSaved`.
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (`planSaved` effects; modal `onConfirm` simplified
+to just `setPlanSaved(true)`, no inline timeout).
+**Tests:** none added — behavioral parity with PlanScreen's already-tested equivalent pattern; the
+existing "make this my plan" flow tests continue to pass unchanged.
 
 ---
 

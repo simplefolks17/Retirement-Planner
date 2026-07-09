@@ -1231,6 +1231,10 @@ export default function App() {
     horizonMax: Math.max(115, lifeExpect),
     contribMax: Math.max(trad401kMax, contrib401k),
     rothMax:    Math.max(200_000, annualConversionAmt),
+    // BUG-17: mirrors ssBundle.ssClaimingAge's floor exactly (review fix — QuickTunePanel's
+    // SS slider had drifted to a flat 62-70, letting a user dial a claim age in the past).
+    ssMin: Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge)),
+    ssMax: SS_MAX_CLAIM_AGE,
     canTuneRothConversion: conversionWindowYrs > 0,
   }), [currentAge, retirementAge, monthlySpend, lifeExpect, trad401kMax, contrib401k, annualConversionAmt, conversionWindowYrs]);
 

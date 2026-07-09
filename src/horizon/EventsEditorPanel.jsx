@@ -5,7 +5,7 @@
 // or writes moneyEvents directly and never computes a total, a max, or a bound —
 // it renders row.*.value/.set and the pre-built atMax/hasEvents/netImpactLabel flags.
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
 import { seg } from "./fields.jsx";
 
@@ -27,6 +27,21 @@ function EventRow({ t, row, isMobile }) {
     border: `1px solid ${t.line2}`, borderRadius: 7, padding: "6px 8px",
     width: "100%", minWidth: 0,
   };
+
+  // Age field: free-type into a local draft, clamp+commit only on blur — committing
+  // on every keystroke (row.ageField.set clamps immediately in App.jsx) locks the
+  // input mid-typing, e.g. typing "70" with min=currentAge>7 clamps the first digit
+  // back to currentAge before the second digit can be added (review fix, same class
+  // as AffordabilityPanel's AgeControl / BUG-48).
+  const [ageDraft, setAgeDraft] = useState(String(row.ageField.value));
+  useEffect(() => { setAgeDraft(String(row.ageField.value)); }, [row.ageField.value]);
+  const commitAge = () => {
+    const { min, max, value } = row.ageField;
+    const clamped = ageDraft === "" ? min : Math.max(min, Math.min(max, Number(ageDraft) || min));
+    setAgeDraft(String(clamped));
+    if (clamped !== value) row.ageField.set(clamped);
+  };
+
   return (
     <div style={{
       display: "flex", flexDirection: isMobile ? "column" : "row",
@@ -52,8 +67,9 @@ function EventRow({ t, row, isMobile }) {
         style={{ ...inputStyle, flex: isMobile ? undefined : "1 1 80px" }}
         type="number" min={row.ageField.min} max={row.ageField.max} step={row.ageField.step}
         placeholder="Age"
-        value={row.ageField.value}
-        onChange={e => row.ageField.set(e.target.value)}
+        value={ageDraft}
+        onChange={e => setAgeDraft(e.target.value)}
+        onBlur={commitAge}
       />
       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
         {row.directionField.options.map(o => (
