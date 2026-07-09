@@ -1068,8 +1068,13 @@ export default function App() {
     baseTotalAtRet: totalAtRet,
     baseYearsSustained: yearsSustained,
     baseDepletionAge: retirementWalk.depletionAge,
+    // baseTotalAtRet already includes addlPreTaxBal (App.jsx adds it to tradGrossAtRet
+    // for the headline totalAtRet); calcWhatIfDelta's forced-resim path needs the same
+    // value to add it back, or a scenario re-sim silently drops it (basis mismatch —
+    // review fix). Inert (0) at the golden master.
+    addlPreTaxBal,
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
-       totalAtRet, yearsSustained, retirementWalk]);
+       totalAtRet, yearsSustained, retirementWalk, addlPreTaxBal]);
 
   // WI-3.8: site-BUILDER for Ideas' "make this scenario my plan" commitPlan site.
   // Deliberately generalizes the Apply-site shape from a static object to a callback:
@@ -3006,6 +3011,7 @@ export default function App() {
         baseTotalAtRet={totalAtRet}
         baseYearsSustained={yearsSustained}
         currentAge={currentAge}
+        addlPreTaxBal={addlPreTaxBal}
       />
 
       <div style={{ ...panel, marginBottom: 20 }}>

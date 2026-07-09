@@ -1,4 +1,4 @@
-// MegaBackdoorFlow — WI-3.7 (#105): mega-backdoor Roth capacity + employer
+// MegaBackdoorFlow — WI-3.7 (#104): mega-backdoor Roth capacity + employer
 // match settings. Read-only for the capacity math (no Apply site — Classic's
 // mega-backdoor panel is informational, same here); the match-mode inputs are
 // live writes through the WI-3.1 `accounts` setter bundle, same as any other

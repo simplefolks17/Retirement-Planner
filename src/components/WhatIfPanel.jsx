@@ -48,6 +48,7 @@ export function WhatIfPanel({
   baseTotalAtRet,
   baseYearsSustained,
   currentAge,
+  addlPreTaxBal = 0,
 }) {
   const [open,     setOpen]     = useState(false);
   const [mode,     setMode]     = useState("delta");
@@ -71,8 +72,9 @@ export function WhatIfPanel({
     simInputs, fedMarginal, retDrawShared,
     safeRetAge, safeLifeExp,
     baseTotalAtRet, baseYearsSustained,
+    addlPreTaxBal,
   }), [simInputs, fedMarginal, retDrawShared,
-       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained]);
+       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, addlPreTaxBal]);
 
   const deltaResult = useMemo(() => {
     if (mode !== "delta") return null;

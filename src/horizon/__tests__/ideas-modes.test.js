@@ -279,7 +279,7 @@ describe("IdeasScreen — Solvers mode", () => {
     const renderer = mount(props);
     clickByText(renderer.root, "Solvers");
     const txt = textOf(renderer.root);
-    expect(txt).toContain("doesn't sustain to age 90");
+    expect(txt).toContain("no room for an additional expense");
     expect(txt).not.toContain("You could spend up to");
     act(() => renderer.unmount());
   });

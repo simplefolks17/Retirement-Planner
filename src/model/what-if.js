@@ -48,6 +48,9 @@ export function calcWhatIfDelta({
   annualExpensesOverride = null, // change annual retirement spending (number or null)
   retirementAgeOverride  = null, // shift retirement age (number or null — re-runs sim)
   contribOverrides = null,       // { contrib401k?, contribRoth?, contribTaxable?, contribHSA? } — re-runs sim
+  addlPreTaxBal = 0,             // outside pre-tax balance (App.jsx) — baseTotalAtRet already
+                                  // includes it; the re-sim below must add it too or a forced
+                                  // resim's scenarioTotalAtRet silently drops it (basis mismatch).
 }) {
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
   const scenarioExpenses  = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
@@ -74,11 +77,14 @@ export function calcWhatIfDelta({
     const at = raw[retIdx];
     if (at) {
       // BUG-35: gross basis (the 401k is no longer haircut) — matches the gross
-      // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples.
+      // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples. Also
+      // add addlPreTaxBal — baseTotalAtRet already includes it (App.jsx), and
+      // runSimulation has no concept of it, so it must be added back here too.
       scenarioTotalAtRet = (at.tradGross ?? 0)
         + (at["Roth IRA"] ?? 0)
         + (at["Taxable"]  ?? 0)
-        + (at["HSA"]      ?? 0);
+        + (at["HSA"]      ?? 0)
+        + addlPreTaxBal;
     } else {
       scenarioTotalAtRet = 0;
     }

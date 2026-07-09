@@ -163,6 +163,27 @@ describe("calcWhatIfDelta", () => {
     expect(result.scenarioDepletionAge).toBe(direct.depletionAge);
   });
 
+  // ── addlPreTaxBal basis-symmetry lock (post-ship review fix) ───────────────
+  // baseTotalAtRet (App.jsx) already includes addlPreTaxBal; a forced re-sim's
+  // scenarioTotalAtRet must add it back too, or "current" (baseTotalAtRet
+  // passthrough) and "candidate" (re-sim) silently diverge by exactly
+  // addlPreTaxBal — a real basis mismatch surfaced by the WI-3.7 surplus
+  // Apply-preview, which compares the two through the SAME mechanism.
+  it("addlPreTaxBal is added to scenarioTotalAtRet on a forced re-sim, not silently dropped", () => {
+    const forceResimEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+    const without = calcWhatIfDelta({ ...baseArgs, moneyEvents: [forceResimEvent] });
+    const withAddl = calcWhatIfDelta({
+      ...baseArgs, moneyEvents: [forceResimEvent], addlPreTaxBal: 500_000,
+    });
+    expect(withAddl.scenarioTotalAtRet - without.scenarioTotalAtRet).toBeCloseTo(500_000, 6);
+  });
+
+  it("addlPreTaxBal defaults to 0 (no-op) when omitted", () => {
+    const omitted = calcWhatIfDelta({ ...baseArgs, moneyEvents: [] });
+    const explicitZero = calcWhatIfDelta({ ...baseArgs, moneyEvents: [], addlPreTaxBal: 0 });
+    expect(explicitZero).toEqual(omitted);
+  });
+
   // ── contribOverrides no-op lock (WI-3.7 extension) ─────────────────────────
   // The param must be a true no-op when omitted/null — nothing on the golden
   // path should move now that this param exists.

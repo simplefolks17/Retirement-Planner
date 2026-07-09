@@ -124,8 +124,8 @@ export default function AffordabilityPanel({ t, whatIfBundle, affordView, isMobi
             padding: "13px 15px",
           }}>
             <div style={{ font: `400 13px/1.5 ${HF}`, color: t.warm }}>
-              Your current plan doesn't sustain to age {targetAge} — no room for an
-              additional expense at age {purchaseAge}.
+              Your plan has no room for an additional expense at age {purchaseAge}
+              while still sustaining to age {targetAge}.
             </div>
           </div>
         )
