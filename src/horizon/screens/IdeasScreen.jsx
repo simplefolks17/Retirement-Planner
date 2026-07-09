@@ -3,6 +3,9 @@ import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
+import ApplyPreviewModal from "../ApplyPreviewModal.jsx";
+import EventsEditorPanel from "../EventsEditorPanel.jsx";
+import AffordabilityPanel from "../AffordabilityPanel.jsx";
 import { calcWhatIfScenario } from "../../model/what-if.js";
 
 // Scenario definitions — overrides only, no display numbers. Every figure shown
@@ -69,7 +72,6 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     contribSeries,
     // Batch B additions:
     whatIfSimInputs: whatIfBundle,
-    commitPlan,
     eventsView,
     // WI-0.1: model-provided monthly figure for the spend dial seed
     statementView,
@@ -77,6 +79,10 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     moneyEvents,
     // WI-2.7: retirement walk rows feed the arc tap-to-scrub chip
     retirementWalk,
+    // WI-3.8: Solvers mode defaults/bounds (eventsView is already destructured above)
+    affordView,
+    // WI-3.9: site-builder for "make this scenario my plan" (Apply-with-preview)
+    buildScenarioCommitSite,
   } = props;
 
   const [mode, setMode] = useState(initialMode ?? null);
@@ -109,6 +115,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
       scenarioEvents: scen.scenarioEvents ?? [],
     });
   }, [scen, whatIfBundle]);
+
+  // Apply-with-preview site for "make this scenario my plan" (WI-3.9). Only built
+  // while the confirm modal is actually open, to avoid an extra calcWhatIfDelta
+  // run (inside buildScenarioCommitSite) on every render.
+  const scenarioCommitSite = useMemo(
+    () => (showMakePlan && scenario) ? buildScenarioCommitSite(scenario.scenarioRetAge) : null,
+    [showMakePlan, scenario, buildScenarioCommitSite]
+  );
 
   const scenarioData = scenario?.chart?.length ? scenario.chart : null;
 
@@ -152,6 +166,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     { k: "dials",   l: "Dial your future" },
     { k: "suggest", l: "Horizon suggestions" },
     { k: "askit",   l: "What if…" },
+    { k: "events",  l: "Events" },
+    { k: "solvers", l: "Solvers" },
   ];
 
   return (
@@ -369,6 +385,16 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                 </div>
               </div>
             )}
+
+            {/* ── Events ── */}
+            {mode === "events" && (
+              <EventsEditorPanel t={t} eventsView={eventsView} isMobile={isMobile} />
+            )}
+
+            {/* ── Solvers ── */}
+            {mode === "solvers" && (
+              <AffordabilityPanel t={t} whatIfBundle={whatIfBundle} affordView={affordView} isMobile={isMobile} />
+            )}
           </div>
         </div>
       )}
@@ -422,15 +448,13 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         />
       )}
 
-      {/* ── Confirm: make this my plan ── */}
-      {showMakePlan && scenario && (
-        <ConfirmModal
+      {/* ── Apply-with-preview: make this scenario my plan (WI-3.9) ── */}
+      {showMakePlan && scenarioCommitSite && (
+        <ApplyPreviewModal
           t={t}
-          title="Save this as your plan?"
-          body={`Retire at ${scenario.scenarioRetAge} · Est. income ${fmtMo(scenario.scenarioExpenses)}/mo`}
-          confirmLabel="Save plan"
+          preview={scenarioCommitSite.preview}
           onConfirm={() => {
-            commitPlan({ retirementAge: scenario.scenarioRetAge });
+            scenarioCommitSite.apply();
             setShowMakePlan(false);
             setPlanSaved(true);
             setTimeout(() => setPlanSaved(false), 2000);

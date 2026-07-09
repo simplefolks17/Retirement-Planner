@@ -101,6 +101,21 @@ const makeMockProps = (overrides = {}) => ({
     canTuneRothConversion: false,
   },
   commitPlan:                vi.fn(),
+  planCommit: {
+    available: true,
+    preview: {
+      title: "Save this as your plan?",
+      action: "Retire at 65 · $4,787/mo spend",
+      confirmLabel: "Save plan",
+      metrics: [
+        { id: "totalAtRet", label: "Nest egg at retirement",
+          before: "—", after: "$3.95M", delta: { dir: "up", label: "+$3.95M", tone: "good" } },
+      ],
+      note: null,
+      verdict: null,
+    },
+    apply: vi.fn(),
+  },
   ...overrides,
 });
 
@@ -121,6 +136,15 @@ function findAll(node, pred, results = []) {
 // Find all range inputs.
 function rangeInputs(root) {
   return findAll(root, n => n.type === "input" && n.props?.type === "range");
+}
+
+// Click the first clickable node (onClick handler) whose text matches exactly.
+function clickByText(root, label) {
+  const target = root.findAll(
+    n => typeof n.props?.onClick === "function" && textOf(n) === label
+  )[0];
+  expect(target, `clickable element "${label}" not found`).toBeTruthy();
+  act(() => { target.props.onClick(); });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -255,6 +279,54 @@ describe("PlanScreen — Reset button visibility", () => {
   });
 });
 
+describe("PlanScreen — Save as my plan (Apply-with-preview, WI-3.9)", () => {
+  it("opens ApplyPreviewModal sourced from planCommit.preview", () => {
+    const props = makeMockProps();
+    let renderer;
+    act(() => {
+      renderer = create(
+        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
+      );
+    });
+    clickByText(renderer.root, "Save as my plan");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain(props.planCommit.preview.title);
+    expect(allText).toContain(props.planCommit.preview.action);
+    expect(allText).toContain("Nest egg at retirement");
+    act(() => renderer.unmount());
+  });
+
+  it("Cancel closes the modal without calling planCommit.apply", () => {
+    const props = makeMockProps();
+    let renderer;
+    act(() => {
+      renderer = create(
+        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
+      );
+    });
+    clickByText(renderer.root, "Save as my plan");
+    clickByText(renderer.root, "Cancel");
+    expect(props.planCommit.apply).not.toHaveBeenCalled();
+    expect(textOf(renderer.root)).not.toContain(props.planCommit.preview.title);
+    act(() => renderer.unmount());
+  });
+
+  it("Confirm calls planCommit.apply() and shows the saved state", () => {
+    const props = makeMockProps();
+    let renderer;
+    act(() => {
+      renderer = create(
+        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
+      );
+    });
+    clickByText(renderer.root, "Save as my plan");
+    clickByText(renderer.root, "Save plan");
+    expect(props.planCommit.apply).toHaveBeenCalledTimes(1);
+    expect(textOf(renderer.root)).toContain("✓ Plan saved");
+    act(() => renderer.unmount());
+  });
+});
+
 describe("PlanScreen — conditional sliders", () => {
   it("Spouse SS pill is absent when isMarried = false", () => {
     const props = makeMockProps({ isMarried: false });
@@ -372,6 +444,21 @@ describe("plan screen wow additions", () => {
       canTuneRothConversion: false,
     },
     commitPlan:             vi.fn(),
+    planCommit: {
+      available: true,
+      preview: {
+        title: "Save this as your plan?",
+        action: "Retire at 65 · $4,787/mo spend",
+        confirmLabel: "Save plan",
+        metrics: [
+          { id: "totalAtRet", label: "Nest egg at retirement",
+            before: "—", after: "$3.95M", delta: { dir: "up", label: "+$3.95M", tone: "good" } },
+        ],
+        note: null,
+        verdict: null,
+      },
+      apply: vi.fn(),
+    },
     planHighlights: {
       wealthMultiplier: 14.2,
       incomeReplacementPct: 82,
