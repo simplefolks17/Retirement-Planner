@@ -27,8 +27,9 @@ import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.j
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
 import { fvAnnuity } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
-import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
+import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview, buildCommitPlanPreview } from "./model/apply-preview.js";
 import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
+import { MAX_MONEY_EVENTS } from "./model/money-events.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
@@ -173,6 +174,61 @@ export default function App() {
   // Empty default → zero golden master impact.
   const [moneyEvents, setMoneyEvents] = useState([]);
 
+  // WI-3.8: eventsView — the wrapped write surface for money events (Apply-with-preview
+  // contract: "no bundle exposes a raw setter or a bare mutation the App memo hasn't
+  // wrapped" — docs/ARCHITECTURE.md). Each row exposes per-field {value,set} objects
+  // (never a raw array setter) plus `add`/`remove` list-mutation callbacks. This
+  // REPLACES the raw `setMoneyEvents` on horizonProps (moneyEvents itself stays exposed
+  // read-only for the arc dots / other read-only consumers).
+  const eventsView = useMemo(() => {
+    const netImpact = moneyEvents.reduce((s, ev) => s + (ev.isInflow ? ev.amount : -ev.amount), 0);
+    return {
+      rows: moneyEvents.map(ev => ({
+        id: ev.id,
+        labelField: {
+          value: ev.label,
+          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id ? { ...e, label: String(v ?? "") } : e)),
+        },
+        amountField: {
+          value: ev.amount,
+          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id ? { ...e, amount: Math.max(0, Number(v) || 0) } : e)),
+          min: 0, step: 1_000,
+        },
+        ageField: {
+          value: ev.age,
+          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id
+            ? { ...e, age: Math.max(currentAge, Math.min(120, Number(v) || currentAge)) } : e)),
+          min: currentAge, max: 120, step: 1,
+        },
+        directionField: {
+          value: ev.isInflow ? "in" : "out",
+          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id ? { ...e, isInflow: v === "in" } : e)),
+          options: [{ value: "out", label: "Expense" }, { value: "in", label: "Income" }],
+        },
+        taxableField: {
+          value: ev.isTaxable,
+          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id ? { ...e, isTaxable: !!v } : e)),
+        },
+        showTaxable: ev.isInflow,
+        remove: () => setMoneyEvents(evs => evs.filter(e => e.id !== ev.id)),
+      })),
+      add: (overrides = {}) => {
+        setMoneyEvents(evs => {
+          if (evs.length >= MAX_MONEY_EVENTS) return evs;
+          return [...evs, {
+            id: Date.now() + Math.random(), label: "", amount: 0, age: currentAge,
+            isInflow: false, isTaxable: false, ...overrides,
+          }];
+        });
+      },
+      atMax: moneyEvents.length >= MAX_MONEY_EVENTS,
+      count: moneyEvents.length,
+      maxEvents: MAX_MONEY_EVENTS,
+      hasEvents: moneyEvents.length > 0,
+      netImpactLabel: netImpact === 0 ? "no net impact" : `${netImpact > 0 ? "+" : ""}${fmt(netImpact)}`,
+    };
+  }, [moneyEvents, setMoneyEvents, currentAge]);
+
   // Committed plan snapshot — null until the user explicitly clicks "Save as my plan".
   // Enables the Reset button in the Plan screen's QuickTunePanel (restores all sliders).
   const [committedPlan, setCommittedPlan] = useState(null);
@@ -185,6 +241,17 @@ export default function App() {
   const phase2End  = safeRetAge - currentAge;
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
+
+  // WI-3.8: affordView — defaults/bounds for the Ideas "affordability" mode
+  // (calcAffordabilityMax itself is called by the screen slice that builds the
+  // panel; this slice only exposes the model-derived defaults/bounds, rule 10).
+  const affordView = useMemo(() => ({
+    defaultPurchaseAge: currentAge + ASSUMPTIONS.AFFORD_DEFAULT_PURCHASE_OFFSET_YRS,
+    purchaseAgeField: { min: currentAge, max: safeLifeExp - 1, step: 1 },
+    defaultTargetAge: safeLifeExp,
+    targetAgeField: { min: safeRetAge + 1, max: 115, step: 1 },
+    step: ASSUMPTIONS.AFFORDABILITY_STEP,
+  }), [currentAge, safeLifeExp, safeRetAge]);
 
   // useCallback so memos that depend on it (simData, whatIfSimInputs) can list it
   // honestly in their deps without re-running every render (V9 / principle 13).
@@ -901,9 +968,37 @@ export default function App() {
   // the pre-commit values (stale-baseline fix — Gemini R2).
   useEffect(() => {
     if (!shouldSnapshotOutputs) return;
-    setCommittedOutputs({ totalAtRet, yearsSustained });
+    setCommittedOutputs({ totalAtRet, yearsSustained, depletionAge: retirementWalk.depletionAge });
     setShouldSnapshotOutputs(false);
-  }, [shouldSnapshotOutputs, totalAtRet, yearsSustained]);
+  }, [shouldSnapshotOutputs, totalAtRet, yearsSustained, retirementWalk]);
+
+  // WI-3.8: Apply-with-preview site for the Plan screen's own "Save as my plan"
+  // (docs/ARCHITECTURE.md "Apply-with-preview contract" — the `commitPlan sites`
+  // registry row). `current` is the last committed snapshot (null fields on a
+  // first-ever save — buildCommitPlanPreview's null-guards render "—", never a
+  // fabricated number); `candidate` is the live, uncommitted plan.
+  const applyPlanCommit = useCallback(() => {
+    commitPlan({ retirementAge, annualExpenses: annualExpenses ?? effectiveExpenses });
+  }, [commitPlan, retirementAge, annualExpenses, effectiveExpenses]);
+
+  const planCommitSite = useMemo(() => ({
+    available: true,
+    preview: buildCommitPlanPreview({
+      action: `Retire at ${retirementAge} · `
+        + `${fmt((annualExpenses ?? effectiveExpenses) / ASSUMPTIONS.MONTHS_PER_YEAR)}/mo spend`,
+      current: committedOutputs
+        ? {
+            totalAtRet: committedOutputs.totalAtRet,
+            yearsSustained: committedOutputs.yearsSustained,
+            depletionAge: committedOutputs.depletionAge,
+          }
+        : { totalAtRet: null, yearsSustained: null, depletionAge: null },
+      candidate: { totalAtRet, yearsSustained, depletionAge: retirementWalk.depletionAge },
+      note: committedOutputs ? null : "First save — this becomes your baseline.",
+    }),
+    apply: applyPlanCommit,
+  }), [retirementAge, annualExpenses, effectiveExpenses, committedOutputs,
+       totalAtRet, yearsSustained, retirementWalk, applyPlanCommit]);
 
   // Monthly spend write-back: the QuickTune slider works in monthly units;
   // this callback converts to annual so PlanScreen never does month→year math (rule 10).
@@ -972,8 +1067,36 @@ export default function App() {
     safeLifeExp,
     baseTotalAtRet: totalAtRet,
     baseYearsSustained: yearsSustained,
+    baseDepletionAge: retirementWalk.depletionAge,
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
-       totalAtRet, yearsSustained]);
+       totalAtRet, yearsSustained, retirementWalk]);
+
+  // WI-3.8: site-BUILDER for Ideas' "make this scenario my plan" commitPlan site.
+  // Deliberately generalizes the Apply-site shape from a static object to a callback:
+  // the candidate retirement age varies per scenario card, so it can't be precomputed
+  // the way planCommitSite is. Both "current" and "candidate" run through the SAME
+  // calcWhatIfDelta mechanism (never mixing an engine headline "before" with a
+  // blended-walk "after" — that would show a phantom delta).
+  const buildScenarioCommitSite = useCallback((candidateRetirementAge) => {
+    const before = calcWhatIfDelta({ ...whatIfBundle });
+    const after = calcWhatIfDelta({ ...whatIfBundle, retirementAgeOverride: candidateRetirementAge });
+    return {
+      available: true,
+      preview: buildCommitPlanPreview({
+        action: `Retire at ${candidateRetirementAge} (now ${retirementAge})`,
+        current: {
+          totalAtRet: before.scenarioTotalAtRet, yearsSustained: before.scenarioYears,
+          depletionAge: before.scenarioDepletionAge,
+        },
+        candidate: {
+          totalAtRet: after.scenarioTotalAtRet, yearsSustained: after.scenarioYears,
+          depletionAge: after.scenarioDepletionAge,
+        },
+        note: "Preview uses the same what-if walk as your scenario card above.",
+      }),
+      apply: () => commitPlan({ retirementAge: candidateRetirementAge }),
+    };
+  }, [whatIfBundle, retirementAge, commitPlan]);
 
   // ── Horizon display bundles (WI-0.1) — derived numbers come from the model, ──
   // pre-gated and display-ready, so screens only format (principle 6).
@@ -1761,10 +1884,21 @@ export default function App() {
     // are already net. Used by the Accounts tab "gross vs spendable" headline.
     spendableAtRet,
     // Batch A additions:
-    moneyEvents, setMoneyEvents,
+    // NOTE: setMoneyEvents is deliberately NOT exposed raw — every write to
+    // moneyEvents goes through eventsView's wrapped fields/add/remove (WI-3.8 /
+    // Apply-with-preview contract: "no bundle exposes a raw setter"). moneyEvents
+    // itself stays exposed read-only (arc dots — WI-1.3 — and other read-only uses).
+    moneyEvents,
     whatIfSimInputs: whatIfBundle,
     commitPlan,
     retirementWalk,
+    // WI-3.8: wrapped money-events write surface + affordability defaults/bounds.
+    eventsView,
+    affordView,
+    // WI-3.8: Apply-with-preview site for Plan's "Save as my plan" + the
+    // site-builder for Ideas' per-scenario "make this my plan".
+    planCommit: planCommitSite,
+    buildScenarioCommitSite,
     // WI-0.1 display bundles (shapes documented at their model functions):
     statementView,    // calcStatementView — pcts null when no income
     chartMilestones,  // calcChartMilestones — { rows, peakTotal }
@@ -1853,7 +1987,8 @@ export default function App() {
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
-       moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
+       moneyEvents, whatIfBundle, commitPlan, retirementWalk,
+       eventsView, affordView, planCommitSite, buildScenarioCommitSite,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):

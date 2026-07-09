@@ -70,7 +70,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     // Batch B additions:
     whatIfSimInputs: whatIfBundle,
     commitPlan,
-    setMoneyEvents,
+    eventsView,
     // WI-0.1: model-provided monthly figure for the spend dial seed
     statementView,
     // WI-1.3: committed money events shown as dots on the arc
@@ -408,17 +408,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
           onConfirm={() => {
             setPlacedEvents(prev => [...prev, pendingEvent.l]);
             setActiveScen(pendingEvent.scen);
-            setMoneyEvents(prev => [
-              ...prev,
-              {
-                id: String(Date.now()),
-                label: pendingEvent.l,
-                amount: pendingEvent.amount,
-                age: pendingEvent.age,
-                isInflow: pendingEvent.isInflow,
-                isTaxable: false,
-              },
-            ]);
+            eventsView.add({
+              id: String(Date.now()),
+              label: pendingEvent.l,
+              amount: pendingEvent.amount,
+              age: pendingEvent.age,
+              isInflow: pendingEvent.isInflow,
+              isTaxable: false,
+            });
             setPendingEvent(null);
           }}
           onCancel={() => setPendingEvent(null)}
