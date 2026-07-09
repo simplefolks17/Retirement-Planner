@@ -52,6 +52,36 @@ function makeProps(overrides = {}) {
       growth: [{ yrs: 5, val: 170_000 }],
       usesCatchupLimit: false,
     },
+    // ── WI-3.7 surplusView flow bundle (WI-3.9 Apply-with-preview) ──
+    surplusView: {
+      availableSurplus: 18_000, savingsSurplusPct: 50, totalExtra: 9_000,
+      deployLabel: "50% of $18,000 surplus",
+      extraRows: [
+        { key: "match", label: "① Employer Match", amount: 3_000, sub: "free money" },
+        { key: "hsa", label: "② HSA", amount: 2_000, sub: "triple tax-free" },
+        { key: "401k", label: "④ 401k", amount: 4_000, sub: "pre-tax deduction" },
+      ],
+      optRows: [
+        { key: "401k", label: "401k", amount: 27_500 },
+        { key: "hsa", label: "HSA", amount: 6_400 },
+      ],
+      applyAllocation: {
+        available: true,
+        preview: {
+          title: "Apply optimized allocation",
+          action: "Deploy 50% of your surplus into the targets below.",
+          confirmLabel: "Apply",
+          metrics: [{
+            id: "totalAtRet", label: "Portfolio at retirement",
+            before: "$3,950,603", after: "$4,050,603",
+            delta: { dir: "up", label: "+$100,000", tone: "good" },
+          }],
+          note: "Preview uses the same per-account engine as your headline numbers.",
+          verdict: null,
+        },
+        apply: vi.fn(), revert: vi.fn(), applied: false,
+      },
+    },
     // ── scalars the flows read directly from horizonProps ──
     isMarried: false,
     includeSS: true,
@@ -168,7 +198,17 @@ function makeProps(overrides = {}) {
       spouseCurrentAge: num(33, 18, 33, 1),
     },
     pension: { pensionMonthly: num(0, 0, 10_000, 100), pensionStartAge: num(65, 50, 75, 1) },
-    accounts: { addlPreTaxBal: num(0, 0, undefined, 10_000) },
+    accounts: {
+      addlPreTaxBal: num(0, 0, undefined, 10_000),
+      matchMode: choice("flat", [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }]),
+      employerMatchPct: num(3, 0, 10, 0.5),
+      matchFormulaRate: num(50, 0, 200, 5),
+      matchFormulaCap: num(6, 1, 15, 0.5),
+    },
+    // ── WI-3.7 assumptions.savingsSurplusPct field (surplus flow stepper) ──
+    assumptions: {
+      savingsSurplusPct: num(50, 0, 100, 5),
+    },
     ...overrides,
   };
 }
@@ -396,6 +436,126 @@ describe("StrategiesScreen", () => {
       app.click(n => textOf(n) === "Apply suggestion");
       app.click(n => textOf(n) === "Apply");
       expect(props.conversionView.optimizer.applySuggestion.apply).toHaveBeenCalledTimes(1);
+      act(() => app.r.unmount());
+    });
+  });
+
+  // ── WI-3.7 (#104/#105): withdrawal order / surplus deployment / mega backdoor ──
+  describe("WithdrawalOrderFlow (WI-3.7)", () => {
+    it("opens from the card (not the ReadOnlyStub) and renders the step labels", () => {
+      const app = mount(makeProps(), { initialStrategy: "withdrawal" });
+      const txt = app.text();
+      expect(txt).toContain("All strategies");
+      expect(txt).toContain("Year-1 draw order");          // flow-specific marker, not the stub
+      expect(txt).toContain("Taxable brokerage");
+      expect(txt).toContain("Traditional 401k");
+      expect(txt).toContain("already-taxed principal");
+      act(() => app.r.unmount());
+    });
+
+    it("shows the savings callout when hasSavings is true", () => {
+      const app = mount(makeProps(), { initialStrategy: "withdrawal" });
+      const txt = app.text();
+      expect(txt).toContain("$12,400 saved in year-1 tax");
+      act(() => app.r.unmount());
+    });
+
+    it("does not fabricate a savings callout when hasSavings is false", () => {
+      const props = makeProps();
+      props.withdrawalView = { ...props.withdrawalView, hasSavings: false };
+      const app = mount(props, { initialStrategy: "withdrawal" });
+      expect(app.text()).not.toContain("saved in year-1 tax");
+      act(() => app.r.unmount());
+    });
+  });
+
+  describe("SurplusDeploymentFlow (WI-3.7 + WI-3.9 Apply-with-preview)", () => {
+    it("opens from the card (not the ReadOnlyStub) and renders the allocation rows", () => {
+      const app = mount(makeProps(), { initialStrategy: "surplus" });
+      const txt = app.text();
+      expect(txt).toContain("All strategies");
+      expect(txt).toContain("How it's deployed");          // flow-specific marker, not the stub
+      expect(txt).toContain("① Employer Match");
+      expect(txt).toContain("New contribution targets if applied");
+      act(() => app.r.unmount());
+    });
+
+    it("the savingsSurplusPct stepper writes through the assumptions bundle", () => {
+      const props = makeProps();
+      const app = mount(props, { initialStrategy: "surplus", isMobile: true });
+      app.click(n => n.props["aria-label"] === "increase Deploy this % of surplus");
+      expect(props.assumptions.savingsSurplusPct.set).toHaveBeenCalled();
+      act(() => app.r.unmount());
+    });
+
+    it("Apply: opening the modal does not call apply; Cancel leaves it uncalled; Confirm calls it once", () => {
+      const props = makeProps();
+      const app = mount(props, { initialStrategy: "surplus" });
+
+      app.click(n => textOf(n) === "Apply optimized allocation");
+      let txt = app.text();
+      expect(txt).toContain("Apply optimized allocation");     // modal title, still on screen
+      expect(props.surplusView.applyAllocation.apply).not.toHaveBeenCalled();
+
+      // Cancel: no write happens, and the modal closes.
+      app.click(n => textOf(n) === "Cancel");
+      expect(props.surplusView.applyAllocation.apply).not.toHaveBeenCalled();
+
+      // Reopen and confirm: apply fires exactly once.
+      app.click(n => textOf(n) === "Apply optimized allocation");
+      app.click(n => textOf(n) === "Apply");
+      expect(props.surplusView.applyAllocation.apply).toHaveBeenCalledTimes(1);
+      act(() => app.r.unmount());
+    });
+
+    it("no Revert affordance when nothing is applied", () => {
+      const app = mount(makeProps(), { initialStrategy: "surplus" });
+      expect(app.text()).not.toContain("Revert");
+      act(() => app.r.unmount());
+    });
+
+    it("Revert is visible and calls site.revert when applied is true", () => {
+      const props = makeProps();
+      props.surplusView.applyAllocation = {
+        available: false, preview: null, apply: vi.fn(), revert: vi.fn(), applied: true,
+      };
+      const app = mount(props, { initialStrategy: "surplus" });
+      expect(app.text()).toContain("Applied");
+      app.click(n => textOf(n) === "Revert");
+      expect(props.surplusView.applyAllocation.revert).toHaveBeenCalledTimes(1);
+      act(() => app.r.unmount());
+    });
+  });
+
+  describe("MegaBackdoorFlow (WI-3.7)", () => {
+    it("opens from the card (not the ReadOnlyStub) and renders the capacity rows", () => {
+      const app = mount(makeProps(), { initialStrategy: "mega" });
+      const txt = app.text();
+      expect(txt).toContain("All strategies");
+      expect(txt).toContain("415(c) capacity");             // flow-specific marker, not the stub
+      expect(txt).toContain("415(c) annual limit");
+      expect(txt).toContain("After-tax space");
+      expect(txt).toContain("In 5 years");
+      act(() => app.r.unmount());
+    });
+
+    it("shows the flat-% match field, not the formula fields, when matchMode is flat", () => {
+      const app = mount(makeProps(), { initialStrategy: "mega" });
+      const txt = app.text();
+      expect(txt).toContain("Employer match (% of salary)");
+      expect(txt).not.toContain("Match rate");
+      expect(txt).not.toContain("Of the first N% of salary");
+      act(() => app.r.unmount());
+    });
+
+    it("shows the formula fields, not the flat-% field, when matchMode is formula", () => {
+      const props = makeProps();
+      props.accounts.matchMode = choice("formula", props.accounts.matchMode.options);
+      const app = mount(props, { initialStrategy: "mega" });
+      const txt = app.text();
+      expect(txt).toContain("Match rate");
+      expect(txt).toContain("Of the first N% of salary");
+      expect(txt).not.toContain("Employer match (% of salary)");
       act(() => app.r.unmount());
     });
   });
