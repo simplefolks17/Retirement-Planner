@@ -182,6 +182,16 @@ export default function App() {
   // read-only for the arc dots / other read-only consumers).
   const eventsView = useMemo(() => {
     const netImpact = moneyEvents.reduce((s, ev) => s + (ev.isInflow ? ev.amount : -ev.amount), 0);
+    // Coercion, not just clamping — Number(v) can produce Infinity/NaN (typed "Infinity",
+    // a bad preset override) which Math.max(0, …) alone would let straight through.
+    const coerceAmount = v => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(0, n) : 0;
+    };
+    const coerceAge = v => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(currentAge, Math.min(120, n)) : currentAge;
+    };
     return {
       rows: moneyEvents.map(ev => ({
         id: ev.id,
@@ -191,13 +201,12 @@ export default function App() {
         },
         amountField: {
           value: ev.amount,
-          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id ? { ...e, amount: Math.max(0, Number(v) || 0) } : e)),
+          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id ? { ...e, amount: coerceAmount(v) } : e)),
           min: 0, step: 1_000,
         },
         ageField: {
           value: ev.age,
-          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id
-            ? { ...e, age: Math.max(currentAge, Math.min(120, Number(v) || currentAge)) } : e)),
+          set: v => setMoneyEvents(evs => evs.map(e => e.id === ev.id ? { ...e, age: coerceAge(v) } : e)),
           min: currentAge, max: 120, step: 1,
         },
         directionField: {
@@ -215,9 +224,14 @@ export default function App() {
       add: (overrides = {}) => {
         setMoneyEvents(evs => {
           if (evs.length >= MAX_MONEY_EVENTS) return evs;
+          const isInflow = !!overrides.isInflow;
           return [...evs, {
-            id: Date.now() + Math.random(), label: "", amount: 0, age: currentAge,
-            isInflow: false, isTaxable: false, ...overrides,
+            id: Date.now() + Math.random(),
+            label: String(overrides.label ?? ""),
+            amount: coerceAmount(overrides.amount ?? 0),
+            age: coerceAge(overrides.age ?? currentAge),
+            isInflow,
+            isTaxable: isInflow && !!overrides.isTaxable,
           }];
         });
       },

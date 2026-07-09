@@ -414,6 +414,49 @@ existing "make this my plan" flow tests continue to pass unchanged.
 
 ---
 
+### BUG-59 — `eventsView` writes accepted non-finite amounts/ages (found + fixed 2026-07-09, CodeRabbit review of PR #51 commit c2d49cf)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit (🟠 major), against `src/App.jsx:194-221`.
+**What:** `amountField.set`'s `Math.max(0, Number(v) || 0)` and `ageField.set`'s equivalent let
+`Number(v)` produce `Infinity`/`NaN` straight through — `Infinity || 0` is `Infinity` (truthy), so
+the `|| 0` fallback never catches it. Separately, `eventsView.add(overrides)` spread `overrides`
+directly onto the new event with no coercion at all, so any future caller passing a bad
+age/amount override (a malformed preset, a future integration) would insert a corrupted event
+straight into `moneyEvents`, which feeds the retirement simulation.
+**Fixed:** replaced both inline clamps with shared `coerceAmount`/`coerceAge` helpers that check
+`Number.isFinite` before clamping (falling back to `0`/`currentAge` — the pre-existing defaults —
+on non-finite input); `add()` now routes `label`/`amount`/`age`/`isTaxable` through the same
+coercion instead of spreading raw `overrides`. Deliberately did **not** change the clamp-in-setter
+timing itself (the accepted WI-3.6 precedent, see the `ageField`/`EventsEditorPanel` review threads
+on PR #51) — this fix is about coercion robustness (rejecting non-finite values), not the
+draft-vs-blur UX question, so it doesn't conflict with that earlier decision.
+**Where:** `src/App.jsx` (`eventsView` memo).
+**Tests:** none added — not reachable via the current UI (`<input type="number">` rejects literal
+"Infinity" text), so no regression test currently fails without the fix; the guard is defensive
+against future preset/integration callers, consistent with the existing NaN/negative guards
+elsewhere (`money-events.js`, `conversion-events.js`). Suite stays at 709 tests.
+
+---
+
+### BUG-60 — `ArcGraph`'s lean-market label duplicated `bandModel`'s lower-bound formula (found + fixed 2026-07-09, CodeRabbit review of PR #51 commit c2d49cf)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit (🔵 trivial / quick win), against
+`src/components/ArcGraph.jsx:495-522`.
+**What:** `BandLabels`' `leanFinalTotal` (added by BUG-54's fix) recomputed
+`last.total * (1 - spread(last.age) * CONE_LOWER_ASYMMETRY)` — the exact same formula `bandModel`
+already computes for `loPts`' lower cone boundary. Two independent copies of one formula is the
+shape of bug this codebase has been bitten by before (BUG-25/BUG-31) — if the spread or asymmetry
+logic ever changes in `bandModel`, the label could silently drift from the band it's labeling.
+**Fixed:** `bandModel` now returns `leanFinalTotal` itself (computed once, alongside `loPts`, from
+the same `last`/`spread` values); `BandLabels` destructures it from the existing `useMemo(() =>
+bandModel(...))` call instead of recomputing it inline.
+**Where:** `src/components/ArcGraph.jsx` (`bandModel`, `BandLabels`).
+**Tests:** none added — no existing harness renders the full `ArcGraph` component (only
+`scrubPointForAge` is unit-tested, per BUG-54's note); value-preserving refactor, traced by hand.
+Suite stays at 709 tests.
+
+---
+
 ### BUG-45 — Life-event pill shows false success once the money-events cap is reached (found + fixed 2026-07-09, in-house diff review on PR #51)
 
 **Owner:** me_theguy. **Found by:** independently surfaced by 3 of 8 finder angles in an in-house
