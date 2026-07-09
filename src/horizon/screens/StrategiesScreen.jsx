@@ -86,7 +86,7 @@ function faceFor(id, props) {
     case "withdrawal":
       return {
         applicable: sv.withdrawal.applicable,
-        headline: money(props.yr1TaxSavings),
+        headline: money(props.withdrawalView?.yr1TaxSavings),
         sub: "saved in year-1 tax",
         tone: "good",
       };
@@ -120,7 +120,7 @@ function faceFor(id, props) {
     case "mega":
       return {
         applicable: sv.mega.applicable,
-        headline: `${money(sv.mega.capacity)}/yr`,
+        headline: `${money(props.megaView?.capacity)}/yr`,
         sub: "after-tax space",
         tone: "accent",
       };
@@ -131,16 +131,16 @@ function faceFor(id, props) {
 
 // Detail rows for the read-only stub — [label, value] pairs, model values only.
 function detailRows(id, props) {
-  const sv = props.strategiesView;
   switch (id) {
     case "withdrawal":
-      return [["Year-1 tax saved", money(props.yr1TaxSavings)]];
+      return [["Year-1 tax saved", money(props.withdrawalView?.yr1TaxSavings)]];
     // conversion + ss + rmd render their own interactive Flow (WI-3.4/3.5/3.6), never this stub.
     case "surplus":
       return [["Available surplus", `${money(props.budget?.availableSurplus)}/yr`]];
     case "mega": {
-      const rows = [["After-tax space", `${money(sv.mega.capacity)}/yr`]];
-      (sv.mega.growth ?? []).forEach(g => rows.push([`Grows to, in ${g.yrs} yrs`, money(g.val)]));
+      const mv = props.megaView;
+      const rows = [["After-tax space", `${money(mv?.capacity)}/yr`]];
+      (mv?.growth ?? []).forEach(g => rows.push([`Grows to, in ${g.yrs} yrs`, money(g.val)]));
       return rows;
     }
     default:

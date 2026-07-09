@@ -31,6 +31,27 @@ function makeProps(overrides = {}) {
     conversionWindowYrs: 7,
     yr1TaxSavings: 12_400,
     budget: { availableSurplus: 18_000 },
+    // ── WI-3.7 withdrawalView / megaView flow bundles ──
+    withdrawalView: {
+      netNeed: 60_000,
+      steps: [
+        { key: "taxable", label: "Taxable brokerage", amount: 30_000, note: "already-taxed principal" },
+        { key: "trad", label: "Traditional 401k", amount: 30_000, note: "taxed at ~22%" },
+      ],
+      yr1TaxOptimal: 6_600, yr1TaxWorstCase: 19_000, yr1TaxSavings: 12_400,
+      hasSavings: true,
+    },
+    megaView: {
+      capacity: 30_000, limit415c: 72_000, employeeDeferral: 24_500, employerMatchAmt: 5_000,
+      capacityRows: [
+        { label: "415(c) annual limit", val: 72_000 },
+        { label: "Your 401k deferral", val: 24_500 },
+        { label: "Employer match", val: 5_000 },
+        { label: "After-tax space", val: 30_000, isTotal: true },
+      ],
+      growth: [{ yrs: 5, val: 170_000 }],
+      usesCatchupLimit: false,
+    },
     // ── scalars the flows read directly from horizonProps ──
     isMarried: false,
     includeSS: true,
@@ -38,14 +59,15 @@ function makeProps(overrides = {}) {
     householdSS: 48_120,
     effectivePension: 0,
     effectiveExpenses: 60_000,
-    // ── strategiesView: applicability flags (+ mega summary until its flow) ──
+    // ── strategiesView: applicability flags only (headlines come from sibling ──
+    // view bundles — withdrawalView / megaView / budget / ssView / rmdView).
     strategiesView: {
       conversion: { applicable: true },
       rmd:        { applicable: true },
       ss:         { applicable: true },
       withdrawal: { applicable: true },
       surplus:    { applicable: true },
-      mega:       { applicable: true, capacity: 30_000, growth: [{ yrs: 5, val: 170_000 }] },
+      mega:       { applicable: true },
     },
     // ── WI-3.6 conversionView flow bundle ──
     conversionView: {

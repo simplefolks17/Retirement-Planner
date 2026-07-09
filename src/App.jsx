@@ -27,7 +27,7 @@ import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.j
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
 import { fvAnnuity } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
-import { buildConversionPreview, isSuggestionApplicable } from "./model/apply-preview.js";
+import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
 import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
 import {
   TAX_DATA_2026,
@@ -290,6 +290,29 @@ export default function App() {
     employerMatchPct, currentIncome,
   }), [availableSurplus, savingsSurplusPct, contrib401k, contribRoth, contribHSA, contribTaxable,
        rothFullyPhased, matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct, currentIncome]);
+
+  // ── Optimized-allocation Apply/Revert — ONE implementation shared by Classic's ──
+  // inline buttons and Horizon's surplusApplySite (WI-3.7). Snapshots the 4 current
+  // contribution values into preApplySnapshot, then writes the 4 opt* values.
+  // revertAllocation is internally guarded (no-op with no snapshot) so it's safe to
+  // wire directly into any Apply-site's `revert` slot without an extra caller-side check.
+  const applyAllocation = useCallback(() => {
+    setPreApplySnapshot({ c401k: contrib401k, cRoth: contribRoth, cTaxable: contribTaxable, cHSA: contribHSA });
+    setContrib401k(optimizedAllocation.opt401k);
+    setContribRoth(optimizedAllocation.optRoth);
+    setContribHSA(optimizedAllocation.optHSA);
+    setContribTaxable(optimizedAllocation.optTaxable);
+  }, [contrib401k, contribRoth, contribTaxable, contribHSA, optimizedAllocation,
+      setPreApplySnapshot, setContrib401k, setContribRoth, setContribHSA, setContribTaxable]);
+
+  const revertAllocation = useCallback(() => {
+    if (!preApplySnapshot) return;
+    setContrib401k(preApplySnapshot.c401k);
+    setContribRoth(preApplySnapshot.cRoth);
+    setContribTaxable(preApplySnapshot.cTaxable);
+    setContribHSA(preApplySnapshot.cHSA);
+    setPreApplySnapshot(null);
+  }, [preApplySnapshot, setContrib401k, setContribRoth, setContribTaxable, setContribHSA, setPreApplySnapshot]);
 
   const ACCOUNTS = [
     { key: "Traditional 401k", dataKey: "Trad 401k", color: C.gold,   note: "Pre-tax",
@@ -738,12 +761,33 @@ export default function App() {
   // all-pre-tax) — extracted to src/model/retirement-tax.js. Drives the
   // withdrawal-strategy card. Worst-case draw caps at the GROSS trad balance
   // (tradGrossAtRet), the BUG-26 basis fix, preserved in the model.
-  const { yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate, yr1TaxOptimal, yr1TaxSavings } =
-    calcWithdrawalOrderTax({
-      netPortfolioNeed, retTaxable, retTrad, retRoth, tradGrossAtRet,
-      rmdIncomeFloor, filingStatus, retStateRate,
-      maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
-    });
+  // Memoized (V9): withdrawalView (→ horizonProps.withdrawalView) reads these
+  // scalars; without this memo they'd still be stable primitives, but the memo
+  // keeps the calc itself from re-running when unrelated state changes trigger
+  // a re-render (same pattern as the other extracted model calls above).
+  const {
+    yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate, yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings,
+  } = useMemo(() => calcWithdrawalOrderTax({
+    netPortfolioNeed, retTaxable, retTrad, retRoth, tradGrossAtRet,
+    rmdIncomeFloor, filingStatus, retStateRate,
+    maxCombinedMarginalRate: ASSUMPTIONS.MAX_COMBINED_MARGINAL_RATE,
+  }), [netPortfolioNeed, retTaxable, retTrad, retRoth, tradGrossAtRet,
+       rmdIncomeFloor, filingStatus, retStateRate]);
+
+  // WI-3.7 (surplus/withdrawal cards): withdrawal-order strategy bundle.
+  // steps[] is pre-filtered to amount > 0 rows (rule 10 — no `> 0` in the
+  // screen) and pre-labeled/pre-noted so the flow only maps and renders.
+  const withdrawalView = useMemo(() => ({
+    netNeed: netPortfolioNeed,
+    steps: [
+      { key: "taxable", label: "Taxable brokerage", amount: yr1FromTaxable, note: "already-taxed principal" },
+      { key: "trad",    label: "Traditional 401k",  amount: yr1FromTrad,   note: `taxed at ~${(yr1TradRate * 100).toFixed(0)}%` },
+      { key: "roth",    label: "Roth IRA",          amount: yr1FromRoth,   note: "tax-free" },
+    ].filter(s => s.amount > 0),
+    yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings,
+    hasSavings: yr1TaxSavings > 0,
+  }), [netPortfolioNeed, yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate,
+       yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings]);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
 
@@ -1253,8 +1297,129 @@ export default function App() {
     // the allocation stack so the footer total is consistent with the visible rows.
     optimizedContribTotal: optimizedAllocation.opt401k + optimizedAllocation.optRoth
       + optimizedAllocation.optHSA + optimizedAllocation.optTaxable,
+    // WI-3.7 (surplus flow): whole-number-percent savings rates (15.3 means 15.3%,
+    // one decimal, matching the codebase convention — see apply-preview.js fmtPercent).
+    // null (never a fabricated rate) when there's no after-tax income to divide by.
+    currentSavingsRatePct: grossAfterTax > 0
+      ? Math.round((currentContribTotal / grossAfterTax) * 1000) / 10
+      : null,
+    optimizedSavingsRatePct: grossAfterTax > 0
+      ? Math.round(((optimizedAllocation.opt401k + optimizedAllocation.optRoth
+          + optimizedAllocation.optHSA + optimizedAllocation.optTaxable) / grossAfterTax) * 1000) / 10
+      : null,
   }), [grossAfterTax, effectiveLiving, savingsCapacity, currentContribTotal,
        availableSurplus, optimizedAllocation, returnRate, safeRetAge, currentAge]);
+
+  // WI-3.7: Apply-with-preview site for the optimized-allocation suggestion
+  // (docs/ARCHITECTURE.md "Apply-with-preview contract"). `available` is pre-gated
+  // App-side (there's extra to deploy, and it hasn't already been applied) — never
+  // compared in the flow/modal. Both "current" and "candidate" run through the SAME
+  // calcWhatIfDelta mechanism (deliberate anti-divergence property: a no-change
+  // candidate can never show a spurious delta from a current/candidate mechanism
+  // mismatch) — see buildSurplusPreview's module doc for why this is the blended
+  // walk, not the per-account engine. `revert` is the first consumer of the Apply-
+  // site contract's optional `revert` slot: an exact restore from preApplySnapshot,
+  // so it doesn't need (and the modal never renders) a preview.
+  const surplusApplySite = useMemo(() => {
+    const available = optimizedAllocation.totalExtra > 0 && preApplySnapshot === null;
+    if (!available) {
+      return {
+        available: false, preview: null, apply: applyAllocation, revert: revertAllocation,
+        applied: preApplySnapshot !== null,
+      };
+    }
+    const before = calcWhatIfDelta({ ...whatIfBundle });
+    const after = calcWhatIfDelta({
+      ...whatIfBundle,
+      contribOverrides: {
+        contrib401k: optimizedAllocation.opt401k,
+        contribRoth: optimizedAllocation.optRoth,
+        contribHSA: optimizedAllocation.optHSA,
+        contribTaxable: optimizedAllocation.optTaxable,
+      },
+    });
+    return {
+      available: true,
+      preview: buildSurplusPreview({
+        current: {
+          contribTotal: currentContribTotal, savingsRatePct: budgetView.currentSavingsRatePct,
+          totalAtRet: before.scenarioTotalAtRet, yearsSustained: before.scenarioYears,
+          depletionAge: before.scenarioDepletionAge,
+        },
+        candidate: {
+          contribTotal: optimizedAllocation.opt401k + optimizedAllocation.optRoth
+            + optimizedAllocation.optHSA + optimizedAllocation.optTaxable,
+          savingsRatePct: budgetView.optimizedSavingsRatePct,
+          totalAtRet: after.scenarioTotalAtRet, yearsSustained: after.scenarioYears,
+          depletionAge: after.scenarioDepletionAge,
+        },
+        deployment: {
+          totalExtra: optimizedAllocation.totalExtra, pct: savingsSurplusPct, availableSurplus,
+        },
+      }),
+      apply: applyAllocation,
+      revert: revertAllocation,
+      applied: false, // preApplySnapshot is null here (we're in the `available` branch)
+    };
+  }, [optimizedAllocation, preApplySnapshot, applyAllocation, revertAllocation, whatIfBundle,
+      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus]);
+
+  // WI-3.7 (#104): Surplus-deployment flow bundle. Sibling of strategiesView keyed
+  // by the "surplus" strategy id — the card face reads props.budget.* directly
+  // (principle 11); this bundle carries only what the interactive flow needs beyond
+  // that: a pre-labeled, pre-filtered (amount > 0) ordered allocation list mirroring
+  // Classic's ①–⑤ IRS-priority breakdown, and the WI-3.9 Apply site.
+  const surplusView = useMemo(() => ({
+    availableSurplus,
+    savingsSurplusPct,
+    totalExtra: optimizedAllocation.totalExtra,
+    deployLabel: `${savingsSurplusPct}% of ${fmt(availableSurplus)} surplus`,
+    extraRows: [
+      optimizedAllocation.extraMatch > 0 && {
+        key: "match", label: "① Employer Match", amount: optimizedAllocation.extraMatch, sub: "free money",
+      },
+      optimizedAllocation.extraHSA > 0 && {
+        key: "hsa", label: "② HSA", amount: optimizedAllocation.extraHSA, sub: "triple tax-free",
+      },
+      optimizedAllocation.extraRoth > 0 && {
+        key: "roth", label: "③ Roth IRA", amount: optimizedAllocation.extraRoth, sub: "tax-free growth",
+      },
+      (optimizedAllocation.extra401k - (optimizedAllocation.extraMatch || 0)) > 0 && {
+        key: "401k", label: "④ 401k",
+        amount: optimizedAllocation.extra401k - (optimizedAllocation.extraMatch || 0),
+        sub: "pre-tax deduction",
+      },
+      optimizedAllocation.extraTaxable > 0 && {
+        key: "taxable", label: "⑤ Taxable", amount: optimizedAllocation.extraTaxable, sub: "overflow",
+      },
+    ].filter(Boolean),
+    optRows: [
+      { key: "401k", label: "401k", amount: optimizedAllocation.opt401k },
+      { key: "roth", label: "Roth IRA", amount: optimizedAllocation.optRoth },
+      { key: "hsa", label: "HSA", amount: optimizedAllocation.optHSA },
+      { key: "taxable", label: "Taxable", amount: optimizedAllocation.optTaxable },
+    ].filter(r => r.amount > 0),
+    applyAllocation: surplusApplySite,
+  }), [availableSurplus, savingsSurplusPct, optimizedAllocation, surplusApplySite]);
+
+  // WI-3.7 (#105): Mega-backdoor Roth flow bundle. Sibling of strategiesView keyed
+  // by the "mega" strategy id — capacityRows is a pre-labeled breakdown of the
+  // 415(c) headroom math (limit − employee deferral − employer match), mirroring
+  // Classic's mega-backdoor panel exactly.
+  const megaView = useMemo(() => ({
+    capacity: megaCapacity,
+    limit415c,
+    employeeDeferral: contrib401k,
+    employerMatchAmt,
+    capacityRows: [
+      { label: "415(c) annual limit", val: limit415c },
+      { label: "Your 401k deferral", val: contrib401k },
+      { label: "Employer match", val: employerMatchAmt },
+      { label: "After-tax space", val: megaCapacity, isTotal: true },
+    ],
+    growth: megaGrowth,
+    usesCatchupLimit: currentAge >= CATCHUP_AGE,
+  }), [megaCapacity, limit415c, contrib401k, employerMatchAmt, megaGrowth, currentAge]);
 
   // WI-2.4 (#94): Taxes tab bundle — phase rates + lifetime composition.
   // fedEffRate (calcTaxBasis) = effective federal rate.
@@ -1353,9 +1518,8 @@ export default function App() {
   const strategiesView = useMemo(() => ({
     // applicable flags only; each card reads its headline from the bundle that
     // owns the number — conversion → taxView.conversionDetail, withdrawal →
-    // yr1TaxSavings, surplus → budget, ss → ssView, rmd → rmdView (siblings keyed
-    // by the same id, WI-3.4/3.5). mega keeps its summary until its flow lands
-    // (WI-3.7). One number, one source (principle 11).
+    // withdrawalView, surplus → budget, ss → ssView, rmd → rmdView, mega → megaView
+    // (siblings keyed by the same id). One number, one source (principle 11).
     conversion: { applicable: conversionWindowYrs > 0 },
     rmd:        { applicable: !!firstRMD },
     ss:         { applicable: includeSS },
@@ -1363,12 +1527,8 @@ export default function App() {
     // > 0 (has surplus to deploy), deliberately stricter than budgetView's
     // surplusPositive (>= 0 = "not a deficit"): a $0 surplus = nothing to deploy.
     surplus:    { applicable: availableSurplus > 0 },
-    mega: {
-      applicable: megaCapacity > 0,
-      capacity:   megaCapacity,
-      growth:     megaGrowth,        // [{ yrs, val }] FV at 5/10/20 yrs
-    },
-  }), [conversionWindowYrs, firstRMD, includeSS, availableSurplus, megaCapacity, megaGrowth]);
+    mega:       { applicable: megaCapacity > 0 },
+  }), [conversionWindowYrs, firstRMD, includeSS, availableSurplus, megaCapacity]);
 
   // WI-3.4 (#101): Social Security timing flow bundle. Sibling of strategiesView
   // keyed by the "ss" strategy id (forward contract in docs/ARCHITECTURE.md). All
@@ -1630,11 +1790,15 @@ export default function App() {
     // scalars (memoized separately for V9). Cards whose headline is already wired
     // read it directly: netConversionBenefit / yr1TaxSavings (above) and budget.*.
     strategiesView,
-    // WI-3.4 (#101) / WI-3.5 (#102) / WI-3.6 (#103): interactive flow bundles,
-    // siblings of strategiesView keyed by strategy id. Memoized separately above (V9).
+    // WI-3.4 (#101) / WI-3.5 (#102) / WI-3.6 (#103) / WI-3.7 (#104/#105): interactive
+    // flow bundles, siblings of strategiesView keyed by strategy id. Memoized
+    // separately above (V9).
     ssView,
     rmdView,
     conversionView,
+    withdrawalView,
+    surplusView,
+    megaView,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
     // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
@@ -1696,8 +1860,8 @@ export default function App() {
        budgetView, taxViewBundle,
        // WI-3.3 strategies bundle (memoized separately for V9 stability):
        strategiesView,
-       // WI-3.4 / WI-3.5 / WI-3.6 flow bundles (memoized separately for V9 stability):
-       ssView, rmdView, conversionView,
+       // WI-3.4 / WI-3.5 / WI-3.6 / WI-3.7 flow bundles (memoized separately for V9 stability):
+       ssView, rmdView, conversionView, withdrawalView, surplusView, megaView,
        returnRate,
        // Session-3 additions:
        ssClaimingAge, includeSS,
@@ -2164,13 +2328,7 @@ export default function App() {
                 <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
                   {preApplySnapshot === null ? (
                     <button
-                      onClick={() => {
-                        setPreApplySnapshot({ c401k: contrib401k, cRoth: contribRoth, cTaxable: contribTaxable, cHSA: contribHSA });
-                        setContrib401k(optimizedAllocation.opt401k);
-                        setContribRoth(optimizedAllocation.optRoth);
-                        setContribHSA(optimizedAllocation.optHSA);
-                        setContribTaxable(optimizedAllocation.optTaxable);
-                      }}
+                      onClick={applyAllocation}
                       style={{ flex: 1, padding: "7px 0", fontSize: 11, fontWeight: 700,
                         border: "none", borderRadius: 6, cursor: "pointer",
                         background: C.green, color: "#0d1117",
@@ -2185,13 +2343,7 @@ export default function App() {
                         <span style={{ fontSize: 9, color: C.muted }}>— projections updated</span>
                       </div>
                       <button
-                        onClick={() => {
-                          setContrib401k(preApplySnapshot.c401k);
-                          setContribRoth(preApplySnapshot.cRoth);
-                          setContribTaxable(preApplySnapshot.cTaxable);
-                          setContribHSA(preApplySnapshot.cHSA);
-                          setPreApplySnapshot(null);
-                        }}
+                        onClick={revertAllocation}
                         style={{ padding: "7px 14px", fontSize: 10, fontWeight: 600,
                           border: `1px solid ${C.orange}60`, borderRadius: 6,
                           background: "transparent", color: C.orange, cursor: "pointer",
