@@ -154,6 +154,50 @@ describe("calcWhatIfDelta", () => {
     expect(result.baseExpenses).toBe(depletingRetDrawShared.effectiveExpenses);
     expect(result.scenarioExpenses).toBe(90_000);
   });
+
+  it("scenarioDepletionAge matches a direct buildRetirementDrawdown call for the same walk", () => {
+    const result = calcWhatIfDelta({ ...depletingArgs, moneyEvents: [] });
+    const direct = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: depletingBase, startAge: safeRetAge, endAge: safeRetAge + 130,
+    });
+    expect(result.scenarioDepletionAge).toBe(direct.depletionAge);
+  });
+
+  // ── contribOverrides no-op lock (WI-3.7 extension) ─────────────────────────
+  // The param must be a true no-op when omitted/null — nothing on the golden
+  // path should move now that this param exists.
+  const accumEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+
+  it("contribOverrides omitted vs explicit null produce identical results", () => {
+    const omitted = calcWhatIfDelta({ ...baseArgs, moneyEvents: [accumEvent] });
+    const explicitNull = calcWhatIfDelta({ ...baseArgs, moneyEvents: [accumEvent], contribOverrides: null });
+    expect(explicitNull).toEqual(omitted);
+  });
+
+  it("contribOverrides matching the existing simInputs contributions is a no-op on scenarioTotalAtRet", () => {
+    const withoutOverride = calcWhatIfDelta({ ...baseArgs, moneyEvents: [accumEvent] });
+    const withMatchingOverride = calcWhatIfDelta({
+      ...baseArgs,
+      moneyEvents: [accumEvent],
+      contribOverrides: {
+        contrib401k: simInputs.contrib401k,
+        contribRoth: simInputs.contribRoth,
+        contribTaxable: simInputs.contribTaxable,
+        contribHSA: simInputs.contribHSA,
+      },
+    });
+    expect(withMatchingOverride.scenarioTotalAtRet).toBeCloseTo(withoutOverride.scenarioTotalAtRet, 6);
+  });
+
+  it("contribOverrides forces a re-sim even with no money events or retirement-age override", () => {
+    // No accum events, no retirementAgeOverride — only contribOverrides should trigger the resim.
+    const higherContrib = calcWhatIfDelta({
+      ...baseArgs,
+      moneyEvents: [],
+      contribOverrides: { contrib401k: simInputs.contrib401k + 20_000 },
+    });
+    expect(higherContrib.scenarioTotalAtRet).toBeGreaterThan(realBaseTotalAtRet);
+  });
 });
 
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
@@ -191,6 +235,61 @@ describe("calcAffordabilityMax", () => {
     });
     // Spending the max should not lengthen the portfolio (it reduces or is neutral)
     expect(result.deltaYears).toBeLessThanOrEqual(0);
+  });
+
+  it("boundary-optimality: sustains to target at maxAmount, fails at maxAmount + step", () => {
+    const purchaseAge = 68, targetLifeExpectancy = 74, step = 10_000;
+    const { maxAmount } = calcAffordabilityMax({
+      ...depletingArgs, purchaseAge, targetLifeExpectancy, step,
+    });
+    expect(maxAmount % step).toBe(0);
+
+    const targetYears = targetLifeExpectancy - safeRetAge;
+    const sustainsAt = (amount) => {
+      const r = calcWhatIfDelta({
+        ...depletingArgs,
+        moneyEvents: [{ label: "chk", amount, age: purchaseAge, isInflow: false, isTaxable: false }],
+      });
+      const years = r.scenarioYears === Infinity ? targetYears + 1 : r.scenarioYears;
+      return years >= targetYears;
+    };
+    expect(sustainsAt(maxAmount)).toBe(true);
+    expect(sustainsAt(maxAmount + step)).toBe(false);
+  });
+
+  it("returns canAfford:false and a zero result when step is non-positive", () => {
+    const result = calcAffordabilityMax({
+      ...depletingArgs, purchaseAge: 68, targetLifeExpectancy: 74, step: 0,
+    });
+    expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
+  });
+
+  it("returns canAfford:false and a zero result when targetLifeExpectancy is at/before retirement", () => {
+    const result = calcAffordabilityMax({
+      ...depletingArgs, purchaseAge: 68, targetLifeExpectancy: safeRetAge, step: 10_000,
+    });
+    expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
+  });
+
+  it("returns canAfford:false when the baseline itself can't sustain to the target age", () => {
+    // depletingBase (~10-12 yrs sustained) cannot reach a 90-yr target (25 yrs).
+    const result = calcAffordabilityMax({
+      ...depletingArgs, purchaseAge: 68, targetLifeExpectancy: safeLifeExp, step: 10_000,
+    });
+    expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
+  });
+
+  it("caps at maxSearch when the scenario is trivially sustainable at any spend within range", () => {
+    // baseArgs (SS-offset, well-funded scenario) with a tiny maxSearch — every
+    // amount tested is sustainable, so the search should exhaust the range
+    // rather than spin, and the result documents the cap.
+    const result = calcAffordabilityMax({
+      ...baseArgs, purchaseAge: 70, targetLifeExpectancy: safeLifeExp,
+      step: 10_000, maxSearch: 30_000,
+    });
+    expect(result.maxAmount).toBeGreaterThanOrEqual(30_000 - 10_000);
+    expect(result.maxAmount).toBeLessThanOrEqual(30_000);
+    expect(result.canAfford).toBe(true);
   });
 });
 
@@ -279,6 +378,14 @@ describe("calcWhatIfScenario", () => {
     const s = calcWhatIfScenario(depletingArgs);
     expect(s.scenarioYears).toBeLessThan(90 - safeRetAge); // depletes before 90
     expect(s.scenarioBalAt90).toBe(0);
+  });
+
+  it("scenarioDepletionAge matches the far-horizon walk's depletionAge", () => {
+    const s = calcWhatIfScenario(depletingArgs);
+    const farWalk = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: depletingBase, startAge: safeRetAge, endAge: safeRetAge + 130,
+    });
+    expect(s.scenarioDepletionAge).toBe(farWalk.depletionAge);
   });
 
   it("monthlyExpenses override equals the annualExpenses override × 12 (conversion in the model)", () => {

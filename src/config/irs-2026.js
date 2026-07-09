@@ -342,4 +342,16 @@ export const ASSUMPTIONS = {
   // below 50% is a significant shortfall. Not IRS rules — planning heuristics.
   INCOME_REPLACEMENT_GOOD_PCT: 70,
   INCOME_REPLACEMENT_WARN_PCT: 50,
+
+  // calcAffordabilityMax's binary search: dollar granularity of the search
+  // and the upper bound it searches up to. Product-level defaults, not IRS
+  // rules — named here so Classic (WhatIfPanel) and the future Horizon
+  // affordability flow are step-identical by construction.
+  AFFORDABILITY_STEP:      1_000,
+  AFFORDABILITY_MAX_SEARCH: 5_000_000,
+
+  // Default "years from today" offset used to seed a one-time purchase's age
+  // in the affordability flow (e.g. "5 years from now"). Not yet consumed —
+  // reserved for the Horizon affordability panel wiring.
+  AFFORD_DEFAULT_PURCHASE_OFFSET_YRS: 5,
 };
