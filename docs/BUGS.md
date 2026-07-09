@@ -33,6 +33,10 @@ return; include it in `taxView.composition.total` and as a third "draw" segment 
 unrelated additions elsewhere in the file); `retirement-phase.js`'s `buildRetirementPhase` return
 still has no `totalDrawTax` field. Still reproduces exactly as described; this session's build
 never touched either file's relevant code.
+**Re-verified 2026-07-09 (L3d close-out):** `taxViewBundle`'s `composition.total = rmdTax + convTax`
+confirmed unchanged (now at `App.jsx:1565`, shifted by this session's additions elsewhere in the
+file); `retirement-phase.js` still has no `totalDrawTax` field. Still reproduces; this session's
+WI-3.7/WI-3.8 build touched neither the composition memo nor `retirement-phase.js`.
 
 ---
 
@@ -66,6 +70,18 @@ preview for the conversion optimizer suggestion deliberately does **not** use `c
 it runs `buildRetirementPhase` directly (the engine itself), sidestepping this gap for that one
 new surface rather than closing it generally. `calcWhatIfDelta`/`calcOptimizedScenario` themselves
 are unchanged.
+**Re-verified 2026-07-09 (L3d close-out) — still reproduces, and scope grew.** `calcWhatIfDelta`
+still calls `buildRetirementDrawdown`, not the engine (confirmed against current `what-if.js`).
+Unlike WI-3.9's conversion Apply (above), **L3d's two new Apply-with-preview sites (`surplusApplySite`,
+`buildScenarioCommitSite`) both use `calcWhatIfDelta`**, not the engine — so this batch added two
+more consumers of the blended-walk gap rather than closing it, an explicit, reviewed tradeoff (the
+"Fix path" below — migrate to `buildRetirementPhase` — wasn't in scope for this batch; the surplus
+candidate is a contribution-rate change, which the engine's per-account walk doesn't yet accept as
+an override the way the conversion optimizer's `buildConversionByAge` override does). Both new
+sites are internally consistent (their own "current" and "candidate" both use the same blended
+mechanism, so no divergence *within* a site) — the gap is only the blended-vs-engine comparison
+this bug already tracks. `docs/ARCHITECTURE.md`'s `buildSurplusPreview` note now states this
+honestly in its `note` field, shown to the user in the preview itself.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
@@ -86,6 +102,10 @@ still unconditionally behaves as `"taxable"`. Still reproduces; this session's W
 the toggle (writes through the `conversion` setter bundle, honored only by the display-path
 `calcConversionSim`) with an explicit honesty note in `ConversionPlannerFlow.jsx` pointing at this
 gap, rather than silently implying the toggle changes engine behavior.
+**Re-verified 2026-07-09 (L3d close-out):** `conversionTaxSource` still zero matches in
+`retirement-engine.js`/`retirement-phase.js`. Still reproduces; neither file was touched by this
+session's WI-3.7/WI-3.8 build (which worked in `what-if.js`, `apply-preview.js`, App.jsx wiring,
+and Horizon screens — not the engine).
 
 ### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
 
@@ -111,6 +131,8 @@ the income surplus absorbs it first.
 **Re-verified 2026-07-08 (L3c close-out):** both line references confirmed exact — `tFloor` still
 at line 150, `needed` still at line 132. Still reproduces; `retirement-engine.js` was not touched
 by this session's build.
+**Re-verified 2026-07-09 (L3d close-out):** `tFloor` still at line 150 (unchanged since 2026-07-08).
+Still reproduces; `retirement-engine.js` was not touched by this session's build.
 
 ### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
@@ -130,10 +152,74 @@ would need `growth` on its `contribRows` rows. **Note:** the round-4 "remove the
 clamp" fix is *on top of* this residual — removing the clamp let negative real growth through, but
 the value is still a residual. **Re-verified 2026-07-08 (L3c close-out):** still reproduces exactly
 as described; this session's build never touched `flow-down.js`.
+**Re-verified 2026-07-09 (L3d close-out):** `totalGrowth` still the residual formula at line 34.
+Still reproduces; `flow-down.js` was not touched by this session's build.
 
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-42 — `calcWhatIfDelta`'s forced re-sim silently drops `addlPreTaxBal` (found + fixed 2026-07-09, L3d post-ship review)
+
+**Owner:** me_theguy. **Found by:** the adversarial-correctness agent of the two-Opus post-ship
+review (`.claude/skills/post-ship-review.md`) run against the WI-3.7/WI-3.8 (L3d) diff.
+**What:** `App.jsx` folds the user's `addlPreTaxBal` input (an outside pre-tax balance, feature #8)
+into the headline `totalAtRet`/`tradGrossAtRet` — `baseTotalAtRet` passed into `calcWhatIfDelta`
+therefore already includes it. But `calcWhatIfDelta`'s forced-re-sim branch (triggered by an
+accumulation-phase money event, a `retirementAgeOverride`, or the new `contribOverrides` param)
+recomputes `scenarioTotalAtRet` from `runSimulation`'s output, which has **no concept of
+`addlPreTaxBal`** — it's an App-level scalar, not a `runSimulation` input. So a forced-resim
+"candidate" always excluded it while the non-resim "current"/"baseline" always included it —
+a basis mismatch between the two sides of any before/after comparison built on this function.
+**Root cause:** the resim branch's own comment claimed "matches the gross `baseTotalAtRet` so
+scenario-vs-baseline deltas are apples-to-apples" (BUG-35 gross-basis note) — true for the
+401k-gross-vs-haircut concern that comment addressed, but false for `addlPreTaxBal`, which the
+comment didn't account for. This gap **predates L3d** (any pre-existing forced-resim caller —
+Classic's `WhatIfPanel` accumulation-phase what-ifs, a retirement-age-shift scenario — already had
+it) but was invisible: What-If mode shows one scenario at a time, not a side-by-side "same
+mechanism" comparison. L3d's `surplusApplySite` and `buildScenarioCommitSite` are the first
+features that market "current vs candidate, guaranteed same mechanism" prominently, which is what
+surfaced it: a user with `addlPreTaxBal` set could see the surplus-allocation Apply preview show a
+spurious six-figure **decrease** in "Nest egg at retirement" for a candidate that actually
+increases contributions.
+**Inert at the default state:** `addlPreTaxBal = 0` by default (golden master unaffected); reachable
+for any user who has set the RMD-basis input (feature #8) and views either new preview.
+**Fixed:** `calcWhatIfDelta` gained an optional `addlPreTaxBal = 0` param, added back into
+`scenarioTotalAtRet` inside the resim branch (mirroring exactly how `App.jsx` already adds it to
+`tradGrossAtRet`). Wired through `whatIfBundle` (Horizon, so every consumer — `surplusApplySite`,
+`buildScenarioCommitSite`, the future `AffordabilityPanel` — picks it up automatically via the
+`...whatIfBundle` spread) and through `WhatIfPanel.jsx`'s `sharedArgs` (Classic, via a new
+`addlPreTaxBal` prop from `App.jsx`) — both UIs fixed identically, closing the same gap either
+would eventually have hit. Default `0` is a no-op for every existing caller.
+**Where:** `src/model/what-if.js` (`calcWhatIfDelta`'s signature + resim branch), `src/App.jsx`
+(`whatIfBundle`, `<WhatIfPanel>` call site), `src/components/WhatIfPanel.jsx` (`sharedArgs`).
+**Tests:** 2 new — a basis-symmetry lock (`addlPreTaxBal` adds exactly its value to
+`scenarioTotalAtRet` on a forced resim) and a default-is-no-op lock, in
+`src/model/__tests__/what-if.test.js`.
+
+---
+
+### BUG-43 — `AffordabilityPanel`'s zero-headroom message falsely claims the plan doesn't sustain (found + fixed 2026-07-09, L3d post-ship review)
+
+**Owner:** me_theguy. **Found by:** the same post-ship review pass as BUG-42.
+**What:** `calcAffordabilityMax` returns `canAfford: false` for two distinct situations: (a) the
+baseline plan itself doesn't sustain to the target age (fails even a $0 purchase), and (b) the
+baseline plan **does** sustain, but has zero headroom for any additional expense at the chosen
+purchase age (the binary search converges to `maxAmount = 0` because even one `step` breaks the
+target). `AffordabilityPanel.jsx`'s `!canAfford` branch rendered "Your current plan doesn't sustain
+to age {targetAge}" for both — false in case (b), where the plan is fine and simply has no slack.
+**Root cause:** the model's `canAfford` boolean deliberately doesn't distinguish the two cases (it
+answers "can this specific purchase be afforded," not "is the underlying plan healthy") — the
+screen's copy assumed it did.
+**Inert at the default state:** the default plan is trivially sustainable (`yearsSustained =
+Infinity`), so case (b) — sustainable-but-zero-headroom — is unreachable without a tighter, more
+realistic plan; reachable for any user on a tight-but-solvent plan probing a large purchase.
+**Fixed:** reworded the message to a claim that's true in both cases without needing a new model
+field to distinguish them: "Your plan has no room for an additional expense at age {purchaseAge}
+while still sustaining to age {targetAge}." No model change — display copy only.
+**Where:** `src/horizon/AffordabilityPanel.jsx`; test updated in `src/horizon/__tests__/ideas-modes.test.js`.
 
 ---
 

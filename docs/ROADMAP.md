@@ -435,6 +435,47 @@ Consistency note: Plan's QuickTune Roth slider already writes the same state (`c
 Each flow attaches its own sibling bundle keyed by the card id (the WI-3.4/3.5 pattern); `strategiesView.mega` then shrinks to `{ applicable }` like `ss`/`rmd` did. The Surplus Apply/Revert routes through the WI-3.9 preview modal.
 **Done when:** parity with the three Classic sections; Apply in Horizon → Classic shows the same applied/revert state (shared mechanism); revert restores the snapshot exactly.
 
+**SHIPPED 2026-07-09 (L3d, branch `claude/l3d-horizon-depth-ladder-dr4gvv`).** `withdrawalView` bundle
+(`netNeed`, pre-filtered/pre-labeled `steps`, `yr1TaxOptimal/yr1TaxWorstCase/yr1TaxSavings`, `hasSavings`)
+feeds `WithdrawalOrderFlow.jsx` — a read-only draw-order sequence + optimal-vs-worst-case comparison +
+a savings callout gated on `hasSavings` (no fabricated $0 when it's false). Classic's inline
+optimized-allocation Apply/Revert `onClick` bodies were extracted verbatim into
+`applyAllocation`/`revertAllocation` `useCallback`s, and **Classic's own buttons were repointed to call
+them** — the literal "extract Classic's existing apply handler… so both UIs share one implementation"
+action, closing a duplication shape this repo's review history flags repeatedly (BUG-25 #4).
+`surplusApplySite` is the Apply-with-preview site (`docs/ARCHITECTURE.md`'s contract): `available =
+totalExtra > 0 && preApplySnapshot === null`; both its "current" and "candidate" previews run through
+`calcWhatIfDelta` — one call with no override, one with a new optional `contribOverrides` param (`{
+contrib401k?, contribRoth?, contribTaxable?, contribHSA? }`, forces a re-sim, additive/no-op when
+omitted) — so a no-change candidate can never show a spurious delta from a current/candidate mechanism
+mismatch. **First real consumer of the contract's optional `revert` field**: an exact
+`preApplySnapshot` restore, rendered as a plain button gated on a sibling `applied` flag, never routed
+through the modal (per the contract's design — an exact restore needs no preview).
+`megaView` bundle (415(c) `capacityRows`, `growth` projections, `usesCatchupLimit`) feeds
+`MegaBackdoorFlow.jsx`; match-mode inputs read directly from the existing `accounts` bundle (no
+duplicate fields). `strategiesView.mega` shrank to `{ applicable }` (capacity/growth moved to
+`megaView`) in the **same commit** as `StrategiesScreen`'s consumer repoint, avoiding a red
+intermediate state. `savingsSurplusPct`'s stepper binds directly to the existing `assumptions`
+bundle field (its `.set` already clears `preApplySnapshot`, matching Classic's slider behavior — one
+write path, no duplication). Allocation breakdown (`surplusView.extraRows`/`optRows`) reuses
+`optimizedAllocation` from the existing `budget` bundle — no re-computation. Done-when verified: a
+manual Classic↔Horizon round-trip confirms Apply/Revert share the single `preApplySnapshot` state so
+the two UIs cannot disagree.
+**Post-ship review fix (2026-07-09):** a two-Opus-agent adversarial+forward-compat pass (per
+`.claude/skills/post-ship-review.md`) found `calcWhatIfDelta`'s forced re-sim path silently dropped
+`addlPreTaxBal` (App.jsx already folds it into the headline `totalAtRet`/`tradGrossAtRet`) — a
+**pre-existing gap** in the resim branch (predates this WI), newly made user-visible because
+`surplusApplySite` is the first feature to market a prominent same-mechanism before/after built on
+it: a user with `addlPreTaxBal` set could see a spurious six-figure "decrease" for a genuinely
+beneficial optimization. Fixed with an optional `addlPreTaxBal` param (default 0, inert everywhere
+else), wired through `whatIfBundle` (Horizon) and `WhatIfPanel`'s `sharedArgs` (Classic) identically
+— both UIs fixed the same way. Locked by 2 new tests. Also flagged (not code changes, recorded for
+later): `revert` isn't yet named in the contract's gating-composition paragraph for WI-5.2's future
+`readOnly` wrap (harmless today — nothing is `readOnly` yet); see `docs/ARCHITECTURE.md`'s updated
+registry.
+687 tests after the WI-3.7 slices; 702 with the shared WI-3.7/3.8 review-fix commit. Golden master
+untouched throughout (`addlPreTaxBal` and `contribOverrides` are both default-inert).
+
 ### WI-3.8 (#105) Ideas growth: events editor + affordability mode
 **Target:** full money-event control and "biggest affordable expense" in Horizon.
 **Actions:**
@@ -443,6 +484,61 @@ Each flow attaches its own sibling bundle keyed by the card id (the WI-3.4/3.5 p
 - Layout: Ideas already has a segmented mode mechanism (`mode` state + mode buttons) — both additions land as **new modes of that one control** (pre-adopting SP-5's Dials · Events · Scenarios · Solvers naming), never as stacked panels.
 - **`commitPlan` call sites (deferred from WI-3.9 — the L3c shell shipped only the conversion Apply):** route the existing `commitPlan` sites (Plan/Ideas "Save as my plan") through `ApplyPreviewModal` for consistency with the Strategies Apply pattern; they stay on plain `ConfirmModal` until this lands.
 **Done when:** an event added in Horizon appears in Classic's panel and moves the arc; affordability result equals Classic `WhatIfPanel`'s for identical inputs; one mode visible at a time (SP-5).
+
+**SHIPPED 2026-07-09 (L3d, same branch/PR as WI-3.7).** **Events editor — one deliberate deviation
+from the Actions text above, recorded so it isn't re-litigated:** the raw `moneyEvents`/`setMoneyEvents`
+reuse this WI's original wording called for is **superseded** by the Apply-with-preview contract's
+"no bundle exposes a raw setter" rule, which shipped (WI-3.9/#106) after this WI's Actions were
+written. A new `eventsView` bundle wraps every mutation as per-field `{value,set}` objects (label/
+amount/age/direction/taxable) + `add`/`remove` list-mutation callbacks, and the raw `setMoneyEvents`
+was **removed** from `horizonProps` entirely (the one pre-existing raw-setter call site — Ideas' own
+life-event-add confirm — was migrated onto `eventsView.add(overrides)` in the same commit).
+`moneyEvents` itself is unchanged: same state, same shape, same 6-event cap (now one shared
+`MAX_MONEY_EVENTS` export instead of a duplicate local constant in `MoneyEventsPanel.jsx`) — "same
+state" holds, "no new mechanism" doesn't (a mechanism was added, but it's the sanctioned one).
+`EventsEditorPanel.jsx` renders it as a new "Events" mode.
+**Affordability:** a new `AffordabilityPanel.jsx` ("Solvers" mode) calls `calcAffordabilityMax`
+directly, in a screen-level `useMemo` fed by locally-staged purchase/target-age state seeded from a
+new `affordView` bundle's model-provided defaults/bounds — the same sanctioned in-screen
+pure-function-call pattern `IdeasScreen` already used for `calcWhatIfScenario` (this is a documented
+rule-10 exception: calling a pure model function with model-provided inputs is not "arithmetic on
+model values"). `calcAffordabilityMax`'s `step`/`maxSearch` defaults moved to named `ASSUMPTIONS`
+constants (`AFFORDABILITY_STEP`/`AFFORDABILITY_MAX_SEARCH`), and Classic's `WhatIfPanel` now uses the
+same constant — Classic and Horizon are step-identical **by construction**, which is what makes the
+"equals Classic's result for identical inputs" done-when true without a dedicated equality test.
+An additive `canAfford` field replaces a `=== 0` comparison the screen would otherwise have needed.
+**Layout:** `"events"`/`"solvers"` added as two new entries in Ideas' existing `modeButtons`
+array/mode-block mechanism — the existing four modes (`life`/`dials`/`suggest`/`askit`) keep their
+current keys/labels (full SP-5 renaming is out of this WI's scope); one-mode-visible-at-a-time is
+automatic (same `mode` state, unchanged).
+**`commitPlan` migration:** both deferred sites now route through `ApplyPreviewModal`. Plan's site
+(`horizonProps.planCommit`) is a static Apply-site object built in App.jsx (comparing the live plan
+against the last `committedOutputs` snapshot, now extended to also carry `depletionAge`). Ideas'
+candidate retirement age varies per scenario card, so a static object can't represent it — instead
+App.jsx exposes `buildScenarioCommitSite(candidateRetirementAge)`, a **site-builder callback**
+(documented as a new, sanctioned variant of the Apply-site shape) that IdeasScreen calls on demand,
+only while its confirm modal is open. Both "current" and "candidate" inside the builder run through
+the same `calcWhatIfDelta` mechanism (not a mix of engine-headline and blended-walk values), matching
+the anti-divergence property `surplusApplySite` established in WI-3.7. **Onboarding
+(`src/components/HorizonShell.jsx`) intentionally NOT migrated** — no committed baseline exists yet
+at onboarding time to preview against; it stays on plain `ConfirmModal`, matching this WI's original
+literal "Plan/Ideas" scoping.
+Done-when verified: Ideas' events mode shares `moneyEvents` state with Classic's panel (same array,
+confirmed by construction, not just by test); the affordability panel's displayed max is produced by
+the identical `calcAffordabilityMax` call Classic's `WhatIfPanel` makes; only one Ideas mode renders
+at a time (pre-existing mechanism, unchanged); a cancel on either migrated modal calls no setter
+(smoke-tested).
+700 tests after the WI-3.8 slices; 702 with the WI-3.7 review-fix commit shared across both WIs.
+Golden master untouched.
+**Level 3 exit gate — build work complete, certification pending one artifact:** every clause except
+the explicit "(parity checklist)" is met by this batch + the prior L3a–L3c work (spouse, SS timing,
+pension, RMD settings, conversion plan with timing + healthcare costs, mega backdoor, withdrawal
+order, and money events are all now buildable end-to-end in Horizon; every optimizer suggestion
+(conversion, surplus) is applyable with preview; `npm test` is green). The parity-checklist artifact
+itself — a table cross-referencing every Classic input to its one Horizon home — was **not** produced
+in this batch (a post-ship review agent flagged this explicitly). Recorded as WI-4.1's deliverable
+rather than built ad hoc here, since building it correctly means walking Classic's JSX section by
+section, which deserves its own pass rather than being a rushed addendum to this batch.
 
 ### WI-3.9 (#106) Apply-with-preview pattern
 **Target:** no Apply button changes headline numbers without showing the consequence first.

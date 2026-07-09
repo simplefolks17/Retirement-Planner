@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (643 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (702 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (120 items, 59 done, 61 planned)
+- Feature backlog: `feature-tracker.html` (120 items, 61 done, 59 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -845,10 +845,70 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     drifted. Fixed in `.claude/skills/verifier-browser.cjs`; see `docs/BUGS.md` BUG-41 (Resolved).
   - 584 → **643** tests, lint clean, build OK. Tracker: #103 + #106 done (59 done, 61 planned).
 
+- **L3d — Withdrawal order / Surplus deployment / Mega backdoor + Ideas events/affordability
+  (2026-07-09, branch `claude/l3d-horizon-depth-ladder-dr4gvv`): WI-3.7 (#104) + WI-3.8 (#105)
+  shipped, closing the Level 3 "Control" exit gate's build work.** Full recon → plan → adversarial
+  plan review (2 Fable agents) → implementation (5 Sonnet slices, model layer first) → post-ship
+  review (2 Opus agents) → docs pipeline, per `docs/ROADMAP.md`'s stated process.
+  - **WI-3.7 (#104):** `withdrawalView` bundle feeds a read-only `WithdrawalOrderFlow.jsx`
+    (draw-order sequence + tax-optimal-vs-worst-case + a savings callout gated on `hasSavings`).
+    Classic's inline optimized-allocation Apply/Revert handlers extracted into
+    `applyAllocation`/`revertAllocation` `useCallback`s — **Classic's own buttons now call these
+    same callbacks**, closing a duplication the review flagged (BUG-25 #4 shape): one
+    implementation, shared by both UIs, reading/writing the single `preApplySnapshot` state so
+    Horizon and Classic can never disagree about applied/reverted state. `surplusApplySite` is the
+    Apply-with-preview site for the surplus suggestion (docs/ARCHITECTURE.md's contract) — its
+    "current" and "candidate" previews both run through `calcWhatIfDelta` (one with no override,
+    one with a new optional `contribOverrides` param) so a no-change candidate can't show a
+    spurious delta from a mechanism mismatch; **first real consumer of the contract's optional
+    `revert` field** (an exact `preApplySnapshot` restore — no modal, no preview, by design).
+    `megaView` bundle (415(c) capacity breakdown, growth projections, match-mode inputs read
+    directly from the existing `accounts` bundle) feeds `MegaBackdoorFlow.jsx`; `strategiesView.mega`
+    shrank to `{applicable}` (capacity/growth moved to `megaView`) in the same commit as its
+    `StrategiesScreen` consumer switch, avoiding a red intermediate state.
+  - **WI-3.8 (#105):** a new `eventsView` bundle wraps every `moneyEvents` mutation as per-field
+    `{value,set}` objects + `add`/`remove` list-mutation callbacks, **replacing the raw
+    `setMoneyEvents`** that was previously exposed directly on `horizonProps` — same underlying
+    state/shape/6-event cap (now one shared `MAX_MONEY_EVENTS` constant), but no bundle exposes an
+    un-wrapped write surface anymore (the Apply-with-preview contract's "no raw setter" rule, which
+    postdates WI-3.8's original wording — a deliberate, documented supersession). `EventsEditorPanel.jsx`
+    renders it as a new "Events" mode on Ideas' existing segmented mode control. A new
+    `AffordabilityPanel.jsx` ("Solvers" mode) calls `calcAffordabilityMax` directly — the same
+    sanctioned in-screen pure-function-call pattern `IdeasScreen` already used for
+    `calcWhatIfScenario` — fed by a new `affordView` bundle (model-provided age defaults/bounds);
+    Classic's `WhatIfPanel` now shares the same `ASSUMPTIONS.AFFORDABILITY_STEP` constant, so both
+    UIs are step-identical by construction. Both `commitPlan` sites deferred from WI-3.9's L3c
+    shell now route through `ApplyPreviewModal`: Plan reads a static `planCommit` site built in
+    App.jsx; Ideas' candidate retirement age varies per scenario card, so it uses a new
+    **site-builder callback** `buildScenarioCommitSite(candidateAge)` instead of a static site
+    object — a documented new variant of the Apply-site shape, built the same App-side way (both
+    "current" and "candidate" through one `calcWhatIfDelta` mechanism) so it can't diverge either.
+    Onboarding (`HorizonShell.jsx`) intentionally kept on plain `ConfirmModal` — no committed
+    baseline exists yet there to preview against.
+  - **Post-ship review (2 Opus agents) — one confirmed bug fixed, one confirmed copy bug fixed.**
+    `calcWhatIfDelta`'s forced re-sim path silently dropped `addlPreTaxBal` (an outside pre-tax
+    balance App.jsx already folds into the headline `totalAtRet`/`tradGrossAtRet`) — a
+    **pre-existing gap** in the resim branch, newly made user-visible because `surplusApplySite`
+    and `buildScenarioCommitSite` are the first features to market a prominent "same mechanism,
+    current vs candidate" preview built on it; a user with `addlPreTaxBal` set could see a spurious
+    six-figure "decrease" for a genuinely beneficial optimization. Fixed with an optional
+    `addlPreTaxBal` param (default 0, inert everywhere else), wired through `whatIfBundle`
+    (Horizon) and `WhatIfPanel`'s `sharedArgs` (Classic) identically. Also fixed:
+    `AffordabilityPanel`'s "doesn't sustain" message was only accurate for one of the two states
+    that produce `canAfford:false` (a sustainable plan with zero purchase headroom showed the same
+    false claim) — reworded to a message accurate in both cases without a new model field.
+    Forward-compat findings recorded (not code changes): the Level 3 exit gate's "(parity
+    checklist)" clause has no artifact yet (deferred to WI-4.1); `revert` isn't yet explicitly
+    named in the Apply-site contract's gating-composition paragraph (harmless today — nothing is
+    `readOnly` yet — but noted for WI-5.2); the `buildScenarioCommitSite` site-builder variant and
+    the shipped bundle shapes are recorded in `docs/ARCHITECTURE.md`'s registry.
+  - 687 → **702** tests (+15 across the WI-3.7/3.8 slices and the review-fix commit), lint clean,
+    build OK, golden master untouched throughout. Tracker: #104 + #105 done (61 done, 59 planned).
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (643 tests)
+- `npm test` — run model + formatter + render-smoke tests (702 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

@@ -209,20 +209,19 @@ auto-covers the bundles' referential stability.
 ### `horizonProps.strategiesView` (WI-3.3 / #100) — the Strategies card-face index
 
 **Added 2026-06-28.** The Strategies screen's read-data bundle (separately memoized for
-V9). It is deliberately **thin**: per-card `applicable` flags only (plus the `mega` summary
-until its flow lands in WI-3.7). Every card reads its headline from the bundle that **owns**
-the number, so there is one source per number (principle 11). Every `applicable` boolean and
-the `> 0` comparisons behind them are computed in the App memo (rule 10 — no comparisons on
-financial values in JSX).
+V9). It is deliberately **thin**: per-card `applicable` flags only. Every card reads its
+headline from the bundle that **owns** the number, so there is one source per number
+(principle 11). Every `applicable` boolean and the `> 0` comparisons behind them are
+computed in the App memo (rule 10 — no comparisons on financial values in JSX).
 
 | Card id | `strategiesView` shape | Headline source |
 |---|---|---|
 | `conversion` | `{ applicable }` | `props.taxView.conversionDetail.adjustedNetConversionBenefit` (+ `isPositive`; healthcare-adjusted, sign-aware; default −9,854) |
 | `rmd` | `{ applicable }` | `props.rmdView.firstRMDAmount` |
 | `ss` | `{ applicable }` | `props.ssView.ssMonthly` |
-| `withdrawal` | `{ applicable }` | `props.yr1TaxSavings` |
+| `withdrawal` | `{ applicable }` | `props.withdrawalView.yr1TaxSavings` |
 | `surplus` | `{ applicable }` | `props.budget.availableSurplus` (flag is `> 0`, stricter than `budget.surplusPositive` `>= 0`) |
-| `mega` | `{ applicable, capacity, growth: [{ yrs, val }] }` | `capacity` |
+| `mega` | `{ applicable }` (WI-3.7 — was `{ applicable, capacity, growth }` until `megaView` shipped and took those two fields; the shrink and the card-face repoint landed in the same commit, per this doc's own principle-11 rule) | `props.megaView.capacity` |
 
 **Forward contract:** the interactive flow bundles (`ssView`, `rmdView`, and the future
 `conversionView`) attach as **sibling** `horizonProps` fields keyed by the same strategy id;
@@ -312,6 +311,70 @@ conversionView fields; ARCHITECTURE wins. The window/events setters live HERE (n
 Tests: `src/__tests__/conversion-view-wiring.test.js` (self-consistency + the WI-3.9
 anti-divergence lock); `horizon-props-stability.test.js` auto-covers stability.
 
+### `horizonProps.withdrawalView` / `surplusView` / `megaView` (WI-3.7 / #104) — the remaining Strategy flow bundles
+
+**Added 2026-07-09.** Same forward contract as `ssView`/`rmdView`/`conversionView` — sibling
+bundles keyed by their strategy id, separately memoized (V9), built from already-computed
+App values.
+
+- **`withdrawalView`** — `{ netNeed, steps, yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings,
+  hasSavings }`. `steps` is a pre-filtered (`amount > 0`), pre-labeled, pre-ordered array
+  (`[{key, label, amount, note}]` — taxable → traditional → Roth); `hasSavings` is the
+  pre-gated boolean the flow's savings callout renders under (never a fabricated $0 when
+  false). Read-only — no Apply site (the draw order isn't a tunable setting).
+- **`surplusView`** — `{ availableSurplus, savingsSurplusPct, totalExtra, deployLabel,
+  extraRows, optRows, applyAllocation }`. `extraRows`/`optRows` are pre-filtered
+  (`amount > 0`), pre-labeled row arrays mirroring Classic's ①–⑤ IRS-priority breakdown —
+  built from `budget.optimizedAllocation`, not re-derived (one source, principle 11). The
+  `savingsSurplusPct` **stepper itself is not on this bundle** — the flow binds directly to
+  the existing `assumptions.savingsSurplusPct` field object (its `.set` already clears
+  `preApplySnapshot`, matching Classic's slider — one write path, not a second copy).
+  `applyAllocation` is the Apply-with-preview site (contract below) — the first real
+  consumer of the optional `revert` field.
+- **`megaView`** — `{ capacity, limit415c, employeeDeferral, employerMatchAmt,
+  capacityRows, growth, usesCatchupLimit }`. `capacityRows` is a pre-labeled 415(c)
+  breakdown (`[{label, val, isTotal?}]`); `growth` is `calcMegaBackdoorGrowth`'s
+  `[{yrs, val}]` (moved here from `strategiesView.mega.growth` — see that table's note).
+  Match-mode inputs are **not duplicated here** — the flow reads/writes them directly off
+  the existing `accounts` bundle (`matchMode`/`employerMatchPct`/`matchFormulaRate`/
+  `matchFormulaCap`), the same field objects Classic's own match-mode UI uses. No Apply
+  site — Classic's mega-backdoor section has none either (informational + live inputs).
+
+Tests: `src/horizon/__tests__/strategies-screen.test.js` (per-flow render + the surplus
+Apply/Revert smoke — modal open/cancel/confirm-once, Revert visibility gated on `applied`);
+`horizon-props-stability.test.js` auto-covers stability.
+
+### `horizonProps.eventsView` / `affordView` (WI-3.8 / #105) — Ideas' events editor + affordability solver
+
+**Added 2026-07-09.**
+
+- **`eventsView`** — the **wrapped write surface** for `moneyEvents` (per the
+  gating-composition rule below: "no bundle exposes a raw setter"). Shape: `{ rows, add,
+  atMax, count, maxEvents, hasEvents, netImpactLabel }`. Each `rows[]` entry is
+  `{ id, labelField, amountField, ageField, directionField, taxableField, showTaxable,
+  remove }` — all `{value,set,...}` field objects except `remove` (a list-mutation
+  callback), mirroring `conversionView.events`'s row-object precedent. `add(overrides = {})`
+  merges over a default blank-event shape (so a caller can pass a full preset, e.g. Ideas'
+  life-event pills, or nothing for a blank new row). **This bundle REPLACES the raw
+  `setMoneyEvents` that was previously exposed directly on `horizonProps`** — `moneyEvents`
+  itself stays exposed read-only (the arc dots, WI-1.3, and any other read-only consumer);
+  every *write* now goes through `eventsView`. `MAX_MONEY_EVENTS` is one exported constant
+  (`money-events.js`) shared by this bundle and Classic's `MoneyEventsPanel.jsx` (no
+  duplicate cap to drift).
+- **`affordView`** — defaults/bounds only for the affordability solver:
+  `{ defaultPurchaseAge, purchaseAgeField, defaultTargetAge, targetAgeField, step }`. The
+  actual `calcAffordabilityMax` call happens **in the screen** (`AffordabilityPanel.jsx`),
+  fed by this bundle's bounds plus the existing `whatIfSimInputs` bundle — the same
+  sanctioned in-screen-pure-function-call pattern `IdeasScreen` already used for
+  `calcWhatIfScenario` (rule 10 exempts calling a pure model function with model-provided
+  inputs; it does not exempt arithmetic/comparisons on the result beyond branching on the
+  model's own output, e.g. `result.canAfford`).
+
+Tests: `src/horizon/__tests__/ideas-modes.test.js` (events round-trip, `atMax` gating, the
+affordability anti-divergence lock — the panel's displayed max equals a direct
+`calcAffordabilityMax` call with the same args, so it can't diverge from Classic's
+`WhatIfPanel`); `horizon-props-stability.test.js` auto-covers stability.
+
 ---
 
 ### Apply-with-preview contract (WI-3.9 / #106)
@@ -322,7 +385,10 @@ used, a pure builder (`src/model/apply-preview.js`) turns the two runs into a di
 payload, and the modal (`src/horizon/ApplyPreviewModal.jsx`) renders it VERBATIM — no
 arithmetic, no comparisons, not even a sign (rule 10).
 
-**Payload shape** (built by `buildConversionPreview` / future per-site builders):
+**Payload shape** (built by `buildConversionPreview` (WI-3.9), `buildSurplusPreview` (WI-3.7),
+`buildCommitPlanPreview` (WI-3.8 — ONE shared builder for both `planCommit` and
+`buildScenarioCommitSite`, since they show identical metrics and differ only in the
+`action` copy the payload already parameterizes for) — all in `src/model/apply-preview.js`):
 
 ```js
 preview = {
@@ -353,9 +419,14 @@ someView.<siteName> = {
   available: bool,   // pre-gated App-side; never compared in JSX
   preview,           // null when !available
   apply,             // useCallback performing the writes
-  // revert?         // OPTIONAL additive sibling (WI-3.7 surplus): restores a
-}                    //   preApplySnapshot; does NOT route through the modal
-                     //   (an exact restore needs no preview); modal never renders it
+  revert?,           // OPTIONAL additive sibling — SHIPPED WI-3.7 (surplusView.applyAllocation,
+                      //   the first consumer): restores an exact preApplySnapshot; does NOT
+                      //   route through the modal (an exact restore needs no preview); the modal
+                      //   never renders it. Valid ONLY for exact pre-apply-snapshot restore — a
+                      //   future site whose "undo" recomputes rather than restores needs its own
+                      //   Apply site, not this slot (recorded so it isn't misused as a generic
+                      //   undo). A sibling `applied` boolean (also additive, also on the site
+                      //   object) drives the revert affordance's visibility — see surplusView.
 ```
 
 **Apply-site registry** (the contract: a generic payload well-formedness test iterates
@@ -365,20 +436,42 @@ currently covered by `conversion-view-wiring.test.js` + `apply-preview.test.js`)
 | Apply site | Ships | Gate (`available`) | Writes |
 |---|---|---|---|
 | `conversionView.optimizer.applySuggestion` | WI-3.6/3.9 | `isSuggestionApplicable` (healthcare toggle on AND the suggestion differs: \|amount diff\| > $4,999 OR start age differs) | `conversionStartAge`, `conversionMode → "custom"`, `annualConversionAmt` |
-| `surplusView.applyAllocation` | WI-3.7 (future) | — | — |
-| commitPlan sites | L3d (future) | — | — |
+| `surplusView.applyAllocation` | WI-3.7 | `totalExtra > 0 && preApplySnapshot === null` | `contrib401k/Roth/HSA/Taxable`, `preApplySnapshot` (snapshot on apply); `revert` restores the 4 contribs from the snapshot and nulls it |
+| `horizonProps.planCommit` (Plan screen "Save as my plan") | WI-3.8 | `true` (always allowed) | `currentAge?`, `currentIncome?`, `retirementAge?`, `annualExpenses?`, `committedPlan`, `committedOutputs` (all via `commitPlan`) |
+| `horizonProps.buildScenarioCommitSite(candidateRetirementAge)` (Ideas "make this scenario my plan") | WI-3.8 | `true` (site-builder variant — see below; a future entitlements AND would live inside the builder, not on a static object) | same as `planCommit`, via `commitPlan({retirementAge: candidateRetirementAge})` |
+
+**Site-builder variant (WI-3.8):** `buildScenarioCommitSite` is a **callback that returns a
+site object** rather than a static site object itself — the one documented exception to "a
+site is a plain object." It exists because the candidate (Ideas' selected scenario's
+retirement age) is ephemeral screen state the App memo can't see ahead of time; a static
+object can't parameterize on it. The callback still does all the model work App-side (both
+"current" and "candidate" through the same `calcWhatIfDelta` mechanism, same anti-divergence
+property as every other site), and the screen only calls it — it never builds a preview or
+performs a write itself. Future consumers with the same "candidate varies per screen
+interaction" shape should use this pattern, named as `build<X>Site(...)`, not invent a new
+one; a static object remains the default for any site whose candidate is App-known ahead of
+time (like `surplusView.applyAllocation`).
 
 **Gating composition point (for WI-5.2):** all gating composes in the App memo that
 computes `available` — entitlements/`readOnly` flags will be AND-ed into `available` and
 into field `.set` wrappers App-side; flows and the modal never import or test entitlements.
+For a site with a `revert` sibling, the SAME composition applies to `revert` — it is not
+exempt just because it bypasses the modal; a future `readOnly` wrap must be able to disable
+`apply` and `revert` identically (not yet implemented — `surplusView.applyAllocation.revert`
+is unconditionally live today, which is harmless while nothing is `readOnly`, but is the
+named TODO for whichever WI adds the wrap). For a site-builder (above), the composition must
+live *inside* the builder function, since there's no static object to wrap at construction.
 Companion convention: **every writable thing on a view bundle is one of three shapes** —
 a `{ value, set }` field object, a registry-listed Apply callback, or a **list-mutation
-callback** (`add` / `remove` on a collection like `conversionView.events`). All three are
-write surfaces WI-5.2 must neuter: the field `.set` and the registry callbacks compose
-gating as above; list-mutation callbacks compose it the same way (App-side, at
-construction), so `readOnly` disabling "add/delete a conversion event" is mechanical too.
-The rule is: **no bundle exposes a raw setter or a bare mutation the App memo hasn't wrapped**
-— that is what makes "all setters inert" a wrap-at-construction job rather than a per-surface hunt.
+callback** (`add` / `remove` on a collection like `conversionView.events` or `eventsView.rows[].remove`).
+All three are write surfaces WI-5.2 must neuter: the field `.set` and the registry callbacks
+compose gating as above; list-mutation callbacks compose it the same way (App-side, at
+construction), so `readOnly` disabling "add/delete a conversion event" or "add/delete a money
+event" is mechanical too. The rule is: **no bundle exposes a raw setter or a bare mutation the
+App memo hasn't wrapped** — that is what makes "all setters inert" a wrap-at-construction job
+rather than a per-surface hunt. `eventsView` (WI-3.8) is the second bundle built specifically
+to satisfy this rule: it replaced a previously-raw `setMoneyEvents` that used to be exposed
+directly on `horizonProps`.
 
 **Anti-divergence guarantee (BUG-31/BUG-35 class):** the conversion Apply site builds its
 candidate via `buildConversionByAge` + `buildRetirementPhase({ ...retPhaseBase, … })` — the
@@ -398,11 +491,15 @@ built now (needs the multi-strategy claim semantics from the SP-1 stress test).
 auto-tested); no household-scope axis in `conversionView` (SP-6: strategy flows are
 household-scope by default); no reserved #119 benefit slot in `events` (bundle fields are
 additive; only `verdict` needs a day-one render slot because the modal LAYOUT must
-accommodate it); no `verdict` population (#85's model field doesn't exist yet). `buildPreviewMetric`
-ships only `money` and `longevity` format kinds — a `percent` kind (savings rate, withdrawal
-rate, income-replacement %) is the **expected additive extension** for the WI-3.7 / WI-3.8 /
-WI-5.4 Apply sites; add it to the builder (so delta/tone/edge logic stays in one place) rather
-than formatting a percentage inline at a call site.
+accommodate it); no `verdict` population (#85's model field doesn't exist yet).
+`buildPreviewMetric` ships `money`, `longevity`, and (added WI-3.7) `percent` format kinds.
+The `percent` kind takes **whole-number percents** (`15.3` means 15.3%, matching this
+codebase's existing convention — `withdrawalRate`, `savingsSurplusPct`, etc. — NOT a
+decimal fraction), rounds each side to one decimal before diffing (same rule as `money`/
+`longevity`, so a sub-0.1-pt float gap can't show a delta beside two identically-displayed
+numbers), and renders its delta in percentage points ("+2.1 pts"). `longevity` also gained a
+null-`years` guard this round (renders "—", no fabricated delta) — needed for
+`buildCommitPlanPreview`'s first-ever-save case, where `current` has no prior baseline.
 
 ---
 
