@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
-import IdeasScreen from "../screens/IdeasScreen.jsx";
+import IdeasScreen, { LIFE_EVENTS } from "../screens/IdeasScreen.jsx";
 import { fmt } from "../shared.jsx";
 import { calcAffordabilityMax } from "../../model/what-if.js";
 import { calcEmployerMatch } from "../../model/employer-match.js";
@@ -281,6 +281,116 @@ describe("IdeasScreen — Solvers mode", () => {
     const txt = textOf(renderer.root);
     expect(txt).toContain("no room for an additional expense");
     expect(txt).not.toContain("You could spend up to");
+    act(() => renderer.unmount());
+  });
+
+  it("desktop age input clamps an out-of-range typed value to its bounds (review-fix regression)", () => {
+    // Before the fix, the desktop <input type=number> passed Number(e.target.value)
+    // straight through with no clamp (only the mobile stepper clamped), so typing an
+    // absurd age (e.g. 500) produced an event the retirement walk never reaches —
+    // isSustainable() then returns true for every amount, and the binary search
+    // converges on maxSearch (a nonsensical "$5,000,000 affordable" result).
+    const props = makeBaseProps();
+    const renderer = mount(props);
+    clickByText(renderer.root, "Solvers");
+
+    const input = renderer.root.findAll(
+      n => n.type === "input" && n.props["aria-label"] === "One-time purchase at age"
+    )[0];
+    expect(input).toBeTruthy();
+    act(() => { input.props.onChange({ target: { value: "500" } }); });
+
+    const clamped = renderer.root.findAll(
+      n => n.type === "input" && n.props["aria-label"] === "One-time purchase at age"
+    )[0];
+    // affordView.purchaseAgeField.max is 89 (safeLifeExp - 1) in this fixture.
+    expect(clamped.props.value).toBe(89);
+    act(() => renderer.unmount());
+  });
+});
+
+describe("IdeasScreen — life-event pill state (review-fix regression)", () => {
+  // A pill's "placed" state is DERIVED from eventsView.rows (== moneyEvents), never
+  // tracked as separate shadow state — see the findPlacedRow comment in IdeasScreen.jsx.
+  const atMaxRows = Array.from({ length: 6 }, (_, i) => ({
+    id: String(i), label: `Existing ${i}`, amount: 1_000, age: 40, isInflow: false,
+  }));
+
+  it("clicking an unplaced pill does not open the confirm modal when at the events cap", () => {
+    const props = makeBaseProps({ eventsView: makeEventsView(atMaxRows) });
+    expect(props.eventsView.atMax).toBe(true);
+
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(
+        IdeasScreen, { t, props, isMobile: false, initialMode: "life" }
+      ));
+    });
+
+    clickByText(renderer.root, LIFE_EVENTS[0].l);
+    // The confirm modal must never open — no "Add to plan" button rendered.
+    expect(renderer.root.findAll(
+      n => typeof n.props?.onClick === "function" && textOf(n) === "Add to plan"
+    )).toHaveLength(0);
+    expect(props.eventsView.add).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it("confirming an unplaced pill under the cap calls eventsView.add with no id override", () => {
+    const props = makeBaseProps({ eventsView: makeEventsView([]) });
+    expect(props.eventsView.atMax).toBe(false);
+
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(
+        IdeasScreen, { t, props, isMobile: false, initialMode: "life" }
+      ));
+    });
+
+    const life = LIFE_EVENTS[0];
+    clickByText(renderer.root, life.l);
+    clickByText(renderer.root, "Add to plan");
+
+    expect(props.eventsView.add).toHaveBeenCalledTimes(1);
+    // The add() call must not pass its own id override — eventsView.add generates
+    // its own id (Date.now() + Math.random()); a caller-supplied id would silently
+    // win (spread order) and defeat that generator's collision-jitter.
+    const written = props.eventsView.add.mock.calls[0][0];
+    expect(written).not.toHaveProperty("id");
+    expect(written).toMatchObject({
+      label: life.l, amount: life.amount, age: life.age, isInflow: life.isInflow,
+    });
+    act(() => renderer.unmount());
+  });
+
+  it("a pill whose exact event already exists in eventsView.rows renders placed, with no click needed", () => {
+    const life = LIFE_EVENTS[0]; // { l: "Buy a home", age: 40, amount: 60_000, isInflow: false }
+    const props = makeBaseProps({
+      eventsView: makeEventsView([
+        { id: "1", label: life.l, amount: life.amount, age: life.age, isInflow: life.isInflow },
+      ]),
+    });
+
+    const renderer = mount(props);
+    clickByText(renderer.root, "Drop life onto timeline"); // enter "life" mode
+    expect(textOf(renderer.root)).toContain(`✓  ${life.l}`);
+    act(() => renderer.unmount());
+  });
+
+  it("clicking a placed pill removes the matching row and clears activeScen", () => {
+    const life = LIFE_EVENTS[0];
+    const removeFn = vi.fn();
+    const eventsView = makeEventsView([
+      { id: "1", label: life.l, amount: life.amount, age: life.age, isInflow: life.isInflow },
+    ]);
+    eventsView.rows[0].remove = removeFn;
+    const props = makeBaseProps({ eventsView });
+
+    const renderer = mount(props);
+    clickByText(renderer.root, "Drop life onto timeline");
+    clickByText(renderer.root, `✓  ${life.l}`);
+
+    expect(removeFn).toHaveBeenCalledTimes(1);
     act(() => renderer.unmount());
   });
 });

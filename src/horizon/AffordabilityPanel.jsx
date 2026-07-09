@@ -43,7 +43,7 @@ function AgeControl({ t, label, value, min, max, step, onChange, isMobile }) {
     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ font: `500 11px ${HF}`, color: t.mut }}>{label}</span>
       <input type="number" aria-label={label} min={min} max={max} step={step} value={value}
-        onChange={e => onChange(Number(e.target.value))}
+        onChange={e => onChange(Math.max(min, Math.min(max, Number(e.target.value) || min)))}
         style={inputStyle(t)} />
     </label>
   );

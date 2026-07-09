@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (702 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (707 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -904,11 +904,39 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     the shipped bundle shapes are recorded in `docs/ARCHITECTURE.md`'s registry.
   - 687 → **702** tests (+15 across the WI-3.7/3.8 slices and the review-fix commit), lint clean,
     build OK, golden master untouched throughout. Tracker: #104 + #105 done (61 done, 59 planned).
+  - **PR #51 in-house 8-angle review (2026-07-09), after CodeRabbit (free-tier summary only) and
+    Gemini (two passes, one minor finding already triaged) returned nothing further.** Ran the
+    `/code-review` skill at high effort — 8 parallel finder angles (3 correctness + reuse +
+    simplification + efficiency + altitude + CLAUDE.md conventions) against the full PR diff,
+    independently verified. Found 3 real bugs the paid bots missed (2 fixed immediately, 1 flagged
+    for an owner decision) plus several accepted-as-noted architecture observations:
+    **BUG-44 fixed** — `AffordabilityPanel`'s desktop age input had no bounds clamp (the mobile
+    stepper clamped, the typed-number path didn't), so a typo'd age past the walk horizon made
+    `calcAffordabilityMax` converge on `maxSearch`, displaying a nonsensical "$5,000,000
+    affordable" result. **BUG-45 fixed, then BUG-47 deepened it** — the life-event pill's "placed"
+    checkmark was tracked as local shadow state (`placedEvents`) disconnected from the real
+    `moneyEvents`; independently corroborated by 3 of the 8 finder angles. BUG-45's first pass
+    added a narrow `atMax` guard (a false-success state once the events cap was hit); asked to
+    reconsider rather than accept the rest as debt, BUG-47 removed `placedEvents` entirely and made
+    "placed" a live derivation off `eventsView.rows` — fixing two more drift directions in the same
+    pass (toggling a pill "off" not removing the underlying event; a mode switch's `clearScen()`
+    blanket-resetting every pill's checkmark). **BUG-46 filed, not fixed** — Ideas' "Big trip at
+    70" scenario card computes its displayed numbers with `scenarioEvents` included, but
+    `buildScenarioCommitSite`'s Apply-preview only forwards the retirement-age override, so the
+    preview can show "no change" for a scenario whose whole point was a $40k event; needs an owner
+    call on whether to fix the preview's honesty or expand `commitPlan`'s scope to persist scenario
+    events (`apply()` has never persisted them, before or after this PR). Noted, not changed:
+    several reuse/duplication opportunities in the new `AffordabilityPanel.jsx` (a bespoke stepper
+    instead of `fields.jsx`'s `DetailField`; a second `DeltaChip` copy of Classic's), and a few
+    architecture observations on `calcWhatIfDelta`'s growing override-param surface and the
+    `buildScenarioCommitSite` site-builder shape — recorded in the PR/BUGS.md, not blocking.
+  - 702 → **707** tests (+5: BUG-44's clamp test, BUG-47's rewritten 4-test life-event-pill block),
+    lint clean, build OK, golden master untouched.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (702 tests)
+- `npm test` — run model + formatter + render-smoke tests (707 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

@@ -90,7 +90,17 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   // Adopt a new deep-link target if one arrives while already mounted.
   useEffect(() => { if (initialMode) setMode(initialMode); }, [initialMode]);
-  const [placedEvents, setPlacedEvents] = useState([]);
+
+  // A life-event pill's "placed" state is DERIVED from moneyEvents (via eventsView.rows),
+  // never tracked as separate shadow state — a prior version tracked a local `placedEvents`
+  // array that could drift from the real event list in both directions (toggling a pill
+  // "off" didn't remove the underlying event; removing the event via the Events tab didn't
+  // un-check the pill). Matches on the full event shape the pill would have written, so an
+  // unrelated custom event that happens to share just the label doesn't false-match.
+  const findPlacedRow = (ev) => eventsView.rows.find(r =>
+    r.labelField.value === ev.l && r.ageField.value === ev.age &&
+    r.amountField.value === ev.amount && r.directionField.value === (ev.isInflow ? "in" : "out")
+  );
 
   // Dial offsets (relative to current props so they stay useful after a commitPlan)
   const [dialRetireOffset, setDialRetireOffset] = useState(0);
@@ -144,7 +154,6 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   const clearScen = () => {
     setActiveScen(null);
-    setPlacedEvents([]);
     setDialOverlay(null);
   };
 
@@ -265,13 +274,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                 </div>
                 <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
                   {LIFE_EVENTS.map((ev) => {
-                    const placed = placedEvents.includes(ev.l);
+                    const placedRow = findPlacedRow(ev);
+                    const placed = !!placedRow;
                     return (
                       <div key={ev.l} onClick={() => {
                         if (placed) {
-                          setPlacedEvents(prev => prev.filter(e => e !== ev.l));
+                          placedRow.remove();
                           setActiveScen(null);
-                        } else {
+                        } else if (!eventsView.atMax) {
                           setPendingEvent(ev);
                         }
                       }} style={{
@@ -432,10 +442,12 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
           body={`${pendingEvent.isInflow ? "Adds" : "Removes"} ${fmt(pendingEvent.amount)} at age ${pendingEvent.age}. It will update your arc and longevity estimate.`}
           confirmLabel="Add to plan"
           onConfirm={() => {
-            setPlacedEvents(prev => [...prev, pendingEvent.l]);
+            // The events-cap guard lives at the pill click (it won't open this modal
+            // when eventsView.atMax) — pendingEvent is only ever set when there's room,
+            // and this modal blocks other interaction while open, so no concurrent path
+            // can push moneyEvents to the cap between opening and confirming.
             setActiveScen(pendingEvent.scen);
             eventsView.add({
-              id: String(Date.now()),
               label: pendingEvent.l,
               amount: pendingEvent.amount,
               age: pendingEvent.age,

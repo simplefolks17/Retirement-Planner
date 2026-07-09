@@ -7,6 +7,43 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-46 — `buildScenarioCommitSite` preview omits the scenario's `scenarioEvents`/expense overrides (found 2026-07-09, in-house 8-angle diff review on PR #51)
+
+**Owner:** me_theguy. **Found by:** an in-house 8-finder-angle code review (line-by-line +
+cross-file-tracer angles independently converged on the same defect) run against PR #51 after
+the paid bots (CodeRabbit free tier, Gemini) returned nothing further.
+**What:** Ideas' "Big trip at 70" scenario card (`SCENARIOS.bigTrip`, `retireAdj: 0,
+scenarioEvents: [{amount: 40_000, age: 70, isInflow: false, ...}]`) is displayed via
+`calcWhatIfScenario(whatIfBundle, {..., scenarioEvents: scen.scenarioEvents})` — the card's
+totalAtRet/longevity numbers reflect the $40k trip. But `scenarioCommitSite` (`IdeasScreen.jsx`)
+builds its preview by calling `props.buildScenarioCommitSite(scenario.scenarioRetAge)`, passing
+**only the candidate retirement age** — `buildScenarioCommitSite` (`App.jsx`) computes
+`before`/`after` via `calcWhatIfDelta({...whatIfBundle, retirementAgeOverride: candidateRetirementAge})`
+with no `moneyEvents`. For `bigTrip` specifically, `retireAdj: 0` means the candidate age equals
+today's retirement age, so the preview shows an almost-total "no change" delta — even though the
+card the user just looked at showed the $40k hit. The preview's own `note` field claims "Preview
+uses the same what-if walk as your scenario card above," which is false whenever the scenario has
+`scenarioEvents` or an `annualExpenses`/`monthlyExpenses` override.
+**Why this needs an owner decision, not just a patch:** `apply()` (`commitPlan({retirementAge:
+candidateRetirementAge})`) has **never** persisted a scenario's one-time events into the real
+`moneyEvents` array — that's true both before and after this PR ("make this my plan" has always
+meant "adopt this retirement age," not "adopt this scenario's temporary events too"). Two
+possible fixes point in different directions: (a) **copy-only fix** — thread `scenarioEvents`/
+expense overrides into `buildScenarioCommitSite`'s `calcWhatIfDelta` calls so the PREVIEW matches
+the card, while `apply()` still only commits the retirement age — but this would then show a
+preview promising a change that `apply()` doesn't actually make, a different (arguably worse)
+mismatch; (b) **scope-expansion fix** — make `apply()` also persist the scenario's events (via
+`eventsView.add(...)` for each), so "make this my plan" genuinely adopts the whole scenario,
+matching what the preview would then show. (b) changes product behavior beyond a preview-display
+bug and needs an explicit decision before implementing.
+**Inert at the default state:** `bigTrip` (and any preset with `scenarioEvents`) is reachable any
+time a user picks that scenario card and clicks "Make this my plan" — no special setup required;
+this is a default-preset scenario, not an edge-case input.
+**Where:** `src/App.jsx` (`buildScenarioCommitSite`), `src/horizon/screens/IdeasScreen.jsx`
+(`scenario` memo passes `scenarioEvents`; `scenarioCommitSite` memo doesn't forward them),
+`src/horizon/screens/IdeasScreen.jsx` (the `SCENARIOS` array, `bigTrip` entry).
+**Not fixed this pass** — flagged to the owner for a fix-direction decision.
+
 ### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
 
 **Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
@@ -158,6 +195,102 @@ Still reproduces; `flow-down.js` was not touched by this session's build.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-45 — Life-event pill shows false success once the money-events cap is reached (found + fixed 2026-07-09, in-house diff review on PR #51)
+
+**Owner:** me_theguy. **Found by:** independently surfaced by 3 of 8 finder angles in an in-house
+code review (line-by-line scan, removed-behavior auditor, cross-file tracer) run against PR #51
+after the paid review bots returned nothing further — strong corroboration from three independent
+reasoning paths converging on the same defect.
+**What:** `IdeasScreen.jsx`'s life-event "Add to plan" confirm handler unconditionally called
+`setPlacedEvents`/`setActiveScen` (marking the pill "✓ placed" and swapping the arc overlay)
+**before** checking whether the underlying `eventsView.add(...)` write actually happened.
+`eventsView.add` (`App.jsx`) silently no-ops once `moneyEvents.length >= MAX_MONEY_EVENTS` (6) —
+so once a user has 6 events (reachable via the new WI-3.8 Events editor, or 6 life-event pills),
+confirming a 7th pill shows a checkmark and swaps the arc/scenario overlay, but the event is never
+actually added to `moneyEvents` — a false-success state with no error path.
+**Root cause:** the confirm handler was written before the events cap existed on this write path
+(the pre-diff code called `setMoneyEvents` directly with no cap); `eventsView`'s wrapped `add()`
+introduced the cap in this same PR (per the Apply-with-preview contract's "wrapped write surface"
+rule) without the one pre-existing caller being updated to check it.
+**Inert at the default state:** `moneyEvents` starts empty; reachable once a user has added 6 events
+by any combination of the Events editor and life-event pills.
+**Fixed:** the confirm handler now checks `eventsView.atMax` before performing the local "placed"
+UI updates and the `add()` call — when at the cap, the confirm silently closes without a false
+success state, matching the existing `EventsEditorPanel`'s own `atMax`-gated Add button. While in
+the same handler, also removed a redundant `id: String(Date.now())` override the call was passing
+into `add()` — `eventsView.add` already generates its own id (`Date.now() + Math.random()`); the
+caller's override silently won (spread order) and (a) defeated the generator's collision-jitter and
+(b) gave life-event-added rows a **string** id while every other event gets a **number** id, a type
+inconsistency with no current downstream effect but no reason to keep.
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (life-event confirm `onConfirm`).
+**Tests:** 2 new in `src/horizon/__tests__/ideas-modes.test.js` — confirms `add`/`atMax` guard
+skips the write and pill-placed state when at the cap; confirms the normal (under-cap) path still
+adds and marks placed, and that no `id` override is passed.
+
+### BUG-44 — `AffordabilityPanel`'s desktop age input has no bounds clamp (found + fixed 2026-07-09, in-house diff review on PR #51)
+
+**Owner:** me_theguy. **Found by:** the line-by-line-scan finder angle of the same in-house review.
+**What:** `AgeControl`'s desktop branch (`<input type="number" min={min} max={max} ...>`) passed
+`Number(e.target.value)` straight to `onChange` with no clamping — HTML `min`/`max` attributes are
+advisory only (the browser doesn't reject a typed out-of-range value). The mobile stepper branch
+DID clamp (`Math.max(min, Math.min(max, value ± step))`), so this was a desktop-only gap.
+**What actually breaks:** typing an absurd purchase age (e.g. `500`, or any age past
+`scenarioRetAge + 130`, the retirement-walk horizon) produces a one-time-expense event whose age
+never appears in any walked row. `calcWhatIfDelta`'s `isSustainable(amount)` check then returns
+`true` for every tested amount (the "expense" never actually fires within the walk), so
+`calcAffordabilityMax`'s binary search converges on `maxSearch` — the panel displays "You could
+spend up to $5,000,000 at age 500 and still last to age 90," a nonsensical result presented as a
+real answer, reachable by a simple typo (no special input needed beyond typing a number).
+**Fixed:** the desktop input's `onChange` now clamps the same way the mobile stepper already does:
+`Math.max(min, Math.min(max, Number(e.target.value) || min))`.
+**Where:** `src/horizon/AffordabilityPanel.jsx` (`AgeControl`'s desktop `<input>`).
+**Tests:** 1 new in `src/horizon/__tests__/ideas-modes.test.js` — types `500` into the purchase-age
+input and asserts the rendered value clamps to the field's `max` (89 in the test fixture).
+
+---
+
+### BUG-47 — Life-event pill "placed" state was disconnected shadow state, stale in both directions (found + properly fixed 2026-07-09, owner follow-up on BUG-45)
+
+**Owner:** me_theguy. **Found by:** BUG-45's fix (a narrow `atMax` guard) prompted the owner to ask
+whether the underlying `placedEvents` design was sound rather than leaving the deeper issue as
+accepted debt — re-examining it surfaced a second, pre-existing staleness direction BUG-45 didn't
+cover.
+**What:** `IdeasScreen.jsx` tracked a local `placedEvents` array (event labels) purely as UI shadow
+state for the life-event pills' checkmarks — separate from `moneyEvents`, the actual source of
+truth. This drifted in **both** directions: (1) clicking an already-"placed" pill to toggle it off
+only removed the label from `placedEvents` — the underlying event stayed in `moneyEvents` forever,
+so the pill said "removed" while the real plan still had it; (2) removing the same event via the
+new WI-3.8 Events tab (`eventsView.rows[].remove()`) never touched `placedEvents`, so the pill kept
+its checkmark after the event was actually gone (BUG-45's post-ship-review finder caught this
+direction specifically). A third, more subtle case: `clearScen()` (called on every Ideas mode
+switch) unconditionally reset `placedEvents` to `[]`, so switching away from "life" mode and back
+un-checked every pill regardless of whether its event was still in `moneyEvents` — a third stale
+direction, found while implementing this fix (not by the original review pass).
+**Root cause:** `placedEvents` duplicated information already derivable from `moneyEvents` instead
+of being computed from it — the "one source of truth" a shadow-state variable is disconnected from
+will drift onto every code path that doesn't happen to update both.
+**Fixed:** removed `placedEvents`/`setPlacedEvents` entirely. A pill's "placed" state is now
+**derived** live from `eventsView.rows` on every render (`findPlacedRow`, matching on label + age +
+amount + direction — the full shape the pill would have written, so an unrelated custom event that
+happens to share just the label text doesn't false-match). Toggling a placed pill off now calls the
+matching row's real `remove()` (previously a no-op on `moneyEvents`); the events-cap guard (BUG-45)
+moved from the confirm handler to the pill's click handler itself, so the confirm modal never opens
+when at capacity (cleaner than opening a modal that would silently fail on confirm); `clearScen()`
+no longer resets any pill state, since there's no separate state left to reset — mode switches now
+correctly continue to reflect whatever `moneyEvents` actually contains.
+**Inert at the default state:** `moneyEvents` starts empty (no pills placed); all three drift
+directions require having actually placed at least one life event first.
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (removed the `placedEvents` `useState` and its one
+setter call site; added `findPlacedRow`; updated the pill click handler and `clearScen`).
+**Tests:** `src/horizon/__tests__/ideas-modes.test.js`'s life-event describe block rewritten (4
+tests): the events-cap guard now checks the confirm modal never opens (not a post-hoc revert);
+confirming under the cap calls `add()` with no `id` override; a pill whose event already exists in
+`eventsView.rows` renders placed with zero clicks (direct test of the derivation, not a
+click-then-rerender simulation the test mocks can't support); clicking a placed pill calls the
+matching row's `remove()`.
 
 ---
 
