@@ -7,40 +7,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-### BUG-41 — verifier-browser.cjs "Numbers / Money flow" tab click times out (found 2026-07-08, L3c verification pass; tooling-only)
-
-**Owner:** me_theguy. **Found by:** the orchestrator during the WI-3.6/WI-3.9 (L3c) manual
-verification pass, running `.claude/skills/verifier-browser.cjs` after the conversion planner
-flow shipped.
-**What:** the visual verifier's walk of the Numbers screen's 6 sub-tabs hangs on the "Money flow"
-tab — the Playwright `locator.click()` for that tab times out (30s) and the run reports it as a
-failed screen.
-**Baseline-confirmed pre-existing:** checked out commit `9ba231b` (the state of the tree *before*
-this session's L3c build — no conversion/Apply-preview code present yet) and re-ran the same
-verifier script; the same "Numbers / Money flow" click timeout reproduces there too. This build
-did not introduce it.
-**Not a rendering bug:** the tab renders correctly in the jsdom suite —
-`src/horizon/__tests__/numbers-tabs.test.js` drives all 6 Numbers sub-tabs including Money flow
-and passes — and it also renders correctly when clicked manually in a real browser during ad hoc
-checks. The failure is isolated to this one automated locator/click path.
-**Suspected root cause:** a verifier-script defect in the "Money flow" tab's locator (possibly a
-viewport/scroll issue — the tab may sit below the fold at the verifier's default viewport size, or
-the button label/selector used for that specific tab may not uniquely resolve) rather than a
-product defect. Not yet root-caused to a specific line in `.claude/skills/verifier-browser.cjs`.
-**Impact:** tooling-only. No model, display, or user-facing behavior is affected; `npm test` and
-`npm run lint` are unaffected; the production build is unaffected.
-**Repro:**
-```bash
-npm run dev -- --port 5174 &
-sleep 4
-node .claude/skills/verifier-browser.cjs
-# → fails on the "Numbers / Money flow" sub-tab with a 30s locator.click() timeout
-```
-**Fix path:** instrument or step through `verifier-browser.cjs`'s Numbers-sub-tab loop for the
-"Money flow" entry specifically (log the resolved selector/bounding box before clicking; try
-scrolling the tab into view first); compare its selector construction against the other 5
-Numbers sub-tabs, which all pass, to find what's different about this one.
-
 ### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
 
 **Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
@@ -62,6 +28,11 @@ return; include it in `taxView.composition.total` and as a third "draw" segment 
 **Where:** `src/model/retirement-phase.js` (add field), `src/App.jsx` `taxViewBundle` (consume it),
 `src/horizon/screens/NumbersScreen.jsx` (render third segment), `src/horizon/__tests__/numbers-tabs.test.js`
 (update composition mock).
+**Re-verified 2026-07-08 (L3c close-out):** `App.jsx`'s `taxViewBundle` still computes
+`total = rmdTax + convTax` with no `drawTax` term (line shifted to ~1272 by this session's
+unrelated additions elsewhere in the file); `retirement-phase.js`'s `buildRetirementPhase` return
+still has no `totalDrawTax` field. Still reproduces exactly as described; this session's build
+never touched either file's relevant code.
 
 ---
 
@@ -89,6 +60,12 @@ The remaining BUG-36 gap is (a) the retirement-phase **delta** still using the b
 `moneyEvents` taxable-inflow income tax still uncharged in accumulation / the blended walk.
 **Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
 work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
+**Re-verified 2026-07-08 (L3c close-out):** `what-if.js` and `optimization.js` still import and
+call `buildRetirementDrawdown` exclusively — still reproduces. Note: this session's WI-3.9 Apply
+preview for the conversion optimizer suggestion deliberately does **not** use `calcWhatIfDelta` —
+it runs `buildRetirementPhase` directly (the engine itself), sidestepping this gap for that one
+new surface rather than closing it generally. `calcWhatIfDelta`/`calcOptimizedScenario` themselves
+are unchanged.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
@@ -103,6 +80,12 @@ full-to-Roth/tax-from-taxable behavior is a defensible default. **Fix path:** th
 `conversionTaxSource` into `buildRetirementWalkByAccount` and, for "converted", credit Roth with
 `conversion − convTax` instead of pulling the tax from the pool. Owner-approved to defer so PR #32
 can close.
+**Re-verified 2026-07-08 (L3c close-out):** `conversionTaxSource` still does not appear anywhere in
+`retirement-engine.js` or `retirement-phase.js` (confirmed via search — zero matches); the engine
+still unconditionally behaves as `"taxable"`. Still reproduces; this session's WI-3.6 flow surfaces
+the toggle (writes through the `conversion` setter bundle, honored only by the display-path
+`calcConversionSim`) with an explicit honesty note in `ConversionPlannerFlow.jsx` pointing at this
+gap, rather than silently implying the toggle changes engine behavior.
 
 ### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
 
@@ -125,6 +108,9 @@ total tax before drawing from the pool.
 L150 then subtracted out by the telescoping components); `needed` at ~L132 (`effectiveExpenses −
 ssCash − penCash + eventOutflow`). A `floorTax = tFloor` component would be added to `tax`, gated so
 the income surplus absorbs it first.
+**Re-verified 2026-07-08 (L3c close-out):** both line references confirmed exact — `tFloor` still
+at line 150, `needed` still at line 132. Still reproduces; `retirement-engine.js` was not touched
+by this session's build.
 
 ### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
@@ -136,15 +122,54 @@ the rule; only the accumulation node lags. Pre-existing (predates BUG-35) and in
 state (no accumulation money events → residual ≈ Σ(growth)). **Fix path:** `totalGrowth =
 Σ(contribRows[].growth)` (the simData rows already carry per-year `growth`), and verify negative real
 growth + reconciliation as separate assertions. Deferred so PR #32 can close.
-**Where:** `src/model/flow-down.js:31` (`const totalGrowth = totalAtRet − startPortfolio −
-totalContrib`). Contrast with the in-file `sumGrowth(rows)` used for `convWindowGrowth`/`distGrowth`
-(the rule-2b-correct pattern). Test fixture in `flow-down.test.js` would need `growth` on its
-`contribRows` rows. **Note:** the round-4 "remove the `Math.max(0,…)` clamp" fix is *on top of* this
-residual — removing the clamp let negative real growth through, but the value is still a residual.
+**Where:** `src/model/flow-down.js:34` (`const totalGrowth = totalAtRet − startPortfolio −
+totalContrib`, line ref trued 2026-07-08 close-out — was :31, shifted by unrelated additions
+elsewhere in the file). Contrast with the in-file `sumGrowth(rows)` used for
+`convWindowGrowth`/`distGrowth` (the rule-2b-correct pattern). Test fixture in `flow-down.test.js`
+would need `growth` on its `contribRows` rows. **Note:** the round-4 "remove the `Math.max(0,…)`
+clamp" fix is *on top of* this residual — removing the clamp let negative real growth through, but
+the value is still a residual. **Re-verified 2026-07-08 (L3c close-out):** still reproduces exactly
+as described; this session's build never touched `flow-down.js`.
 
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-41 — `verifier-browser.cjs` has a stale hardcoded "Money flow" Numbers tab (found 2026-07-08, L3c verification pass; re-diagnosed + fixed at 2026-07-08 close-out)
+
+**Owner:** me_theguy. **Found by:** the orchestrator during the WI-3.6/WI-3.9 (L3c) manual
+verification pass; **misdiagnosed** at filing time as a Playwright locator defect ("the tab
+renders fine, the click just times out") — corrected during the same-day session close-out.
+**What actually happens:** `.claude/skills/verifier-browser.cjs:63` hardcodes
+`NUMBERS_TABS = ['Statement', 'Budget', 'Accounts', 'Taxes', 'Year by year', 'Money flow']`. The
+"Money flow" tab **no longer exists** in `NumbersScreen.jsx` — its button and render block were
+removed in commit `434caf8` (2026-06-24, PR #38, "Numbers screen depth build-out"). The verifier
+correctly fails to find a button with that label and times out; there was never a locator bug.
+**Root cause of the stale test, and why it's NOT a product bug:** `434caf8`'s diff shows the
+"Money flow" tab's retirement-phase content (SS / Pension / Portfolio draw) was **merged into the
+Statement tab** as a new "Retirement income companion strip" in the same commit (still present
+today at `NumbersScreen.jsx:478-493`, shown beside the existing working-year paycheck waterfall) —
+this was a deliberate 6→5 tab consolidation (Statement already showed a similar working-year
+breakdown; folding the retirement-year one in next to it removes a redundant tab), not an
+accidental deletion. Confirmed by re-reading the commit's full diff and message, and independently
+confirmed against the owner's own recollection during the 2026-07-08 close-out. The commit's
+message and the CLAUDE.md status entry it produced (Status log, "Numbers screen depth build-out —
+Sessions 1–4") describe this only as "hardened the Year-by-year and Money-flow tabs," which is
+misleading phrasing (it reads as if both tabs still exist standalone) — that phrasing is what led
+this session's initial BUG-41 filing to assume a 6th tab still exists and misdiagnose the
+verifier's failure as its own bug.
+**What was actually wrong (the real, narrow bug):** only `.claude/skills/verifier-browser.cjs`'s
+hardcoded `NUMBERS_TABS` array — a piece of test tooling — never got updated for the 434caf8
+consolidation. `src/horizon/__tests__/numbers-tabs.test.js` and the render-smoke suite were
+correctly updated at the time (they don't reference a "Money flow" tab) — only this one visual
+verification script drifted.
+**Fixed:** 2026-07-08, same session. `NUMBERS_TABS` in `.claude/skills/verifier-browser.cjs`
+trued to the current 5-tab list (`['Statement', 'Budget', 'Accounts', 'Taxes', 'Year by year']`).
+`docs/HORIZON.md` and `docs/ROADMAP.md`'s parity table corrected to describe the 5-tab Numbers
+screen with the consolidated Statement companion strip instead of a standalone Money-flow tab.
+`npm test` unaffected (this touches only the `.claude/skills/` Playwright script, not the suite).
 
 ---
 

@@ -3,7 +3,7 @@
  *
  * Drives the REAL browser (what jsdom render-smoke can't): runtime console /
  * page errors, real failed network requests, actual paint, and screenshots.
- * Walks every Horizon screen + the six Numbers sub-tabs + a Classic-view
+ * Walks every Horizon screen + the five Numbers sub-tabs + a Classic-view
  * round-trip, asserting a screen-specific marker and a non-blank content area
  * for each.
  *
@@ -60,7 +60,10 @@ const SCREENS = [
   { id: 'someday',  label: 'Someday',     marker: 'work optional.'         },
   { id: 'settings', label: 'Settings',    marker: 'Theme'                  },
 ];
-const NUMBERS_TABS = ['Statement', 'Budget', 'Accounts', 'Taxes', 'Year by year', 'Money flow'];
+// Trued 2026-07-08 (BUG-41 close-out fix): "Money flow" was consolidated into
+// Statement (commit 434caf8, PR #38) — its retirement-phase content lives on as
+// Statement's "Retirement income companion strip". 5 tabs, not 6.
+const NUMBERS_TABS = ['Statement', 'Budget', 'Accounts', 'Taxes', 'Year by year'];
 
 // Console / network noise that is NOT a code bug in this sandbox.
 const IGNORE_CONSOLE = [

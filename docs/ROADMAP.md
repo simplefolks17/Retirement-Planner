@@ -83,21 +83,21 @@ Sibling to the parity-audit table: every backlog item that had no obvious home, 
 
 | # | Item | Fact home | Output rendering | Decision surface | Tier |
 |---|---|---|---|---|---|
-| 48 | Income/expense timeline primitive | — (model: `timeline.js` `sources[]`, SP-2) | Arc markers; Money flow bands; Year-by-year | — | Free |
-| 10 | Variable spending in retirement | My details → Spending (phase rows on the timeline) | Money flow (retirement); arc | — | Free |
-| 17 | Pension timing granularity | My details → Income & expense timeline | Journey ch. 3; Money flow | — | Free |
-| 35 | Part-time / bridge income | Timeline template (SP-2) | Arc marker; Money flow | — | Free |
-| 36 | Rental income as retirement income | My details → Property & rentals | Money flow; Journey ch. 3 | — | Free |
+| 48 | Income/expense timeline primitive | — (model: `timeline.js` `sources[]`, SP-2) | Arc markers; Statement (retirement strip) bands; Year-by-year | — | Free |
+| 10 | Variable spending in retirement | My details → Spending (phase rows on the timeline) | Statement (retirement strip); arc | — | Free |
+| 17 | Pension timing granularity | My details → Income & expense timeline | Journey ch. 3; Statement (retirement strip) | — | Free |
+| 35 | Part-time / bridge income | Timeline template (SP-2) | Arc marker; Statement (retirement strip) | — | Free |
+| 36 | Rental income as retirement income | My details → Property & rentals | Statement (retirement strip); Journey ch. 3 | — | Free |
 | 43 | Long-term care expense shock | Timeline template (SP-2) | Arc marker; Range view | — | Premium |
-| 53 | Mortgage payoff + expense step-down | My details → Spending (timeline template) | Arc marker; Money flow | — | Free |
+| 53 | Mortgage payoff + expense step-down | My details → Spending (timeline template) | Arc marker; Statement (retirement strip) | — | Free |
 | 54 | Inheritance / windfall | Timeline template (SP-2) | Arc marker | — | Free |
-| 58 | Rental cash flow / depreciation split | My details → Property & rentals | Numbers → Taxes; Money flow | — | Premium |
+| 58 | Rental cash flow / depreciation split | My details → Property & rentals | Numbers → Taxes; Statement (retirement strip) | — | Premium |
 | 59 | Rental depreciation recapture at sale | My details → Property & rentals | sale-year tax in Taxes | Strategies → Assets: "Sell the rental?" | Premium |
 | 60 | REIT dividends + §199A | My details → Accounts (holding flag) | Numbers → Taxes (MAGI line) | — | Premium |
 | 61 | K-1 partnership income | My details → Business & partnerships | Numbers → Taxes | — | Premium |
 | 62 | S-corp salary/distribution split | My details → Business & partnerships | Numbers → Taxes | Strategies → Income timing | Premium |
-| 63 | Defined benefit / cash balance plan | My details → Accounts | Journey ch. 2; Money flow | Strategies → Accounts | Premium |
-| 64 | NQDC / 409A income flood | My details → Business & partnerships (timeline) | Money flow; Numbers → Taxes | Strategies → Income timing (distribution schedule) | Premium |
+| 63 | Defined benefit / cash balance plan | My details → Accounts | Journey ch. 2; Statement (retirement strip) | Strategies → Accounts | Premium |
+| 64 | NQDC / 409A income flood | My details → Business & partnerships (timeline) | Statement (retirement strip); Numbers → Taxes | Strategies → Income timing (distribution schedule) | Premium |
 | 65 | Tax-loss harvesting | — (uses taxable balance) | annual alpha in card | Strategies → Taxes | Premium |
 | 66 | Inherited IRA 10-year rule | My details → Family & estate | Numbers → Taxes; Year-by-year | Strategies → Assets (distribution timing) | Premium |
 | 67 | Concentrated stock position | My details → Accounts (position card) | Range view (concentration risk) | Strategies → Assets (diversify vs tax) | Premium |
@@ -199,7 +199,7 @@ The IA was tested, not assumed. Three scenarios were walked end-to-end; two forc
 **WI-2.3 shipped Jun 13 2026.** Numbers → Accounts tab: 4-bucket bars + milestone pills from `chartMilestones`.
 **WI-2.4 shipped Jun 13 2026.** Numbers → Taxes tab: working/retirement timeline + lifetime composition bar; `horizonProps.taxView` bundle.
 **WI-2.5 shipped Jun 13 2026.** Year-by-year is now the whole life (accumulation + retirement) with Contrib./RMD/Conversion columns. `runSimulation` emits per-year `growth`/`tradGrowth`; `buildAccumulationRows` builds working-year rows on a reconciling after-tax basis (owner decision); `buildYearlyRows` joins the RMD/conversion schedules by age. Reconciliation + value-lock tests added.
-**WI-2.6 shipped Jun 13 2026.** Money-flow tab gains a Working/Retirement toggle; retirement view shows Expenses ← SS + Pension + Portfolio draw. New `calcRetIncomeFlow` (drawdown.js) guarantees the bands sum to `effectiveExpenses`; `horizonProps.retIncomeFlow` bundle.
+**WI-2.6 shipped Jun 13 2026.** Money-flow tab gains a Working/Retirement toggle; retirement view shows Expenses ← SS + Pension + Portfolio draw. New `calcRetIncomeFlow` (drawdown.js) guarantees the bands sum to `effectiveExpenses`; `horizonProps.retIncomeFlow` bundle. **Superseded Jun 24 2026 (PR #38, commit `434caf8`):** the standalone Money-flow tab was consolidated into Statement as a "Retirement income companion strip" (same `calcRetIncomeFlow`-backed bands, no model change) — Numbers dropped from 6 tabs back to 5. The consolidation went undocumented at the time; corrected during the 2026-07-08 close-out (`docs/BUGS.md` BUG-41).
 **WI-2.7 shipped Jun 13 2026.** Arc tap-to-scrub: pointer/touch handlers + floating chip (age/total, plus draw/growth/tax in retirement) via the pure exported `scrubPointForAge`; optional `walkRows` prop passed by Plan + Ideas.
 **Level 2 exit gate met (Jun 13 2026):** every dollar is traceable through every life stage in Horizon without opening Classic.
 
@@ -352,9 +352,12 @@ feature, now fully interactive in Horizon.
 - **Browser verification:** verifier-browser passed every Horizon screen + the Classic round-trip
   + the new flow renders (screenshot-verified). One **pre-existing** failure was found and
   baseline-confirmed (reproduces at commit `9ba231b`, before this build): the verifier's
-  "Numbers / Money flow" tab click times out — the tab renders fine in the jsdom suite and
-  manually, so this looks like a verifier-script locator/viewport defect, not a product bug.
-  Filed as **BUG-41** (tooling-only) in `docs/BUGS.md`.
+  "Numbers / Money flow" tab click times out. Filed same-day as **BUG-41**, initially misdiagnosed
+  as a locator defect. **Re-diagnosed and fixed at the 2026-07-08 session close-out:** the "Money
+  flow" tab doesn't exist — it was consolidated into Statement back in PR #38 (commit `434caf8`,
+  2026-06-24; its retirement-phase content survives as Statement's "Retirement income companion
+  strip"), and only the verifier script's hardcoded tab list never got updated. Fixed in
+  `.claude/skills/verifier-browser.cjs`; see `docs/BUGS.md` BUG-41 (Resolved) for the full trace.
 - **Post-ship review fixes (Jul 8 2026, same PR #50 — two follow-up commits).** The
   adversarial review's one confirmed finding (**LOW-1**): a conversion crossing the ACA
   subsidy cliff with the marketplace premium left unset showed "\$0 in lost subsidy" and a
@@ -520,8 +523,8 @@ The End state section's patterns, turned into work items. Sequencing: Level 5 fo
 | Account comparison at retirement + milestones | Numbers → Accounts | 2.3 |
 | Tax phase timeline, brackets, effective/marginal rates | Numbers → Taxes | 2.4 |
 | Year-by-year projection table | Numbers → Year by year (extended) | 2.5 |
-| Working-year income flow | Numbers → Money flow (shipped) | — |
-| Portfolio needs breakdown (retirement income sources) | Numbers → Money flow, retirement view | 2.6 |
+| Working-year income flow | Numbers → Statement, `IncomeWaterfall` (shipped) | — |
+| Portfolio needs breakdown (retirement income sources) | Numbers → Statement, "Retirement income companion strip" (consolidated from the former Money-flow tab, PR #38 / BUG-41) | 2.6 |
 | Drawdown chart | Arc (shipped) + tap-to-scrub | 2.7 |
 | Flow-Down waterfall (3 phases, ~20 metrics, action cards) | Journey | 2.1 |
 | SS section (claim age, override, benefit, break-even, delay-to-70) | Strategies → SS timing | 3.4 |

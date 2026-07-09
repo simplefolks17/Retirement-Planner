@@ -838,8 +838,11 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   - **Browser verification:** verifier-browser passed every Horizon screen, the Classic
     round-trip, and the new flow. One pre-existing issue surfaced and was baseline-confirmed
     (reproduces before this build, at commit `9ba231b`): the verifier's "Numbers / Money flow"
-    tab click times out even though the tab renders correctly in the jsdom suite and manually —
-    filed as **BUG-41** (tooling-only, no product impact).
+    tab click times out. Filed same-day as **BUG-41**, initially misdiagnosed as a locator defect.
+    **Re-diagnosed + fixed at the same-session close-out:** the "Money flow" tab doesn't exist —
+    PR #38 (commit `434caf8`, 2026-06-24) consolidated it into Statement as a "Retirement income
+    companion strip" without documenting the removal; only the verifier's hardcoded tab list had
+    drifted. Fixed in `.claude/skills/verifier-browser.cjs`; see `docs/BUGS.md` BUG-41 (Resolved).
   - 584 → **643** tests, lint clean, build OK. Tracker: #103 + #106 done (59 done, 61 planned).
 
 ## Commands

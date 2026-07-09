@@ -23,7 +23,7 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 | `src/horizon/screens/PlanScreen.jsx` | Plan screen (arc, hero, income meter, QuickTune, signals strip, "Make this my plan") |
 | `src/horizon/screens/JourneyScreen.jsx` | Journey screen — the Flow-Down port (3-chapter narrative) |
 | `src/horizon/screens/IdeasScreen.jsx` | Ideas screen (dials, scenario cards, life events) |
-| `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen — 6 tabs (Statement, Budget, Accounts, Taxes, Year by year, Money flow) |
+| `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen — 5 tabs (Statement, Budget, Accounts, Taxes, Year by year); Statement carries a "Retirement income companion strip" (the consolidated former Money-flow retirement view — see below) |
 | `src/horizon/screens/StrategiesScreen.jsx` | Strategies catalogue (WI-3.3) — `STRATEGIES` registry of cards; each opens a `Flow` in the detail slot |
 | `src/horizon/screens/strategies/` | The interactive strategy flows: `SSTimingFlow.jsx` (WI-3.4), `RMDOutlookFlow.jsx` (WI-3.5), `ConversionPlannerFlow.jsx` (WI-3.6); `flow-ui.jsx` = shared `SectionLabel`/`NoteBox`/`StatTile` |
 | `src/horizon/screens/MyDetailsScreen.jsx` | My details (WI-3.2) — plan-fact topic cards over the setter bundles |
@@ -187,7 +187,15 @@ Scenario exploration — the arc is always the hero.
 
 ### The Numbers screen
 
-> **Now 6 tabs** (Statement · Budget · Accounts · Taxes · Year by year · Money flow) as of the Level-2 build-out (WI-2.2–2.6); the Budget/Accounts/Taxes bundles and the Year-by-year/Money-flow upgrades are documented in `docs/ROADMAP.md` (Level 2). The 3-tab description below is the original Level-1 shape, kept for history.
+> **Now 5 tabs** (Statement · Budget · Accounts · Taxes · Year by year). The Level-2 build-out
+> (WI-2.2–2.6) briefly grew Numbers to 6 tabs including a standalone "Money flow" tab; PR #38
+> (2026-06-24, commit `434caf8`) consolidated that tab's retirement-phase content into Statement
+> as a "Retirement income companion strip" (SS / Pension / Portfolio draw, shown beside the
+> existing working-year paycheck waterfall) and removed the now-redundant tab — a deliberate
+> simplification, documented at `docs/BUGS.md` BUG-41 after the consolidation went undocumented
+> in the original PR. The Budget/Accounts/Taxes bundles and the Year-by-year upgrade are
+> documented in `docs/ROADMAP.md` (Level 2). The 3-tab description below is the original Level-1
+> shape, kept for history.
 
 **3 tabs (original):**
 
