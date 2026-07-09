@@ -8,7 +8,7 @@
 // comparisons on model VALUES happen here beyond that one call and branching on
 // its own boolean output.
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
 import { StepBtn } from "./fields.jsx";
 import { fmt } from "./shared.jsx";
@@ -22,6 +22,15 @@ function inputStyle(t) {
 }
 
 function AgeControl({ t, label, value, min, max, step, onChange, isMobile }) {
+  // Desktop: free-type into a local draft (no clamp mid-keystroke — clamping on every
+  // onChange locks the input, e.g. typing "68" with min=60 clamps to 60 after the
+  // first digit "6", making the second digit impossible to add). The value only
+  // commits (clamped) to the parent on blur. Re-syncs the draft if `value` changes
+  // from outside (e.g. a future reset). Hooks run unconditionally (rules-of-hooks) —
+  // unused on the mobile path, which writes straight through via the steppers.
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => { setDraft(String(value)); }, [value]);
+
   if (isMobile) {
     const clamp = v => Math.max(min, Math.min(max, v));
     return (
@@ -39,11 +48,19 @@ function AgeControl({ t, label, value, min, max, step, onChange, isMobile }) {
       </div>
     );
   }
+
+  const commit = () => {
+    const clamped = draft === "" ? min : Math.max(min, Math.min(max, Number(draft) || min));
+    setDraft(String(clamped));
+    if (clamped !== value) onChange(clamped);
+  };
+
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ font: `500 11px ${HF}`, color: t.mut }}>{label}</span>
-      <input type="number" aria-label={label} min={min} max={max} step={step} value={value}
-        onChange={e => onChange(Math.max(min, Math.min(max, Number(e.target.value) || min)))}
+      <input type="number" aria-label={label} min={min} max={max} step={step} value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
         style={inputStyle(t)} />
     </label>
   );

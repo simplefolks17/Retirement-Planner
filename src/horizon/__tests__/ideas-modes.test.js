@@ -284,27 +284,32 @@ describe("IdeasScreen — Solvers mode", () => {
     act(() => renderer.unmount());
   });
 
-  it("desktop age input clamps an out-of-range typed value to its bounds (review-fix regression)", () => {
-    // Before the fix, the desktop <input type=number> passed Number(e.target.value)
-    // straight through with no clamp (only the mobile stepper clamped), so typing an
+  it("desktop age input allows free typing then clamps an out-of-range value on blur (review-fix regression)", () => {
+    // Before the first fix, the desktop <input type=number> passed Number(e.target.value)
+    // straight through with no clamp at all (only the mobile stepper clamped), so typing an
     // absurd age (e.g. 500) produced an event the retirement walk never reaches —
-    // isSustainable() then returns true for every amount, and the binary search
-    // converges on maxSearch (a nonsensical "$5,000,000 affordable" result).
+    // isSustainable() then returns true for every amount, and the binary search converges
+    // on maxSearch (a nonsensical "$5,000,000 affordable" result). A second review pass
+    // found that clamping on every onChange keystroke locks the input mid-typing (typing
+    // "68" with min=60 clamps to 60 after the first digit) — clamping moved to onBlur,
+    // with onChange left free so the draft can hold any intermediate typed text.
     const props = makeBaseProps();
     const renderer = mount(props);
     clickByText(renderer.root, "Solvers");
 
-    const input = renderer.root.findAll(
+    const findInput = () => renderer.root.findAll(
       n => n.type === "input" && n.props["aria-label"] === "One-time purchase at age"
     )[0];
-    expect(input).toBeTruthy();
-    act(() => { input.props.onChange({ target: { value: "500" } }); });
 
-    const clamped = renderer.root.findAll(
-      n => n.type === "input" && n.props["aria-label"] === "One-time purchase at age"
-    )[0];
+    // Mid-typing: onChange must NOT clamp — the draft holds the raw typed text.
+    act(() => { findInput().props.onChange({ target: { value: "6" } }); });
+    expect(findInput().props.value).toBe("6");
+
+    // Finishing an absurd value and blurring clamps to the field's bounds.
+    act(() => { findInput().props.onChange({ target: { value: "500" } }); });
+    act(() => { findInput().props.onBlur({ target: { value: "500" } }); });
     // affordView.purchaseAgeField.max is 89 (safeLifeExp - 1) in this fixture.
-    expect(clamped.props.value).toBe(89);
+    expect(findInput().props.value).toBe("89");
     act(() => renderer.unmount());
   });
 });

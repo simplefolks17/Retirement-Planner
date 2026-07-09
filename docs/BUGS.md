@@ -249,6 +249,41 @@ real answer, reachable by a simple typo (no special input needed beyond typing a
 **Where:** `src/horizon/AffordabilityPanel.jsx` (`AgeControl`'s desktop `<input>`).
 **Tests:** 1 new in `src/horizon/__tests__/ideas-modes.test.js` — types `500` into the purchase-age
 input and asserts the rendered value clamps to the field's `max` (89 in the test fixture).
+**Follow-up (2026-07-09, same day, found by Gemini's re-review of this exact fix):** clamping on
+every `onChange` keystroke locks the input mid-typing — with `min=60`, typing "68" clamps to `60`
+after the first digit ("6" < 60), making the second digit impossible to add naturally. Fixed by
+giving `AgeControl` a local uncommitted `draft` string state: `onChange` writes the raw typed text
+with no clamp, and only `onBlur` computes the clamped value and calls the parent `onChange`. The
+original out-of-range-submission bug this entry documents stays fixed (an absurd value still
+clamps once the field loses focus); only the mid-typing UX changed. Test updated to check the
+draft is unclamped after a single keystroke, then clamps on blur.
+
+---
+
+### BUG-48 — `affordView.defaultPurchaseAge` can exceed its own field's `max` bound (found + fixed 2026-07-09, Gemini re-review of PR #51)
+
+**Owner:** me_theguy. **Found by:** Gemini Code Assist, re-review round requested after the
+in-house pass's BUG-44/45/47 fixes were pushed.
+**What:** `App.jsx`'s `affordView` computed `defaultPurchaseAge: currentAge +
+ASSUMPTIONS.AFFORD_DEFAULT_PURCHASE_OFFSET_YRS` (currently `+5`) without clamping it against the
+`purchaseAgeField.max` (`safeLifeExp - 1`) bound the same object declares. `AffordabilityPanel`
+seeds its local `purchaseAge` state directly from this default on mount — so for a user whose
+`currentAge` is close to their planning horizon, the initial (untouched) input value could exceed
+its own field's stated maximum before the user types anything.
+**Reachable how:** `currentAge`'s own slider goes up to 80. With `currentAge = 80` and a modest
+`lifeExpect` (e.g. `84`, itself only constrained to be `> retirementAge`), `safeLifeExp = 84`,
+`purchaseAgeField.max = 83`, but `defaultPurchaseAge = 85` — 2 years past the field's own bound,
+with no typing required to trigger it.
+**Fixed:** `defaultPurchaseAge` now clamps to `purchaseAgeField.max` (via `Math.min`) inside the
+`affordView` memo itself — bounds math stays in the model/App layer (rule 10), not the screen.
+Deliberately clamped the *default down* to fit the existing bound rather than *expanding the
+bound* to fit the default (Gemini's suggested patch did the latter) — the `max` represents "before
+the plan horizon ends," a real constraint that shouldn't stretch just to accommodate an oversized
+default.
+**Where:** `src/App.jsx` (`affordView` memo).
+**Tests:** none added — the existing `AffordabilityPanel`/Solvers-mode tests all use fixtures where
+this doesn't trigger; the fix is a one-line, directly-inspectable clamp with an obvious invariant
+(`defaultPurchaseAge <= purchaseAgeField.max` always holds by construction after the `Math.min`).
 
 ---
 

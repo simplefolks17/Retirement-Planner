@@ -246,7 +246,13 @@ export default function App() {
   // (calcAffordabilityMax itself is called by the screen slice that builds the
   // panel; this slice only exposes the model-derived defaults/bounds, rule 10).
   const affordView = useMemo(() => ({
-    defaultPurchaseAge: currentAge + ASSUMPTIONS.AFFORD_DEFAULT_PURCHASE_OFFSET_YRS,
+    // Clamped to purchaseAgeField's own bounds (not the other way around — expanding
+    // max to fit an oversized default would let purchases land past the plan horizon).
+    // Reachable: currentAge's slider goes to 80, so currentAge + offset can exceed
+    // safeLifeExp - 1 for anyone close to their planning horizon (review fix).
+    defaultPurchaseAge: Math.min(
+      currentAge + ASSUMPTIONS.AFFORD_DEFAULT_PURCHASE_OFFSET_YRS, safeLifeExp - 1
+    ),
     purchaseAgeField: { min: currentAge, max: safeLifeExp - 1, step: 1 },
     defaultTargetAge: safeLifeExp,
     targetAgeField: { min: safeRetAge + 1, max: 115, step: 1 },
