@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { applyMoneyEvents, totalEventImpact } from "../money-events.js";
+import {
+  applyMoneyEvents, totalEventImpact,
+  eventNetForYear, eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
+  isDurationEvent,
+} from "../money-events.js";
 
 describe("applyMoneyEvents", () => {
   it("returns zero adjustment when events array is empty", () => {
@@ -168,5 +172,123 @@ describe("runSimulation with moneyEvents", () => {
     const withEmpty = runSimulation({ ...base, moneyEvents: [] });
     const noParam   = runSimulation(base);
     expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(noParam));
+  });
+});
+
+// ── Duration events ($X/mo for N months, optional income offset) ──────────────
+describe("duration events", () => {
+  const travel6mo = {
+    label: "Travel", monthlyAmount: 6_000, durationMonths: 6, age: 40,
+    isInflow: false, incomeAnnual: 0,
+  };
+  const travel18mo = {
+    label: "Long travel", monthlyAmount: 6_000, durationMonths: 18, age: 40,
+    isInflow: false, incomeAnnual: 0,
+  };
+
+  it("isDurationEvent distinguishes the two kinds", () => {
+    expect(isDurationEvent(travel6mo)).toBe(true);
+    expect(isDurationEvent({ amount: 40_000, age: 70, isInflow: false })).toBe(false);
+    expect(isDurationEvent({ monthlyAmount: 6_000, durationMonths: 0, age: 40 })).toBe(false);
+  });
+
+  it("a 6-month event lands entirely in its start year", () => {
+    expect(eventNetForYear(travel6mo, 40)).toBe(-36_000);
+    expect(eventNetForYear(travel6mo, 41)).toBe(0);
+    expect(eventNetForYear(travel6mo, 39)).toBe(0);
+  });
+
+  it("an 18-month event splits 12 months / 6 months across two years", () => {
+    expect(eventNetForYear(travel18mo, 40)).toBe(-72_000);
+    expect(eventNetForYear(travel18mo, 41)).toBe(-36_000);
+    expect(eventNetForYear(travel18mo, 42)).toBe(0);
+  });
+
+  it("income while traveling offsets the outflow, prorated by active months", () => {
+    const withIncome = { ...travel6mo, incomeAnnual: 24_000 };
+    // −(6 × 6k) + (6/12 × 24k) = −36k + 12k
+    expect(eventNetForYear(withIncome, 40)).toBe(-24_000);
+  });
+
+  it("an inflow duration event adds monthly amounts plus income", () => {
+    const partTime = { monthlyAmount: 2_000, durationMonths: 12, age: 60, isInflow: true, incomeAnnual: 0 };
+    expect(eventNetForYear(partTime, 60)).toBe(24_000);
+  });
+
+  it("eventFirstAge / eventLastAge cover the active year span", () => {
+    expect(eventFirstAge(travel6mo)).toBe(40);
+    expect(eventLastAge(travel6mo)).toBe(40);
+    expect(eventLastAge(travel18mo)).toBe(41);
+    expect(eventLastAge({ ...travel6mo, durationMonths: 24 })).toBe(41);
+    expect(eventLastAge({ ...travel6mo, durationMonths: 25 })).toBe(42);
+    expect(eventLastAge({ amount: 40_000, age: 70, isInflow: false })).toBe(70);
+  });
+
+  it("eventGrossCost is monthly × months (income offset excluded)", () => {
+    expect(eventGrossCost({ ...travel6mo, incomeAnnual: 24_000 })).toBe(36_000);
+    expect(eventGrossCost({ amount: 40_000, age: 70, isInflow: false })).toBe(40_000);
+  });
+
+  it("eventNetTotal sums the signed impact across all active years", () => {
+    expect(eventNetTotal(travel18mo)).toBe(-108_000);
+    expect(eventNetTotal({ ...travel18mo, incomeAnnual: 24_000 })).toBe(-72_000); // +18/12 × 24k
+    expect(eventNetTotal({ amount: 40_000, age: 70, isInflow: false })).toBe(-40_000);
+  });
+
+  it("applyMoneyEvents folds duration events into portfolioAdjustment per year", () => {
+    const events = [travel18mo, { amount: 10_000, age: 41, isInflow: true, isTaxable: false }];
+    expect(applyMoneyEvents(events, 40).portfolioAdjustment).toBe(-72_000);
+    expect(applyMoneyEvents(events, 41).portfolioAdjustment).toBe(-26_000); // −36k + 10k
+    expect(applyMoneyEvents(events, 42).portfolioAdjustment).toBe(0);
+  });
+
+  it("duration events never produce taxable income (documented simplification)", () => {
+    const flagged = { ...travel6mo, isInflow: true, isTaxable: true };
+    expect(applyMoneyEvents([flagged], 40).taxableIncomeAdjustment).toBe(0);
+  });
+
+  it("totalEventImpact includes duration events", () => {
+    expect(totalEventImpact([travel6mo, { amount: 50_000, age: 65, isInflow: true }]))
+      .toBe(14_000); // −36k + 50k
+  });
+
+  it("runSimulation applies a duration event's years to the taxable account", async () => {
+    const { runSimulation } = await import("../simulation.js");
+    const em = () => 0;
+    const base = {
+      totalYears: 30, currentAge: 30, currentIncome: 100_000, incomeGrowth: 0,
+      filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 0,
+      bal401k: 0, balRoth: 0, balTaxable: 500_000, balHSA: 0,
+      contrib401k: 0, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+      contribEnd401k: 0, contribEndRoth: 0, contribEndTaxable: 0, contribEndHSA: 0,
+      calcEmployerMatchFn: em,
+    };
+    const withEvent = runSimulation({
+      ...base,
+      moneyEvents: [{ monthlyAmount: 6_000, durationMonths: 18, age: 40, isInflow: false, incomeAnnual: 0 }],
+    });
+    const without = runSimulation(base);
+    const at = (rows, age) => rows.find(r => r.age === age)["Taxable"];
+    // 0% return → deltas are exactly the event months
+    expect(at(without, 40) - at(withEvent, 40)).toBe(72_000);
+    expect(at(without, 41) - at(withEvent, 41)).toBe(108_000);
+    expect(at(without, 42) - at(withEvent, 42)).toBe(108_000);
+  });
+
+  it("buildRetirementDrawdown applies a duration event across its retirement years", async () => {
+    const { buildRetirementDrawdown } = await import("../retirement-drawdown.js");
+    const base = {
+      startBal: 2_000_000, startAge: 65, endAge: 90, rReal: 0,
+      effectiveExpenses: 0, moneyEvents: [],
+    };
+    const withEvent = buildRetirementDrawdown({
+      ...base,
+      moneyEvents: [{ monthlyAmount: 5_000, durationMonths: 24, age: 70, isInflow: false, incomeAnnual: 0 }],
+    });
+    const without = buildRetirementDrawdown(base);
+    const at = (walk, age) => walk.rows.find(r => r.age === age).total;
+    expect(at(without, 70) - at(withEvent, 70)).toBe(60_000);
+    expect(at(without, 71) - at(withEvent, 71)).toBe(120_000);
+    expect(at(without, 72) - at(withEvent, 72)).toBe(120_000);
   });
 });

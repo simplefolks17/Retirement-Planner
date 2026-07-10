@@ -3,6 +3,7 @@ import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo, kbActivate } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
+import LifeEventSheet from "../LifeEventSheet.jsx";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
 function SignalsStrip({ t, signals, navigate, isMobile }) {
@@ -498,10 +499,24 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     contribSeries, activity,
     planView, signals, moneyEvents, retirementWalk,
     planHighlights, planDelta, statementView,
+    // Life-event edit-in-place: badge tap on the arc opens the sheet.
+    whatIfSimInputs, setMoneyEvents, lifeEventBounds,
   } = props;
 
   const [arcView, setArcView] = useState("arc");
   const [isDirty, setIsDirty] = useState(false);
+
+  // Committed-event edit sheet ({ seed, eventId }) — opened by tapping an arc badge.
+  const [eventSheet, setEventSheet] = useState(null);
+  const openEventSheet = (ev) => setEventSheet({ seed: ev, eventId: ev.id });
+  const handleEventSave = (ev) => {
+    setMoneyEvents(prev => prev.map(me => (me.id === eventSheet.eventId ? ev : me)));
+    setEventSheet(null);
+  };
+  const handleEventRemove = () => {
+    setMoneyEvents(prev => prev.filter(me => me.id !== eventSheet.eventId));
+    setEventSheet(null);
+  };
 
   const { progressPct } = planView;
   const wrOk = planView.drivers.find(d => d.id === "withdrawal")?.ok;
@@ -579,6 +594,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
               showToggle={false}
               events={moneyEvents ?? []}
               walkRows={retirementWalk?.rows ?? []}
+              onEventTap={openEventSheet}
             />
           </div>
           {/* Hero row — 2-up on mobile */}
@@ -617,6 +633,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
               showToggle
               events={moneyEvents ?? []}
               walkRows={retirementWalk?.rows ?? []}
+              onEventTap={openEventSheet}
             />
           </div>
           <div style={{ width: 320, flexShrink: 0, overflowY: "auto" }}>
@@ -668,6 +685,19 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
 
       {/* ── signals strip ────────────────────────────────────────────────────── */}
       <SignalsStrip t={t} signals={signals} navigate={navigate} isMobile={isMobile} />
+
+      {/* ── life-event edit sheet (opened by tapping an arc badge) ───────────── */}
+      {eventSheet && (
+        <LifeEventSheet
+          t={t}
+          whatIfBundle={whatIfSimInputs}
+          bounds={lifeEventBounds}
+          initial={eventSheet.seed}
+          onSave={handleEventSave}
+          onRemove={handleEventRemove}
+          onCancel={() => setEventSheet(null)}
+        />
+      )}
     </div>
   );
 }

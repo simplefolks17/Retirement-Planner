@@ -66,6 +66,13 @@ preview for the conversion optimizer suggestion deliberately does **not** use `c
 it runs `buildRetirementPhase` directly (the engine itself), sidestepping this gap for that one
 new surface rather than closing it generally. `calcWhatIfDelta`/`calcOptimizedScenario` themselves
 are unchanged.
+**Scope note (2026-07-10, life-event placement build):** `runSimulation` and
+`buildRetirementDrawdown` no longer inline the event sign — both now call the shared
+`eventNetForYear` (`money-events.js`), which also splits the new **duration events** ("$X/mo for
+N months") across their active years. The tax gap itself is unchanged: both still consume only the
+portfolio adjustment and charge no income tax on taxable inflows (the engine remains the only walk
+that does), and duration events are untaxed **by design everywhere** (documented in
+`money-events.js` — their `incomeAnnual` offset is treated as after-tax cash). Still open.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
@@ -134,6 +141,37 @@ as described; this session's build never touched `flow-down.js`.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-42 — `calcWhatIfScenario` silently dropped pre-retirement `scenarioEvents` (found + fixed 2026-07-10, life-event placement build)
+
+**Owner:** me_theguy. **Found by:** design pass for the life-event sheet (video-inspired arc-event
+placement), while tracing where a candidate event's impact would come from.
+**What:** `calcWhatIfScenario` (`src/model/what-if.js`) passed `overrides.scenarioEvents` ONLY into
+the retirement walk (`mergedEvents`). The walk iterates ages `scenarioRetAge+1 …`, so a scenario
+event at an age **before** retirement never matched any walk year and was silently ignored — the
+scenario chart/stats showed no impact at all for a pre-retirement event. Latent in production:
+both existing callers (Ideas `bigTrip` at 70; life-event pill commits, which go through committed
+`moneyEvents`, not `scenarioEvents`) only ever passed post-retirement events. It became live the
+moment the new `evaluateLifeEvent` needed pre-retirement candidates.
+**Second (boundary) symptom, same fix:** the re-sim path's accumulation filter was
+`ev.age < scenarioRetAge`, but the sim row that `calcWhatIfScenario` reads IS the
+retirement-age row — the main App path (which passes the full event list to `runSimulation`)
+therefore counts an event landing exactly at the retirement age, while the what-if re-sim dropped
+it. Inconsistent baselines for the same plan.
+**Fix (2026-07-10, same session):** scenario events with any pre-/at-retirement activity now force
+a re-sim that includes them alongside the committed accumulation events
+(`scenarioAccum = scenarioEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge)`), and all
+phase filters in `what-if.js` + `App.jsx` (`retPhaseBase` / `retDrawShared`) are **kind-aware**
+via the new `eventFirstAge`/`eventLastAge` helpers (`money-events.js`), so a duration event
+("$X/mo for N months") spanning the retirement boundary reaches both walks and each applies only
+the years inside its own age range — every event-year counted exactly once. Golden master
+untouched (default `moneyEvents`/`scenarioEvents` are empty).
+**Where:** `src/model/what-if.js` (re-sim trigger + filters), `src/model/money-events.js` (new
+helpers), `src/App.jsx` (walk filters). Regression tests: "calcWhatIfScenario no longer drops
+pre-retirement scenarioEvents" + the boundary-spanning duration test in
+`src/model/__tests__/what-if.test.js`.
 
 ---
 

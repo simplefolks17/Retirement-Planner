@@ -12,6 +12,9 @@
 import { runSimulation } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
+import {
+  eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
+} from "./money-events.js";
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
 // Computes the impact of scenario overrides vs the baseline.
@@ -51,9 +54,11 @@ export function calcWhatIfDelta({
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
   const scenarioExpenses  = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
 
-  // Split events by phase
-  const accumEvents = moneyEvents.filter(ev => ev.age < scenarioRetAge);
-  const retEvents   = moneyEvents.filter(ev => ev.age >= scenarioRetAge);
+  // Split events by phase — kind-aware (money-events.js): a duration event
+  // spanning the retirement boundary goes to BOTH walks; each walk applies only
+  // the years inside its own age range via eventNetForYear.
+  const accumEvents = moneyEvents.filter(ev => eventFirstAge(ev) < scenarioRetAge);
+  const retEvents   = moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge);
 
   // ── Step 1: determine scenario starting balance at retirement ──────────────
   let scenarioTotalAtRet = baseTotalAtRet;
@@ -188,11 +193,27 @@ export function calcWhatIfScenario({
   // Determine starting portfolio balance at the scenario retirement age
   let startBal = baseTotalAtRet ?? 0;
 
-  if (scenarioRetAge !== safeRetAge) {
+  // Scenario events with pre-retirement activity force a re-sim even when the
+  // retirement age is unchanged — they change the compounded balance AT
+  // retirement. (Previously scenarioEvents reached only the retirement walk, so
+  // a pre-retirement scenario event was silently ignored — BUG-42.)
+  // Boundary: the sim row that is read below IS the retirement-age row, so an
+  // event landing exactly at the retirement age belongs in the sim (this matches
+  // the main App path, where runSimulation gets the full event list) — hence <=.
+  const committedEvents = simInputs.moneyEvents ?? [];
+  const scenarioAccum   = scenarioEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge);
+
+  if (scenarioRetAge !== safeRetAge || scenarioAccum.length > 0) {
     try {
-      // Keep permanent accumulation-phase plan events in the re-sim (BUG-34):
-      // only events at/after the scenario retirement age move to the walk below.
-      const accumEvents = (simInputs.moneyEvents ?? []).filter(ev => ev.age < scenarioRetAge);
+      // Keep permanent accumulation-phase plan events in the re-sim (BUG-34).
+      // Kind-aware filter (money-events.js): a duration event spanning the
+      // boundary stays in — the sim result is read at the retirement-age row,
+      // so only its months up to that row land in the starting balance; the
+      // walk below applies the later months (it starts one year after).
+      const accumEvents = [
+        ...committedEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge),
+        ...scenarioAccum,
+      ];
       const raw    = runSimulation({ ...simInputs, moneyEvents: accumEvents });
       const retIdx = scenarioRetAge - simInputs.currentAge - 1;
       const at     = raw[retIdx];
@@ -211,8 +232,13 @@ export function calcWhatIfScenario({
   // scenario retires EARLIER than the base plan, permanent events between the
   // two retirement ages move from the accumulation phase into the walk
   // (retDrawShared.moneyEvents was filtered at the BASE retirement age).
+  // Kind-aware gap filter: an event whose LAST active year falls in the gap moves
+  // to the walk; one that also spans past the base retirement age is already in
+  // retDrawShared.moneyEvents (filtered by eventLastAge in App.jsx) and must not
+  // be duplicated here.
   const gapEvents = scenarioRetAge < safeRetAge
-    ? (simInputs.moneyEvents ?? []).filter(ev => ev.age >= scenarioRetAge && ev.age < safeRetAge)
+    ? committedEvents.filter(ev =>
+        eventLastAge(ev) >= scenarioRetAge && eventLastAge(ev) < safeRetAge)
     : [];
   const mergedEvents = [...(retDrawShared.moneyEvents ?? []), ...gapEvents, ...scenarioEvents];
 
@@ -282,6 +308,118 @@ export function calcWhatIfScenario({
 export function calcWhatIfChart(bundle, overrides = {}) {
   const scenario = calcWhatIfScenario(bundle, overrides);
   return scenario ? scenario.chart : [];
+}
+
+// ── evaluateLifeEvent ────────────────────────────────────────────────────────
+// The model behind the Horizon life-event sheet (sheet-first placement flow):
+// ONE candidate event → a plain-language verdict plus concrete impact deltas,
+// all computed HERE so the sheet renders and formats only (rule 10).
+//
+// Both runs are calcWhatIfScenario (baseline = no overrides, scenario = the
+// candidate event), so the verdict, the deltas, and any arc overlay drawn from
+// scenario.chart come from the SAME walk and can never disagree (V1/principle 7).
+//
+// Verdict (thresholds in ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS):
+//   "unaffordable" — with the event, the portfolio depletes before the plan age
+//   "tight"        — sustains to plan age with less than the buffer to spare
+//   "comfortable"  — sustains at least buffer years past plan age (or forever)
+//
+// Returns null when inputs are invalid; otherwise:
+//   {
+//     verdict,               // "comfortable" | "tight" | "unaffordable"
+//     grossCost,             // total $ of the event itself (duration: monthly × months)
+//     netTotal,              // signed net portfolio impact across all event years
+//     chart,                 // scenario arc series (same run as the verdict)
+//     atRetirement: { age, base, scenario, deltaAbs, dir },
+//         // portfolio at the retirement age; dir "down" | "up" | null (no change —
+//         // e.g. a post-retirement event never moves this number)
+//     atPlanAge: { age, base, scenario, deltaAbs, dir },
+//         // balance at the plan (life-expectancy) age from the walk rows;
+//         // base/scenario are null when the walk doesn't reach that age —
+//         // "not applicable", NOT zero (screens render "—")
+//     sustainability: {
+//       baseYears, scenarioYears,          // years sustained; Infinity = never depletes
+//       baseDepletionAge, scenarioDepletionAge,  // null = never depletes
+//       marginYears,                       // scenarioYears − plan horizon (Infinity ok)
+//       stillSustainable,                  // scenario sustains to the plan age
+//       newlyDepletes, depletionMoved,     // display flags (rule 10 — no comparisons in JSX)
+//     },
+//   }
+export function evaluateLifeEvent(bundle, event) {
+  if (!event) return null;
+  const base = calcWhatIfScenario(bundle, {});
+  const scen = calcWhatIfScenario(bundle, { scenarioEvents: [event] });
+  if (!base || !scen) return null;
+
+  const { safeRetAge, safeLifeExp } = bundle;
+
+  const balAt = (run, age) => {
+    const row = (run.chart ?? []).find(r => r.age === age);
+    return row ? row.total : null;
+  };
+  const dirOf = (delta) =>
+    Math.round(delta) < 0 ? "down" : Math.round(delta) > 0 ? "up" : null;
+
+  const retBase = base.scenarioTotalAtRet;
+  const retScen = scen.scenarioTotalAtRet;
+  const planBase = balAt(base, safeLifeExp);
+  const planScen = balAt(scen, safeLifeExp);
+
+  const planHorizon = safeLifeExp - safeRetAge;
+  const marginYears = scen.scenarioYears === Infinity
+    ? Infinity
+    : scen.scenarioYears - planHorizon;
+  const verdict = marginYears < 0
+    ? "unaffordable"
+    : marginYears < ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS
+      ? "tight"
+      : "comfortable";
+
+  const walkDepletion = (run) => {
+    if (run.scenarioYears === Infinity) return null;
+    // yearsSustained is measured from the retirement age (far-horizon walk).
+    return Math.round(run.scenarioRetAge + run.scenarioYears);
+  };
+
+  return {
+    verdict,
+    grossCost: Math.round(eventGrossCost(event)),
+    netTotal:  Math.round(eventNetTotal(event)),
+    chart: scen.chart,
+    atRetirement: {
+      age: safeRetAge,
+      base: retBase,
+      scenario: retScen,
+      deltaAbs: Math.abs(Math.round(retScen - retBase)),
+      dir: dirOf(retScen - retBase),
+    },
+    atPlanAge: {
+      age: safeLifeExp,
+      base: planBase,
+      scenario: planScen,
+      deltaAbs: (planBase != null && planScen != null)
+        ? Math.abs(Math.round(planScen - planBase))
+        : null,
+      dir: (planBase != null && planScen != null) ? dirOf(planScen - planBase) : null,
+    },
+    sustainability: (() => {
+      const baseDepletionAge     = walkDepletion(base);
+      const scenarioDepletionAge = walkDepletion(scen);
+      return {
+        baseYears: base.scenarioYears,
+        scenarioYears: scen.scenarioYears,
+        baseDepletionAge,
+        scenarioDepletionAge,
+        marginYears,
+        stillSustainable: marginYears >= 0,
+        // Pre-computed display flags so screens never compare model values (rule 10):
+        // the event newly introduced a depletion / moved an existing depletion age.
+        newlyDepletes: scenarioDepletionAge != null && baseDepletionAge == null,
+        depletionMoved: scenarioDepletionAge != null && baseDepletionAge != null
+          && baseDepletionAge !== scenarioDepletionAge,
+      };
+    })(),
+  };
 }
 
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────

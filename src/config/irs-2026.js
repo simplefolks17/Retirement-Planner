@@ -342,4 +342,11 @@ export const ASSUMPTIONS = {
   // below 50% is a significant shortfall. Not IRS rules — planning heuristics.
   INCOME_REPLACEMENT_GOOD_PCT: 70,
   INCOME_REPLACEMENT_WARN_PCT: 50,
+
+  // Life-event verdict buffer (evaluateLifeEvent, what-if.js): with the event
+  // applied, the portfolio must outlast the plan age by at least this many years
+  // to read "comfortable"; sustaining to plan age with less margin reads "tight";
+  // depleting before plan age reads "unaffordable". A planning heuristic, not an
+  // IRS rule.
+  EVENT_COMFORT_BUFFER_YEARS: 5,
 };

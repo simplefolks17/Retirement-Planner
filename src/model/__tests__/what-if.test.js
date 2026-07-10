@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario } from "../what-if.js";
+import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent } from "../what-if.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
@@ -306,5 +306,114 @@ describe("calcWhatIfScenario", () => {
   it("returns null for missing inputs (and calcWhatIfChart maps that to [])", () => {
     expect(calcWhatIfScenario({})).toBeNull();
     expect(calcWhatIfChart({})).toEqual([]);
+  });
+});
+
+// ── evaluateLifeEvent (life-event sheet: verdict + impact deltas) ─────────────
+describe("evaluateLifeEvent", () => {
+  it("returns null for a missing event or invalid bundle", () => {
+    expect(evaluateLifeEvent(baseArgs, null)).toBeNull();
+    expect(evaluateLifeEvent({ ...baseArgs, simInputs: null },
+      { amount: 10_000, age: 70, isInflow: false })).toBeNull();
+  });
+
+  it("a pre-retirement outflow reduces the portfolio at retirement (BUG-42 regression)", () => {
+    const result = evaluateLifeEvent(baseArgs, {
+      label: "Home", amount: 100_000, age: 40, isInflow: false, isTaxable: false,
+    });
+    expect(result.atRetirement.dir).toBe("down");
+    // Lost compounding: the delta at retirement exceeds the sticker price.
+    expect(result.atRetirement.deltaAbs).toBeGreaterThan(100_000);
+    expect(result.grossCost).toBe(100_000);
+    expect(result.netTotal).toBe(-100_000);
+  });
+
+  it("calcWhatIfScenario no longer drops pre-retirement scenarioEvents (BUG-42 regression)", () => {
+    const scen = calcWhatIfScenario(baseArgs, {
+      scenarioEvents: [{ label: "Home", amount: 100_000, age: 40, isInflow: false, isTaxable: false }],
+    });
+    expect(scen.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
+  });
+
+  it("a post-retirement event leaves the retirement balance unchanged but moves the plan-age balance", () => {
+    const result = evaluateLifeEvent(baseArgs, {
+      label: "Trip", amount: 200_000, age: 70, isInflow: false, isTaxable: false,
+    });
+    expect(result.atRetirement.dir).toBeNull();
+    expect(result.atRetirement.deltaAbs).toBe(0);
+    expect(result.atPlanAge.dir).toBe("down");
+    expect(result.atPlanAge.deltaAbs).toBeGreaterThan(0);
+  });
+
+  it("a duration event is costed as monthly × months with income offset in netTotal", () => {
+    const result = evaluateLifeEvent(baseArgs, {
+      label: "Travel", monthlyAmount: 6_000, durationMonths: 6, age: 40,
+      isInflow: false, incomeAnnual: 24_000,
+    });
+    expect(result.grossCost).toBe(36_000);
+    expect(result.netTotal).toBe(-24_000);
+    expect(result.atRetirement.dir).toBe("down");
+  });
+
+  it("a duration event spanning the retirement boundary hits both phases exactly once", () => {
+    // 24 months starting the year BEFORE retirement (64): 12 months land at 64
+    // (accumulation) and 12 at 65 (the retirement-age sim row); the walk from 66
+    // adds nothing. Zero-rate variant so the arithmetic is exact.
+    const flatSim = { ...simInputs, returnRate: 0, incomeGrowth: 0,
+      contrib401k: 0, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+      calcEmployerMatchFn: () => 0 };
+    const flatBase = runSimulation(flatSim)[safeRetAge - currentAge - 1];
+    const flatTotal = (flatBase.tradGross ?? 0) + flatBase["Roth IRA"] + flatBase["Taxable"] + flatBase["HSA"];
+    const bundle = { ...baseArgs, simInputs: flatSim, baseTotalAtRet: flatTotal };
+    const result = evaluateLifeEvent(bundle, {
+      label: "Span", monthlyAmount: 1_000, durationMonths: 24, age: 64,
+      isInflow: false, incomeAnnual: 0,
+    });
+    expect(result.atRetirement.deltaAbs).toBe(24_000);
+    expect(result.atRetirement.dir).toBe("down");
+  });
+
+  // Verdict thresholds — depleting bundle with tuned expenses. Plan horizon is
+  // 25 years (65 → 90); the probe event is small so the pre-computed margins hold:
+  //   $30k spend → ~31.0 yrs sustained → margin ~+6.0 → comfortable
+  //   $33k spend → ~27.7 yrs           → margin ~+2.7 → tight
+  //   $40k spend → ~22.3 yrs           → margin ~−2.7 → unaffordable
+  const verdictBundle = (expenses) => ({
+    ...depletingArgs,
+    retDrawShared: { ...depletingRetDrawShared, effectiveExpenses: expenses },
+  });
+  const probeEvent = { label: "Probe", amount: 1_000, age: 70, isInflow: false, isTaxable: false };
+
+  it("verdict = comfortable when the portfolio outlasts plan age by the buffer", () => {
+    const r = evaluateLifeEvent(verdictBundle(30_000), probeEvent);
+    expect(r.verdict).toBe("comfortable");
+    expect(r.sustainability.stillSustainable).toBe(true);
+  });
+
+  it("verdict = tight when it sustains to plan age with little margin", () => {
+    const r = evaluateLifeEvent(verdictBundle(33_000), probeEvent);
+    expect(r.verdict).toBe("tight");
+    expect(r.sustainability.stillSustainable).toBe(true);
+    expect(r.sustainability.marginYears).toBeGreaterThanOrEqual(0);
+    expect(r.sustainability.marginYears).toBeLessThan(5);
+  });
+
+  it("verdict = unaffordable when the event depletes the portfolio before plan age", () => {
+    const r = evaluateLifeEvent(verdictBundle(40_000), probeEvent);
+    expect(r.verdict).toBe("unaffordable");
+    expect(r.sustainability.stillSustainable).toBe(false);
+    expect(r.sustainability.scenarioDepletionAge).not.toBeNull();
+    expect(r.sustainability.scenarioDepletionAge).toBeLessThan(safeLifeExp);
+  });
+
+  it("verdict = comfortable with infinite margin when the portfolio never depletes", () => {
+    const r = evaluateLifeEvent({
+      ...depletingArgs,
+      baseTotalAtRet: 10_000_000,
+      retDrawShared: { ...depletingRetDrawShared, effectiveExpenses: 30_000 },
+    }, probeEvent);
+    expect(r.verdict).toBe("comfortable");
+    expect(r.sustainability.marginYears).toBe(Infinity);
+    expect(r.sustainability.scenarioDepletionAge).toBeNull();
   });
 });

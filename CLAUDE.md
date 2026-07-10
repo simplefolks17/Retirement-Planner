@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (643 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (674 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (120 items, 59 done, 61 planned)
+- Feature backlog: `feature-tracker.html` (121 items, 60 done, 61 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -845,10 +845,40 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     drifted. Fixed in `.claude/skills/verifier-browser.cjs`; see `docs/BUGS.md` BUG-41 (Resolved).
   - 584 → **643** tests, lint clean, build OK. Tracker: #103 + #106 done (59 done, 61 planned).
 
+- **Life-event placement on the arc (2026-07-10, branch `claude/arc-event-placement-video-61zalx`,
+  feature #121):** the video-inspired (Copilot Money "Path") what-if event flow, owner decisions:
+  sheet-first placement / duration-based events / verdict + impact bullets / upgrade Ideas + Plan.
+  **Model:** `money-events.js` gains **duration events** (`{ monthlyAmount, durationMonths, age,
+  isInflow, incomeAnnual }` — "$X/mo for N months", income offset prorated; untaxed by design,
+  BUG-36 scope note) beside one-time events; `eventNetForYear` is the ONE per-year source, now
+  consumed by `runSimulation`, `buildRetirementDrawdown`, AND the per-account engine (which already
+  used `applyMoneyEvents`); new `eventFirstAge`/`eventLastAge` make every phase filter
+  (`App.jsx` `retPhaseBase`/`retDrawShared`, `what-if.js` accum/ret splits) **kind-aware**, so a
+  boundary-spanning duration event reaches both walks and each applies only its own years.
+  New `evaluateLifeEvent` (`what-if.js`): baseline + candidate `calcWhatIfScenario` runs → verdict
+  ("comfortable"/"tight"/"unaffordable", buffer `ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS: 5`),
+  `grossCost`/`netTotal`, `atRetirement`/`atPlanAge` deltas with model-computed `dir`, and
+  sustainability flags (`newlyDepletes`/`depletionMoved`) — screens render only (rule 10).
+  **BUG-42 found + fixed en route** (`docs/BUGS.md`): `calcWhatIfScenario` silently dropped
+  pre-retirement `scenarioEvents` (they only reached the retirement walk) and its re-sim excluded
+  events at exactly the retirement age that the main App path counts; pre-/at-retirement scenario
+  events now force a re-sim that includes them. **UI:** new `src/horizon/LifeEventSheet.jsx`
+  (one-time vs "Monthly, for a while" toggle, income-while-it-runs field, age slider bounded by the
+  new memoized `horizonProps.lifeEventBounds`, live verdict card + impact bullets); `ArcGraph`
+  event dots upgraded to **tappable icon badges with stems** (`icon` field, `onEventTap` prop;
+  `events=[]` still renders pixel-identical); Ideas life-event pills open the sheet seeded from the
+  preset (LIFE_EVENTS got icons, `scen` coupling dropped, "Travel 6 months" + "Part-time at 60"
+  became duration seeds — preset value-locks updated deliberately), placed pills + arc badges
+  re-open it in edit mode with Remove; Plan arc badges tap-to-edit too. Classic panels untouched.
+  Golden master untouched (defaults empty). 643 → **674** tests (+23 model, +8 sheet/badge);
+  lint clean; build OK; Playwright verifier all screens + a scripted end-to-end drive of the new
+  flow (open sheet → duration change updates verdict → commit → badge on both arcs → edit →
+  remove).
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (643 tests)
+- `npm test` — run model + formatter + render-smoke tests (674 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

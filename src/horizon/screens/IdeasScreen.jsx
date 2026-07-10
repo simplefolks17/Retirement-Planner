@@ -3,6 +3,7 @@ import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
+import LifeEventSheet from "../LifeEventSheet.jsx";
 import { calcWhatIfScenario } from "../../model/what-if.js";
 
 // Scenario definitions — overrides only, no display numbers. Every figure shown
@@ -23,13 +24,20 @@ export const SCENARIOS = [
     scenarioEvents: [{ label: "Big trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false }] },
 ];
 
-// Life events that can be added to the user's plan as one-time money events.
+// Life-event presets — SEEDS for the LifeEventSheet (sheet-first placement flow):
+// tapping a pill opens the sheet pre-filled with these values; the user tunes
+// amount/age/duration there, sees the live verdict, and commits. Presets carry
+// no display numbers — every figure the sheet shows comes from evaluateLifeEvent.
+// One-time seeds have `amount`; duration seeds have monthlyAmount/durationMonths/
+// incomeAnnual ($X/mo for N months, money-events.js). `icon` is the arc badge.
 export const LIFE_EVENTS = [
-  { l: "Buy a home",      age: 40, scen: "retire63", amount: 60_000, isInflow: false },
-  { l: "Kid's college",   age: 52, scen: "retire60", amount: 50_000, isInflow: false },
-  { l: "Big trip · $40k", age: 70, scen: "bigTrip",  amount: 40_000, isInflow: false },
-  { l: "Downsize",        age: 72, scen: "saveMore",  amount: 80_000, isInflow: true  },
-  { l: "Part-time at 60", age: 60, scen: "retire60", amount: 24_000, isInflow: true  },
+  { l: "Buy a home",      icon: "🏠", age: 40, amount: 60_000, isInflow: false },
+  { l: "Kid's college",   icon: "🎓", age: 52, amount: 50_000, isInflow: false },
+  { l: "Travel 6 months", icon: "✈️", age: 70, monthlyAmount: 6_000, durationMonths: 6,
+    incomeAnnual: 0, isInflow: false },
+  { l: "Downsize",        icon: "🏡", age: 72, amount: 80_000, isInflow: true  },
+  { l: "Part-time at 60", icon: "💼", age: 60, monthlyAmount: 2_000, durationMonths: 12,
+    incomeAnnual: 0, isInflow: true  },
 ];
 
 function ScenStatCard({ t, label, baseVal, scenVal, warm }) {
@@ -73,10 +81,12 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     setMoneyEvents,
     // WI-0.1: model-provided monthly figure for the spend dial seed
     statementView,
-    // WI-1.3: committed money events shown as dots on the arc
+    // WI-1.3: committed money events shown as icon badges on the arc
     moneyEvents,
     // WI-2.7: retirement walk rows feed the arc tap-to-scrub chip
     retirementWalk,
+    // Life-event sheet: age bounds computed in App.jsx (rule 10)
+    lifeEventBounds,
   } = props;
 
   const [mode, setMode] = useState(initialMode ?? null);
@@ -84,7 +94,10 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   // Adopt a new deep-link target if one arrives while already mounted.
   useEffect(() => { if (initialMode) setMode(initialMode); }, [initialMode]);
-  const [placedEvents, setPlacedEvents] = useState([]);
+
+  // Life-event sheet state: { seed } for a new event (preset values),
+  // { seed, eventId } when editing a committed event (seed IS the event).
+  const [eventSheet, setEventSheet] = useState(null);
 
   // Dial offsets (relative to current props so they stay useful after a commitPlan)
   const [dialRetireOffset, setDialRetireOffset] = useState(0);
@@ -92,7 +105,6 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   const [dialOverlay, setDialOverlay]           = useState(null);
 
   // Confirm state — one modal at a time
-  const [pendingEvent, setPendingEvent]         = useState(null); // life event waiting to be added
   const [showMakePlan, setShowMakePlan]         = useState(false);
   const [planSaved, setPlanSaved]               = useState(false);
 
@@ -130,8 +142,24 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   const clearScen = () => {
     setActiveScen(null);
-    setPlacedEvents([]);
     setDialOverlay(null);
+  };
+
+  // ── Life-event sheet handlers (sheet-first placement) ──────────────────────
+  // A preset pill is "placed" when a committed event carries its label; tapping
+  // it again re-opens the sheet in edit mode for that committed event.
+  const committedByLabel = (label) => (moneyEvents ?? []).find(me => me.label === label);
+  const presetSeed = ({ l, ...rest }) => ({ ...rest, label: l });
+
+  const handleEventSave = (ev) => {
+    setMoneyEvents(prev => eventSheet?.eventId
+      ? prev.map(me => (me.id === eventSheet.eventId ? ev : me))
+      : [...prev, ev]);
+    setEventSheet(null);
+  };
+  const handleEventRemove = () => {
+    setMoneyEvents(prev => prev.filter(me => me.id !== eventSheet.eventId));
+    setEventSheet(null);
   };
 
   // Compute arc overlay from current dial values and display it (#69)
@@ -209,6 +237,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
           scenarioData={activeOverlay}
           events={moneyEvents ?? []}
           walkRows={retirementWalk?.rows ?? []}
+          onEventTap={(ev) => setEventSheet({ seed: ev, eventId: ev.id })}
         />
       </div>
 
@@ -241,31 +270,29 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
             background: t.surf, border: `1px solid ${t.line}`,
             borderRadius: 13, padding: 14
           }}>
-            {/* ── Life events ── */}
+            {/* ── Life events (sheet-first placement) ── */}
             {mode === "life" && (
               <div>
                 <div style={{ font: `500 12px ${HF}`, color: t.mut, marginBottom: 9 }}>
-                  Tap to add to your plan:
+                  Tap to shape an event, see its impact, then add it to your plan.
+                  Placed events live on the arc — tap a badge (or its pill) to edit.
                 </div>
                 <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
                   {LIFE_EVENTS.map((ev) => {
-                    const placed = placedEvents.includes(ev.l);
+                    const committed = committedByLabel(ev.l);
+                    const placed = !!committed;
                     return (
-                      <div key={ev.l} onClick={() => {
-                        if (placed) {
-                          setPlacedEvents(prev => prev.filter(e => e !== ev.l));
-                          setActiveScen(null);
-                        } else {
-                          setPendingEvent(ev);
-                        }
-                      }} style={{
-                        padding: "6px 13px", borderRadius: 999, cursor: "pointer",
-                        border: `1px solid ${placed ? t.warm : t.line2}`,
-                        background: placed ? `${t.warm}14` : "transparent",
-                        font: `${placed ? 600 : 400} 13px ${HF}`,
-                        color: placed ? t.ink : t.mut
-                      }}>
-                        {placed ? "✓  " : ""}{ev.l}
+                      <div key={ev.l} onClick={() => setEventSheet(placed
+                        ? { seed: committed, eventId: committed.id }
+                        : { seed: presetSeed(ev) })}
+                        style={{
+                          padding: "6px 13px", borderRadius: 999, cursor: "pointer",
+                          border: `1px solid ${placed ? t.warm : t.line2}`,
+                          background: placed ? `${t.warm}14` : "transparent",
+                          font: `${placed ? 600 : 400} 13px ${HF}`,
+                          color: placed ? t.ink : t.mut
+                        }}>
+                        {ev.icon}  {placed ? "✓ " : ""}{ev.l}
                       </div>
                     );
                   })}
@@ -398,30 +425,17 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         )}
       </div>
 
-      {/* ── Confirm: add life event to plan ── */}
-      {pendingEvent && (
-        <ConfirmModal
+      {/* ── Life-event sheet: configure → live verdict → commit (replaces the
+             old bare ConfirmModal path) ── */}
+      {eventSheet && (
+        <LifeEventSheet
           t={t}
-          title={`Add "${pendingEvent.l}" to your plan?`}
-          body={`${pendingEvent.isInflow ? "Adds" : "Removes"} ${fmt(pendingEvent.amount)} at age ${pendingEvent.age}. It will update your arc and longevity estimate.`}
-          confirmLabel="Add to plan"
-          onConfirm={() => {
-            setPlacedEvents(prev => [...prev, pendingEvent.l]);
-            setActiveScen(pendingEvent.scen);
-            setMoneyEvents(prev => [
-              ...prev,
-              {
-                id: String(Date.now()),
-                label: pendingEvent.l,
-                amount: pendingEvent.amount,
-                age: pendingEvent.age,
-                isInflow: pendingEvent.isInflow,
-                isTaxable: false,
-              },
-            ]);
-            setPendingEvent(null);
-          }}
-          onCancel={() => setPendingEvent(null)}
+          whatIfBundle={whatIfBundle}
+          bounds={lifeEventBounds}
+          initial={eventSheet.seed}
+          onSave={handleEventSave}
+          onRemove={eventSheet.eventId ? handleEventRemove : undefined}
+          onCancel={() => setEventSheet(null)}
         />
       )}
 

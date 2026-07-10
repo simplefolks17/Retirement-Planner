@@ -29,6 +29,7 @@ import { fvAnnuity } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable } from "./model/apply-preview.js";
 import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
+import { eventLastAge } from "./model/money-events.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
@@ -468,7 +469,10 @@ export default function App() {
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     filingStatus, retStateRate, rmdStartAge: RMD_START_AGE,
     useTable2, spouseCurrentAge, currentAge,
-    moneyEvents: moneyEvents.filter(ev => ev.age >= safeRetAge),
+    // Kind-aware filter (money-events.js): a duration event spanning the
+    // retirement boundary reaches the walk too; the walk applies only its
+    // post-retirement months (the sim applied the pre-retirement ones).
+    moneyEvents: moneyEvents.filter(ev => eventLastAge(ev) >= safeRetAge),
   }), [tradGrossAtRet, retRoth, retTaxable, retHsa, safeRetAge, safeLifeExp, rReal,
        effectiveExpenses, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
        pensionMonthly, pensionStartAge, filingStatus, retStateRate,
@@ -556,7 +560,7 @@ export default function App() {
     pensionAmount:   pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0,
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     rmdTaxByAge, conversionTaxByAge,
-    moneyEvents: moneyEvents.filter(ev => ev.age >= safeRetAge),
+    moneyEvents: moneyEvents.filter(ev => eventLastAge(ev) >= safeRetAge),
   }), [rReal, effectiveExpenses, householdSS, includeSS, ssClaimingAge,
        pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
        moneyEvents, safeRetAge]);
@@ -1579,6 +1583,15 @@ export default function App() {
        conversionInService, setConversionInService,
        optimizerResult, conversionApplySite]);
 
+  // Life-event sheet bounds (rule 10: the age math lives here, not in the sheet).
+  // Events can land on any year from next year through the plan (life-expectancy)
+  // age. Memoized separately (V9).
+  const lifeEventBounds = useMemo(() => ({
+    minAge: currentAge + 1,
+    maxAge: safeLifeExp,
+    retirementAge: safeRetAge,
+  }), [currentAge, safeLifeExp, safeRetAge]);
+
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
   // so the bundle reference only changes when an input actually changes.
@@ -1605,6 +1618,10 @@ export default function App() {
     whatIfSimInputs: whatIfBundle,
     commitPlan,
     retirementWalk,
+    // Life-event sheet (sheet-first placement): age bounds for the sheet's
+    // sliders — memoized separately above (V9). The sheet's verdict/impact come
+    // from evaluateLifeEvent (what-if.js) called with whatIfSimInputs.
+    lifeEventBounds,
     // WI-0.1 display bundles (shapes documented at their model functions):
     statementView,    // calcStatementView — pcts null when no income
     chartMilestones,  // calcChartMilestones — { rows, peakTotal }
@@ -1690,6 +1707,7 @@ export default function App() {
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
        moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
+       lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):

@@ -35,19 +35,28 @@ describe("SCENARIOS preset table (IdeasScreen)", () => {
 
 describe("LIFE_EVENTS preset table (IdeasScreen)", () => {
   it("locks the exact life-event definitions (labels, ages, amounts, direction)", () => {
+    // Deliberately updated for the sheet-first life-event flow (arc-event
+    // placement): presets are SEEDS for LifeEventSheet — `scen` coupling
+    // removed, `icon` added (the arc badge), and two presets became duration
+    // events (monthlyAmount/durationMonths/incomeAnnual — money-events.js).
     expect(LIFE_EVENTS).toEqual([
-      { l: "Buy a home",      age: 40, scen: "retire63", amount: 60_000, isInflow: false },
-      { l: "Kid's college",   age: 52, scen: "retire60", amount: 50_000, isInflow: false },
-      { l: "Big trip · $40k", age: 70, scen: "bigTrip",  amount: 40_000, isInflow: false },
-      { l: "Downsize",        age: 72, scen: "saveMore", amount: 80_000, isInflow: true  },
-      { l: "Part-time at 60", age: 60, scen: "retire60", amount: 24_000, isInflow: true  },
+      { l: "Buy a home",      icon: "🏠", age: 40, amount: 60_000, isInflow: false },
+      { l: "Kid's college",   icon: "🎓", age: 52, amount: 50_000, isInflow: false },
+      { l: "Travel 6 months", icon: "✈️", age: 70, monthlyAmount: 6_000, durationMonths: 6,
+        incomeAnnual: 0, isInflow: false },
+      { l: "Downsize",        icon: "🏡", age: 72, amount: 80_000, isInflow: true  },
+      { l: "Part-time at 60", icon: "💼", age: 60, monthlyAmount: 2_000, durationMonths: 12,
+        incomeAnnual: 0, isInflow: true  },
     ]);
   });
 
-  it("every life event references a scenario that exists in SCENARIOS", () => {
-    const keys = new Set(SCENARIOS.map(s => s.k));
+  it("presets carry no display numbers beyond their seed values", () => {
+    // Only seed/presentation fields are allowed — every displayed verdict/delta
+    // comes from evaluateLifeEvent at open time (V1: stats come from the model run).
+    const allowed = ["l", "icon", "age", "amount", "monthlyAmount", "durationMonths",
+      "incomeAnnual", "isInflow"];
     for (const ev of LIFE_EVENTS) {
-      expect(keys.has(ev.scen)).toBe(true);
+      expect(Object.keys(ev).every(key => allowed.includes(key))).toBe(true);
     }
   });
 });

@@ -314,6 +314,36 @@ anti-divergence lock); `horizon-props-stability.test.js` auto-covers stability.
 
 ---
 
+### Life-event placement (sheet-first flow) — `lifeEventBounds` + `evaluateLifeEvent`
+
+**Added 2026-07-10** (video-inspired arc-event placement). The user picks an event seed
+(Ideas life-event pills), configures it in `src/horizon/LifeEventSheet.jsx` with a **live
+verdict**, and on save it joins committed `moneyEvents` — rendering as a tappable **icon
+badge with a stem** on the Plan/Ideas arcs (`ArcGraph` `events` + `onEventTap` props;
+badge tap re-opens the sheet in edit mode with a Remove action).
+
+- **Model:** `evaluateLifeEvent(whatIfBundle, event)` (`what-if.js`) runs baseline +
+  candidate through `calcWhatIfScenario` (ONE walk each — the verdict and any overlay can
+  never disagree, V1) and returns `verdict` ("comfortable"/"tight"/"unaffordable",
+  threshold `ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS`), cost scalars, `atRetirement` /
+  `atPlanAge` deltas with model-computed `dir` strings, and a `sustainability` block with
+  pre-computed display flags (`newlyDepletes`, `depletionMoved`) — the sheet renders and
+  formats only (rule 10).
+- **Event kinds:** one-time (`amount`) and **duration** (`monthlyAmount` × `durationMonths`
+  from `age`, optional `incomeAnnual` inflow offset) — see `src/model/money-events.js`.
+  `eventNetForYear` is the ONE per-year source consumed by `runSimulation`,
+  `buildRetirementDrawdown`, and the per-account engine; `eventFirstAge`/`eventLastAge`
+  drive every phase filter so boundary-spanning duration events hit each walk's years
+  exactly once (BUG-42).
+- **`horizonProps.lifeEventBounds`** — `{ minAge, maxAge, retirementAge }`, separately
+  memoized (V9): the sheet's age-slider bounds, computed in App.jsx (rule 10 — no age math
+  in the screen). The sheet's model runs use the existing `whatIfSimInputs` bundle.
+
+Tests: `src/horizon/__tests__/life-event-sheet.test.js` (sheet + badges),
+duration/`evaluateLifeEvent` coverage in `money-events.test.js` / `what-if.test.js`.
+
+---
+
 ### Apply-with-preview contract (WI-3.9 / #106)
 
 **Added 2026-07-08.** The shared pattern for every "Apply this suggestion" affordance:
