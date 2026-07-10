@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildConversionPreview } from "../apply-preview.js";
+import { buildConversionPreview, buildSurplusPreview, buildCommitPlanPreview } from "../apply-preview.js";
 
 // ── Apply-site registry contract (WI-3.9 / #106) ─────────────────────────────
 // docs/ARCHITECTURE.md's "Apply-with-preview contract" documents a registry of
@@ -31,8 +31,29 @@ const REGISTRY = [
       refAge: 90,
     }),
   },
-  // WI-3.7 (future): { site: "surplusView.applyAllocation", buildSample: () => buildSurplusPreview({...}) },
-  // WI-3.8 (future): { site: "<commitPlan sites>", buildSample: () => buildCommitPlanPreview({...}) },
+  {
+    site: "surplusView.applyAllocation",
+    buildSample: () => buildSurplusPreview({
+      current: {
+        contribTotal: 24_850, savingsRatePct: 18.2,
+        totalAtRet: 3_950_603, yearsSustained: Infinity, depletionAge: null,
+      },
+      candidate: {
+        contribTotal: 39_500, savingsRatePct: 27.9,
+        totalAtRet: 4_620_000, yearsSustained: Infinity, depletionAge: null,
+      },
+      deployment: { totalExtra: 14_650, pct: 100, availableSurplus: 14_650 },
+    }),
+  },
+  {
+    site: "commitPlan.planScreen.saveAsMyPlan",
+    buildSample: () => buildCommitPlanPreview({
+      action: "Save your current plan (retire at 65, $57,377/yr spending) as your baseline.",
+      current: { totalAtRet: null, yearsSustained: null, depletionAge: null },
+      candidate: { totalAtRet: 3_950_603, yearsSustained: Infinity, depletionAge: null },
+      note: "This becomes your new comparison baseline everywhere.",
+    }),
+  },
 ];
 
 const DELTA_DIRS = ["up", "down", "none"];

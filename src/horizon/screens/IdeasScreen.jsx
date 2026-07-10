@@ -3,6 +3,9 @@ import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 import ConfirmModal from "../ConfirmModal.jsx";
+import ApplyPreviewModal from "../ApplyPreviewModal.jsx";
+import EventsEditorPanel from "../EventsEditorPanel.jsx";
+import AffordabilityPanel from "../AffordabilityPanel.jsx";
 import { calcWhatIfScenario } from "../../model/what-if.js";
 
 // Scenario definitions — overrides only, no display numbers. Every figure shown
@@ -69,14 +72,21 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     contribSeries,
     // Batch B additions:
     whatIfSimInputs: whatIfBundle,
-    commitPlan,
-    setMoneyEvents,
+    eventsView,
     // WI-0.1: model-provided monthly figure for the spend dial seed
     statementView,
     // WI-1.3: committed money events shown as dots on the arc
     moneyEvents,
     // WI-2.7: retirement walk rows feed the arc tap-to-scrub chip
     retirementWalk,
+    // WI-3.8: Solvers mode defaults/bounds (eventsView is already destructured above)
+    affordView,
+    // WI-3.9: site-builder for "make this scenario my plan" (Apply-with-preview)
+    buildScenarioCommitSite,
+    // Dial bounds (review fix — the dials were previously unbounded, letting a user
+    // dial a retire age below currentAge or a negative monthly spend; reuses the
+    // same bounds PlanScreen's QuickTune sliders already enforce for these values).
+    sliderBounds,
   } = props;
 
   const [mode, setMode] = useState(initialMode ?? null);
@@ -84,7 +94,17 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   // Adopt a new deep-link target if one arrives while already mounted.
   useEffect(() => { if (initialMode) setMode(initialMode); }, [initialMode]);
-  const [placedEvents, setPlacedEvents] = useState([]);
+
+  // A life-event pill's "placed" state is DERIVED from moneyEvents (via eventsView.rows),
+  // never tracked as separate shadow state — a prior version tracked a local `placedEvents`
+  // array that could drift from the real event list in both directions (toggling a pill
+  // "off" didn't remove the underlying event; removing the event via the Events tab didn't
+  // un-check the pill). Matches on the full event shape the pill would have written, so an
+  // unrelated custom event that happens to share just the label doesn't false-match.
+  const findPlacedRow = (ev) => eventsView.rows.find(r =>
+    r.labelField.value === ev.l && r.ageField.value === ev.age &&
+    r.amountField.value === ev.amount && r.directionField.value === (ev.isInflow ? "in" : "out")
+  );
 
   // Dial offsets (relative to current props so they stay useful after a commitPlan)
   const [dialRetireOffset, setDialRetireOffset] = useState(0);
@@ -95,6 +115,20 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   const [pendingEvent, setPendingEvent]         = useState(null); // life event waiting to be added
   const [showMakePlan, setShowMakePlan]         = useState(false);
   const [planSaved, setPlanSaved]               = useState(false);
+
+  // Clear the "✓ Saved" badge if the user switches to a different scenario after
+  // saving — otherwise it can go on labeling a scenario that was never actually
+  // committed (review fix, same pattern as PlanScreen's QuickTunePanel). setPlanSaved
+  // is a no-op when already false, so this is safe to call unconditionally on mount too.
+  useEffect(() => { setPlanSaved(false); }, [activeScen]);
+
+  // Clear the "✓ Saved" badge after 2s; cleanup prevents a fire-on-unmount leak
+  // (review fix — the previous inline setTimeout had no cleanup).
+  useEffect(() => {
+    if (!planSaved) return;
+    const timer = setTimeout(() => setPlanSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [planSaved]);
 
   const scen = activeScen ? SCENARIOS.find(s => s.k === activeScen) : null;
 
@@ -109,6 +143,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
       scenarioEvents: scen.scenarioEvents ?? [],
     });
   }, [scen, whatIfBundle]);
+
+  // Apply-with-preview site for "make this scenario my plan" (WI-3.9). Only built
+  // while the confirm modal is actually open, to avoid an extra calcWhatIfDelta
+  // run (inside buildScenarioCommitSite) on every render.
+  const scenarioCommitSite = useMemo(
+    () => (showMakePlan && scenario) ? buildScenarioCommitSite(scenario.scenarioRetAge) : null,
+    [showMakePlan, scenario, buildScenarioCommitSite]
+  );
 
   const scenarioData = scenario?.chart?.length ? scenario.chart : null;
 
@@ -128,10 +170,27 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   const dialRetireAge    = retirementAge + dialRetireOffset;
   const dialMonthlySpend = statementView.monthlyTotal + dialSpendOffset;
 
+  // Retire-age offset bounds derived from the same sliderBounds PlanScreen's QuickTune
+  // slider already enforces (both read `retirementAge` directly, so the bases match) —
+  // keeps the dial from producing a retire age at/before currentAge (review fix).
+  const dialRetireOffsetMin = sliderBounds.retireMin - retirementAge;
+  const dialRetireOffsetMax = sliderBounds.retireMax - retirementAge;
+  // Spend offset floor computed against the dial's OWN base (statementView.monthlyTotal),
+  // not sliderBounds.spendMin/Max — those are based on annualExpenses ?? effectiveExpenses,
+  // which diverges from statementView's effectiveExpenses-only base once a user has ever
+  // set an explicit spend override, which would make a cross-referenced bound wrong.
+  // Floors at $0 (the concretely reachable bug: the dial could show "$-100/mo"); no
+  // upper bound — a higher spend scenario isn't invalid the way a negative one is.
+  const dialSpendOffsetMin  = -statementView.monthlyTotal;
+
   const clearScen = () => {
     setActiveScen(null);
-    setPlacedEvents([]);
     setDialOverlay(null);
+    // Defensive: a scenario clearing out from under an open "make this my plan" modal
+    // (scenarioCommitSite goes null since `scenario` requires activeScen) would
+    // otherwise strand showMakePlan=true with nothing to show — the next scenario
+    // activation would pop the modal unprompted (review fix).
+    setShowMakePlan(false);
   };
 
   // Compute arc overlay from current dial values and display it (#69)
@@ -152,6 +211,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     { k: "dials",   l: "Dial your future" },
     { k: "suggest", l: "Horizon suggestions" },
     { k: "askit",   l: "What if…" },
+    { k: "events",  l: "Events" },
+    { k: "solvers", l: "Solvers" },
   ];
 
   return (
@@ -249,13 +310,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                 </div>
                 <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
                   {LIFE_EVENTS.map((ev) => {
-                    const placed = placedEvents.includes(ev.l);
+                    const placedRow = findPlacedRow(ev);
+                    const placed = !!placedRow;
                     return (
                       <div key={ev.l} onClick={() => {
                         if (placed) {
-                          setPlacedEvents(prev => prev.filter(e => e !== ev.l));
+                          placedRow.remove();
                           setActiveScen(null);
-                        } else {
+                        } else if (!eventsView.atMax) {
                           setPendingEvent(ev);
                         }
                       }} style={{
@@ -280,20 +342,20 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                 <div style={{ minWidth: 140 }}>
                   <div style={{ font: `500 12px ${HF}`, color: t.mut, marginBottom: 6 }}>Retire at</div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span onClick={() => setDialRetireOffset(o => o - 1)} style={dialBtnStyle(t)}>−</span>
+                    <span onClick={() => setDialRetireOffset(o => Math.max(dialRetireOffsetMin, o - 1))} style={dialBtnStyle(t)}>−</span>
                     <div style={dialValStyle(t)}>
                       <span style={{ font: `600 17px ${HM}`, color: dialRetireOffset !== 0 ? t.accent : t.ink }}>
                         {dialRetireAge}
                       </span>
                     </div>
-                    <span onClick={() => setDialRetireOffset(o => o + 1)} style={dialBtnStyle(t)}>+</span>
+                    <span onClick={() => setDialRetireOffset(o => Math.min(dialRetireOffsetMax, o + 1))} style={dialBtnStyle(t)}>+</span>
                   </div>
                 </div>
                 {/* Monthly spend dial */}
                 <div style={{ minWidth: 140 }}>
                   <div style={{ font: `500 12px ${HF}`, color: t.mut, marginBottom: 6 }}>Monthly spend</div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span onClick={() => setDialSpendOffset(o => o - 100)} style={dialBtnStyle(t)}>−</span>
+                    <span onClick={() => setDialSpendOffset(o => Math.max(dialSpendOffsetMin, o - 100))} style={dialBtnStyle(t)}>−</span>
                     <div style={dialValStyle(t)}>
                       <span style={{ font: `600 17px ${HM}`, color: dialSpendOffset !== 0 ? t.accent : t.ink }}>
                         ${dialMonthlySpend.toLocaleString()}
@@ -369,6 +431,16 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                 </div>
               </div>
             )}
+
+            {/* ── Events ── */}
+            {mode === "events" && (
+              <EventsEditorPanel t={t} eventsView={eventsView} isMobile={isMobile} />
+            )}
+
+            {/* ── Solvers ── */}
+            {mode === "solvers" && (
+              <AffordabilityPanel t={t} whatIfBundle={whatIfBundle} affordView={affordView} isMobile={isMobile} />
+            )}
           </div>
         </div>
       )}
@@ -378,7 +450,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         <ScenStatCard t={t} label="Retire at"   baseVal={String(retirementAge)} scenVal={scenRetire} />
         <ScenStatCard t={t} label="Income / mo" baseVal={fmtMo(effectiveExpenses)} scenVal={scenIncome} warm />
         <ScenStatCard t={t} label="Nest egg"    baseVal={fmt(totalAtRet)} scenVal={scenNest} />
-        <ScenStatCard t={t} label="Left at 90"  baseVal={fmt(balAt90)} scenVal={scenLeft90} />
+        <ScenStatCard t={t} label={`Left at ${lifeExpect}`} baseVal={fmt(balAt90)} scenVal={scenLeft90} />
         {scen && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", flexShrink: 0 }}>
             <div
@@ -406,37 +478,33 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
           body={`${pendingEvent.isInflow ? "Adds" : "Removes"} ${fmt(pendingEvent.amount)} at age ${pendingEvent.age}. It will update your arc and longevity estimate.`}
           confirmLabel="Add to plan"
           onConfirm={() => {
-            setPlacedEvents(prev => [...prev, pendingEvent.l]);
+            // The events-cap guard lives at the pill click (it won't open this modal
+            // when eventsView.atMax) — pendingEvent is only ever set when there's room,
+            // and this modal blocks other interaction while open, so no concurrent path
+            // can push moneyEvents to the cap between opening and confirming.
             setActiveScen(pendingEvent.scen);
-            setMoneyEvents(prev => [
-              ...prev,
-              {
-                id: String(Date.now()),
-                label: pendingEvent.l,
-                amount: pendingEvent.amount,
-                age: pendingEvent.age,
-                isInflow: pendingEvent.isInflow,
-                isTaxable: false,
-              },
-            ]);
+            eventsView.add({
+              label: pendingEvent.l,
+              amount: pendingEvent.amount,
+              age: pendingEvent.age,
+              isInflow: pendingEvent.isInflow,
+              isTaxable: false,
+            });
             setPendingEvent(null);
           }}
           onCancel={() => setPendingEvent(null)}
         />
       )}
 
-      {/* ── Confirm: make this my plan ── */}
-      {showMakePlan && scenario && (
-        <ConfirmModal
+      {/* ── Apply-with-preview: make this scenario my plan (WI-3.9) ── */}
+      {showMakePlan && scenarioCommitSite && (
+        <ApplyPreviewModal
           t={t}
-          title="Save this as your plan?"
-          body={`Retire at ${scenario.scenarioRetAge} · Est. income ${fmtMo(scenario.scenarioExpenses)}/mo`}
-          confirmLabel="Save plan"
+          preview={scenarioCommitSite.preview}
           onConfirm={() => {
-            commitPlan({ retirementAge: scenario.scenarioRetAge });
+            scenarioCommitSite.apply();
             setShowMakePlan(false);
             setPlanSaved(true);
-            setTimeout(() => setPlanSaved(false), 2000);
           }}
           onCancel={() => setShowMakePlan(false)}
         />

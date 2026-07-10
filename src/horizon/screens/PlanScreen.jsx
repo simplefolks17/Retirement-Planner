@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo, kbActivate } from "../shared.jsx";
-import ConfirmModal from "../ConfirmModal.jsx";
+import ApplyPreviewModal from "../ApplyPreviewModal.jsx";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
 function SignalsStrip({ t, signals, navigate, isMobile }) {
@@ -190,7 +190,7 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
 function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
   const {
     // Current values (what the sliders display)
-    retirementAge, annualExpenses, effectiveExpenses, lifeExpect,
+    retirementAge, annualExpenses, lifeExpect,
     returnRate, inflationRate, incomeGrowth, contrib401k,
     ssClaimingAge, spouseClaimingAge, annualConversionAmt,
     currentAge,
@@ -204,8 +204,9 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
     setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
     // Coupled callbacks (invariant-preserving + rule 10 write-backs)
     setRetirementAgeCoupled, setMonthlySpend, setConversionMode,
-    // Save + Reset
-    commitPlan, committedPlan,
+    // Save + Reset (WI-3.9: planCommit is the Apply-with-preview site — preview +
+    // apply() come pre-built from App.jsx, this screen never calls commitPlan directly)
+    planCommit, committedPlan,
   } = props;
 
   const [activeKey, setActiveKey] = useState("retire");
@@ -282,7 +283,7 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       label: "SS age",
       headline: "When will you claim Social Security?",
       value: ssClaimingAge,
-      min: 62, max: 70, step: 1,
+      min: sliderBounds.ssMin, max: sliderBounds.ssMax, step: 1,
       format: v => `age ${v}`,
       onChange: v => setSsClaimingAge(v),
     },
@@ -336,11 +337,11 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
     return () => clearTimeout(timer);
   }, [saved]);
 
-  const handleSave = useCallback(() => {
-    commitPlan({ retirementAge, annualExpenses: annualExpenses ?? effectiveExpenses });
+  const handleConfirmSave = useCallback(() => {
+    planCommit.apply();
     setShowConfirm(false);
     setSaved(true);
-  }, [commitPlan, retirementAge, annualExpenses, effectiveExpenses]);
+  }, [planCommit]);
 
   const handleReset = useCallback(() => {
     if (!committedPlan) return;
@@ -477,12 +478,10 @@ function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
       </div>
 
       {showConfirm && (
-        <ConfirmModal
+        <ApplyPreviewModal
           t={t}
-          title="Save this as your plan?"
-          body={`Retire at ${retirementAge} · ${fmt(monthlySpend)}/mo spend`}
-          confirmLabel="Save plan"
-          onConfirm={handleSave}
+          preview={planCommit.preview}
+          onConfirm={handleConfirmSave}
           onCancel={() => setShowConfirm(false)}
         />
       )}

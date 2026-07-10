@@ -9,6 +9,7 @@ import { useState, useMemo } from "react";
 import { C } from "../theme.js";
 import { fmt, fmtPct } from "../formatters.js";
 import { calcWhatIfDelta, calcAffordabilityMax } from "../model/what-if.js";
+import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 const PRESETS = [
   { label: "Work 2 more years",  retirementAgeOffset: +2 },
@@ -47,6 +48,7 @@ export function WhatIfPanel({
   baseTotalAtRet,
   baseYearsSustained,
   currentAge,
+  addlPreTaxBal = 0,
 }) {
   const [open,     setOpen]     = useState(false);
   const [mode,     setMode]     = useState("delta");
@@ -70,8 +72,9 @@ export function WhatIfPanel({
     simInputs, fedMarginal, retDrawShared,
     safeRetAge, safeLifeExp,
     baseTotalAtRet, baseYearsSustained,
+    addlPreTaxBal,
   }), [simInputs, fedMarginal, retDrawShared,
-       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained]);
+       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, addlPreTaxBal]);
 
   const deltaResult = useMemo(() => {
     if (mode !== "delta") return null;
@@ -103,7 +106,7 @@ export function WhatIfPanel({
       ...sharedArgs,
       purchaseAge: Number(affAge),
       targetLifeExpectancy: Number(targetAge),
-      step: 1_000,
+      step: ASSUMPTIONS.AFFORDABILITY_STEP,
     });
   }, [mode, affAge, targetAge, sharedArgs]);
 

@@ -32,6 +32,9 @@ import { money } from "../fields.jsx";   // shared sign-aware money formatter
 import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
 import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
 import ConversionPlannerFlow from "./strategies/ConversionPlannerFlow.jsx";
+import WithdrawalOrderFlow from "./strategies/WithdrawalOrderFlow.jsx";
+import SurplusDeploymentFlow from "./strategies/SurplusDeploymentFlow.jsx";
+import MegaBackdoorFlow from "./strategies/MegaBackdoorFlow.jsx";
 
 // ── strategy catalogue ───────────────────────────────────────────────────────
 const SECTIONS = [
@@ -41,15 +44,16 @@ const SECTIONS = [
 ];
 
 // Flow: the interactive flow component, or null for a read-only stub (slot filled
-// by WI-3.4+). SS timing (3.4), RMD outlook (3.5), and Roth conversion (3.6) are
-// live; the rest stub until their WI lands.
+// by WI-3.4+). All six strategies are now live: SS timing (3.4), RMD outlook
+// (3.5), Roth conversion (3.6), and withdrawal order / surplus deployment /
+// mega backdoor (3.7).
 const STRATEGIES = [
   { id: "conversion", section: "taxes",    title: "Roth conversion",        wi: "3.6", Flow: ConversionPlannerFlow },
-  { id: "withdrawal", section: "taxes",    title: "Withdrawal order",       wi: "3.7", Flow: null },
+  { id: "withdrawal", section: "taxes",    title: "Withdrawal order",       wi: "3.7", Flow: WithdrawalOrderFlow },
   { id: "ss",         section: "income",   title: "Social Security timing", wi: "3.4", Flow: SSTimingFlow },
   { id: "rmd",        section: "accounts", title: "RMD outlook",            wi: "3.5", Flow: RMDOutlookFlow },
-  { id: "surplus",    section: "accounts", title: "Surplus deployment",     wi: "3.7", Flow: null },
-  { id: "mega",       section: "accounts", title: "Mega backdoor",          wi: "3.7", Flow: null },
+  { id: "surplus",    section: "accounts", title: "Surplus deployment",     wi: "3.7", Flow: SurplusDeploymentFlow },
+  { id: "mega",       section: "accounts", title: "Mega backdoor",          wi: "3.7", Flow: MegaBackdoorFlow },
 ];
 
 // One-line "what it is" copy — static, no model values (rule 10 safe).
@@ -86,7 +90,7 @@ function faceFor(id, props) {
     case "withdrawal":
       return {
         applicable: sv.withdrawal.applicable,
-        headline: money(props.yr1TaxSavings),
+        headline: money(props.withdrawalView?.yr1TaxSavings),
         sub: "saved in year-1 tax",
         tone: "good",
       };
@@ -120,7 +124,7 @@ function faceFor(id, props) {
     case "mega":
       return {
         applicable: sv.mega.applicable,
-        headline: `${money(sv.mega.capacity)}/yr`,
+        headline: `${money(props.megaView?.capacity)}/yr`,
         sub: "after-tax space",
         tone: "accent",
       };
@@ -130,17 +134,20 @@ function faceFor(id, props) {
 }
 
 // Detail rows for the read-only stub — [label, value] pairs, model values only.
+// As of WI-3.7 all six strategies have a live Flow (see STRATEGIES above), so
+// this is currently unreachable — kept as the general ReadOnlyStub fallback
+// for any future strategy added without a Flow yet (mirrors the withdrawal /
+// surplus / mega cases that shipped their own Flow this round).
 function detailRows(id, props) {
-  const sv = props.strategiesView;
   switch (id) {
     case "withdrawal":
-      return [["Year-1 tax saved", money(props.yr1TaxSavings)]];
-    // conversion + ss + rmd render their own interactive Flow (WI-3.4/3.5/3.6), never this stub.
+      return [["Year-1 tax saved", money(props.withdrawalView?.yr1TaxSavings)]];
     case "surplus":
       return [["Available surplus", `${money(props.budget?.availableSurplus)}/yr`]];
     case "mega": {
-      const rows = [["After-tax space", `${money(sv.mega.capacity)}/yr`]];
-      (sv.mega.growth ?? []).forEach(g => rows.push([`Grows to, in ${g.yrs} yrs`, money(g.val)]));
+      const mv = props.megaView;
+      const rows = [["After-tax space", `${money(mv?.capacity)}/yr`]];
+      (mv?.growth ?? []).forEach(g => rows.push([`Grows to, in ${g.yrs} yrs`, money(g.val)]));
       return rows;
     }
     default:

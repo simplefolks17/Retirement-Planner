@@ -47,6 +47,10 @@ export function calcWhatIfDelta({
   moneyEvents = [],             // { label, amount, age, isInflow, isTaxable }
   annualExpensesOverride = null, // change annual retirement spending (number or null)
   retirementAgeOverride  = null, // shift retirement age (number or null — re-runs sim)
+  contribOverrides = null,       // { contrib401k?, contribRoth?, contribTaxable?, contribHSA? } — re-runs sim
+  addlPreTaxBal = 0,             // outside pre-tax balance (App.jsx) — baseTotalAtRet already
+                                  // includes it; the re-sim below must add it too or a forced
+                                  // resim's scenarioTotalAtRet silently drops it (basis mismatch).
 }) {
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
   const scenarioExpenses  = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
@@ -62,19 +66,25 @@ export function calcWhatIfDelta({
   // current age has no accumulation phase, so re-running the sim and indexing
   // at a negative row would fabricate a $0 starting balance / depletion. Skip
   // the sim and keep the baseline starting balance in that case.
-  if ((accumEvents.length > 0 || retirementAgeOverride !== null)
+  if ((accumEvents.length > 0 || retirementAgeOverride !== null || contribOverrides !== null)
       && scenarioRetAge > simInputs.currentAge) {
-    const raw = runSimulation({ ...simInputs, moneyEvents: accumEvents });
+    // contribOverrides spread AFTER simInputs so it takes precedence; moneyEvents
+    // is written explicitly last so a stray key in contribOverrides (not part of
+    // its documented shape) can never silently override the real accumEvents.
+    const raw = runSimulation({ ...simInputs, ...(contribOverrides ?? {}), moneyEvents: accumEvents });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
     const at = raw[retIdx];
     if (at) {
       // BUG-35: gross basis (the 401k is no longer haircut) — matches the gross
-      // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples.
+      // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples. Also
+      // add addlPreTaxBal — baseTotalAtRet already includes it (App.jsx), and
+      // runSimulation has no concept of it, so it must be added back here too.
       scenarioTotalAtRet = (at.tradGross ?? 0)
         + (at["Roth IRA"] ?? 0)
         + (at["Taxable"]  ?? 0)
-        + (at["HSA"]      ?? 0);
+        + (at["HSA"]      ?? 0)
+        + addlPreTaxBal;
     } else {
       scenarioTotalAtRet = 0;
     }
@@ -124,13 +134,9 @@ export function calcWhatIfDelta({
     baseExpenses:    retDrawShared.effectiveExpenses,
     scenarioExpenses,
     scenarioEndVal: scenarioLifeWalk.endVal,
+    scenarioDepletionAge: scenarioWalk.depletionAge,
   };
 }
-
-// Reference age for the "Left at 90" stat — the Ideas scenario stat row compares
-// the scenario's balance at this age against the baseline card. Not an IRS value;
-// a product-level display anchor.
-const BAL_REFERENCE_AGE = 90;
 
 // ── calcWhatIfScenario ───────────────────────────────────────────────────────
 // ONE model run returning BOTH the arc chart series and the real stat scalars
@@ -157,10 +163,15 @@ const BAL_REFERENCE_AGE = 90;
 //     scenarioExpenses,   // annual retirement spending under the scenario
 //     scenarioYears,      // years sustained (far-horizon walk; Infinity = never depletes)
 //     deltaYears,         // scenarioYears − baseYearsSustained (±Infinity handled)
-//     scenarioBalAt90,    // balance at age 90 from the walk rows.
-//                         //   null  → the walk never reaches 90 (e.g. life expectancy < 90):
-//                         //           "not applicable", NOT zero — screens render "—".
-//                         //   0     → a genuine depletion at/before 90 (a real $0).
+//     scenarioBalAt90,    // balance at safeLifeExp from the walk rows (field keeps its
+//                         //   historical "90" name — matches App.jsx's balAt90, which
+//                         //   is also lifeExp-based despite the name; review fix — this
+//                         //   used to be hardcoded to literal age 90, comparing against
+//                         //   the already-lifeExp-based baseline at a DIFFERENT age).
+//                         //   null  → the walk never reaches safeLifeExp: "not applicable",
+//                         //           NOT zero — screens render "—".
+//                         //   0     → a genuine depletion at/before safeLifeExp (a real $0).
+//     scenarioDepletionAge, // age the far-horizon walk hits $0, or null if it never does.
 //   }
 //
 // Never reimplements the walk: both walks are buildRetirementDrawdown, and
@@ -242,14 +253,20 @@ export function calcWhatIfScenario({
 
   const chart = (lifeWalk.rows ?? []).map(r => ({ age: r.age, total: r.total }));
 
-  // Balance at age 90 — null means "the walk never reaches 90" (not applicable,
-  // NOT zero); a genuine depletion at/before 90 is a real 0.
+  // Balance at safeLifeExp (the field keeps its historical "90" name, matching
+  // App.jsx's balAt90 — both were literally age-90 once; both now use the user's
+  // actual plan-to-age). Review fix: this used to be a hardcoded age-90 lookup,
+  // comparing against baseTotalAtRet's balAt90 (already lifeExp-based) at a
+  // DIFFERENT age whenever lifeExpect != 90 — an apples-to-oranges "Left at 90"
+  // stat. null means "the walk never reaches safeLifeExp" (not applicable, NOT
+  // zero — can't happen in practice since lifeWalk's endAge is >= safeLifeExp,
+  // but kept as a guard); a genuine depletion at/before safeLifeExp is a real 0.
   let scenarioBalAt90;
-  if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= BAL_REFERENCE_AGE) {
+  if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= safeLifeExp) {
     scenarioBalAt90 = 0;
   } else {
-    const row90 = (lifeWalk.rows ?? []).find(r => r.age === BAL_REFERENCE_AGE);
-    scenarioBalAt90 = row90 ? row90.total : null;
+    const refRow = (lifeWalk.rows ?? []).find(r => r.age === safeLifeExp);
+    scenarioBalAt90 = refRow ? refRow.total : null;
   }
 
   const scenarioYears = farWalk.yearsSustained;
@@ -269,6 +286,7 @@ export function calcWhatIfScenario({
     scenarioYears,
     deltaYears,
     scenarioBalAt90,
+    scenarioDepletionAge: farWalk.depletionAge,
   };
 }
 
@@ -287,12 +305,12 @@ export function calcWhatIfChart(bundle, overrides = {}) {
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
 // Binary search for the largest one-time outflow at `purchaseAge` such that
 // the portfolio still sustains to `targetLifeExpectancy`.
-// Returns { maxAmount, deltaYears } for the affordable amount.
+// Returns { maxAmount, deltaYears, canAfford } for the affordable amount.
 export function calcAffordabilityMax({
   purchaseAge,
   targetLifeExpectancy,
-  step = 1_000,
-  maxSearch = 5_000_000,
+  step = ASSUMPTIONS.AFFORDABILITY_STEP,
+  maxSearch = ASSUMPTIONS.AFFORDABILITY_MAX_SEARCH,
   // all other args forwarded to calcWhatIfDelta
   ...deltaArgs
 }) {
@@ -303,7 +321,7 @@ export function calcAffordabilityMax({
   // binary search; a target life expectancy at or before retirement leaves no
   // horizon to sustain. Return a safe zero result rather than spin / fabricate.
   if (!(step > 0) || targetLifeExpectancy <= safeRetAge) {
-    return { maxAmount: 0, deltaYears: 0 };
+    return { maxAmount: 0, deltaYears: 0, canAfford: false };
   }
 
   const isSustainable = (amount) => {
@@ -316,7 +334,7 @@ export function calcAffordabilityMax({
   };
 
   // Quick check: can they even afford $0? (i.e. is baseline sustainable)
-  if (!isSustainable(0)) return { maxAmount: 0, deltaYears: 0 };
+  if (!isSustainable(0)) return { maxAmount: 0, deltaYears: 0, canAfford: false };
 
   // Binary search
   let lo = 0;
@@ -335,5 +353,6 @@ export function calcAffordabilityMax({
   return {
     maxAmount: lo,
     deltaYears: finalResult.deltaYears,
+    canAfford: lo > 0,
   };
 }

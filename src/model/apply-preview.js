@@ -7,7 +7,7 @@
 // commitPlan sites; #86's scenario-overlaid recompute) shows the same visual
 // language without re-implementing delta/edge-case semantics per site.
 //
-// The two format kinds:
+// The three format kinds:
 //   "money"     — a plain before/after dollar figure (sign-aware: a negative
 //                 Roth benefit reads "−$9,854", matching src/horizon/fields.jsx
 //                 `money`).
@@ -15,6 +15,12 @@
 //                 "never depletes within the walk horizon" (BUG-35's
 //                 trivially-sustainable case) and gets its own copy + delta
 //                 vocabulary instead of pretending it's a finite number.
+//                 `years == null` means "not knowable yet" (e.g. no prior
+//                 committed plan to compare against) — renders "—", same as
+//                 a missing money side, never a fabricated number.
+//   "percent"   — a WHOLE-NUMBER percent (15.3 means 15.3%, matching this
+//                 codebase's existing convention, e.g. withdrawalRate). Delta
+//                 is in percentage points ("+2.1 pts" / "−2.1 pts").
 
 // Sign-aware dollar formatter — same visual rule as fields.jsx `money` (kept
 // as a separate copy here rather than importing across the model/horizon
@@ -61,7 +67,11 @@ function moneyMetric({ id, label, before, after, betterDir }) {
 // Longevity's own copy — "lasts beyond your plan" instead of "$Infinity",
 // and the depletion age folded into the SAME row as the years-sustained
 // figure (one row, two views of one fact — the roadmap's explicit framing).
-function renderLongevity({ years, depletionAge }) {
+// A missing/null `years` (e.g. no prior committed plan to compare against)
+// renders "—" — never a fabricated number.
+function renderLongevity(v) {
+  if (v == null || v.years == null) return "—";
+  const { years, depletionAge } = v;
   if (years === Infinity) return "lasts beyond your plan";
   if (depletionAge == null) return `${years.toFixed(1)} yrs`;
   return `depletes at ${depletionAge} (${years.toFixed(1)} yrs)`;
@@ -70,32 +80,77 @@ function renderLongevity({ years, depletionAge }) {
 function longevityMetric({ id, label, before, after, betterDir }) {
   const beforeStr = renderLongevity(before);
   const afterStr = renderLongevity(after);
-  const beforeInf = before.years === Infinity;
-  const afterInf = after.years === Infinity;
+
+  const beforeMissing = before == null || before.years == null;
+  const afterMissing  = after == null || after.years == null;
 
   let delta;
-  if (beforeInf && afterInf) {
-    delta = { dir: "none", label: "no change", tone: "neutral" };
-  } else if (afterInf && !beforeInf) {
-    // Crossing INTO trivially-sustainable — always an improvement in years,
-    // but its tone still respects betterDir (a longevity row could in theory
-    // be framed the other way by a future consumer).
-    delta = { dir: "up", label: "beyond plan", tone: betterDir === "up" ? "good" : "warm" };
-  } else if (beforeInf && !afterInf) {
-    // Crossing OUT of trivially-sustainable — the plan now has a depletion
-    // age where it didn't before. Always framed as "shorter".
-    delta = { dir: "down", label: "shorter", tone: betterDir === "up" ? "warm" : "good" };
+  if (beforeMissing || afterMissing) {
+    // Missing either side — mirrors moneyMetric's null/non-finite guard:
+    // never fabricate a delta from a half-known pair.
+    delta = { dir: "none", label: "—", tone: "neutral" };
   } else {
-    // Diff the SAME one-decimal rounding renderLongevity displays (Gemini
-    // review) — a raw-float gap smaller than 0.05yr would otherwise show a
-    // nonzero delta beside two identically-displayed "X.X yrs" figures.
-    const d = Number(after.years.toFixed(1)) - Number(before.years.toFixed(1));
+    const beforeInf = before.years === Infinity;
+    const afterInf = after.years === Infinity;
+
+    if (beforeInf && afterInf) {
+      delta = { dir: "none", label: "no change", tone: "neutral" };
+    } else if (afterInf && !beforeInf) {
+      // Crossing INTO trivially-sustainable — always an improvement in years,
+      // but its tone still respects betterDir (a longevity row could in theory
+      // be framed the other way by a future consumer).
+      delta = { dir: "up", label: "beyond plan", tone: betterDir === "up" ? "good" : "warm" };
+    } else if (beforeInf && !afterInf) {
+      // Crossing OUT of trivially-sustainable — the plan now has a depletion
+      // age where it didn't before. Always framed as "shorter".
+      delta = { dir: "down", label: "shorter", tone: betterDir === "up" ? "warm" : "good" };
+    } else {
+      // Diff the SAME one-decimal rounding renderLongevity displays (Gemini
+      // review) — a raw-float gap smaller than 0.05yr would otherwise show a
+      // nonzero delta beside two identically-displayed "X.X yrs" figures.
+      const d = Number(after.years.toFixed(1)) - Number(before.years.toFixed(1));
+      if (d === 0) {
+        delta = { dir: "none", label: "no change", tone: "neutral" };
+      } else {
+        const dir = d > 0 ? "up" : "down";
+        const sign = d > 0 ? "+" : "−";
+        delta = { dir, label: `${sign}${Math.abs(d).toFixed(1)} yrs`, tone: dir === betterDir ? "good" : "warm" };
+      }
+    }
+  }
+  return { id, label, before: beforeStr, after: afterStr, delta };
+}
+
+// Sign-aware whole-number-percent formatter — "15.3%" (one decimal place).
+// Matches this codebase's convention that percent fields are already
+// whole-number percents (15.3 means 15.3%, not 0.153).
+function fmtPercent(v) {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v.toFixed(1)}%`;
+}
+
+function percentMetric({ id, label, before, after, betterDir }) {
+  const beforeStr = fmtPercent(before);
+  const afterStr = fmtPercent(after);
+
+  let delta;
+  if (before == null || after == null || !Number.isFinite(before) || !Number.isFinite(after)) {
+    delta = { dir: "none", label: "—", tone: "neutral" };
+  } else {
+    // Round BEFORE differencing (same rule as money/longevity) so a sub-0.1-pt
+    // float gap never shows a delta beside two identically-displayed "X.X%"
+    // figures — e.g. before=15.04, after=15.06 rounds to 15.0/15.1 → "no
+    // change" would be wrong; both round to the SAME displayed value only
+    // when their rounded forms agree.
+    const b = Number(before.toFixed(1));
+    const a = Number(after.toFixed(1));
+    const d = Number((a - b).toFixed(1));
     if (d === 0) {
       delta = { dir: "none", label: "no change", tone: "neutral" };
     } else {
       const dir = d > 0 ? "up" : "down";
       const sign = d > 0 ? "+" : "−";
-      delta = { dir, label: `${sign}${Math.abs(d).toFixed(1)} yrs`, tone: dir === betterDir ? "good" : "warm" };
+      delta = { dir, label: `${sign}${Math.abs(d).toFixed(1)} pts`, tone: dir === betterDir ? "good" : "warm" };
     }
   }
   return { id, label, before: beforeStr, after: afterStr, delta };
@@ -105,9 +160,9 @@ function longevityMetric({ id, label, before, after, betterDir }) {
 // says which direction reads as "good"), formatting, and the Infinity/null
 // edge states — all in one place so no Apply site re-derives this logic.
 export function buildPreviewMetric({ id, label, before, after, betterDir = "up", format = "money" }) {
-  return format === "longevity"
-    ? longevityMetric({ id, label, before, after, betterDir })
-    : moneyMetric({ id, label, before, after, betterDir });
+  if (format === "longevity") return longevityMetric({ id, label, before, after, betterDir });
+  if (format === "percent") return percentMetric({ id, label, before, after, betterDir });
+  return moneyMetric({ id, label, before, after, betterDir });
 }
 
 // The `available` gate for the conversion-optimizer Apply site. Mirrors
@@ -161,5 +216,83 @@ export function buildConversionPreview({ current, candidate, suggestion, refAge 
     ],
     note: "Preview uses the same per-account engine as your headline numbers.",
     verdict: null, // RESERVED render slot — WI-5.4 (#85) attaches { label, tone }
+  };
+}
+
+// The full Apply-preview payload for the WI-3.7 surplus-allocation Apply site
+// (the Budget tab's "optimized allocation" suggestion). `current`/`candidate`
+// are two already-computed scenario outputs — this function never runs the
+// engine itself. `deployment` describes the allocation being proposed
+// (`totalExtra`/yr, the `savingsSurplusPct` slider value, and the surplus
+// dollar figure it's a percent of) so the action line can spell out exactly
+// what "Apply" does.
+//
+// NOTE: the candidate scenario here is produced via calcWhatIfDelta (a
+// contribOverrides re-sim), which walks the retirement phase with the
+// BLENDED buildRetirementDrawdown, not the per-account engine
+// (buildRetirementWalkByAccount) that produces the app's headline numbers —
+// see what-if.js's module doc. The `note` below says so honestly rather than
+// reusing buildConversionPreview's "per-account engine" language, which
+// would be inaccurate here.
+export function buildSurplusPreview({ current, candidate, deployment }) {
+  return {
+    title: "Apply optimized allocation",
+    action: `Deploy ${fmtMoney(deployment.totalExtra)}/yr (${deployment.pct}% of your `
+      + `${fmtMoney(deployment.availableSurplus)} surplus) in IRS-priority order`,
+    confirmLabel: "Apply",
+    metrics: [
+      buildPreviewMetric({
+        id: "contribTotal", label: "Annual contributions",
+        before: current.contribTotal, after: candidate.contribTotal, betterDir: "up",
+      }),
+      buildPreviewMetric({
+        id: "savingsRate", label: "Savings rate", format: "percent",
+        before: current.savingsRatePct, after: candidate.savingsRatePct, betterDir: "up",
+      }),
+      buildPreviewMetric({
+        id: "totalAtRet", label: "Nest egg at retirement",
+        before: current.totalAtRet, after: candidate.totalAtRet, betterDir: "up",
+      }),
+      buildPreviewMetric({
+        id: "longevity", label: "Portfolio lasts", format: "longevity",
+        before: { years: current.yearsSustained, depletionAge: current.depletionAge },
+        after: { years: candidate.yearsSustained, depletionAge: candidate.depletionAge },
+        betterDir: "up",
+      }),
+    ],
+    note: "Preview uses the same blended retirement walk as your what-if scenarios "
+      + "(not the per-account engine behind your headline numbers), evaluated at "
+      + "today's income and spending.",
+    verdict: null,
+  };
+}
+
+// ONE shared preview builder for every "save as my plan" Apply site (Plan
+// screen's own save, Ideas' "make this scenario my plan" — WI-3.8). The two
+// sites differ only in their `action` copy; the metrics shown are identical.
+// `current`/`candidate` fields may individually be null — e.g. a first-ever
+// save has no prior committed plan to compare against, which is exactly why
+// the longevity/money metrics' null-guards exist.
+export function buildCommitPlanPreview({
+  action, current, candidate, title = "Save as my plan?", confirmLabel = "Save plan", note = null,
+}) {
+  return {
+    title,
+    action,
+    confirmLabel,
+    metrics: [
+      buildPreviewMetric({
+        id: "totalAtRet", label: "Nest egg at retirement",
+        before: current.totalAtRet, after: candidate.totalAtRet, betterDir: "up",
+      }),
+      buildPreviewMetric({
+        id: "longevity", label: "Portfolio lasts", format: "longevity",
+        before: { years: current.yearsSustained, depletionAge: current.depletionAge },
+        after: { years: candidate.yearsSustained, depletionAge: candidate.depletionAge },
+        betterDir: "up",
+      }),
+    ],
+    note,
+    verdict: null,
   };
 }

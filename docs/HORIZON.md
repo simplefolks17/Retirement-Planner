@@ -18,14 +18,16 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 | `src/horizon/ConfirmModal.jsx` | Shared confirm dialog + toast pattern (used by PlanScreen and IdeasScreen) |
 | `src/horizon/ApplyPreviewModal.jsx` | Apply-with-preview shell (WI-3.9): pure renderer of a model-computed before/after payload, wraps `ConfirmModal`; exports `PreviewMetricRow` + `VerdictBadge`. Contract in `ARCHITECTURE.md` |
 | `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape |
+| `src/horizon/EventsEditorPanel.jsx` | Money-events editor (WI-3.8, Ideas' "Events" mode) — pure render of `eventsView`'s wrapped fields/`add`/`remove` |
+| `src/horizon/AffordabilityPanel.jsx` | "Biggest affordable expense" solver (WI-3.8, Ideas' "Solvers" mode) — calls `calcAffordabilityMax` directly (sanctioned in-screen pattern), fed by `affordView` + `whatIfSimInputs` |
 | `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views, scenario overlay, event markers, tap-to-scrub |
 | `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard + mobile bar/MoreSheet; exports `SCREENS`; imports per-screen files |
-| `src/horizon/screens/PlanScreen.jsx` | Plan screen (arc, hero, income meter, QuickTune, signals strip, "Make this my plan") |
+| `src/horizon/screens/PlanScreen.jsx` | Plan screen (arc, hero, income meter, QuickTune, signals strip, "Make this my plan" — now via `ApplyPreviewModal`/`planCommit`, WI-3.8) |
 | `src/horizon/screens/JourneyScreen.jsx` | Journey screen — the Flow-Down port (3-chapter narrative) |
-| `src/horizon/screens/IdeasScreen.jsx` | Ideas screen (dials, scenario cards, life events) |
+| `src/horizon/screens/IdeasScreen.jsx` | Ideas screen (dials, scenario cards, life events, Events editor + Solvers/affordability modes — WI-3.8) |
 | `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen — 5 tabs (Statement, Budget, Accounts, Taxes, Year by year); Statement carries a "Retirement income companion strip" (the consolidated former Money-flow retirement view — see below) |
-| `src/horizon/screens/StrategiesScreen.jsx` | Strategies catalogue (WI-3.3) — `STRATEGIES` registry of cards; each opens a `Flow` in the detail slot |
-| `src/horizon/screens/strategies/` | The interactive strategy flows: `SSTimingFlow.jsx` (WI-3.4), `RMDOutlookFlow.jsx` (WI-3.5), `ConversionPlannerFlow.jsx` (WI-3.6); `flow-ui.jsx` = shared `SectionLabel`/`NoteBox`/`StatTile` |
+| `src/horizon/screens/StrategiesScreen.jsx` | Strategies catalogue (WI-3.3) — `STRATEGIES` registry of cards; each opens a `Flow` in the detail slot. All 6 cards now have a live `Flow` (WI-3.4–3.7) |
+| `src/horizon/screens/strategies/` | The interactive strategy flows: `SSTimingFlow.jsx` (WI-3.4), `RMDOutlookFlow.jsx` (WI-3.5), `ConversionPlannerFlow.jsx` (WI-3.6), `WithdrawalOrderFlow.jsx` / `SurplusDeploymentFlow.jsx` / `MegaBackdoorFlow.jsx` (WI-3.7); `flow-ui.jsx` = shared `SectionLabel`/`NoteBox`/`StatTile`/`ListRow`/`ListCard` |
 | `src/horizon/screens/MyDetailsScreen.jsx` | My details (WI-3.2) — plan-fact topic cards over the setter bundles |
 | `src/horizon/screens/SomedayScreen.jsx` | Someday screen (activity selector, photo placeholder) |
 | `src/horizon/screens/SettingsScreen.jsx` | Settings screen (palette, theme, arc style, activity) |
