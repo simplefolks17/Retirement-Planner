@@ -3,6 +3,8 @@ import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScena
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
+import { buildRetirementPhase } from "../retirement-phase.js";
+import { buildAccumChart } from "../accumulation.js";
 
 // ── Shared baseline setup ────────────────────────────────────────────────────
 const em = (s, c) => calcEmployerMatch(s, c, {
@@ -48,6 +50,26 @@ const { yearsSustained: depletingBaseYears } = buildRetirementDrawdown({
   startBal: depletingBase, startAge: safeRetAge, endAge: safeRetAge + 130,
 });
 
+// ── Per-account engine fixtures (2026-07-11, overlay-continuity migration) ────
+// calcWhatIfScenario now walks retirement with buildRetirementPhase (the same
+// per-account engine the main chart uses) whenever the bundle carries a
+// `retPhaseBase`. These fixtures seed the ENTIRE retirement balance into
+// `taxable` (rmdStartAge: Infinity, conversionByAge: {}) so the engine's
+// per-account walk degenerates to the exact same bal*(1+r) − draw recurrence
+// buildRetirementDrawdown used above (no RMD/conversion/draw tax leaks) — the
+// existing expected values below (computed against the blended walk) still hold.
+const depletingRetPhaseBase = {
+  tradGross: 0, roth: 0, taxable: depletingBase, hsa: 0,
+  startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+  rReal, effectiveExpenses: depletingRetDrawShared.effectiveExpenses,
+  ssGross: depletingRetDrawShared.ssAmount, ssTaxable: depletingRetDrawShared.ssAmount,
+  ssClaimAge: depletingRetDrawShared.ssClaimAge,
+  pension: depletingRetDrawShared.pensionAmount, pensionStartAge: depletingRetDrawShared.pensionStartAge,
+  filingStatus: "single", retStateRate: 0,
+  rmdStartAge: Infinity, useTable2: false, spouseCurrentAge: null, currentAge,
+  moneyEvents: depletingRetDrawShared.moneyEvents ?? [],
+};
+
 // Standard (sustainable) scenario for qualitative tests
 const retDrawShared = {
   rReal, effectiveExpenses: 75_000,
@@ -59,10 +81,40 @@ const { yearsSustained: baseYearsSustained } = buildRetirementDrawdown({
   ...retDrawShared, startBal: realBaseTotalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130,
 });
 
+const baseRetPhaseBase = {
+  tradGross: 0, roth: 0, taxable: realBaseTotalAtRet, hsa: 0,
+  startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+  rReal, effectiveExpenses: retDrawShared.effectiveExpenses,
+  ssGross: retDrawShared.ssAmount, ssTaxable: retDrawShared.ssAmount,
+  ssClaimAge: retDrawShared.ssClaimAge,
+  pension: retDrawShared.pensionAmount, pensionStartAge: retDrawShared.pensionStartAge,
+  filingStatus: "single", retStateRate: 0,
+  rmdStartAge: Infinity, useTable2: false, spouseCurrentAge: null, currentAge,
+  moneyEvents: retDrawShared.moneyEvents ?? [],
+};
+// baseChart mirrors App.jsx's totalChartData: accumulation rows (from the REAL
+// per-account sim) + the engine's retirement rows (from the all-taxable seed —
+// the total at the boundary is the same either way, so the chart is continuous).
+// buildAccumChart's sumAccountRow reads the "Trad 401k" key that App.jsx adds
+// after runSimulation (from tradGross) — raw sim rows don't carry it, so it's
+// added here too (mirrors the same fix in what-if.js's own re-sim path).
+const _baseSimWithTrad = _baseSim.map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+const _baseAccumChart = buildAccumChart({
+  simData: _baseSimWithTrad, safeRetAge, currentAge,
+  bal401k: simInputs.bal401k, balRoth: simInputs.balRoth,
+  balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
+});
+const _baseRetPhase = buildRetirementPhase({ ...baseRetPhaseBase, conversionByAge: {} });
+const baseChart = [
+  ..._baseAccumChart,
+  ..._baseRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+];
+
 const baseArgs = {
   simInputs, fedMarginal, retDrawShared,
   safeRetAge, safeLifeExp,
   baseTotalAtRet: realBaseTotalAtRet, baseYearsSustained,
+  retPhaseBase: baseRetPhaseBase, conversionByAge: {}, baseChart, addlPreTaxBal: 0,
 };
 
 const depletingArgs = {
@@ -70,6 +122,7 @@ const depletingArgs = {
   retDrawShared: depletingRetDrawShared,
   safeRetAge, safeLifeExp,
   baseTotalAtRet: depletingBase, baseYearsSustained: depletingBaseYears,
+  retPhaseBase: depletingRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
 };
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
@@ -202,31 +255,46 @@ const chartBundle = {
   safeRetAge,
   safeLifeExp,
   baseTotalAtRet: realBaseTotalAtRet,
+  retPhaseBase: baseRetPhaseBase, conversionByAge: {}, baseChart, addlPreTaxBal: 0,
 };
 
+// NOTE (2026-07-11 overlay-continuity migration): calcWhatIfScenario's `chart`
+// now covers the FULL lifetime (accumulation + retirement), not just the
+// retirement phase — see the header comment on calcWhatIfScenario. The three
+// "no overrides"/"retireAdj" assertions below were written against the old
+// retirement-only chart and are rewritten here for the new scope; the
+// "returns [] for missing inputs" case is unaffected.
 describe("calcWhatIfChart", () => {
-  it("no overrides: returns series starting at safeRetAge+1 and ending at safeLifeExp", () => {
+  it("no overrides: returns the full lifetime series, from just after current age through safeLifeExp", () => {
     const series = calcWhatIfChart(chartBundle);
     expect(Array.isArray(series)).toBe(true);
     expect(series.length).toBeGreaterThan(0);
-    expect(series[0].age).toBe(safeRetAge + 1);
+    expect(series[0].age).toBe(currentAge + 1);
     expect(series[series.length - 1].age).toBe(safeLifeExp);
   });
 
-  it("no overrides: first-year total matches baseTotalAtRet minus draw", () => {
+  it("no overrides: the retirement-age row matches baseTotalAtRet, and the walk continues from it", () => {
     const series = calcWhatIfChart(chartBundle);
-    // The first row should be close to (but no more than) baseTotalAtRet
-    // (it has grown by rReal but lost the first draw)
-    expect(series[0].total).toBeGreaterThan(0);
-    expect(series[0].total).toBeLessThanOrEqual(realBaseTotalAtRet * 1.1);
+    const retRow  = series.find(r => r.age === safeRetAge);
+    const nextRow = series.find(r => r.age === safeRetAge + 1);
+    expect(retRow).toBeDefined();
+    expect(retRow.total).toBe(Math.round(realBaseTotalAtRet));
+    // The next row has grown by rReal but lost the first year's draw.
+    expect(nextRow.total).toBeGreaterThan(0);
+    expect(nextRow.total).toBeLessThanOrEqual(realBaseTotalAtRet * 1.1);
   });
 
-  it("retireAdj shifts the series start age", () => {
+  it("retireAdj moves the accumulation→retirement boundary within the full series", () => {
     const seriesEarly = calcWhatIfChart(chartBundle, { retireAdj: -2 });
+    const scenarioRetAge = safeRetAge - 2;
     expect(Array.isArray(seriesEarly)).toBe(true);
-    expect(seriesEarly.length).toBeGreaterThan(0);
-    // Series starts from the earlier retirement age
-    expect(seriesEarly[0].age).toBe(safeRetAge - 2 + 1);
+    // The series still spans the whole lifetime — start age is unaffected by
+    // WHEN retirement happens, only the boundary between the two phases moves.
+    expect(seriesEarly[0].age).toBe(currentAge + 1);
+    expect(seriesEarly[seriesEarly.length - 1].age).toBe(safeLifeExp);
+    const boundaryIdx = seriesEarly.findIndex(r => r.age === scenarioRetAge);
+    expect(boundaryIdx).toBeGreaterThanOrEqual(0);
+    expect(seriesEarly[boundaryIdx + 1].age).toBe(scenarioRetAge + 1);
   });
 
   it("returns [] for missing inputs", () => {
@@ -309,6 +377,105 @@ describe("calcWhatIfScenario", () => {
   });
 });
 
+// ── calcWhatIfScenario — engine migration (2026-07-11 overlay-continuity fix) ──
+// These tests exercise the PRIMARY (per-account engine) path directly, using a
+// bundle built the exact way App.jsx builds it — not the all-taxable fixtures
+// above — so a real, mixed-account plan (401k + Roth + Taxable + HSA, SS,
+// conversions, RMDs) is under test, not just the degenerate recurrence case.
+describe("calcWhatIfScenario — engine migration", () => {
+  const appSimInputs = {
+    totalYears: 60, currentAge: 40, currentIncome: 120_000, incomeGrowth: 2,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 6,
+    bal401k: 100_000, balRoth: 40_000, balTaxable: 60_000, balHSA: 15_000,
+    contrib401k: 15_000, contribRoth: 6_000, contribTaxable: 5_000, contribHSA: 3_000,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: em, moneyEvents: [],
+  };
+  const appSafeRetAge = 65, appSafeLifeExp = 90, appCurrentAge = 40;
+
+  // Mirrors App.jsx exactly: sim → "Trad 401k" key → accumChart → retPhaseBase →
+  // buildRetirementPhase → totalChartData.
+  const appSim = runSimulation(appSimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const appAt = appSim[appSafeRetAge - appCurrentAge - 1];
+  const appTradGrossAtRet = appAt.tradGross ?? 0;
+  const appRoth    = appAt["Roth IRA"] ?? 0;
+  const appTaxable = appAt["Taxable"]  ?? 0;
+  const appHsa     = appAt["HSA"]      ?? 0;
+  const appTotalAtRet = appTradGrossAtRet + appRoth + appTaxable + appHsa;
+
+  const appRetPhaseBase = {
+    tradGross: appTradGrossAtRet, roth: appRoth, taxable: appTaxable, hsa: appHsa,
+    startAge: appSafeRetAge, lifeExp: appSafeLifeExp, longevityHorizon: appSafeRetAge + 130,
+    rReal: 0.02, effectiveExpenses: 60_000,
+    ssGross: 24_000, ssTaxable: 20_000, ssClaimAge: 67,
+    pension: 0, pensionStartAge: Infinity,
+    filingStatus: "single", retStateRate: 0,
+    rmdStartAge: 73, useTable2: false, spouseCurrentAge: null, currentAge: appCurrentAge,
+    moneyEvents: [],
+  };
+  const appConversionByAge = { 66: 20_000, 67: 20_000 }; // a small realistic conversion window
+  const appRetPhase = buildRetirementPhase({ ...appRetPhaseBase, conversionByAge: appConversionByAge });
+  const appAccumChart = buildAccumChart({
+    simData: appSim, safeRetAge: appSafeRetAge, currentAge: appCurrentAge,
+    bal401k: appSimInputs.bal401k, balRoth: appSimInputs.balRoth,
+    balTaxable: appSimInputs.balTaxable, balHSA: appSimInputs.balHSA,
+  });
+  const appTotalChartData = [
+    ...appAccumChart,
+    ...appRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+  // retDrawShared is still required by the guard clause but is otherwise unused
+  // on the engine path — it's never read for the walk itself.
+  const appRetDrawShared = {
+    rReal: appRetPhaseBase.rReal, effectiveExpenses: appRetPhaseBase.effectiveExpenses,
+    ssAmount: appRetPhaseBase.ssGross, ssClaimAge: appRetPhaseBase.ssClaimAge,
+    pensionAmount: 0, pensionStartAge: Infinity,
+    rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [],
+  };
+  const appBundle = {
+    simInputs: appSimInputs, fedMarginal: 0.22, retDrawShared: appRetDrawShared,
+    safeRetAge: appSafeRetAge, safeLifeExp: appSafeLifeExp,
+    baseTotalAtRet: appTotalAtRet, baseYearsSustained: appRetPhase.yearsSustained,
+    retPhaseBase: appRetPhaseBase, conversionByAge: appConversionByAge,
+    baseChart: appTotalChartData, addlPreTaxBal: 0,
+  };
+
+  // ── THE invariant test ──────────────────────────────────────────────────────
+  it("a no-op scenario's chart deep-equals App's own totalChartData (every row, age and total)", () => {
+    const result = calcWhatIfScenario(appBundle, {});
+    expect(result.chart).toEqual(appTotalChartData);
+  });
+
+  it("a post-retirement scenario event leaves pre-event rows identical and changes the event-age row", () => {
+    const noOp = calcWhatIfScenario(appBundle, {});
+    const withEvent = calcWhatIfScenario(appBundle, {
+      scenarioEvents: [{ label: "Trip", amount: 50_000, age: 70, isInflow: false, isTaxable: false }],
+    });
+    const preRows     = noOp.chart.filter(r => r.age < 70);
+    const preRowsScen = withEvent.chart.filter(r => r.age < 70);
+    expect(preRowsScen).toEqual(preRows);
+    const baseRow70  = noOp.chart.find(r => r.age === 70);
+    const scenRow70  = withEvent.chart.find(r => r.age === 70);
+    expect(scenRow70.total).toBeLessThan(baseRow70.total);
+  });
+
+  it("retire-earlier scenario: pre-retirement rows equal the re-sim's accumulation portion, and the walk begins the next year", () => {
+    const scenarioRetAge = appSafeRetAge - 2;
+    const s = calcWhatIfScenario(appBundle, { retireAdj: -2 });
+    const resim = runSimulation({ ...appSimInputs, moneyEvents: appSimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const expectedAccum = buildAccumChart({
+      simData: resim, safeRetAge: scenarioRetAge, currentAge: appSimInputs.currentAge,
+      bal401k: appSimInputs.bal401k, balRoth: appSimInputs.balRoth,
+      balTaxable: appSimInputs.balTaxable, balHSA: appSimInputs.balHSA,
+    });
+    const actualAccum = s.chart.slice(0, expectedAccum.length);
+    expect(actualAccum).toEqual(expectedAccum);
+    expect(s.chart[expectedAccum.length].age).toBe(scenarioRetAge + 1);
+  });
+});
+
 // ── evaluateLifeEvent (life-event sheet: verdict + impact deltas) ─────────────
 describe("evaluateLifeEvent", () => {
   it("returns null for a missing event or invalid bundle", () => {
@@ -364,7 +531,12 @@ describe("evaluateLifeEvent", () => {
       calcEmployerMatchFn: () => 0 };
     const flatBase = runSimulation(flatSim)[safeRetAge - currentAge - 1];
     const flatTotal = (flatBase.tradGross ?? 0) + flatBase["Roth IRA"] + flatBase["Taxable"] + flatBase["HSA"];
-    const bundle = { ...baseArgs, simInputs: flatSim, baseTotalAtRet: flatTotal };
+    // retPhaseBase deliberately unset: this test overrides baseTotalAtRet directly
+    // to a value the (unrelated) baseArgs.retPhaseBase fixture doesn't know about —
+    // clearing retPhaseBase forces the no-resim path to honor baseTotalAtRet via
+    // the older blended-walk fallback, which is exactly what this test needs
+    // (it's testing event-splitting mechanics, not the engine migration).
+    const bundle = { ...baseArgs, simInputs: flatSim, baseTotalAtRet: flatTotal, retPhaseBase: undefined };
     const result = evaluateLifeEvent(bundle, {
       label: "Span", monthlyAmount: 1_000, durationMonths: 24, age: 64,
       isInflow: false, incomeAnnual: 0,
@@ -407,10 +579,14 @@ describe("evaluateLifeEvent", () => {
   });
 
   it("verdict = comfortable with infinite margin when the portfolio never depletes", () => {
+    // retPhaseBase deliberately unset — same reason as the flatSim bundle above:
+    // this test overrides baseTotalAtRet to $10M directly, which the fixed
+    // depletingArgs.retPhaseBase (seeded at $800k) doesn't reflect.
     const r = evaluateLifeEvent({
       ...depletingArgs,
       baseTotalAtRet: 10_000_000,
       retDrawShared: { ...depletingRetDrawShared, effectiveExpenses: 30_000 },
+      retPhaseBase: undefined,
     }, probeEvent);
     expect(r.verdict).toBe("comfortable");
     expect(r.sustainability.marginYears).toBe(Infinity);

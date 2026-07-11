@@ -73,6 +73,22 @@ N months") across their active years. The tax gap itself is unchanged: both stil
 portfolio adjustment and charge no income tax on taxable inflows (the engine remains the only walk
 that does), and duration events are untaxed **by design everywhere** (documented in
 `money-events.js` — their `incomeAnnual` offset is treated as after-tax cash). Still open.
+**Scope narrowed (2026-07-11, overlay-continuity fix, Step 0 of the arc-event-placement plan):**
+`calcWhatIfScenario` (`what-if.js`) — the model behind the Ideas/Plan arc overlay, the life-event
+sheet's verdict (`evaluateLifeEvent`), and `calcWhatIfChart` — now walks the retirement phase with
+`buildRetirementPhase`, the SAME per-account, taxed-once engine the main chart uses, whenever the
+bundle App.jsx passes (`whatIfBundle`/`horizonProps.whatIfSimInputs`) carries the new
+`retPhaseBase`/`conversionByAge`/`baseChart`/`addlPreTaxBal` fields (App.jsx always supplies them;
+a bundle without `retPhaseBase` falls back to the old blended walk, kept only for unmigrated
+callers/tests). Root cause this fixed: the overlay was walked with a *different* model than the
+solid line, so even a no-change scenario's dashed overlay didn't sit exactly on the chart — now it
+does (locked by an invariant test: a no-op scenario's `chart` deep-equals App's own
+`totalChartData`). Side effect: `calcWhatIfScenario`'s returned `chart` now covers the **full
+lifetime** (accumulation + retirement), not just the retirement phase, so the overlay is drawn
+end-to-end. The remaining BUG-36 gap **narrows** to `calcWhatIfDelta`, `calcAffordabilityMax`, and
+`calcOptimizedScenario` — all three still call `buildRetirementDrawdown` directly and were
+deliberately left untouched by this fix (their signatures don't carry the engine bundle). Files:
+`src/model/what-if.js` (`calcWhatIfScenario` only), `src/App.jsx` (`whatIfBundle` memo).
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 

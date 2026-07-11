@@ -17,6 +17,8 @@ import LifeEventSheet from "../LifeEventSheet.jsx";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { runSimulation } from "../../model/simulation.js";
 import { buildRetirementDrawdown } from "../../model/retirement-drawdown.js";
+import { buildRetirementPhase } from "../../model/retirement-phase.js";
+import { buildAccumChart } from "../../model/accumulation.js";
 import { calcEmployerMatch } from "../../model/employer-match.js";
 
 beforeAll(() => {
@@ -68,9 +70,37 @@ const retDrawShared = {
 const { yearsSustained: baseYearsSustained } = buildRetirementDrawdown({
   ...retDrawShared, startBal: baseTotalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130,
 });
+
+// Per-account engine fixture (mirrors what-if.test.js's baseRetPhaseBase — seeds
+// the ENTIRE balance into `taxable` so the engine's walk degenerates to the same
+// recurrence buildRetirementDrawdown used above; existing expected values hold).
+const retPhaseBase = {
+  tradGross: 0, roth: 0, taxable: baseTotalAtRet, hsa: 0,
+  startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+  rReal, effectiveExpenses: retDrawShared.effectiveExpenses,
+  ssGross: retDrawShared.ssAmount, ssTaxable: retDrawShared.ssAmount,
+  ssClaimAge: retDrawShared.ssClaimAge,
+  pension: retDrawShared.pensionAmount, pensionStartAge: retDrawShared.pensionStartAge,
+  filingStatus: "single", retStateRate: 0,
+  rmdStartAge: Infinity, useTable2: false, spouseCurrentAge: null, currentAge,
+  moneyEvents: retDrawShared.moneyEvents ?? [],
+};
+const _simWithTrad = runSimulation(simInputs)
+  .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+const _accumChart = buildAccumChart({
+  simData: _simWithTrad, safeRetAge, currentAge,
+  bal401k: simInputs.bal401k, balRoth: simInputs.balRoth,
+  balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
+});
+const _retPhase = buildRetirementPhase({ ...retPhaseBase, conversionByAge: {} });
+const baseChart = [
+  ..._accumChart,
+  ..._retPhase.rows.map(r => ({ age: r.age, total: r.total })),
+];
 const whatIfBundle = {
   simInputs, fedMarginal: 0.22, retDrawShared,
   safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained,
+  retPhaseBase, conversionByAge: {}, baseChart, addlPreTaxBal: 0,
 };
 const bounds = { minAge: currentAge + 1, maxAge: safeLifeExp, retirementAge: safeRetAge };
 

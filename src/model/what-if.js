@@ -11,6 +11,8 @@
 
 import { runSimulation } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
+import { buildRetirementPhase } from "./retirement-phase.js";
+import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
@@ -144,7 +146,16 @@ const BAL_REFERENCE_AGE = 90;
 //
 // bundle (the `whatIfBundle` App.jsx passes via horizonProps.whatIfSimInputs):
 //   { simInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
-//     baseTotalAtRet, baseYearsSustained }
+//     baseTotalAtRet, baseYearsSustained,
+//     retPhaseBase, conversionByAge, baseChart, addlPreTaxBal }
+//   retPhaseBase/conversionByAge/baseChart are the SAME memoized objects App.jsx
+//   feeds the main per-account engine (retirement-phase.js) for the solid line —
+//   passing them through here means the scenario walk uses the identical engine
+//   + inputs, so a no-change scenario's dashed overlay sits EXACTLY on the solid
+//   line (the overlay-continuity fix, 2026-07-11). When retPhaseBase is absent
+//   this falls back to the older blended-pool walk (buildRetirementDrawdown) —
+//   App.jsx always supplies retPhaseBase, so that branch is dead in production
+//   (kept only for callers/tests that haven't been migrated).
 //
 // overrides: { retireAdj, retirementAge, annualExpenses, monthlyExpenses, scenarioEvents }
 //   retireAdj       — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
@@ -156,7 +167,9 @@ const BAL_REFERENCE_AGE = 90;
 //
 // Returns null when inputs are invalid; otherwise:
 //   {
-//     chart,              // [{age, total}] retirement-phase series for the arc overlay
+//     chart,              // [{age, total}] the FULL lifetime series (accumulation +
+//                         //   retirement) — the same shape as App's totalChartData,
+//                         //   so a no-op scenario's chart deep-equals it exactly.
 //     scenarioRetAge,
 //     scenarioTotalAtRet, // portfolio at the scenario retirement age
 //     scenarioExpenses,   // annual retirement spending under the scenario
@@ -168,9 +181,10 @@ const BAL_REFERENCE_AGE = 90;
 //                         //   0     → a genuine depletion at/before 90 (a real $0).
 //   }
 //
-// Never reimplements the walk: both walks are buildRetirementDrawdown, and
-// permanent plan events are honored on both phases (retDrawShared.moneyEvents
-// merged into the retirement walk; simInputs.moneyEvents kept for re-sims).
+// Never reimplements the walk: the retirement-phase portion is buildRetirementPhase
+// (the SAME per-account engine the main chart uses — BUG-35/BUG-31), and permanent
+// plan events are honored on both phases (retDrawShared.moneyEvents merged into the
+// retirement walk; simInputs.moneyEvents kept for re-sims).
 export function calcWhatIfScenario({
   simInputs,
   fedMarginal,
@@ -179,6 +193,10 @@ export function calcWhatIfScenario({
   safeLifeExp,
   baseTotalAtRet,
   baseYearsSustained,
+  retPhaseBase,
+  conversionByAge,
+  baseChart,
+  addlPreTaxBal,
 }, overrides = {}) {
   if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return null;
 
@@ -190,9 +208,6 @@ export function calcWhatIfScenario({
       : retDrawShared.effectiveExpenses);
   const scenarioEvents   = overrides.scenarioEvents ?? [];
 
-  // Determine starting portfolio balance at the scenario retirement age
-  let startBal = baseTotalAtRet ?? 0;
-
   // Scenario events with pre-retirement activity force a re-sim even when the
   // retirement age is unchanged — they change the compounded balance AT
   // retirement. (Previously scenarioEvents reached only the retirement walk, so
@@ -202,8 +217,10 @@ export function calcWhatIfScenario({
   // the main App path, where runSimulation gets the full event list) — hence <=.
   const committedEvents = simInputs.moneyEvents ?? [];
   const scenarioAccum   = scenarioEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge);
+  const needsResim = scenarioRetAge !== safeRetAge || scenarioAccum.length > 0;
 
-  if (scenarioRetAge !== safeRetAge || scenarioAccum.length > 0) {
+  let resimRaw = null;
+  if (needsResim) {
     try {
       // Keep permanent accumulation-phase plan events in the re-sim (BUG-34).
       // Kind-aware filter (money-events.js): a duration event spanning the
@@ -214,19 +231,19 @@ export function calcWhatIfScenario({
         ...committedEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge),
         ...scenarioAccum,
       ];
-      const raw    = runSimulation({ ...simInputs, moneyEvents: accumEvents });
-      const retIdx = scenarioRetAge - simInputs.currentAge - 1;
-      const at     = raw[retIdx];
-      if (!at) return null;
-      // BUG-35: gross basis (no 401k haircut) — consistent with baseTotalAtRet.
-      startBal = (at.tradGross ?? 0)
-        + (at["Roth IRA"] ?? 0) + (at["Taxable"] ?? 0) + (at["HSA"] ?? 0);
+      // Mirror App.jsx's simData wrapper: buildAccumChart's sumAccountRow reads
+      // the "Trad 401k" key (added after runSimulation from tradGross), which
+      // the raw simulation rows don't carry — without this, a re-sim's
+      // accumulation chart would silently drop the 401k balance (BUG-35 display key).
+      resimRaw = runSimulation({ ...simInputs, moneyEvents: accumEvents })
+        .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     } catch {
       return null;
     }
   }
+  const resimAt = needsResim ? resimRaw[scenarioRetAge - simInputs.currentAge - 1] : null;
+  if (needsResim && !resimAt) return null;
 
-  const endAge = Math.max(safeLifeExp, scenarioRetAge + 5);
   // Permanent plan events + this scenario's own events (same merge the chart
   // always used — see the fixed Batch-A incident in docs/ROADMAP.md). When the
   // scenario retires EARLIER than the base plan, permanent events between the
@@ -242,6 +259,105 @@ export function calcWhatIfScenario({
     : [];
   const mergedEvents = [...(retDrawShared.moneyEvents ?? []), ...gapEvents, ...scenarioEvents];
 
+  // ── Primary path: the per-account engine (BUG-35/BUG-31) ──────────────────
+  if (retPhaseBase) {
+    const seeds = needsResim
+      ? {
+          tradGross: (resimAt.tradGross ?? 0) + (addlPreTaxBal ?? 0),
+          roth:      resimAt["Roth IRA"] ?? 0,
+          taxable:   resimAt["Taxable"]  ?? 0,
+          hsa:       resimAt["HSA"]      ?? 0,
+        }
+      : {
+          tradGross: retPhaseBase.tradGross ?? 0,
+          roth:      retPhaseBase.roth ?? 0,
+          taxable:   retPhaseBase.taxable ?? 0,
+          hsa:       retPhaseBase.hsa ?? 0,
+        };
+
+    // Accumulation-phase portion of the chart: reuse the main chart's rows
+    // (no re-sim) or rebuild them from the scenario's own re-sim with the SAME
+    // helper App.jsx uses (buildAccumChart) — one source, no re-derivation.
+    const accumChartRows = needsResim
+      ? buildAccumChart({
+          simData: resimRaw, safeRetAge: scenarioRetAge, currentAge: simInputs.currentAge,
+          bal401k: simInputs.bal401k, balRoth: simInputs.balRoth,
+          balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
+        })
+      : (baseChart ?? []).filter(r => r.age <= scenarioRetAge);
+
+    // lifeExp mirrors App's own safeLifeExp guard (≥ startAge + 1); longevityHorizon
+    // is the far cap for yearsSustained — buildRetirementPhase computes BOTH from
+    // ONE walk (it runs to longevityHorizon, then truncates rows to lifeExp for
+    // display), so a single call covers both the chart and the headline longevity.
+    const lifeExp = Math.max(safeLifeExp, scenarioRetAge + 1);
+
+    let rp;
+    try {
+      rp = buildRetirementPhase({
+        ...retPhaseBase,
+        tradGross: seeds.tradGross, roth: seeds.roth, taxable: seeds.taxable, hsa: seeds.hsa,
+        startAge: scenarioRetAge,
+        lifeExp,
+        longevityHorizon: scenarioRetAge + 130,
+        effectiveExpenses: scenarioExpenses,
+        // The conversion schedule stays at ABSOLUTE ages even when the retirement
+        // age shifts — the same approximation the blended walk already made with
+        // its per-age tax maps (rmdTaxByAge/conversionTaxByAge above); a schedule
+        // that re-anchors to the new retirement age is a documented follow-up,
+        // not a regression introduced here.
+        conversionByAge: conversionByAge ?? {},
+        moneyEvents: mergedEvents,
+      });
+    } catch {
+      return null;
+    }
+
+    const walkRows = rp.rows ?? [];
+    const scenarioTotalAtRet = seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa;
+    const chart = [...accumChartRows, ...walkRows.map(r => ({ age: r.age, total: r.total }))];
+
+    // Balance at age 90 — null means "the walk never reaches 90" (not applicable,
+    // NOT zero); a genuine depletion at/before 90 is a real 0.
+    let scenarioBalAt90;
+    if (rp.depletionAge != null && rp.depletionAge <= BAL_REFERENCE_AGE) {
+      scenarioBalAt90 = 0;
+    } else {
+      const row90 = walkRows.find(r => r.age === BAL_REFERENCE_AGE);
+      scenarioBalAt90 = row90 ? row90.total : null;
+    }
+
+    const scenarioYears = rp.yearsSustained;
+    const deltaYears = (scenarioYears === Infinity && baseYearsSustained === Infinity)
+      ? 0
+      : scenarioYears === Infinity
+        ? Infinity
+        : baseYearsSustained === Infinity
+          ? -Infinity
+          : scenarioYears - baseYearsSustained;
+
+    return {
+      chart,
+      scenarioRetAge,
+      scenarioTotalAtRet,
+      scenarioExpenses,
+      scenarioYears,
+      deltaYears,
+      scenarioBalAt90,
+    };
+  }
+
+  // ── Fallback: the older blended-pool walk (buildRetirementDrawdown). App.jsx
+  // always supplies retPhaseBase, so this branch does not run in production —
+  // kept for any caller/test that hasn't been migrated to the engine bundle.
+  let startBal = baseTotalAtRet ?? 0;
+  if (needsResim) {
+    // BUG-35: gross basis (no 401k haircut) — consistent with baseTotalAtRet.
+    startBal = (resimAt.tradGross ?? 0)
+      + (resimAt["Roth IRA"] ?? 0) + (resimAt["Taxable"] ?? 0) + (resimAt["HSA"] ?? 0);
+  }
+
+  const endAge = Math.max(safeLifeExp, scenarioRetAge + 5);
   let lifeWalk, farWalk;
   try {
     // Chart walk to life expectancy — what the arc renders.
@@ -268,8 +384,6 @@ export function calcWhatIfScenario({
 
   const chart = (lifeWalk.rows ?? []).map(r => ({ age: r.age, total: r.total }));
 
-  // Balance at age 90 — null means "the walk never reaches 90" (not applicable,
-  // NOT zero); a genuine depletion at/before 90 is a real 0.
   let scenarioBalAt90;
   if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= BAL_REFERENCE_AGE) {
     scenarioBalAt90 = 0;

@@ -924,6 +924,11 @@ export default function App() {
   // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
   // memoized whatIfSimInputs + retDrawShared as deps. Grown by named fields only —
   // baseYearsSustained added for calcWhatIfScenario's deltaYears (never repurpose).
+  // retPhaseBase/conversionByAge/baseChart/addlPreTaxBal (2026-07-11, overlay-
+  // continuity fix): the SAME memoized inputs the main per-account engine
+  // (retirement-phase.js) uses, so calcWhatIfScenario can walk retirement with
+  // that engine instead of the older blended buildRetirementDrawdown — a
+  // no-change scenario's dashed overlay then sits exactly on the solid line.
   const whatIfBundle = useMemo(() => ({
     simInputs: whatIfSimInputs,
     fedMarginal,
@@ -932,8 +937,13 @@ export default function App() {
     safeLifeExp,
     baseTotalAtRet: totalAtRet,
     baseYearsSustained: yearsSustained,
+    retPhaseBase,
+    conversionByAge,
+    baseChart: totalChartData,
+    addlPreTaxBal,
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
-       totalAtRet, yearsSustained]);
+       totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
+       addlPreTaxBal]);
 
   // ── Horizon display bundles (WI-0.1) — derived numbers come from the model, ──
   // pre-gated and display-ready, so screens only format (principle 6).
