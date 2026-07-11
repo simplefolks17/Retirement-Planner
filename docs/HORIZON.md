@@ -20,9 +20,9 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 | `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape |
 | `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views, scenario overlay, event markers, tap-to-scrub |
 | `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard + mobile bar/MoreSheet; exports `SCREENS`; imports per-screen files |
-| `src/horizon/screens/PlanScreen.jsx` | Plan screen (arc, hero, income meter, QuickTune, signals strip, "Make this my plan") |
+| `src/horizon/screens/PlanScreen.jsx` | arc (full-width), hero, income meter, Try-a-change preview levers (Apply/Discard), stat cards, signals strip |
 | `src/horizon/screens/JourneyScreen.jsx` | Journey screen — the Flow-Down port (3-chapter narrative) |
-| `src/horizon/screens/IdeasScreen.jsx` | Ideas screen (dials, scenario cards, life events) |
+| `src/horizon/screens/IdeasScreen.jsx` | segmented Dials · Events · Scenarios workshop; live dial sliders; Apply to my plan |
 | `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen — 5 tabs (Statement, Budget, Accounts, Taxes, Year by year); Statement carries a "Retirement income companion strip" (the consolidated former Money-flow retirement view — see below) |
 | `src/horizon/screens/StrategiesScreen.jsx` | Strategies catalogue (WI-3.3) — `STRATEGIES` registry of cards; each opens a `Flow` in the detail slot |
 | `src/horizon/screens/strategies/` | The interactive strategy flows: `SSTimingFlow.jsx` (WI-3.4), `RMDOutlookFlow.jsx` (WI-3.5), `ConversionPlannerFlow.jsx` (WI-3.6); `flow-ui.jsx` = shared `SectionLabel`/`NoteBox`/`StatTile` |

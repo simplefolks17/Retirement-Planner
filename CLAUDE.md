@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (674 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (686 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (121 items, 60 done, 61 planned)
+- Feature backlog: `feature-tracker.html` (123 items, 61 done, 62 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -875,10 +875,41 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   flow (open sheet → duration change updates verdict → commit → badge on both arcs → edit →
   remove).
 
+- **Plan/Ideas re-differentiation + preview-first levers (2026-07-11, branch
+  `claude/arc-event-placement-video-61zalx`, feature #122):** the two screens had converged
+  after #121; two Fable design rounds (owner feedback folded in) re-split them. **Plan** is now
+  a calm dashboard of the COMMITTED plan: full-width arc (54vh desktop / 38vh mobile — the
+  320px scrolling right rail is gone), a 3-column band (PortfolioHero [delta badge retired] |
+  IncomeMeter | new **TryAChangePanel**), then stat cards + signals. TryAChangePanel's two
+  levers (Retire at, Monthly spend) are **preview-first**: dragging draws the DASHED what-if
+  overlay on Plan's own arc + a delta chip (ONE `buildLeverPreview` run feeds both) and
+  explicit **Apply** (via `ApplyPreviewModal` → new App callback `applyPlanLevers` →
+  `commitPlan`, which now accepts `monthlySpend`) / **Discard** — real state never moves on
+  drag. QuickTunePanel and the `planDelta`/`committedOutputs` dirty-state machinery are
+  RETIRED; the 8 assumption sliders live in My details. **Ideas** stays the deep workshop
+  (SP-5 tidy): ONE segmented control Dials · Events · Scenarios (askit folded into Scenarios;
+  mode ids unchanged for deep links), Dials are live sliders whose dashed overlay + strikethrough
+  stats come from ONE run, and the commit verb is unified to **"Apply to my plan"** via
+  `ApplyPreviewModal` — fixing the old bug where the spend dial was never committed.
+  **Overlay-continuity fix (closes the scenario half of BUG-36):** `calcWhatIfScenario` now
+  walks retirement with the per-account engine (`buildRetirementPhase`) using the SAME memoized
+  inputs as the solid arc (whatIfBundle gained `retPhaseBase`/`conversionByAge`/`baseChart`/
+  `addlPreTaxBal`), locked by an invariant test: a no-op scenario's chart deep-equals
+  `totalChartData`; `ArcGraph.trimScenarioOverlay` starts the dashed line exactly at the
+  divergence age. **Colored verdict tick rails** (the video's rail idea): `buildLeverRail` /
+  `buildDurationRail` (what-if.js) run the model once per slider step → comfortable/tight/
+  unaffordable ticks under Plan levers, Ideas dials, and the LifeEventSheet duration slider
+  (shared `VerdictTickRail` in `fields.jsx`); `verdictForMargin` is the ONE verdict formula,
+  shared with `evaluateLifeEvent`. New model exports: `buildLeverPreview`, `buildLeverRail`,
+  `buildDurationRail`. Golden master + preset value-locks untouched throughout. 674 → **686**
+  tests; lint clean; build OK. Execution note: implemented by Sonnet subagents (model layer →
+  App plumbing + Plan re-layout → Ideas tidy) from a Fable-written plan, orchestrator reviewing
+  every diff and committing; docs by Haiku.
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (674 tests)
+- `npm test` — run model + formatter + render-smoke tests (686 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

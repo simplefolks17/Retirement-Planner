@@ -842,6 +842,20 @@ var DATA = [
     cx: "Medium", im: "High", af: ["money-events.js (duration events + helpers)", "what-if.js (evaluateLifeEvent, BUG-42)", "simulation.js / retirement-drawdown.js (shared helper)", "App.jsx (lifeEventBounds, kind-aware filters)", "LifeEventSheet.jsx (new)", "ArcGraph.jsx (badges + onEventTap)", "IdeasScreen.jsx / PlanScreen.jsx (wiring)"], sv: "none at defaults (moneyEvents=[] — golden master untouched)"
   },
   {
+    id: 122, pr: 1, sec: "Horizon Depth Ladder", st: "done",
+    ti: "Plan/Ideas re-differentiation — preview-first levers + overlay-continuity fix",
+    ds: "Plan and Ideas had converged (same arc, duplicate editing, duplicate stats). Redesign (two Fable design rounds + owner decisions): Plan = calm dashboard of the committed plan — full-width arc, 3-column band (hero | income meter | Try-a-change panel), no scrolling rail; the two headline levers (retire age, monthly spend) are preview-first: dragging draws the dashed what-if overlay on Plan's own arc with a delta chip and explicit Apply/Discard (real state never moves on drag). Ideas = the deep workshop: one segmented control (Dials · Events · Scenarios), live dial sliders, one unified 'Apply to my plan' verb. Colored verdict tick rails under all what-if sliders show which values are comfortable/tight/unaffordable before you drag there. Dashed overlays now sit exactly on the solid line where nothing changed (scenario walks moved onto the per-account engine).",
+    dt: "Shipped 2026-07-11 (branch claude/arc-event-placement-video-61zalx). Model: calcWhatIfScenario walks buildRetirementPhase with the SAME memoized inputs as the solid arc (whatIfBundle += retPhaseBase/conversionByAge/baseChart/addlPreTaxBal; no-op invariant test chart === totalChartData; BUG-36 scenario half closed); new buildLeverPreview / buildLeverRail / buildDurationRail; verdictForMargin shared with evaluateLifeEvent. App: applyPlanLevers single write path (commitPlan accepts monthlySpend); planDelta/committedOutputs retired; horizonProps pruned of QuickTune-only setters. UI: PlanScreen rewrite (QuickTunePanel deleted; TryAChangePanel with rails + ApplyPreviewModal; mobile sticky Apply/Discard bar); IdeasScreen segmented control + live sliders (spend-commit bug fixed); shared VerdictTickRail (fields.jsx); ArcGraph.trimScenarioOverlay. 674→686 tests; golden master + preset locks untouched.",
+    cx: "High", im: "High", af: ["what-if.js (engine walk, preview/rail builders)", "App.jsx (applyPlanLevers, whatIfBundle, pruning)", "PlanScreen.jsx (rewrite)", "IdeasScreen.jsx (rewrite)", "ArcGraph.jsx (overlay trim)", "fields.jsx (VerdictTickRail)", "LifeEventSheet.jsx (duration rail)"], sv: "none at defaults (what-if paths only; golden master untouched)"
+  },
+  {
+    id: 123, pr: 2, sec: "Horizon Depth Ladder", st: "planned",
+    ti: "Third Plan lever: yearly savings (needs calcWhatIfScenario contribution override)",
+    ds: "The Plan Try-a-change panel ships with two levers (retire age, monthly spend). The designer's spec includes a third — yearly savings — deferred because calcWhatIfScenario has no contribution override yet: sandboxing savings requires re-running the accumulation sim with a modified contribution, model-first (principle 4).",
+    dt: "Add a contributions override to calcWhatIfScenario's overrides (re-sim path, mirroring the retirementAge override), then add the third slider row + tick rail to TryAChangePanel (bounds from sliderBounds.contribMax) and optionally to Ideas' Dials. Inert at default — golden master untouched.",
+    cx: "Medium", im: "Medium", af: ["what-if.js (contribution override)", "PlanScreen.jsx (third lever)", "IdeasScreen.jsx (optional)"], sv: "none at defaults"
+  },
+  {
     id: 98, pr: 1, sec: "Horizon Depth Ladder", st: "done",
     ti: "L3 / WI-3.1 — Topic-grouped setter bundles in horizonProps",
     ds: "The plumbing for all Level-3 work: Horizon gains write access to every Classic input via topic-grouped bundles of the existing App.jsx state + setters (profile, spending, accounts, ss, pension, conversion, health, assumptions). Both UIs keep sharing one state.",

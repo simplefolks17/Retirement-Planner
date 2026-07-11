@@ -342,6 +342,23 @@ badge tap re-opens the sheet in edit mode with a Remove action).
 Tests: `src/horizon/__tests__/life-event-sheet.test.js` (sheet + badges),
 duration/`evaluateLifeEvent` coverage in `money-events.test.js` / `what-if.test.js`.
 
+### Preview-first levers + verdict tick rails (2026-07-11, #122)
+
+Plan's `TryAChangePanel` and Ideas' Dials are **preview-first**: screen-local offsets feed ONE
+`buildLeverPreview(whatIfBundle, { retirementAge, monthlyExpenses })` run (what-if.js) whose
+`chart` is the arc's dashed overlay and whose `metrics` (buildPreviewMetric rows) are the delta
+chip AND the ApplyPreviewModal payload — one run, three surfaces, no divergence. Apply goes
+through the single App write path `applyPlanLevers({ retirementAge, monthlySpend })`
+(coupled setters + `commitPlan`, which now accepts `monthlySpend`; month→year conversion stays
+App-side). `buildLeverRail` / `buildDurationRail` produce `[{ value|months, verdict }]` per
+slider step (verdictForMargin — the same formula as `evaluateLifeEvent`); screens render them
+with the shared `VerdictTickRail` (fields.jsx) mapping verdict strings to tokens only.
+`calcWhatIfScenario` itself walks retirement with `buildRetirementPhase` on the bundle's
+`retPhaseBase`/`conversionByAge` (whatIfBundle also carries `baseChart` + `addlPreTaxBal`),
+locked by the no-op invariant (scenario chart === totalChartData); `ArcGraph.trimScenarioOverlay`
+starts the dashed line at the divergence age. `calcWhatIfDelta`/`calcAffordabilityMax`/the
+optimizer remain on the blended walk (BUG-36's narrowed scope).
+
 ---
 
 ### Apply-with-preview contract (WI-3.9 / #106)
