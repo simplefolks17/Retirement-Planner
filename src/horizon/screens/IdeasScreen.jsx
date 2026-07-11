@@ -195,7 +195,14 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   const applyPreview = useMemo(() => {
     if (!whatIfBundle) return null;
     if (scen && scenario) {
-      return buildLeverPreview(whatIfBundle, { retirementAge: scenario.scenarioRetAge });
+      // M1: preview the scenario's FULL overrides, not just the retirement-age
+      // shift — a scenario like bigTrip (no age shift, but a scenarioEvents
+      // outflow) previously previewed as "no change" because only retirementAge
+      // was passed through here.
+      return buildLeverPreview(whatIfBundle, {
+        retirementAge: scenario.scenarioRetAge,
+        scenarioEvents: scen.scenarioEvents ?? [],
+      });
     }
     if (dialsActive) {
       const overrides = {};
@@ -219,7 +226,23 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   const handleApplyConfirm = () => {
     if (scen && scenario) {
-      applyPlanLevers({ retirementAge: scenario.scenarioRetAge });
+      // M1: retirement-age write only when the scenario actually shifts it
+      // (bigTrip doesn't — retireAdj: 0 — so applyPlanLevers would be a no-op
+      // write; skip it rather than calling with an unchanged age).
+      if (scenario.scenarioRetAge !== retirementAge) {
+        applyPlanLevers({ retirementAge: scenario.scenarioRetAge });
+      }
+      // M1: merge the scenario's own events (e.g. bigTrip's $40k outflow) into
+      // committed moneyEvents — previously dropped entirely, so "Apply to my
+      // plan" for an event-only scenario never reached the plan.
+      const scenEvents = scen.scenarioEvents ?? [];
+      if (scenEvents.length > 0) {
+        const stamp = Date.now();
+        setMoneyEvents(prev => [
+          ...prev,
+          ...scenEvents.map((ev, i) => ({ ...ev, id: String(stamp) + i, icon: ev.icon ?? "✨" })),
+        ]);
+      }
     } else if (dialsActive) {
       applyPlanLevers({
         ...(dialRetireOffset !== 0 ? { retirementAge: dialRetireAge } : {}),

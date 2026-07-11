@@ -950,9 +950,13 @@ export default function App() {
     conversionByAge,
     baseChart: totalChartData,
     addlPreTaxBal,
+    // M2 review fix: the engine's own depletion age (exact), so buildLeverPreview's
+    // "before" longevity metric doesn't fall back to a round(retAge+years)
+    // derivation that can land one year early.
+    baseDepletionAge: depletionAge,
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
-       addlPreTaxBal]);
+       addlPreTaxBal, depletionAge]);
 
   // ── Horizon display bundles (WI-0.1) — derived numbers come from the model, ──
   // pre-gated and display-ready, so screens only format (principle 6).

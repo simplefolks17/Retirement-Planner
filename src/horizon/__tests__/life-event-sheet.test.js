@@ -237,6 +237,92 @@ describe("LifeEventSheet", () => {
   });
 });
 
+// ── LifeEventSheet — edit mode double-count regression (H1) ───────────────────
+// A real per-account-engine bundle (mirrors what-if.test.js's H1 fixture — the
+// all-taxable-seed trick the fixture above uses is NOT valid here: editing a
+// committed event forces a re-sim, which reads REAL per-account balances, so an
+// artificially-collapsed retPhaseBase would show a spurious divergence unrelated
+// to the bug under test) with a COMMITTED event already baked into every
+// committed-event source, exactly how App.jsx wires a real moneyEvents entry.
+describe("LifeEventSheet — edit mode double-count regression (H1)", () => {
+  const editEm = (s, c) => calcEmployerMatch(s, c, {
+    matchMode: "flat", matchFormulaCap: 6, matchFormulaRate: 50, employerMatchPct: 3,
+  });
+  const editSimInputsBase = {
+    totalYears: 60, currentAge: 40, currentIncome: 120_000, incomeGrowth: 2,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 6,
+    bal401k: 100_000, balRoth: 40_000, balTaxable: 60_000, balHSA: 15_000,
+    contrib401k: 15_000, contribRoth: 6_000, contribTaxable: 5_000, contribHSA: 3_000,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: editEm, moneyEvents: [],
+  };
+  const editSafeRetAge = 65, editSafeLifeExp = 90, editCurrentAge = 40;
+  const committedTrip = {
+    id: "trip-1", label: "Big trip", icon: "✈️", amount: 40_000, age: 70,
+    isInflow: false, isTaxable: false,
+  };
+  const editSimInputs = { ...editSimInputsBase, moneyEvents: [committedTrip] };
+  const editSim = runSimulation(editSimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const editAt = editSim[editSafeRetAge - editCurrentAge - 1];
+  const editTradGrossAtRet = editAt.tradGross ?? 0;
+  const editRoth    = editAt["Roth IRA"] ?? 0;
+  const editTaxable = editAt["Taxable"]  ?? 0;
+  const editHsa     = editAt["HSA"]      ?? 0;
+  const editTotalAtRet = editTradGrossAtRet + editRoth + editTaxable + editHsa;
+  const editRetPhaseBase = {
+    tradGross: editTradGrossAtRet, roth: editRoth, taxable: editTaxable, hsa: editHsa,
+    startAge: editSafeRetAge, lifeExp: editSafeLifeExp, longevityHorizon: editSafeRetAge + 130,
+    rReal: 0.02, effectiveExpenses: 60_000,
+    ssGross: 24_000, ssTaxable: 20_000, ssClaimAge: 67,
+    pension: 0, pensionStartAge: Infinity,
+    filingStatus: "single", retStateRate: 0,
+    rmdStartAge: 73, useTable2: false, spouseCurrentAge: null, currentAge: editCurrentAge,
+    moneyEvents: [committedTrip],
+  };
+  const editRetPhase = buildRetirementPhase({ ...editRetPhaseBase, conversionByAge: {} });
+  const editAccumChart = buildAccumChart({
+    simData: editSim, safeRetAge: editSafeRetAge, currentAge: editCurrentAge,
+    bal401k: editSimInputsBase.bal401k, balRoth: editSimInputsBase.balRoth,
+    balTaxable: editSimInputsBase.balTaxable, balHSA: editSimInputsBase.balHSA,
+  });
+  const editBaseChart = [
+    ...editAccumChart,
+    ...editRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+  const editRetDrawShared = {
+    rReal: editRetPhaseBase.rReal, effectiveExpenses: editRetPhaseBase.effectiveExpenses,
+    ssAmount: editRetPhaseBase.ssGross, ssClaimAge: editRetPhaseBase.ssClaimAge,
+    pensionAmount: 0, pensionStartAge: Infinity,
+    rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [committedTrip],
+  };
+  const editBundle = {
+    simInputs: editSimInputs, fedMarginal: 0.22, retDrawShared: editRetDrawShared,
+    safeRetAge: editSafeRetAge, safeLifeExp: editSafeLifeExp,
+    baseTotalAtRet: editTotalAtRet, baseYearsSustained: editRetPhase.yearsSustained,
+    retPhaseBase: editRetPhaseBase, conversionByAge: {},
+    baseChart: editBaseChart, addlPreTaxBal: 0,
+  };
+  const editBounds = { minAge: editCurrentAge + 1, maxAge: editSafeLifeExp, retirementAge: editSafeRetAge };
+
+  it("editing a committed event with unchanged values shows no impact bullet (no double-count)", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle: editBundle, bounds: editBounds, initial: committedTrip,
+        onSave: vi.fn(), onRemove: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const text = allText(tree);
+    // Before the fix this bullet showed a large spurious delta (≈ −$59k) from
+    // pricing the already-committed event a second time via scenarioEvents.
+    // Fixed: base and scenario runs price it exactly once, so the "Left at ___"
+    // delta bullet (rendered only when result.atPlanAge.dir is truthy) is absent.
+    expect(text).not.toContain("Left at");
+    expect(text).toContain("This plan…");
+  });
+});
+
 describe("ArcGraph event badges", () => {
   const chartData = [];
   for (let a = 35; a <= 90; a++) chartData.push({ age: a, total: 1_000_000 + a * 10_000 });

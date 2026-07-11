@@ -48,29 +48,46 @@ export default function LifeEventSheet({
 
   const icon = initial?.icon ?? (isInflow ? "✳" : "◆");
 
+  // The SAVE candidate — includes label/icon (display-only fields the model
+  // never reads). H1: `id: initial?.id` carries the committed event's id
+  // through when editing (undefined for a new/unsaved event — harmless), so
+  // evaluateLifeEvent can tell "editing this committed event" from "adding a
+  // new one" and avoid double-counting the original (see modelCandidate below).
   const candidate = useMemo(() => {
-    const common = { label, icon, age, isInflow, isTaxable: false };
+    const common = { label, icon, age, isInflow, isTaxable: false, id: initial?.id };
     return mode === "monthly"
       ? { ...common, monthlyAmount, durationMonths, incomeAnnual }
       : { ...common, amount };
-  }, [label, icon, age, isInflow, mode, amount, monthlyAmount, durationMonths, incomeAnnual]);
+  }, [label, icon, age, isInflow, mode, amount, monthlyAmount, durationMonths, incomeAnnual, initial?.id]);
 
-  // ONE model run per candidate change — verdict, deltas, and (future) overlay
-  // all come from this result, so they can never disagree (V1/principle 7).
+  // L1: the MODEL-facing candidate — numeric/model fields only (no label/icon,
+  // which the model never reads but which change on every keystroke in the
+  // name field). Keeping this separate from `candidate` means typing a label
+  // doesn't re-run evaluateLifeEvent/buildDurationRail (dozens of walks) —
+  // only a field that can actually change the model's answer does.
+  const modelCandidate = useMemo(() => {
+    const common = { age, isInflow, isTaxable: false, id: initial?.id };
+    return mode === "monthly"
+      ? { ...common, monthlyAmount, durationMonths, incomeAnnual }
+      : { ...common, amount };
+  }, [age, isInflow, mode, amount, monthlyAmount, durationMonths, incomeAnnual, initial?.id]);
+
+  // ONE model run per model-candidate change — verdict, deltas, and (future)
+  // overlay all come from this result, so they can never disagree (V1/principle 7).
   const result = useMemo(
-    () => (whatIfBundle ? evaluateLifeEvent(whatIfBundle, candidate) : null),
-    [whatIfBundle, candidate]);
+    () => (whatIfBundle ? evaluateLifeEvent(whatIfBundle, modelCandidate) : null),
+    [whatIfBundle, modelCandidate]);
 
   // Duration tick rail (monthly mode only): one calcWhatIfScenario run per
   // month of duration, verdict-colored, so the slider shows which durations
   // are still comfortable before the user drags to the edge. eventBase is the
-  // candidate minus durationMonths (buildDurationRail's contract — it sets
-  // durationMonths per step itself).
+  // model candidate minus durationMonths (buildDurationRail's contract — it
+  // sets durationMonths per step itself).
   const durationEventBase = useMemo(() => {
     if (mode !== "monthly") return null;
-    const { durationMonths: _drop, ...base } = candidate;
+    const { durationMonths: _drop, ...base } = modelCandidate;
     return base;
-  }, [candidate, mode]);
+  }, [modelCandidate, mode]);
 
   const durationRail = useMemo(
     () => (whatIfBundle && durationEventBase

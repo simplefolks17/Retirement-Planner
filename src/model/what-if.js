@@ -77,7 +77,12 @@ export function calcWhatIfDelta({
   // Split events by phase — kind-aware (money-events.js): a duration event
   // spanning the retirement boundary goes to BOTH walks; each walk applies only
   // the years inside its own age range via eventNetForYear.
-  const accumEvents = moneyEvents.filter(ev => eventFirstAge(ev) < scenarioRetAge);
+  // Boundary: <= (not <) — an event at exactly the retirement age belongs in the
+  // re-sim, since the sim row read below IS the retirement-age row (matches
+  // calcWhatIfScenario's documented convention below). With `<` an event dated
+  // exactly at scenarioRetAge fell into neither the sim (excluded by `<`) nor the
+  // walk (which starts at startAge+1) — a complete no-op.
+  const accumEvents = moneyEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge);
   const retEvents   = moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge);
 
   // ── Step 1: determine scenario starting balance at retirement ──────────────
@@ -175,13 +180,20 @@ const BAL_REFERENCE_AGE = 90;
 //   App.jsx always supplies retPhaseBase, so that branch is dead in production
 //   (kept only for callers/tests that haven't been migrated).
 //
-// overrides: { retireAdj, retirementAge, annualExpenses, monthlyExpenses, scenarioEvents }
+// overrides: { retireAdj, retirementAge, annualExpenses, monthlyExpenses, scenarioEvents, excludeEventId }
 //   retireAdj       — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
 //   retirementAge   — absolute retirement age override (takes precedence over retireAdj)
 //   annualExpenses  — override for retirement spending
 //   monthlyExpenses — same override expressed monthly (annualExpenses wins if both
 //                     are given); the month→year conversion lives HERE, not in JSX
 //   scenarioEvents  — additional one-time events for this scenario only (e.g. a lump-sum trip spend)
+//   excludeEventId  — strip a committed event (by id) out of every committed-event
+//                     source (simInputs.moneyEvents, retDrawShared.moneyEvents, and
+//                     the gap-events derived from them) before the walk, and force a
+//                     re-sim so the starting-balance baseline recomputes too (H1: lets
+//                     a caller re-price a committed event — e.g. LifeEventSheet's edit
+//                     mode — without it also being priced as part of the "committed"
+//                     background via scenarioEvents, which would double-count it)
 //
 // Returns null when inputs are invalid; otherwise:
 //   {
@@ -225,6 +237,15 @@ export function calcWhatIfScenario({
       ? overrides.monthlyExpenses * ASSUMPTIONS.MONTHS_PER_YEAR
       : retDrawShared.effectiveExpenses);
   const scenarioEvents   = overrides.scenarioEvents ?? [];
+  const excludeEventId   = overrides.excludeEventId ?? null;
+
+  // H1: strip a committed event (by id) out of every committed-event source
+  // before the walk — used when re-pricing a committed event (e.g. an edit in
+  // LifeEventSheet) so it isn't ALSO counted via the committed background AND
+  // via scenarioEvents. A no-op (identity) when excludeEventId is null.
+  const stripExcluded = (events) => (excludeEventId == null
+    ? (events ?? [])
+    : (events ?? []).filter(ev => ev.id !== excludeEventId));
 
   // Scenario events with pre-retirement activity force a re-sim even when the
   // retirement age is unchanged — they change the compounded balance AT
@@ -233,9 +254,13 @@ export function calcWhatIfScenario({
   // Boundary: the sim row that is read below IS the retirement-age row, so an
   // event landing exactly at the retirement age belongs in the sim (this matches
   // the main App path, where runSimulation gets the full event list) — hence <=.
-  const committedEvents = simInputs.moneyEvents ?? [];
+  // excludeEventId also forces a re-sim (even with no other override) so the
+  // starting-balance baseline recomputes from a committed-event set that no
+  // longer includes the excluded id (H1) — needed for a pre-retirement or
+  // boundary-spanning excluded event to actually leave the compounding balance.
+  const committedEvents = stripExcluded(simInputs.moneyEvents);
   const scenarioAccum   = scenarioEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge);
-  const needsResim = scenarioRetAge !== safeRetAge || scenarioAccum.length > 0;
+  const needsResim = scenarioRetAge !== safeRetAge || scenarioAccum.length > 0 || excludeEventId != null;
 
   let resimRaw = null;
   if (needsResim) {
@@ -275,7 +300,7 @@ export function calcWhatIfScenario({
     ? committedEvents.filter(ev =>
         eventLastAge(ev) >= scenarioRetAge && eventLastAge(ev) < safeRetAge)
     : [];
-  const mergedEvents = [...(retDrawShared.moneyEvents ?? []), ...gapEvents, ...scenarioEvents];
+  const mergedEvents = [...stripExcluded(retDrawShared.moneyEvents), ...gapEvents, ...scenarioEvents];
 
   // ── Primary path: the per-account engine (BUG-35/BUG-31) ──────────────────
   if (retPhaseBase) {
@@ -362,6 +387,11 @@ export function calcWhatIfScenario({
       scenarioYears,
       deltaYears,
       scenarioBalAt90,
+      // M2: the engine's own depletion age (rp.depletionAge) — exact, not a
+      // round(retAge + yearsSustained) derivation, which lands one year early
+      // whenever the failure year is < 50% funded (yearsSustained's fractional
+      // part < 0.5 rounds DOWN past a depletion that already happened).
+      scenarioDepletionAge: rp.depletionAge ?? null,
     };
   }
 
@@ -419,6 +449,13 @@ export function calcWhatIfScenario({
         ? -Infinity
         : scenarioYears - baseYearsSustained;
 
+  // M2 (fallback path only — dead in production, App.jsx always supplies
+  // retPhaseBase): kept as the pre-existing derived value rather than
+  // farWalk.depletionAge, so this branch's behavior is unchanged.
+  const scenarioDepletionAge = scenarioYears === Infinity
+    ? null
+    : Math.round(scenarioRetAge + scenarioYears);
+
   return {
     chart,
     scenarioRetAge,
@@ -427,6 +464,7 @@ export function calcWhatIfScenario({
     scenarioYears,
     deltaYears,
     scenarioBalAt90,
+    scenarioDepletionAge,
   };
 }
 
@@ -479,8 +517,22 @@ export function calcWhatIfChart(bundle, overrides = {}) {
 //   }
 export function evaluateLifeEvent(bundle, event) {
   if (!event) return null;
+  // H1: when editing a committed event (event.id set — LifeEventSheet's edit
+  // mode), the bundle's committed-event lists already bake the ORIGINAL event
+  // into every walk. Pricing the (possibly edited) candidate on top of that via
+  // scenarioEvents alone would count it twice (an unchanged edit of a $40k trip
+  // showed ≈ −$59k instead of "no change"). Only the SCENARIO run excludes the
+  // original and re-adds the candidate in its place; the BASE run stays the
+  // plan exactly as currently committed, so an edit that changes nothing
+  // reproduces the base run (small resim-vs-direct rounding noise is expected
+  // and tolerated by callers). New (unsaved) events carry no id, so this is a
+  // no-op for the add-new-event flow — unchanged from before.
+  const excludeEventId = event.id ?? null;
   const base = calcWhatIfScenario(bundle, {});
-  const scen = calcWhatIfScenario(bundle, { scenarioEvents: [event] });
+  const scen = calcWhatIfScenario(bundle, {
+    ...(excludeEventId != null ? { excludeEventId } : {}),
+    scenarioEvents: [event],
+  });
   if (!base || !scen) return null;
 
   const { safeRetAge, safeLifeExp } = bundle;
@@ -505,8 +557,9 @@ export function evaluateLifeEvent(bundle, event) {
 
   const walkDepletion = (run) => {
     if (run.scenarioYears === Infinity) return null;
-    // yearsSustained is measured from the retirement age (far-horizon walk).
-    return Math.round(run.scenarioRetAge + run.scenarioYears);
+    // M2: prefer the engine's own scenarioDepletionAge (exact) over the
+    // round(retAge + yearsSustained) derivation, which can land one year early.
+    return run.scenarioDepletionAge ?? Math.round(run.scenarioRetAge + run.scenarioYears);
   };
 
   return {
@@ -628,15 +681,20 @@ function depletionAgeFrom(years, retAge) {
 // never hand-rolled here (rule 10).
 //
 // bundle: the `whatIfBundle` shape documented above calcWhatIfScenario.
-// overrides: { retirementAge, monthlyExpenses } — either, both, or neither.
+// overrides: { retirementAge, monthlyExpenses, scenarioEvents } — any subset.
 //   Omitted fields simply aren't overridden (calcWhatIfScenario semantics).
+//   scenarioEvents (M1) — one-time/duration events for this preview only (e.g.
+//   an Ideas scenario card's lump-sum trip) — passed straight through to
+//   calcWhatIfScenario so the preview and the eventual moneyEvents commit can
+//   never disagree about what "applying this scenario" means.
 //
 // Returns null when the bundle is invalid (calcWhatIfScenario itself returns
 // null); otherwise:
 //   {
 //     changed,        // true when a provided override actually differs from
-//                     // the base (retirementAge vs bundle.safeRetAge, or the
-//                     // annualized monthly value vs bundle.retDrawShared.effectiveExpenses)
+//                     // the base (retirementAge vs bundle.safeRetAge, the
+//                     // annualized monthly value vs bundle.retDrawShared.effectiveExpenses,
+//                     // or a non-empty scenarioEvents list)
 //     chart,          // the scenario's full lifetime series (for the dashed overlay)
 //     metrics,        // [portfolio-at-retirement, longevity, balance-at-plan-age]
 //                     // — buildPreviewMetric rows, ready to render verbatim
@@ -646,17 +704,21 @@ function depletionAgeFrom(years, retAge) {
 //     scenarioStats,  // { scenarioRetAge, scenarioExpenses, scenarioTotalAtRet,
 //                     //   scenarioYears, scenarioBalAt90 } — passthrough scalars
 //   }
-export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses } = {}) {
+export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses, scenarioEvents = [] } = {}) {
   if (!bundle) return null;
 
   const overrides = {};
   if (retirementAge != null) overrides.retirementAge = retirementAge;
   if (monthlyExpenses != null) overrides.monthlyExpenses = monthlyExpenses;
+  if (scenarioEvents.length > 0) overrides.scenarioEvents = scenarioEvents;
 
   const scenario = calcWhatIfScenario(bundle, overrides);
   if (!scenario) return null;
 
-  const { safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, baseChart, retDrawShared } = bundle;
+  const {
+    safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, baseChart, retDrawShared,
+    baseDepletionAge,
+  } = bundle;
 
   const changedRetAge = retirementAge != null && retirementAge !== safeRetAge;
   const scenarioAnnualExpenses = monthlyExpenses != null
@@ -664,7 +726,7 @@ export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses } = {
     : null;
   const changedExpenses = scenarioAnnualExpenses != null
     && scenarioAnnualExpenses !== retDrawShared.effectiveExpenses;
-  const changed = changedRetAge || changedExpenses;
+  const changed = changedRetAge || changedExpenses || scenarioEvents.length > 0;
 
   const metrics = [
     buildPreviewMetric({
@@ -673,8 +735,10 @@ export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses } = {
     }),
     buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity",
-      before: { years: baseYearsSustained, depletionAge: depletionAgeFrom(baseYearsSustained, safeRetAge) },
-      after: { years: scenario.scenarioYears, depletionAge: depletionAgeFrom(scenario.scenarioYears, scenario.scenarioRetAge) },
+      // M2: prefer the bundle/scenario's own engine-derived depletion age over
+      // the round(retAge + years) derivation (which can land one year early).
+      before: { years: baseYearsSustained, depletionAge: baseDepletionAge ?? depletionAgeFrom(baseYearsSustained, safeRetAge) },
+      after: { years: scenario.scenarioYears, depletionAge: scenario.scenarioDepletionAge ?? depletionAgeFrom(scenario.scenarioYears, scenario.scenarioRetAge) },
       betterDir: "up",
     }),
     buildPreviewMetric({

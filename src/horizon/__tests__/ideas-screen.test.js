@@ -269,6 +269,47 @@ describe("IdeasScreen — Scenarios mode", () => {
     expect(props.applyPlanLevers).toHaveBeenCalledWith({ retirementAge: safeRetAge - 2 });
     act(() => renderer.unmount());
   });
+
+  // M1 regression: bigTrip (retireAdj: 0, scenarioEvents only) previously
+  // previewed as "no change" (buildLeverPreview never saw the event) and Apply
+  // never wrote the event anywhere — a scenario with a lump-sum event could
+  // never actually be applied to the plan.
+  it("activating bigTrip previews a real change (not all 'no change') and Apply merges the event into moneyEvents", () => {
+    const { renderer, props } = mount();
+    act(() => { buttonsByText(renderer.root, "Scenarios")[0].props.onClick(); });
+    const scenarioCard = renderer.root.findAll(
+      n => typeof n.props?.onClick === "function" && textOf(n).includes("Big trip at 70")
+    )[0];
+    expect(scenarioCard).toBeTruthy();
+    act(() => { scenarioCard.props.onClick(); });
+
+    act(() => { clickableByText(renderer.root, "Apply to my plan")[0].props.onClick(); });
+    expect(allText(renderer.root)).toContain("Apply these changes?");
+
+    // At least one preview metric must show a real change — not every metric
+    // reading "no change" (the bug's symptom: retireAdj is 0, so a preview that
+    // ignored scenarioEvents showed nothing moved at all).
+    const noChangeCount = (allText(renderer.root).match(/no change/g) || []).length;
+    expect(noChangeCount).toBeLessThan(3);
+
+    const applyBtns = buttonsByText(renderer.root, "Apply changes");
+    act(() => { applyBtns[applyBtns.length - 1].props.onClick(); });
+
+    // bigTrip's retireAdj is 0 → retirement age is unchanged → applyPlanLevers
+    // must NOT fire a no-op retirementAge write.
+    expect(props.applyPlanLevers).not.toHaveBeenCalled();
+
+    expect(props.setMoneyEvents).toHaveBeenCalledTimes(1);
+    const updater = props.setMoneyEvents.mock.calls[0][0];
+    const result = updater([]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      label: "Big trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false,
+    });
+    expect(result[0].id).toBeTruthy();
+    expect(result[0].icon).toBeTruthy();
+    act(() => renderer.unmount());
+  });
 });
 
 describe("IdeasScreen — Events mode", () => {
