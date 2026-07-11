@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Analytics } from "@vercel/analytics/react";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
@@ -174,11 +174,12 @@ export default function App() {
   // Empty default → zero golden master impact.
   const [moneyEvents, setMoneyEvents] = useState([]);
 
-  // Committed plan snapshot — null until the user explicitly clicks "Save as my plan".
-  // Enables the Reset button in the Plan screen's QuickTunePanel (restores all sliders).
+  // Committed plan snapshot — null until the user explicitly clicks "Save as my plan"
+  // (via commitPlan, e.g. onboarding's done screen or the Plan/Ideas "Save as my
+  // plan" flows). Read by MyDetailsScreen-adjacent flows; the old QuickTunePanel
+  // Reset button that also consumed this was removed with the Plan "Try a change"
+  // redesign (2026-07-11).
   const [committedPlan, setCommittedPlan] = useState(null);
-  const [committedOutputs, setCommittedOutputs] = useState(null);
-  const [shouldSnapshotOutputs, setShouldSnapshotOutputs] = useState(false);
 
   const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
 
@@ -841,9 +842,9 @@ export default function App() {
     if (ra !== undefined) setRetirementAge(ra);
     if (ae !== undefined) setAnnualExpenses(ae);
     else if (ms !== undefined) setAnnualExpenses(ms * ASSUMPTIONS.MONTHS_PER_YEAR);
-    // Snapshot of all Quick Tune slider values at commit time — enables the Reset
-    // button in PlanScreen to restore exactly this state. Uses the new values for
-    // fields being updated, current state for everything else.
+    // Snapshot of all Quick Tune slider values at commit time — enables Reset-style
+    // consumers to restore exactly this state. Uses the new values for fields being
+    // updated, current state for everything else.
     const snapAe = ae !== undefined ? ae : ms !== undefined ? ms * ASSUMPTIONS.MONTHS_PER_YEAR : annualExpenses;
     setCommittedPlan({
       retirementAge: ra ?? retirementAge,
@@ -851,22 +852,12 @@ export default function App() {
       lifeExpect, returnRate, inflationRate, incomeGrowth, contrib401k,
       ssClaimingAge, spouseClaimingAge, annualConversionAmt,
     });
-    setShouldSnapshotOutputs(true);
   }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses,
       retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
       incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
 
-  // Deferred output snapshot: runs AFTER the plan-state updates from commitPlan have caused
-  // a re-render so that totalAtRet / yearsSustained reflect the newly saved inputs, not
-  // the pre-commit values (stale-baseline fix — Gemini R2).
-  useEffect(() => {
-    if (!shouldSnapshotOutputs) return;
-    setCommittedOutputs({ totalAtRet, yearsSustained });
-    setShouldSnapshotOutputs(false);
-  }, [shouldSnapshotOutputs, totalAtRet, yearsSustained]);
-
-  // Monthly spend write-back: the QuickTune slider works in monthly units;
-  // this callback converts to annual so PlanScreen never does month→year math (rule 10).
+  // Monthly spend write-back: converts monthly slider units to annual so screens
+  // never do month→year math (rule 10). Used internally by applyPlanLevers below.
   const setMonthlySpend = useCallback(
     v => setAnnualExpenses(v * ASSUMPTIONS.MONTHS_PER_YEAR),
     [setAnnualExpenses]
@@ -882,6 +873,24 @@ export default function App() {
     if (contribEndHSA     === retirementAge) setContribEndHSA(v);
   }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
+
+  // Applies the Plan screen "Try a change" panel's previewed levers to real state.
+  // Only called from the ApplyPreviewModal's onConfirm (never fired directly by a
+  // slider) — the panel itself never touches real state, matching the "preview
+  // first, explicit Apply" rule this redesign introduced (2026-07-11). Uses the
+  // coupled retirement-age setter so contribEnd ages stay in sync (the same
+  // invariant Classic's own slider preserves), then commits a plan snapshot via
+  // commitPlan so committedPlan reflects the newly applied values. Fields are
+  // independently optional — a lever the user never dragged is omitted, not
+  // re-applied with its unchanged value.
+  const applyPlanLevers = useCallback(({ retirementAge: ra, monthlySpend: ms } = {}) => {
+    if (ra !== undefined) setRetirementAgeCoupled(ra);
+    if (ms !== undefined) setMonthlySpend(ms);
+    commitPlan({
+      ...(ra !== undefined ? { retirementAge: ra } : {}),
+      ...(ms !== undefined ? { monthlySpend: ms } : {}),
+    });
+  }, [setRetirementAgeCoupled, setMonthlySpend, commitPlan]);
 
   // Current-age coupled update: mirrors the Classic onChange (Tax Rate Phases)
   // that pushes retirement age, spouse age, and contribEnd ages forward so they
@@ -1039,24 +1048,7 @@ export default function App() {
   }, [currentSaved, totalAtRet, takeHome, effectiveExpenses,
       ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge]);
 
-  // Live delta vs the last committed plan — null until the user saves once.
-  // Drives the "↑ $X more than your saved plan" badge in the Plan screen Hero block.
-  // badge is pre-computed (rule 10: screens must not do sign/abs checks on financial values).
-  const planDelta = useMemo(() => {
-    if (!committedOutputs) return null;
-    const deltaAtRet = totalAtRet - committedOutputs.totalAtRet;
-    const deltaYrs = isFinite(yearsSustained) && isFinite(committedOutputs.yearsSustained)
-      ? Math.round((yearsSustained - committedOutputs.yearsSustained) * 10) / 10
-      : null;
-    const badge = Math.abs(deltaAtRet) > 1000 ? {
-      dir:       deltaAtRet > 0 ? "up" : "down",
-      atRetAbs:  Math.abs(deltaAtRet),
-      yearsGain: deltaYrs !== null && deltaYrs > 0 ? deltaYrs : null,
-    } : null;
-    return { atRet: deltaAtRet, yearsSustained: deltaYrs, badge };
-  }, [totalAtRet, yearsSustained, committedOutputs]);
-
-  // QuickTunePanel slider bounds — age/financial math extracted from the screen (rule 10).
+  // Plan screen "Try a change" slider bounds — age/financial math extracted from the screen (rule 10).
   // canTuneRothConversion: pre-gated eligibility boolean so the screen never does > 0 check.
   const sliderBounds = useMemo(() => ({
     retireMin:  Math.min(currentAge + 1, retirementAge),
@@ -1627,6 +1619,10 @@ export default function App() {
     moneyEvents, setMoneyEvents,
     whatIfSimInputs: whatIfBundle,
     commitPlan,
+    // Plan screen "Try a change" panel (2026-07-11 redesign): the ONLY write path
+    // from a Horizon lever preview back to real state — always called from
+    // ApplyPreviewModal's onConfirm, never directly by a slider (preview-first).
+    applyPlanLevers,
     retirementWalk,
     // Life-event sheet (sheet-first placement): age bounds for the sheet's
     // sliders — memoized separately above (V9). The sheet's verdict/impact come
@@ -1673,31 +1669,20 @@ export default function App() {
     // Session-4: per-account breakdown + milestone badges for Year-by-year deep layer.
     retirementRowByAge,   // { [age]: engineRow } — Trad/Roth/Taxable/HSA + tax breakdown
     milestoneByAge,       // { [age]: tag } — inline portfolio-cell milestone badge
-    // Plan screen Quick Tune panel — setters (React guarantees identity stability,
-    // so adding them does not hurt V9; exhaustive-deps still wants them listed).
-    setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
-    setIncomeGrowth, setReturnRate, setInflationRate,
-    setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
-    // Coupled callbacks (rule 10 + invariant preservation):
-    //   setRetirementAgeCoupled mirrors the Classic UI's contribEnd tracking.
-    //   setMonthlySpend converts monthly slider units to annual before writing state.
-    //   setConversionMode lets the Roth slider switch to custom mode on first drag.
-    setRetirementAgeCoupled, setMonthlySpend, setConversionMode,
-    // Raw input values the sliders need to display (derived display values like
-    // effectiveExpenses are already present above; these are the raw state values).
-    annualExpenses, inflationRate, incomeGrowth, contrib401k,
-    spouseClaimingAge, annualConversionAmt,
     // Pre-computed display scalars and slider bounds (rule 10: math in model, not screen).
+    // monthlySpend/sliderBounds seed + bound the Plan screen's "Try a change" sliders;
+    // the per-lever flat setters (setAnnualExpenses, setContrib401k, etc.) that used
+    // to live here were removed with the QuickTunePanel (2026-07-11) — real-state
+    // writes now go through the single applyPlanLevers path above.
     monthlySpend,
-    trad401kMax,
     sliderBounds,
     // Conditional slider flags.
     isMarried,
-    // Committed plan snapshot for the Reset button (null until first save).
+    // Committed plan snapshot — null until the user has saved a plan at least once
+    // (onboarding's done screen, or Plan/Ideas "Save as my plan").
     committedPlan,
-    // Plan screen "command center" additions — hero block + income meter + delta badge.
+    // Plan screen "command center" additions — hero block + income meter.
     planHighlights,
-    planDelta,
     // WI-3.1 (#98): topic-grouped setter bundles (shapes in docs/ARCHITECTURE.md).
     // Each is memoized separately above (V9 stability). The plumbing for all of
     // Level 3 — no screen consumes them yet.
@@ -1716,7 +1701,7 @@ export default function App() {
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
-       moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, retirementWalk,
+       moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
        lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
@@ -1732,16 +1717,9 @@ export default function App() {
        markerByAge, tablePhases,
        // Session-4 additions:
        retirementRowByAge, milestoneByAge,
-       // Quick Tune additions (setters are stable by definition; listed for exhaustive-deps):
-       setRetirementAge, setAnnualExpenses, setLifeExpect, setContrib401k,
-       setIncomeGrowth, setReturnRate, setInflationRate,
-       setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
-       setRetirementAgeCoupled, setMonthlySpend, setConversionMode,
-       annualExpenses, inflationRate, incomeGrowth, contrib401k,
-       spouseClaimingAge, annualConversionAmt,
        isMarried, committedPlan,
-       planHighlights, planDelta,
-       monthlySpend, trad401kMax, sliderBounds,
+       planHighlights,
+       monthlySpend, sliderBounds,
        // WI-3.1 setter bundles (each memoized separately above):
        profileBundle, spendingBundle, accountsBundle, ssBundle, pensionBundle,
        conversionBundle, healthBundle, assumptionsBundle]);

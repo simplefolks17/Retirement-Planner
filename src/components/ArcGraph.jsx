@@ -102,6 +102,30 @@ function totalAtAge(chartData, age) {
   return chartData[chartData.length - 1].total;
 }
 
+// ── Scenario overlay trimming (Plan "Try a change", 2026-07-11) ────────────────
+// A scenario series (from calcWhatIfScenario) is a FULL lifetime walk that
+// coincides with the solid chartData line right up until the change actually
+// bites (e.g. a retire-later override doesn't move the balance until the new
+// retirement age). Retracing the dashed line from the very start would just
+// draw a second line on top of the first one — so this drops LEADING points
+// whose total matches chartData's total at the same age within $1, keeping the
+// LAST matching point so the dashed line starts exactly ON the solid line at
+// the divergence age. Pure layout trimming (no model math): if every point
+// matches, the caller's own `sPts.length >= 2` guard renders nothing.
+function trimScenarioOverlay(scenarioData, mainData) {
+  if (!scenarioData?.length) return scenarioData ?? [];
+  let cut = 0;
+  for (let i = 0; i < scenarioData.length; i++) {
+    const d = scenarioData[i];
+    if (Math.abs(d.total - totalAtAge(mainData, d.age)) <= 1) {
+      cut = i;
+    } else {
+      break;
+    }
+  }
+  return scenarioData.slice(cut);
+}
+
 // ── Scrub lookup (WI-2.7) ─────────────────────────────────────────────────────
 // Given a raw (possibly fractional) age from a pointer position, snap to the
 // nearest charted year and return that year's numbers for the floating chip.
@@ -706,7 +730,7 @@ export default function ArcGraph({
             <BandSvg t={t} chartData={validData} currentAge={currentAge} retirementAge={retirementAge} s={s} vmax={vmax} />
           )}
           {activeView === "arc" && scenarioData?.length >= 2 && (() => {
-            const sPts = scenarioData
+            const sPts = trimScenarioOverlay(scenarioData, chartData)
               .filter(d => d.age >= ageMin && d.age <= ageMax)
               .map(d => [s.xOf(d.age), +s.yOf(Math.max(0, Math.min(d.total, vmax * 1.02))).toFixed(1)]);
             return sPts.length >= 2 ? (
