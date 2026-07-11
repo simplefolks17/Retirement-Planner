@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent } from "../what-if.js";
+import {
+  calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
+  buildLeverPreview, buildLeverRail, buildDurationRail,
+} from "../what-if.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
@@ -591,5 +594,121 @@ describe("evaluateLifeEvent", () => {
     expect(r.verdict).toBe("comfortable");
     expect(r.sustainability.marginYears).toBe(Infinity);
     expect(r.sustainability.scenarioDepletionAge).toBeNull();
+  });
+});
+
+// ── buildLeverPreview / buildLeverRail / buildDurationRail ────────────────────
+// The Plan-screen "Try a change" panel + Ideas dials + LifeEventSheet duration
+// rail all read these — every delta, dir/tone, and verdict must come from here
+// (rule 10), never be recomputed in a screen.
+const VALID_VERDICTS = ["comfortable", "tight", "unaffordable"];
+const verdictRank = { unaffordable: 0, tight: 1, comfortable: 2 };
+
+describe("buildLeverPreview", () => {
+  it("no-op preview: changed=false and chart equals the base chart", () => {
+    const preview = buildLeverPreview(baseArgs, {});
+    expect(preview.changed).toBe(false);
+    expect(preview.chart).toEqual(baseArgs.baseChart);
+  });
+
+  it("retire-earlier preview: changed=true, and the portfolio-at-retirement metric reads down", () => {
+    const preview = buildLeverPreview(baseArgs, { retirementAge: safeRetAge - 2 });
+    expect(preview.changed).toBe(true);
+    expect(preview.scenarioStats.scenarioRetAge).toBe(safeRetAge - 2);
+    const totalAtRetMetric = preview.metrics.find(m => m.id === "totalAtRet");
+    expect(totalAtRetMetric).toBeDefined();
+    expect(totalAtRetMetric.delta.dir).toBe("down");
+  });
+
+  it("monthlyExpenses-only override annualizes in the model (month → year)", () => {
+    const preview = buildLeverPreview(depletingArgs, { monthlyExpenses: 90_000 / 12 });
+    expect(preview.changed).toBe(true);
+    expect(preview.scenarioStats.scenarioExpenses).toBe(90_000);
+  });
+
+  it("metrics reuse buildPreviewMetric's documented row shape", () => {
+    const preview = buildLeverPreview(baseArgs, { retirementAge: safeRetAge - 2 });
+    expect(preview.metrics).toHaveLength(3);
+    for (const m of preview.metrics) {
+      expect(typeof m.id).toBe("string");
+      expect(typeof m.label).toBe("string");
+      expect(typeof m.before).toBe("string");
+      expect(typeof m.after).toBe("string");
+      expect(m.delta).toHaveProperty("dir");
+      expect(m.delta).toHaveProperty("label");
+      expect(m.delta).toHaveProperty("tone");
+    }
+  });
+
+  it("returns null for an invalid bundle", () => {
+    expect(buildLeverPreview(null, {})).toBeNull();
+    expect(buildLeverPreview({}, {})).toBeNull();
+  });
+});
+
+describe("buildLeverRail", () => {
+  it("returns (max−min)/step + 1 entries, all with valid verdict strings", () => {
+    const rail = buildLeverRail(depletingArgs, {
+      lever: "monthlyExpenses", min: 30_000 / 12, max: 90_000 / 12, step: 10_000 / 12,
+    });
+    expect(rail).toHaveLength(7);
+    for (const entry of rail) {
+      expect(VALID_VERDICTS).toContain(entry.verdict);
+    }
+  });
+
+  it("a higher monthly spend never gets a better verdict than a lower one", () => {
+    const rail = buildLeverRail(depletingArgs, {
+      lever: "monthlyExpenses", min: 30_000 / 12, max: 90_000 / 12, step: 10_000 / 12,
+    });
+    const low = rail[0];
+    const high = rail[rail.length - 1];
+    expect(verdictRank[high.verdict]).toBeLessThanOrEqual(verdictRank[low.verdict]);
+  });
+
+  it("retirementAge rail uses each step's own plan horizon (retiring later is never worse)", () => {
+    const rail = buildLeverRail(baseArgs, { lever: "retirementAge", min: 55, max: 75, step: 5 });
+    expect(rail.length).toBeGreaterThan(1);
+    const earliest = rail[0];
+    const latest = rail[rail.length - 1];
+    expect(earliest.value).toBe(55);
+    expect(latest.value).toBe(75);
+    // More accumulation time + a shorter retirement horizon → retiring later
+    // is never a worse verdict than retiring earlier.
+    expect(verdictRank[latest.verdict]).toBeGreaterThanOrEqual(verdictRank[earliest.verdict]);
+  });
+
+  it("guards return [] for invalid bundle, min > max, step <= 0, or an unrecognized lever", () => {
+    expect(buildLeverRail(null, { lever: "retirementAge", min: 60, max: 70, step: 1 })).toEqual([]);
+    expect(buildLeverRail(baseArgs, { lever: "retirementAge", min: 70, max: 60, step: 1 })).toEqual([]);
+    expect(buildLeverRail(baseArgs, { lever: "retirementAge", min: 60, max: 70, step: 0 })).toEqual([]);
+    expect(buildLeverRail(baseArgs, { lever: "somethingElse", min: 60, max: 70, step: 1 })).toEqual([]);
+  });
+
+  it("caps at 80 entries by coarsening the step, still spanning min..max", () => {
+    const rail = buildLeverRail(baseArgs, { lever: "retirementAge", min: 55, max: 75, step: 0.01 });
+    expect(rail.length).toBeLessThanOrEqual(80);
+    expect(rail[0].value).toBe(55);
+    expect(rail[rail.length - 1].value).toBe(75);
+  });
+});
+
+describe("buildDurationRail", () => {
+  const durationEventBase = { label: "Probe", monthlyAmount: 2_000, age: 70, isInflow: false, incomeAnnual: 0 };
+
+  it("verdict at N months agrees with evaluateLifeEvent for the same candidate", () => {
+    const rail = buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 36, step: 6 });
+    expect(rail.length).toBeGreaterThan(0);
+    const entry = rail.find(r => r.months === 18);
+    expect(entry).toBeDefined();
+    const expected = evaluateLifeEvent(depletingArgs, { ...durationEventBase, durationMonths: 18 });
+    expect(entry.verdict).toBe(expected.verdict);
+  });
+
+  it("guards return [] for invalid bundle, missing eventBase, or non-positive maxMonths/step", () => {
+    expect(buildDurationRail(null, durationEventBase, { maxMonths: 24, step: 6 })).toEqual([]);
+    expect(buildDurationRail(depletingArgs, null, { maxMonths: 24, step: 6 })).toEqual([]);
+    expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 0, step: 6 })).toEqual([]);
+    expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 24, step: 0 })).toEqual([]);
   });
 });

@@ -17,6 +17,24 @@ import { ASSUMPTIONS } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
 } from "./money-events.js";
+import { buildPreviewMetric } from "./apply-preview.js";
+
+// ── verdictForMargin ─────────────────────────────────────────────────────────
+// The ONE definition of the comfortable/tight/unaffordable verdict from a
+// sustainability margin (scenarioYears sustained minus the plan horizon in
+// years). Used by evaluateLifeEvent (below) and the lever-preview/rail
+// builders (buildLeverPreview/buildLeverRail/buildDurationRail) so every
+// verdict in the app comes from one formula (rule 10 / principle 7).
+//   margin < 0                              → "unaffordable" (depletes before the plan age)
+//   0 <= margin < EVENT_COMFORT_BUFFER_YEARS → "tight"
+//   margin >= EVENT_COMFORT_BUFFER_YEARS     → "comfortable"
+function verdictForMargin(marginYears) {
+  return marginYears < 0
+    ? "unaffordable"
+    : marginYears < ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS
+      ? "tight"
+      : "comfortable";
+}
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
 // Computes the impact of scenario overrides vs the baseline.
@@ -483,11 +501,7 @@ export function evaluateLifeEvent(bundle, event) {
   const marginYears = scen.scenarioYears === Infinity
     ? Infinity
     : scen.scenarioYears - planHorizon;
-  const verdict = marginYears < 0
-    ? "unaffordable"
-    : marginYears < ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS
-      ? "tight"
-      : "comfortable";
+  const verdict = verdictForMargin(marginYears);
 
   const walkDepletion = (run) => {
     if (run.scenarioYears === Infinity) return null;
@@ -588,4 +602,195 @@ export function calcAffordabilityMax({
     maxAmount: lo,
     deltaYears: finalResult.deltaYears,
   };
+}
+
+// Balance at a given age from a chart series ([{age, total}]). Shared by
+// buildLeverPreview below (mirrors evaluateLifeEvent's local `balAt`).
+function balAtAge(chart, age) {
+  const row = (chart ?? []).find(r => r.age === age);
+  return row ? row.total : null;
+}
+
+// Depletion age implied by a years-sustained figure measured from `retAge`.
+// Infinity years → null (never depletes — "not applicable", not a real age);
+// mirrors evaluateLifeEvent's walkDepletion.
+function depletionAgeFrom(years, retAge) {
+  return years === Infinity ? null : Math.round(retAge + years);
+}
+
+// ── buildLeverPreview ────────────────────────────────────────────────────────
+// The model behind the Plan screen's "Try a change" panel: ONE candidate
+// override (a new retirement age and/or a new monthly spend) → the dashed
+// overlay chart AND the three headline preview metrics, all from the SAME
+// calcWhatIfScenario run (so the panel's numbers and its chart overlay can
+// never disagree — V1/principle 7). Metrics are built with buildPreviewMetric
+// (apply-preview.js, WI-3.9) — the ONE dir/tone/formatting implementation —
+// never hand-rolled here (rule 10).
+//
+// bundle: the `whatIfBundle` shape documented above calcWhatIfScenario.
+// overrides: { retirementAge, monthlyExpenses } — either, both, or neither.
+//   Omitted fields simply aren't overridden (calcWhatIfScenario semantics).
+//
+// Returns null when the bundle is invalid (calcWhatIfScenario itself returns
+// null); otherwise:
+//   {
+//     changed,        // true when a provided override actually differs from
+//                     // the base (retirementAge vs bundle.safeRetAge, or the
+//                     // annualized monthly value vs bundle.retDrawShared.effectiveExpenses)
+//     chart,          // the scenario's full lifetime series (for the dashed overlay)
+//     metrics,        // [portfolio-at-retirement, longevity, balance-at-plan-age]
+//                     // — buildPreviewMetric rows, ready to render verbatim
+//     verdict,        // "comfortable" | "tight" | "unaffordable" — from the
+//                     // scenario's own retirement age (a retire-later override
+//                     // shifts the plan horizon, not just the balance)
+//     scenarioStats,  // { scenarioRetAge, scenarioExpenses, scenarioTotalAtRet,
+//                     //   scenarioYears, scenarioBalAt90 } — passthrough scalars
+//   }
+export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses } = {}) {
+  if (!bundle) return null;
+
+  const overrides = {};
+  if (retirementAge != null) overrides.retirementAge = retirementAge;
+  if (monthlyExpenses != null) overrides.monthlyExpenses = monthlyExpenses;
+
+  const scenario = calcWhatIfScenario(bundle, overrides);
+  if (!scenario) return null;
+
+  const { safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, baseChart, retDrawShared } = bundle;
+
+  const changedRetAge = retirementAge != null && retirementAge !== safeRetAge;
+  const scenarioAnnualExpenses = monthlyExpenses != null
+    ? monthlyExpenses * ASSUMPTIONS.MONTHS_PER_YEAR
+    : null;
+  const changedExpenses = scenarioAnnualExpenses != null
+    && scenarioAnnualExpenses !== retDrawShared.effectiveExpenses;
+  const changed = changedRetAge || changedExpenses;
+
+  const metrics = [
+    buildPreviewMetric({
+      id: "totalAtRet", label: "Portfolio at retirement",
+      before: baseTotalAtRet, after: scenario.scenarioTotalAtRet, betterDir: "up",
+    }),
+    buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity",
+      before: { years: baseYearsSustained, depletionAge: depletionAgeFrom(baseYearsSustained, safeRetAge) },
+      after: { years: scenario.scenarioYears, depletionAge: depletionAgeFrom(scenario.scenarioYears, scenario.scenarioRetAge) },
+      betterDir: "up",
+    }),
+    buildPreviewMetric({
+      id: "balAtPlanAge", label: `Balance at ${safeLifeExp}`,
+      before: balAtAge(baseChart, safeLifeExp), after: balAtAge(scenario.chart, safeLifeExp), betterDir: "up",
+    }),
+  ];
+
+  const planHorizon = safeLifeExp - scenario.scenarioRetAge;
+  const marginYears = scenario.scenarioYears === Infinity
+    ? Infinity
+    : scenario.scenarioYears - planHorizon;
+  const verdict = verdictForMargin(marginYears);
+
+  return {
+    changed,
+    chart: scenario.chart,
+    metrics,
+    verdict,
+    scenarioStats: {
+      scenarioRetAge: scenario.scenarioRetAge,
+      scenarioExpenses: scenario.scenarioExpenses,
+      scenarioTotalAtRet: scenario.scenarioTotalAtRet,
+      scenarioYears: scenario.scenarioYears,
+      scenarioBalAt90: scenario.scenarioBalAt90,
+    },
+  };
+}
+
+// Entries cap shared by buildLeverRail and buildDurationRail — a slider tick
+// rail with more than this many points has no visual value and would just be
+// extra model runs; both coarsen their step to fit rather than truncate the
+// range (so the rail still spans min..max / the full duration).
+const RAIL_MAX_ENTRIES = 80;
+
+// ── buildLeverRail ───────────────────────────────────────────────────────────
+// A verdict at every step of a lever's range, for the colored tick rail under
+// a Plan/Ideas slider (e.g. "which retirement ages are still comfortable").
+// One calcWhatIfScenario run per step — never a special-cased walk (BUG-31
+// rule; the model is 1-2ms/run so this is cheap even at the entry cap).
+//
+// lever: "retirementAge" | "monthlyExpenses" — which override each step sets.
+// Guards (invalid bundle, min > max, step <= 0, unrecognized lever) return [].
+//
+// Returns [{ value, verdict }] — verdict is per-step, using THAT step's own
+// scenario retirement age for the plan horizon (so a retirementAge rail's
+// verdict reflects retiring at that step's age, not the current plan's).
+export function buildLeverRail(bundle, { lever, min, max, step } = {}) {
+  if (!bundle) return [];
+  if (lever !== "retirementAge" && lever !== "monthlyExpenses") return [];
+  if (!(min <= max) || !(step > 0)) return [];
+
+  const rawCount = Math.floor((max - min) / step + 1e-9) + 1;
+  const count = Math.min(rawCount, RAIL_MAX_ENTRIES);
+  // Coarsen the step to fit the cap while still spanning min..max exactly.
+  const effStep = count === rawCount ? step : (max - min) / (count - 1);
+
+  const { safeLifeExp } = bundle;
+  const rail = [];
+  for (let i = 0; i < count; i++) {
+    const raw = min + i * effStep;
+    const value = lever === "retirementAge" ? Math.round(raw) : Math.round(raw * 100) / 100;
+    const overrides = lever === "retirementAge"
+      ? { retirementAge: value }
+      : { monthlyExpenses: value };
+    const scenario = calcWhatIfScenario(bundle, overrides);
+    if (!scenario) continue;
+    const planHorizon = safeLifeExp - scenario.scenarioRetAge;
+    const marginYears = scenario.scenarioYears === Infinity
+      ? Infinity
+      : scenario.scenarioYears - planHorizon;
+    rail.push({ value, verdict: verdictForMargin(marginYears) });
+  }
+  return rail;
+}
+
+// ── buildDurationRail ────────────────────────────────────────────────────────
+// A verdict at every duration step for the LifeEventSheet's "how many months"
+// slider — lets the sheet show a tick rail alongside the live verdict card.
+// One calcWhatIfScenario run per step (scenarioEvents: [candidate]); the plan
+// horizon is the CURRENT plan's (safeLifeExp − safeRetAge — the event never
+// moves the retirement age), matching evaluateLifeEvent's own margin formula
+// exactly so a rail entry and evaluateLifeEvent's verdict for the same months
+// can never disagree.
+//
+// eventBase: the candidate event's fields minus durationMonths (must carry
+//   monthlyAmount/age/isInflow — the same shape evaluateLifeEvent takes for a
+//   duration event); durationMonths is set per-step here.
+// Guards (invalid bundle, missing eventBase, maxMonths <= 0, step <= 0)
+// return [].
+//
+// Returns [{ months, verdict }] for months = step, 2*step, … up to maxMonths
+// (coarsened to fit the RAIL_MAX_ENTRIES cap, same as buildLeverRail).
+export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {}) {
+  if (!bundle || !eventBase) return [];
+  if (!(maxMonths > 0) || !(step > 0)) return [];
+
+  const rawCount = Math.floor(maxMonths / step + 1e-9);
+  if (rawCount <= 0) return [];
+  const count = Math.min(rawCount, RAIL_MAX_ENTRIES);
+  // Coarsen the step to fit the cap while still spanning up to maxMonths.
+  const effStep = count === rawCount ? step : maxMonths / count;
+
+  const { safeRetAge, safeLifeExp } = bundle;
+  const planHorizon = safeLifeExp - safeRetAge;
+
+  const rail = [];
+  for (let i = 1; i <= count; i++) {
+    const months = Math.round(i * effStep);
+    const candidate = { ...eventBase, durationMonths: months };
+    const scenario = calcWhatIfScenario(bundle, { scenarioEvents: [candidate] });
+    if (!scenario) continue;
+    const marginYears = scenario.scenarioYears === Infinity
+      ? Infinity
+      : scenario.scenarioYears - planHorizon;
+    rail.push({ months, verdict: verdictForMargin(marginYears) });
+  }
+  return rail;
 }
