@@ -1,8 +1,56 @@
 import { describe, it, expect } from "vitest";
 import {
-  fmtMoney, buildPreviewMetric, isSuggestionApplicable, buildConversionPreview,
+  fmtMoney, buildPreviewMetric, isSuggestionApplicable, buildConversionPreview, verdictDisplay,
 } from "../apply-preview.js";
 import { buildRmdComparison, walkBalanceAt } from "../retirement-phase.js";
+import { verdictForMargin } from "../what-if.js";
+
+// ── verdictDisplay (#85 readiness) ───────────────────────────────────────────
+describe("verdictDisplay", () => {
+  it("maps comfortable → { label: 'Comfortable', tone: 'good' }", () => {
+    expect(verdictDisplay("comfortable")).toEqual({ label: "Comfortable", tone: "good" });
+  });
+  it("maps tight → { label: 'Tight', tone: 'warm' }", () => {
+    expect(verdictDisplay("tight")).toEqual({ label: "Tight", tone: "warm" });
+  });
+  it("maps unaffordable → a supported tone (no 'bad' tone exists, so it uses 'warm')", () => {
+    const d = verdictDisplay("unaffordable");
+    expect(d.label).toBe("Doesn't fit");
+    // VerdictBadge (ApplyPreviewModal.jsx) only special-cases "good"/"warm" and
+    // falls back to a neutral token for anything else — every verdictDisplay
+    // tone must be one VerdictBadge actually renders distinctly.
+    expect(["good", "warm"]).toContain(d.tone);
+  });
+  it("returns null for an unknown/unrecognized verdict string", () => {
+    expect(verdictDisplay("nonsense")).toBeNull();
+    expect(verdictDisplay(undefined)).toBeNull();
+    expect(verdictDisplay(null)).toBeNull();
+  });
+});
+
+// ── verdictForMargin (what-if.js) — threshold reuse ──────────────────────────
+// verdictForMargin is exported from what-if.js (fix pass 2, #85 readiness) so
+// verdictDisplay's mapping and this threshold formula can be tested/consumed
+// independently while staying the ONE definition (evaluateLifeEvent /
+// buildLeverPreview / buildLeverRail / buildDurationRail all call it).
+describe("verdictForMargin (exported from what-if.js)", () => {
+  it("negative margin → unaffordable", () => {
+    expect(verdictForMargin(-0.1)).toBe("unaffordable");
+  });
+  it("0 <= margin < buffer → tight", () => {
+    expect(verdictForMargin(0)).toBe("tight");
+    expect(verdictForMargin(4.9)).toBe("tight");
+  });
+  it("margin >= buffer → comfortable", () => {
+    expect(verdictForMargin(5)).toBe("comfortable");
+    expect(verdictForMargin(Infinity)).toBe("comfortable");
+  });
+  it("every verdictForMargin output has a verdictDisplay mapping", () => {
+    for (const margin of [-10, -0.1, 0, 2.5, 4.9, 5, 50, Infinity]) {
+      expect(verdictDisplay(verdictForMargin(margin))).not.toBeNull();
+    }
+  });
+});
 
 describe("fmtMoney", () => {
   it("formats a positive value", () => {

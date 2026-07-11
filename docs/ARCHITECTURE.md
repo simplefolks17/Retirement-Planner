@@ -356,8 +356,9 @@ with the shared `VerdictTickRail` (fields.jsx) mapping verdict strings to tokens
 `calcWhatIfScenario` itself walks retirement with `buildRetirementPhase` on the bundle's
 `retPhaseBase`/`conversionByAge` (whatIfBundle also carries `baseChart` + `addlPreTaxBal`),
 locked by the no-op invariant (scenario chart === totalChartData); `ArcGraph.trimScenarioOverlay`
-starts the dashed line at the divergence age. `calcWhatIfDelta`/`calcAffordabilityMax`/the
-optimizer remain on the blended walk (BUG-36's narrowed scope).
+starts the dashed line at the divergence age. `calcWhatIfDelta`/the optimizer remain on the
+blended walk (BUG-36's narrowed scope); `calcAffordabilityMax` moved onto the engine
+(`calcWhatIfScenario`) in the 2026-07-11 fix pass — see BUG-36's scope note.
 
 ---
 
@@ -412,8 +413,22 @@ currently covered by `conversion-view-wiring.test.js` + `apply-preview.test.js`)
 | Apply site | Ships | Gate (`available`) | Writes |
 |---|---|---|---|
 | `conversionView.optimizer.applySuggestion` | WI-3.6/3.9 | `isSuggestionApplicable` (healthcare toggle on AND the suggestion differs: \|amount diff\| > $4,999 OR start age differs) | `conversionStartAge`, `conversionMode → "custom"`, `annualConversionAmt` |
+| `applyPlanLevers` (Plan `TryAChangePanel` / Ideas dials + scenario Apply) | 2026-07-11 (#122) | `buildLeverPreview(...).changed` truthy | `retirementAge` (coupled setters) and/or `annualExpenses` (via `commitPlan`, month→year done App-side) |
 | `surplusView.applyAllocation` | WI-3.7 (future) | — | — |
 | commitPlan sites | L3d (future) | — | — |
+
+**Other wrapped write surfaces (non-`ApplyPreviewModal`, fix-pass-2 / 2026-07-11):** the
+`horizonProps.setMoneyEvents` raw setter was replaced with two list-mutation callbacks — the
+concrete instance of the "list-mutation callback" shape the companion convention above names.
+Neither routes through `ApplyPreviewModal` (no preview needed for an explicit add/edit/delete in
+LifeEventSheet), but both are still wrapped at construction (App.jsx), never a bare setter on the
+props bundle:
+
+| Write surface | Writes | Called by |
+|---|---|---|
+| `saveEvent(ev)` | upsert into `moneyEvents` by `ev.id` (replace if present, else append) | `LifeEventSheet`'s `onSave`, via Plan's arc-badge edit-in-place and Ideas' preset placement / edit / scenario-apply merge |
+| `removeEvent(id)` | filters `moneyEvents` to drop the matching id | `LifeEventSheet`'s `onRemove`, via Plan's + Ideas' edit-in-place "Remove from plan" |
+| `commitPlan({...})` | `retirementAge`, `annualExpenses` (or `monthlySpend`), optionally `currentAge`/`currentIncome`, and snapshots `committedPlan` | onboarding's done screen ("Save as my plan"); internally by `applyPlanLevers` after it writes the coupled setters, so every lever apply also refreshes the `committedPlan` snapshot |
 
 **Gating composition point (for WI-5.2):** all gating composes in the App memo that
 computes `available` — entitlements/`readOnly` flags will be AND-ed into `available` and

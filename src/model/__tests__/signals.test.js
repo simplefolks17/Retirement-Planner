@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { calcSignals } from "../signals.js";
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
+import { NUMBERS_TABS } from "../../horizon/screens/NumbersScreen.jsx";
 
 // ── WI-1.2 (#89): Plan-screen signals strip ──────────────────────────────────
 // calcSignals receives VALUES App.jsx already computes (extraMatch from
@@ -43,6 +44,36 @@ describe("calcSignals — thresholds (each signal on/off independently)", () => 
     expect(on).toHaveLength(1);
     expect(on[0].id).toBe("deficit");
     expect(on[0].dollars).toBe(7_400);
+  });
+
+  // BUG-43 (found 2026-07-11 by the interop audit, fixed same day): the match
+  // and deficit signals targeted { screen: "numbers", subView: "flow" }, a tab
+  // that PR #38 (2026-06-24) had already folded into Statement — clicking
+  // either signal landed on a blank Numbers body. Retargeted to "budget" (the
+  // savings waterfall + deficit warning live there).
+  it("BUG-43: match and deficit signals deep-link to numbers/budget, not the removed numbers/flow tab", () => {
+    const match = calcSignals({ ...quiet, extraMatch: 1_000 });
+    expect(match[0].target).toEqual({ screen: "numbers", subView: "budget" });
+    const deficit = calcSignals({ ...quiet, budgetDeficit: 1_000 });
+    expect(deficit[0].target).toEqual({ screen: "numbers", subView: "budget" });
+  });
+});
+
+describe("calcSignals — deep-link guard (BUG-43 class)", () => {
+  // Machine-checked version of "does this signal's target tab still exist" —
+  // iterates NumbersScreen's own exported tab-id list (NUMBERS_TABS) rather than
+  // a second hardcoded copy here, so the two can never drift apart again.
+  const numbersTabIds = NUMBERS_TABS.map(([id]) => id);
+
+  it("every numbers-screen signal target's subView is a real NumbersScreen tab", () => {
+    const all = calcSignals({
+      extraMatch: 1_000, adjustedNetConversionBenefit: 60_000, budgetDeficit: 1_000,
+    }, 10);
+    const numbersTargets = all.filter(s => s.target.screen === "numbers");
+    expect(numbersTargets.length).toBeGreaterThan(0);
+    for (const sig of numbersTargets) {
+      expect(numbersTabIds).toContain(sig.target.subView);
+    }
   });
 });
 

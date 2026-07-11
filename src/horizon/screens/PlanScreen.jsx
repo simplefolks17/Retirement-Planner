@@ -382,7 +382,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     planHighlights, statementView,
     // Try-a-change panel + life-event edit-in-place.
     whatIfSimInputs, monthlySpend, sliderBounds, applyPlanLevers,
-    setMoneyEvents, lifeEventBounds,
+    saveEvent, removeEvent, lifeEventBounds,
   } = props;
 
   const [arcView, setArcView] = useState("arc");
@@ -405,11 +405,11 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
   const [eventSheet, setEventSheet] = useState(null);
   const openEventSheet = (ev) => setEventSheet({ seed: ev, eventId: ev.id });
   const handleEventSave = (ev) => {
-    setMoneyEvents(prev => prev.map(me => (me.id === eventSheet.eventId ? ev : me)));
+    saveEvent(ev);
     setEventSheet(null);
   };
   const handleEventRemove = () => {
-    setMoneyEvents(prev => prev.filter(me => me.id !== eventSheet.eventId));
+    removeEvent(eventSheet.eventId);
     setEventSheet(null);
   };
 

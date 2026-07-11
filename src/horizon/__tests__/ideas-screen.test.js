@@ -119,7 +119,8 @@ const makeMockProps = (overrides = {}) => ({
   balAt90:           1_000_000,
   contribSeries:     [],
   whatIfSimInputs:   whatIfBundle,
-  setMoneyEvents:    vi.fn(),
+  saveEvent:         vi.fn(),
+  removeEvent:       vi.fn(),
   statementView:     { monthlyTotal },
   moneyEvents:       [],
   retirementWalk:    { rows: _retPhase.rows },
@@ -299,15 +300,13 @@ describe("IdeasScreen — Scenarios mode", () => {
     // must NOT fire a no-op retirementAge write.
     expect(props.applyPlanLevers).not.toHaveBeenCalled();
 
-    expect(props.setMoneyEvents).toHaveBeenCalledTimes(1);
-    const updater = props.setMoneyEvents.mock.calls[0][0];
-    const result = updater([]);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
+    expect(props.saveEvent).toHaveBeenCalledTimes(1);
+    const saved = props.saveEvent.mock.calls[0][0];
+    expect(saved).toMatchObject({
       label: "Big trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false,
     });
-    expect(result[0].id).toBeTruthy();
-    expect(result[0].icon).toBeTruthy();
+    expect(saved.id).toBeTruthy();
+    expect(saved.icon).toBeTruthy();
     act(() => renderer.unmount());
   });
 });

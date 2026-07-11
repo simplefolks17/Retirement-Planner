@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
-  buildLeverPreview, buildLeverRail, buildDurationRail,
+  buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS,
 } from "../what-if.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
@@ -225,10 +225,17 @@ describe("calcWhatIfDelta", () => {
 });
 
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
+// 2026-07-11 (fix-pass-2): calcAffordabilityMax moved from the blended walk
+// (calcWhatIfDelta) onto the per-account engine (calcWhatIfScenario), matching
+// every other Ideas/Plan surface — it now takes the SAME bundle shape
+// (depletingArgs / baseArgs already have the right fields: retPhaseBase,
+// conversionByAge, addlPreTaxBal). The three assertions here were already loose
+// (non-negative / non-positive directional checks, not exact-value locks), so
+// they hold across the blended→engine migration; noted here rather than
+// silently re-passing.
 describe("calcAffordabilityMax", () => {
   it("returns a non-negative maxAmount", () => {
-    const result = calcAffordabilityMax({
-      ...depletingArgs,
+    const result = calcAffordabilityMax(depletingArgs, {
       purchaseAge: 40,
       targetLifeExpectancy: 75,  // modest target well within depleting scenario
       step: 10_000,
@@ -238,8 +245,7 @@ describe("calcAffordabilityMax", () => {
 
   it("returns 0 when baseline can't sustain to target age", () => {
     // Force scenario that barely sustains to 74 — target 80 is impossible
-    const result = calcAffordabilityMax({
-      ...depletingArgs,
+    const result = calcAffordabilityMax(depletingArgs, {
       purchaseAge: 40,
       targetLifeExpectancy: 80,  // beyond depleting scenario longevity (~75–77)
       step: 10_000,
@@ -251,14 +257,35 @@ describe("calcAffordabilityMax", () => {
 
   it("delta is non-positive when max amount is spent (retirement-phase purchase)", () => {
     // Retirement-phase purchase avoids re-simulation; depletingBase stays consistent.
-    const result = calcAffordabilityMax({
-      ...depletingArgs,
+    const result = calcAffordabilityMax(depletingArgs, {
       purchaseAge: 68,   // >= safeRetAge — stays within retirement walk
       targetLifeExpectancy: 74,
       step: 10_000,
     });
     // Spending the max should not lengthen the portfolio (it reduces or is neutral)
     expect(result.deltaYears).toBeLessThanOrEqual(0);
+  });
+
+  it("returns a safe zero result for a missing/invalid bundle", () => {
+    expect(calcAffordabilityMax(null, { purchaseAge: 40, targetLifeExpectancy: 75 }))
+      .toEqual({ maxAmount: 0, deltaYears: 0 });
+  });
+
+  it("the found maxAmount actually sustains to the target age when priced through calcWhatIfScenario directly", () => {
+    // Self-consistency check on the new engine-based probe: calcAffordabilityMax's
+    // own isSustainable() closure isn't exported, so re-derive the same candidate
+    // through calcWhatIfScenario (what the probe calls internally) and confirm the
+    // years-sustained figure actually clears the target — i.e. the binary search
+    // converged on a genuinely affordable amount, not just "didn't crash".
+    const targetLifeExpectancy = 74;
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy, step: 10_000,
+    });
+    const scenario = calcWhatIfScenario(depletingArgs, {
+      scenarioEvents: [{ label: "Check", amount: result.maxAmount, age: 68, isInflow: false, isTaxable: false }],
+    });
+    const years = scenario.scenarioYears === Infinity ? Infinity : scenario.scenarioYears;
+    expect(years).toBeGreaterThanOrEqual(targetLifeExpectancy - depletingArgs.safeRetAge);
   });
 });
 
@@ -717,6 +744,38 @@ describe("evaluateLifeEvent — edit mode (H1 double-count regression)", () => {
 // (rule 10), never be recomputed in a screen.
 const VALID_VERDICTS = ["comfortable", "tight", "unaffordable"];
 const verdictRank = { unaffordable: 0, tight: 1, comfortable: 2 };
+
+// ── LEVERS (#123 readiness) ──────────────────────────────────────────────────
+// The per-lever table buildLeverPreview/buildLeverRail now iterate instead of
+// hand-rolling per-lever ternaries. Locks the shape + the exact per-lever
+// behavior each was lifted from, so a future edit can't silently change
+// rounding/comparison semantics without a test noticing.
+describe("LEVERS table", () => {
+  it("has exactly the two currently-wired levers, each with the four documented fields", () => {
+    expect(Object.keys(LEVERS).sort()).toEqual(["monthlyExpenses", "retirementAge"]);
+    for (const def of Object.values(LEVERS)) {
+      expect(typeof def.overrideKey).toBe("string");
+      expect(typeof def.round).toBe("function");
+      expect(typeof def.toComparable).toBe("function");
+      expect(typeof def.baseValue).toBe("function");
+    }
+  });
+
+  it("retirementAge: overrideKey/round/toComparable/baseValue match the old inline behavior", () => {
+    expect(LEVERS.retirementAge.overrideKey).toBe("retirementAge");
+    expect(LEVERS.retirementAge.round(64.6)).toBe(65); // whole-year rounding
+    expect(LEVERS.retirementAge.toComparable(63)).toBe(63); // identity
+    expect(LEVERS.retirementAge.baseValue(baseArgs)).toBe(safeRetAge);
+  });
+
+  it("monthlyExpenses: overrideKey/round/toComparable/baseValue match the old inline behavior", () => {
+    expect(LEVERS.monthlyExpenses.overrideKey).toBe("monthlyExpenses");
+    expect(LEVERS.monthlyExpenses.round(1234.567)).toBe(1234.57); // cents rounding
+    expect(LEVERS.monthlyExpenses.toComparable(1_000))
+      .toBe(1_000 * 12); // annualized (ASSUMPTIONS.MONTHS_PER_YEAR)
+    expect(LEVERS.monthlyExpenses.baseValue(baseArgs)).toBe(baseArgs.retDrawShared.effectiveExpenses);
+  });
+});
 
 describe("buildLeverPreview", () => {
   it("no-op preview: changed=false and chart equals the base chart", () => {

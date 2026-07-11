@@ -28,7 +28,11 @@ import { buildPreviewMetric } from "./apply-preview.js";
 //   margin < 0                              → "unaffordable" (depletes before the plan age)
 //   0 <= margin < EVENT_COMFORT_BUFFER_YEARS → "tight"
 //   margin >= EVENT_COMFORT_BUFFER_YEARS     → "comfortable"
-function verdictForMargin(marginYears) {
+// Exported (#85 readiness, fix pass 2): verdictDisplay (apply-preview.js) maps
+// this string to a render-ready { label, tone } — the vocabulary lives here,
+// the display mapping lives there, so a future consumer never re-derives the
+// three-way threshold itself.
+export function verdictForMargin(marginYears) {
   return marginYears < 0
     ? "unaffordable"
     : marginYears < ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS
@@ -606,16 +610,29 @@ export function evaluateLifeEvent(bundle, event) {
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
 // Binary search for the largest one-time outflow at `purchaseAge` such that
 // the portfolio still sustains to `targetLifeExpectancy`.
-// Returns { maxAmount, deltaYears } for the affordable amount.
-export function calcAffordabilityMax({
+//
+// Takes the SAME bundle shape as calcWhatIfScenario (the `whatIfBundle` shape
+// documented above it) rather than the older calcWhatIfDelta arg shape — this
+// is the "must precede any solver UI" fix (fix-pass-2, 2026-07-11): everything
+// visible on the Ideas/Plan arc already walks retirement with the per-account
+// engine (buildRetirementPhase) via calcWhatIfScenario; a future affordability
+// solver built on the OLD blended calcWhatIfDelta walk would silently contradict
+// what the arc shows for the same candidate purchase. The probe below is exactly
+// evaluateLifeEvent's pattern — one candidate one-time outflow via
+// `scenarioEvents`, sustainability read off `scenarioYears` — so a solver and
+// the life-event sheet can never disagree about whether an amount is affordable.
+//
+// Returns { maxAmount, deltaYears } for the affordable amount. `deltaYears` is
+// calcWhatIfScenario's own `deltaYears` for the final candidate (±Infinity
+// handled there), not a locally recomputed value.
+export function calcAffordabilityMax(bundle, {
   purchaseAge,
   targetLifeExpectancy,
   step = 1_000,
   maxSearch = 5_000_000,
-  // all other args forwarded to calcWhatIfDelta
-  ...deltaArgs
-}) {
-  const { safeRetAge } = deltaArgs;
+} = {}) {
+  if (!bundle) return { maxAmount: 0, deltaYears: 0 };
+  const { safeRetAge } = bundle;
   const targetYears = targetLifeExpectancy - safeRetAge;
 
   // Guard degenerate inputs: a non-positive step would loop forever in the
@@ -625,12 +642,14 @@ export function calcAffordabilityMax({
     return { maxAmount: 0, deltaYears: 0 };
   }
 
+  const runScenario = (amount) => calcWhatIfScenario(bundle, {
+    scenarioEvents: [{ label: "Affordability check", amount, age: purchaseAge, isInflow: false, isTaxable: false }],
+  });
+
   const isSustainable = (amount) => {
-    const result = calcWhatIfDelta({
-      ...deltaArgs,
-      moneyEvents: [{ label: "Affordability check", amount, age: purchaseAge, isInflow: false, isTaxable: false }],
-    });
-    const years = result.scenarioYears === Infinity ? targetYears + 1 : result.scenarioYears;
+    const scenario = runScenario(amount);
+    if (!scenario) return false;
+    const years = scenario.scenarioYears === Infinity ? targetYears + 1 : scenario.scenarioYears;
     return years >= targetYears;
   };
 
@@ -646,14 +665,11 @@ export function calcAffordabilityMax({
     else hi = mid - step;
   }
 
-  const finalResult = calcWhatIfDelta({
-    ...deltaArgs,
-    moneyEvents: [{ label: "Affordability max", amount: lo, age: purchaseAge, isInflow: false, isTaxable: false }],
-  });
+  const finalScenario = runScenario(lo);
 
   return {
     maxAmount: lo,
-    deltaYears: finalResult.deltaYears,
+    deltaYears: finalScenario ? finalScenario.deltaYears : 0,
   };
 }
 
@@ -670,6 +686,49 @@ function balAtAge(chart, age) {
 function depletionAgeFrom(years, retAge) {
   return years === Infinity ? null : Math.round(retAge + years);
 }
+
+// ── LEVERS ───────────────────────────────────────────────────────────────────
+// Per-lever knowledge shared by buildLeverPreview's `changed` computation and
+// buildLeverRail's lever whitelist + override construction (#123 readiness,
+// fix pass 2) — lifted verbatim from the branching each function already did,
+// not new behavior:
+//   overrideKey  — the calcWhatIfScenario override field this lever writes.
+//                  Identical to the lever's own key today, but kept explicit
+//                  rather than assumed: #123's future lever will NOT share its
+//                  name with its override key (see the reserved note below).
+//   round        — buildLeverRail's per-step value rounding (retirementAge:
+//                  whole years; monthlyExpenses: cents) — was a ternary on
+//                  `lever === "retirementAge"` inline in that function.
+//   toComparable — normalizes a raw lever value into the SAME units as
+//                  baseValue(bundle), for buildLeverPreview's `changed` check.
+//                  retirementAge needs no conversion; monthlyExpenses is
+//                  annualized (× ASSUMPTIONS.MONTHS_PER_YEAR) to compare
+//                  against the annual `effectiveExpenses` baseline — mirrors
+//                  what calcWhatIfScenario itself does with the override.
+//   baseValue    — reads the current/committed value off the bundle to diff
+//                  the candidate against (safeRetAge;
+//                  retDrawShared.effectiveExpenses).
+//
+// RESERVED (future #123): an `annualSavings` lever — override key
+// `annualContributions` — unit is ANNUAL dollars (the owner's unit decision;
+// NOT monthly, unlike the spend lever). See the matching savingsMin/savingsMax
+// reservation note in App.jsx's sliderBounds memo. Not added as a table entry
+// until #123 actually threads a savings override through calcWhatIfScenario —
+// an empty reservation entry here would be dead code no caller exercises.
+export const LEVERS = {
+  retirementAge: {
+    overrideKey: "retirementAge",
+    round: v => Math.round(v),
+    toComparable: v => v,
+    baseValue: bundle => bundle.safeRetAge,
+  },
+  monthlyExpenses: {
+    overrideKey: "monthlyExpenses",
+    round: v => Math.round(v * 100) / 100,
+    toComparable: v => v * ASSUMPTIONS.MONTHS_PER_YEAR,
+    baseValue: bundle => bundle.retDrawShared.effectiveExpenses,
+  },
+};
 
 // ── buildLeverPreview ────────────────────────────────────────────────────────
 // The model behind the Plan screen's "Try a change" panel: ONE candidate
@@ -708,24 +767,26 @@ export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses, scen
   if (!bundle) return null;
 
   const overrides = {};
-  if (retirementAge != null) overrides.retirementAge = retirementAge;
-  if (monthlyExpenses != null) overrides.monthlyExpenses = monthlyExpenses;
+  if (retirementAge != null) overrides[LEVERS.retirementAge.overrideKey] = retirementAge;
+  if (monthlyExpenses != null) overrides[LEVERS.monthlyExpenses.overrideKey] = monthlyExpenses;
   if (scenarioEvents.length > 0) overrides.scenarioEvents = scenarioEvents;
 
   const scenario = calcWhatIfScenario(bundle, overrides);
   if (!scenario) return null;
 
   const {
-    safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, baseChart, retDrawShared,
+    safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, baseChart,
     baseDepletionAge,
   } = bundle;
 
-  const changedRetAge = retirementAge != null && retirementAge !== safeRetAge;
-  const scenarioAnnualExpenses = monthlyExpenses != null
-    ? monthlyExpenses * ASSUMPTIONS.MONTHS_PER_YEAR
-    : null;
-  const changedExpenses = scenarioAnnualExpenses != null
-    && scenarioAnnualExpenses !== retDrawShared.effectiveExpenses;
+  // LEVERS table (below): toComparable normalizes each lever's raw preview
+  // value into the same units as baseValue(bundle) before comparing — identity
+  // for retirementAge, annualized for monthlyExpenses (mirrors what
+  // calcWhatIfScenario itself does with the override).
+  const changedRetAge = retirementAge != null
+    && LEVERS.retirementAge.toComparable(retirementAge) !== LEVERS.retirementAge.baseValue(bundle);
+  const changedExpenses = monthlyExpenses != null
+    && LEVERS.monthlyExpenses.toComparable(monthlyExpenses) !== LEVERS.monthlyExpenses.baseValue(bundle);
   const changed = changedRetAge || changedExpenses || scenarioEvents.length > 0;
 
   const metrics = [
@@ -780,15 +841,17 @@ const RAIL_MAX_ENTRIES = 80;
 // One calcWhatIfScenario run per step — never a special-cased walk (BUG-31
 // rule; the model is 1-2ms/run so this is cheap even at the entry cap).
 //
-// lever: "retirementAge" | "monthlyExpenses" — which override each step sets.
-// Guards (invalid bundle, min > max, step <= 0, unrecognized lever) return [].
+// lever: a key in the LEVERS table (today: "retirementAge" | "monthlyExpenses")
+// — which override each step sets. Guards (invalid bundle, min > max,
+// step <= 0, unrecognized lever) return [].
 //
 // Returns [{ value, verdict }] — verdict is per-step, using THAT step's own
 // scenario retirement age for the plan horizon (so a retirementAge rail's
 // verdict reflects retiring at that step's age, not the current plan's).
 export function buildLeverRail(bundle, { lever, min, max, step } = {}) {
   if (!bundle) return [];
-  if (lever !== "retirementAge" && lever !== "monthlyExpenses") return [];
+  const leverDef = LEVERS[lever];
+  if (!leverDef) return [];
   if (!(min <= max) || !(step > 0)) return [];
 
   const rawCount = Math.floor((max - min) / step + 1e-9) + 1;
@@ -800,10 +863,8 @@ export function buildLeverRail(bundle, { lever, min, max, step } = {}) {
   const rail = [];
   for (let i = 0; i < count; i++) {
     const raw = min + i * effStep;
-    const value = lever === "retirementAge" ? Math.round(raw) : Math.round(raw * 100) / 100;
-    const overrides = lever === "retirementAge"
-      ? { retirementAge: value }
-      : { monthlyExpenses: value };
+    const value = leverDef.round(raw);
+    const overrides = { [leverDef.overrideKey]: value };
     const scenario = calcWhatIfScenario(bundle, overrides);
     if (!scenario) continue;
     const planHorizon = safeLifeExp - scenario.scenarioRetAge;

@@ -215,6 +215,15 @@ describe("duration events", () => {
     expect(eventNetForYear(partTime, 60)).toBe(24_000);
   });
 
+  it("isDurationEvent takes precedence when BOTH amount and monthlyAmount/durationMonths are present", () => {
+    // Locks the precedence rule documented at isDurationEvent: an event carrying
+    // both shapes (e.g. a stale/malformed record) is treated as duration, not
+    // one-time — eventNetForYear should use the monthly×months formula, not `amount`.
+    const both = { amount: 999_999, monthlyAmount: 1_000, durationMonths: 3, age: 40, isInflow: false };
+    expect(isDurationEvent(both)).toBe(true);
+    expect(eventNetForYear(both, 40)).toBe(-3_000); // 3 × 1,000, NOT -999,999
+  });
+
   it("eventFirstAge / eventLastAge cover the active year span", () => {
     expect(eventFirstAge(travel6mo)).toBe(40);
     expect(eventLastAge(travel6mo)).toBe(40);

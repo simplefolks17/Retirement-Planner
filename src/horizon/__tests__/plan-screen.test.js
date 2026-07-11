@@ -144,7 +144,8 @@ const makeMockProps = (overrides = {}) => ({
     spendMin: 2_000, spendMax: 10_000,
   },
   applyPlanLevers:   vi.fn(),
-  setMoneyEvents:    vi.fn(),
+  saveEvent:         vi.fn(),
+  removeEvent:       vi.fn(),
   lifeEventBounds:   { minAge: currentAge + 1, maxAge: safeLifeExp, retirementAge: safeRetAge },
   ...overrides,
 });

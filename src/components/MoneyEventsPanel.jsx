@@ -1,9 +1,15 @@
-// Money Events Panel — one-time windfalls, large purchases, inheritances.
-// Minimal/functional UI; design polish deferred to the design pass.
-// Each event: { id, label, amount, age, isInflow, isTaxable }
+// Money Events Panel — one-time windfalls, large purchases, inheritances, plus
+// READ-ONLY display of duration events (created in the Horizon view's
+// LifeEventSheet — see src/model/money-events.js for the two shapes).
+// One-time:  { id, label, amount, age, isInflow, isTaxable }
+// Duration:  { id, label, monthlyAmount, durationMonths, age, isInflow, incomeAnnual }
+//   Classic can delete a duration event but never edits its amount here (that
+//   would require the same $/mo × months UI as LifeEventSheet — out of scope
+//   for this minimal panel); it renders as a plain summary string instead.
 
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
+import { isDurationEvent, totalEventImpact } from "../model/money-events.js";
 
 const MAX_EVENTS = 6;
 
@@ -42,7 +48,9 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
         </p>
       )}
 
-      {events.map(ev => (
+      {events.map(ev => {
+        const duration = isDurationEvent(ev);
+        return (
         <div key={ev.id} style={{
           display: "grid", gridTemplateColumns: "1fr 100px 60px auto auto auto",
           gap: 6, alignItems: "center", marginBottom: 6,
@@ -53,12 +61,26 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
             style={inputStyle} placeholder="Label (e.g. Car purchase)"
             value={ev.label} onChange={e => update(ev.id, "label", e.target.value)}
           />
-          <input
-            style={inputStyle} type="number" min="0" step="1000"
-            placeholder="Amount"
-            value={ev.amount || ""}
-            onChange={e => update(ev.id, "amount", Math.max(0, Number(e.target.value)))}
-          />
+          {duration ? (
+            <span
+              title="Duration event — edit in the Horizon view."
+              style={{ display: "flex", flexDirection: "column", lineHeight: 1.3 }}
+            >
+              <span style={{ fontSize: 11, color: C.text, whiteSpace: "nowrap" }}>
+                {fmt(ev.monthlyAmount)}/mo × {ev.durationMonths} mo
+              </span>
+              <span style={{ fontSize: 9, color: C.muted, whiteSpace: "nowrap" }}>
+                edit in Horizon view
+              </span>
+            </span>
+          ) : (
+            <input
+              style={inputStyle} type="number" min="0" step="1000"
+              placeholder="Amount"
+              value={ev.amount || ""}
+              onChange={e => update(ev.id, "amount", Math.max(0, Number(e.target.value)))}
+            />
+          )}
           <input
             style={inputStyle} type="number" min={currentAge} max={120}
             placeholder="Age"
@@ -68,15 +90,19 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
             onChange={e => update(ev.id, "age", Number(e.target.value))}
             onBlur={e => update(ev.id, "age", Math.max(currentAge, Number(e.target.value) || currentAge))}
           />
-          <select
-            style={{ ...inputStyle, width: "auto", padding: "4px 6px" }}
-            value={ev.isInflow ? "in" : "out"}
-            onChange={e => update(ev.id, "isInflow", e.target.value === "in")}
-          >
-            <option value="out">Expense</option>
-            <option value="in">Income</option>
-          </select>
-          {ev.isInflow && (
+          {duration ? (
+            <span style={{ fontSize: 11, color: C.muted }}>{ev.isInflow ? "Income" : "Expense"}</span>
+          ) : (
+            <select
+              style={{ ...inputStyle, width: "auto", padding: "4px 6px" }}
+              value={ev.isInflow ? "in" : "out"}
+              onChange={e => update(ev.id, "isInflow", e.target.value === "in")}
+            >
+              <option value="out">Expense</option>
+              <option value="in">Income</option>
+            </select>
+          )}
+          {!duration && ev.isInflow && (
             <label style={{ fontSize: 11, color: C.muted, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
               <input
                 type="checkbox" checked={ev.isTaxable}
@@ -85,7 +111,7 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
               Taxable
             </label>
           )}
-          {!ev.isInflow && <span />}
+          {(duration || !ev.isInflow) && <span />}
           <button
             onClick={() => remove(ev.id)}
             style={{
@@ -94,7 +120,8 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
             }}
           >×</button>
         </div>
-      ))}
+        );
+      })}
 
       {events.length < MAX_EVENTS && (
         <button onClick={add} style={{
@@ -110,7 +137,7 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
         <p style={{ fontSize: 11, color: C.muted, margin: "8px 0 0" }}>
           Net impact on portfolio:{" "}
           <span style={{ color: C.text }}>
-            {fmt(events.reduce((s, e) => s + (e.isInflow ? e.amount : -e.amount), 0))}
+            {fmt(totalEventImpact(events))}
           </span>
         </p>
       )}

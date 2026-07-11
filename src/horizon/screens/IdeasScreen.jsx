@@ -90,7 +90,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     contribSeries,
     // Batch B additions:
     whatIfSimInputs: whatIfBundle,
-    setMoneyEvents,
+    saveEvent, removeEvent,
     // WI-0.1: model-provided monthly figure for the spend dial seed
     statementView,
     // WI-1.3: committed money events shown as icon badges on the arc
@@ -238,10 +238,10 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
       const scenEvents = scen.scenarioEvents ?? [];
       if (scenEvents.length > 0) {
         const stamp = Date.now();
-        setMoneyEvents(prev => [
-          ...prev,
-          ...scenEvents.map((ev, i) => ({ ...ev, id: String(stamp) + i, icon: ev.icon ?? "✨" })),
-        ]);
+        // saveEvent per event (wrapped write surface — no raw setMoneyEvents):
+        // each gets a fresh id, so every call is an append (never a collision
+        // with an existing committed event or with a sibling in this batch).
+        scenEvents.forEach((ev, i) => saveEvent({ ...ev, id: String(stamp) + i, icon: ev.icon ?? "✨" }));
       }
     } else if (dialsActive) {
       applyPlanLevers({
@@ -262,13 +262,11 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   const presetSeed = ({ l, ...rest }) => ({ ...rest, label: l });
 
   const handleEventSave = (ev) => {
-    setMoneyEvents(prev => eventSheet?.eventId
-      ? prev.map(me => (me.id === eventSheet.eventId ? ev : me))
-      : [...prev, ev]);
+    saveEvent(ev);
     setEventSheet(null);
   };
   const handleEventRemove = () => {
-    setMoneyEvents(prev => prev.filter(me => me.id !== eventSheet.eventId));
+    removeEvent(eventSheet.eventId);
     setEventSheet(null);
   };
 

@@ -89,6 +89,19 @@ end-to-end. The remaining BUG-36 gap **narrows** to `calcWhatIfDelta`, `calcAffo
 `calcOptimizedScenario` — all three still call `buildRetirementDrawdown` directly and were
 deliberately left untouched by this fix (their signatures don't carry the engine bundle). Files:
 `src/model/what-if.js` (`calcWhatIfScenario` only), `src/App.jsx` (`whatIfBundle` memo).
+**Scope narrowed further (2026-07-11, fix pass 2):** `calcAffordabilityMax` moved onto the engine —
+it now takes the `calcWhatIfScenario` bundle shape and probes sustainability with
+`calcWhatIfScenario(bundle, { scenarioEvents: [candidate] })` (the same primitive
+`evaluateLifeEvent` uses), instead of binary-searching over the blended `calcWhatIfDelta`. Reason:
+a future affordability-solver UI sitting on the old blended walk would have silently disagreed with
+what the arc already shows for the same candidate purchase. Classic's `WhatIfPanel` (the only
+caller) now receives a `whatIfBundle` prop for its Max Affordable mode; Delta mode is unchanged
+(`calcWhatIfDelta`, still blended). The remaining BUG-36 gap is now just `calcWhatIfDelta` and
+`calcOptimizedScenario`. Files: `src/model/what-if.js` (`calcAffordabilityMax`),
+`src/components/WhatIfPanel.jsx` (new `whatIfBundle` prop), `src/App.jsx` (passes it). Existing
+`calcAffordabilityMax` test assertions were loose (non-negative/non-positive directional checks) and
+held unchanged across the migration; 2 new tests added (invalid-bundle guard, an engine
+self-consistency check).
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
@@ -157,6 +170,33 @@ as described; this session's build never touched `flow-down.js`.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-43 — Signals strip deep-linked to a Numbers tab that no longer exists (found + fixed 2026-07-11, interop audit)
+
+**Owner:** me_theguy. **Found by:** the fix-pass-2 interop audit (checking every deep-link target
+against the screens that actually exist).
+**What:** `src/model/signals.js`'s "unclaimed employer match" and "budget deficit" signals both
+targeted `{ screen: "numbers", subView: "flow" }`. `NumbersScreen` has had no "flow" tab since PR
+#38 (2026-06-24) consolidated the standalone Money-flow tab into Statement as the "Retirement
+income companion strip" — the current tab set is statement/budget/accounts/taxes/yearly. Clicking
+either signal navigated to Numbers with a `subView` matching no tab, so `NumbersScreen`'s
+`useState(initialTab ?? "statement")` / `useEffect(() => { if (initialTab) setTab(initialTab); })`
+set `tab` to the dead id "flow", which matches none of the `tab === "…"` render branches — a blank
+Numbers body.
+**Root cause:** PR #38's tab consolidation updated `NumbersScreen.jsx` but never searched for other
+consumers of the old tab id; `signals.js` was written before PR #38 and was never revisited.
+**Fix:** retargeted both signals to `{ screen: "numbers", subView: "budget" }` — the Budget tab owns
+the savings waterfall and deficit warning, the natural home for both nudges. Added a machine-checked
+guard: `NumbersScreen.jsx` now exports `NUMBERS_TABS` (the tab id/label pairs, previously an inline
+literal in the render), and a new `signals.test.js` test iterates every Numbers-targeting signal and
+asserts its `subView` is one of `NUMBERS_TABS`'s ids — so a future tab rename/removal fails a test
+instead of shipping a silent blank screen.
+**Where:** `src/model/signals.js` (2 target fixes), `src/horizon/screens/NumbersScreen.jsx` (export
+`NUMBERS_TABS`, tab-strip render now maps over it instead of a duplicate inline array),
+`src/model/__tests__/signals.test.js` (retargeted expectations + the new deep-link guard describe
+block). Golden master untouched (signals.js has no model-value fields; display/plumbing only).
 
 ---
 

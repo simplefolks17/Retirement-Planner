@@ -169,8 +169,11 @@ export default function App() {
   const [hasMedicare, setHasMedicare] = useState(false);
   const [personOnMedicare, setPersonOnMedicare] = useState(1); // 1 or 2 (persons)
 
-  // One-time money events: windfalls, large purchases, inheritances.
-  // { id, label, amount, age, isInflow, isTaxable }
+  // Money events: windfalls, large purchases, inheritances, travel years,
+  // sabbaticals. Two shapes share this array — see src/model/money-events.js
+  // for the full contract:
+  //   One-time  { id, label, amount, age, isInflow, isTaxable }
+  //   Duration  { id, label, monthlyAmount, durationMonths, age, isInflow, incomeAnnual }
   // Empty default → zero golden master impact.
   const [moneyEvents, setMoneyEvents] = useState([]);
 
@@ -892,6 +895,23 @@ export default function App() {
     });
   }, [setRetirementAgeCoupled, setMonthlySpend, commitPlan]);
 
+  // Wrapped moneyEvents write surface (replaces the raw `setMoneyEvents` that used
+  // to ride on horizonProps — every screen called `setMoneyEvents(prev => …)`
+  // itself, a bare mutation the App memo never wrapped, violating the
+  // "no bundle exposes a raw setter" convention in docs/ARCHITECTURE.md). Two
+  // list-mutation callbacks cover every write LifeEventSheet/Ideas/Plan need:
+  // upsert-by-id (new event when no id matches, replace when one does) and
+  // remove-by-id. This is also where WI-5.2's entitlements/readOnly gating will
+  // compose (App-side, at construction) once it exists.
+  const saveEvent = useCallback((ev) => {
+    setMoneyEvents(prev => (prev.some(me => me.id === ev.id)
+      ? prev.map(me => (me.id === ev.id ? ev : me))
+      : [...prev, ev]));
+  }, [setMoneyEvents]);
+  const removeEvent = useCallback((id) => {
+    setMoneyEvents(prev => prev.filter(me => me.id !== id));
+  }, [setMoneyEvents]);
+
   // Current-age coupled update: mirrors the Classic onChange (Tax Rate Phases)
   // that pushes retirement age, spouse age, and contribEnd ages forward so they
   // never fall before the new current age.
@@ -1064,6 +1084,11 @@ export default function App() {
     contribMax: Math.max(trad401kMax, contrib401k),
     rothMax:    Math.max(200_000, annualConversionAmt),
     canTuneRothConversion: conversionWindowYrs > 0,
+    // RESERVED (future #123): savingsMin/savingsMax for an annualSavings lever —
+    // see the matching LEVERS-table reservation note in src/model/what-if.js.
+    // Unit decision (owner): ANNUAL dollars, override key `annualContributions`
+    // (not monthly, unlike the spend lever) — no bounds computed until #123
+    // actually wires the lever through calcWhatIfScenario.
   }), [currentAge, retirementAge, monthlySpend, lifeExpect, trad401kMax, contrib401k, annualConversionAmt, conversionWindowYrs]);
 
   // ── WI-3.1 (#98) setter bundles ─────────────────────────────────────────────
@@ -1620,7 +1645,11 @@ export default function App() {
     // are already net. Used by the Accounts tab "gross vs spendable" headline.
     spendableAtRet,
     // Batch A additions:
-    moneyEvents, setMoneyEvents,
+    moneyEvents,
+    // Wrapped write surface (list-mutation callbacks) — see the definitions above
+    // for why this replaced a raw setMoneyEvents (docs/ARCHITECTURE.md write-surface
+    // convention: no bundle exposes a raw setter).
+    saveEvent, removeEvent,
     whatIfSimInputs: whatIfBundle,
     commitPlan,
     // Plan screen "Try a change" panel (2026-07-11 redesign): the ONLY write path
@@ -1705,7 +1734,7 @@ export default function App() {
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
-       moneyEvents, setMoneyEvents, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
+       moneyEvents, saveEvent, removeEvent, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
        lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
@@ -2729,6 +2758,7 @@ export default function App() {
         baseTotalAtRet={totalAtRet}
         baseYearsSustained={yearsSustained}
         currentAge={currentAge}
+        whatIfBundle={whatIfBundle}
       />
 
       <div style={{ ...panel, marginBottom: 20 }}>

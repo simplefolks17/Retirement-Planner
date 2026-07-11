@@ -110,6 +110,31 @@ export function buildPreviewMetric({ id, label, before, after, betterDir = "up",
     : moneyMetric({ id, label, before, after, betterDir });
 }
 
+// ── verdictDisplay (#85 readiness) ──────────────────────────────────────────
+// Maps a `verdictForMargin` (what-if.js) result string to a render-ready
+// { label, tone } pair — the ONE place that turns the comfortable/tight/
+// unaffordable vocabulary into copy + a color token, so #85's verdict badge
+// (reserved on every apply-preview payload above) and any future surface that
+// shows a verdict (the Strategies "For you" strip, a Range/Monte-Carlo lens)
+// use identical wording and tone.
+//
+// Tone values are constrained to what VerdictBadge (ApplyPreviewModal.jsx)
+// actually renders: it maps "good"/"warm" to their tokens and falls back to
+// `t.mut` for anything else — its accepted set is good/warm/neutral (also the
+// enum apply-site-contract.test.js checks). There is no "bad"/red tone today,
+// so "unaffordable" is deliberately mapped to "warm" — the closest supported
+// tone, not a new one invented here; revisit if a future design pass adds a
+// dedicated danger tone to VerdictBadge.
+const VERDICT_DISPLAY = {
+  comfortable:  { label: "Comfortable", tone: "good" },
+  tight:        { label: "Tight",       tone: "warm" },
+  unaffordable: { label: "Doesn't fit", tone: "warm" }, // closest supported tone — see note above
+};
+
+export function verdictDisplay(verdict) {
+  return VERDICT_DISPLAY[verdict] ?? null;
+}
+
 // The `available` gate for the conversion-optimizer Apply site. Mirrors
 // Classic App.jsx:3291-3293 VERBATIM: a healthcare toggle must be on (the
 // optimizer only searches with IRMAA/ACA costs in the objective when one

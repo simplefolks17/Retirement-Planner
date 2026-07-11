@@ -47,6 +47,13 @@ export function WhatIfPanel({
   baseTotalAtRet,
   baseYearsSustained,
   currentAge,
+  // The calcWhatIfScenario/calcAffordabilityMax bundle shape (App.jsx's
+  // `whatIfBundle`) — used only by the Max Affordable mode, which runs on the
+  // per-account engine (calcAffordabilityMax, 2026-07-11) so a solved amount
+  // can never disagree with what the Horizon arc would show for the same
+  // candidate purchase. Delta mode is unchanged (calcWhatIfDelta, the blended
+  // walk — BUG-36's narrowed scope).
+  whatIfBundle,
 }) {
   const [open,     setOpen]     = useState(false);
   const [mode,     setMode]     = useState("delta");
@@ -99,13 +106,12 @@ export function WhatIfPanel({
 
   const affordResult = useMemo(() => {
     if (mode !== "affordability") return null;
-    return calcAffordabilityMax({
-      ...sharedArgs,
+    return calcAffordabilityMax(whatIfBundle, {
       purchaseAge: Number(affAge),
       targetLifeExpectancy: Number(targetAge),
       step: 1_000,
     });
-  }, [mode, affAge, targetAge, sharedArgs]);
+  }, [mode, affAge, targetAge, whatIfBundle]);
 
   const inputStyle = {
     background: "#0d1117", border: `1px solid ${C.border}`, borderRadius: 6,
