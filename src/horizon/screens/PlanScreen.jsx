@@ -4,6 +4,7 @@ import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo, kbActivate } from "../shared.jsx";
 import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
+import { VerdictTickRail } from "../fields.jsx";
 import { buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
@@ -178,23 +179,9 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
 // (what-if.js) for a live dashed-overlay + delta chip. Real state changes only
 // when the user explicitly confirms in the ApplyPreviewModal (applyPlanLevers).
 // Rule 10: every verdict/delta/tick color comes straight from the model
-// (buildLeverPreview / buildLeverRail) — this component maps a verdict STRING
-// to a theme token and nothing else; it never computes or compares dollars.
-const VERDICT_TINT = { comfortable: "good", tight: "warm", unaffordable: "accent" };
-
-function TickRail({ t, rail }) {
-  if (!rail.length) return null;
-  return (
-    <div style={{ display: "flex", gap: 2, marginTop: 6 }} aria-hidden="true">
-      {rail.map(entry => (
-        <div key={entry.value} style={{
-          flex: 1, height: 4, borderRadius: 2,
-          background: t[VERDICT_TINT[entry.verdict]] ?? t.line,
-        }} />
-      ))}
-    </div>
-  );
-}
+// (buildLeverPreview / buildLeverRail) — the shared VerdictTickRail (fields.jsx)
+// maps a verdict STRING to a theme token and nothing else; it never computes or
+// compares dollars.
 
 function TryAChangePanel({
   t, isMobile, navigate,
@@ -271,7 +258,7 @@ function TryAChangePanel({
           onChange={e => setRetireOffset(Number(e.target.value) - retirementAge)}
           style={sliderInput}
         />
-        <TickRail t={t} rail={retireRail} />
+        <VerdictTickRail t={t} rail={retireRail} />
       </div>
 
       {/* Monthly-spend slider */}
@@ -290,7 +277,7 @@ function TryAChangePanel({
           onChange={e => setSpendOffset(Number(e.target.value) - monthlySpend)}
           style={sliderInput}
         />
-        <TickRail t={t} rail={spendRail} />
+        <VerdictTickRail t={t} rail={spendRail} />
       </div>
 
       {/* Footer: idle link, or a live delta chip + Apply/Discard */}

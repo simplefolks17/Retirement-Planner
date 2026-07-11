@@ -176,6 +176,38 @@ describe("LifeEventSheet", () => {
     expect(saved.amount).toBeUndefined();
   });
 
+  it("renders a 36-tick verdict rail for a duration event, and none when the bundle is missing", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Travel 6 months", icon: "✈️", age: 70,
+          monthlyAmount: 6_000, durationMonths: 6, incomeAnnual: 0, isInflow: false },
+        onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const ticks = tree.root.findAll(n => n.type === "div" && n.props?.style?.borderRadius === 2);
+    expect(ticks.length).toBe(36);
+    // Every tick's background resolves to one of the verdict tokens (rule 10 —
+    // the mapping is a fixed enum, never a computed color).
+    const validColors = new Set([t.good, t.warm, t.accent, t.line]);
+    for (const tick of ticks) {
+      expect(validColors.has(tick.props.style.background)).toBe(true);
+    }
+
+    let treeNoBundle;
+    act(() => {
+      treeNoBundle = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle: null, bounds,
+        initial: { label: "Travel 6 months", icon: "✈️", age: 70,
+          monthlyAmount: 6_000, durationMonths: 6, incomeAnnual: 0, isInflow: false },
+        onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const ticksNoBundle = treeNoBundle.root.findAll(n => n.type === "div" && n.props?.style?.borderRadius === 2);
+    expect(ticksNoBundle.length).toBe(0);
+  });
+
   it("edit mode shows Save changes + Remove from plan and wires both", () => {
     const onSave = vi.fn(), onRemove = vi.fn();
     let tree;

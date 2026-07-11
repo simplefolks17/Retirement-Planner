@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
 import { fmt, kbActivate } from "./shared.jsx";
-import { evaluateLifeEvent } from "../model/what-if.js";
+import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
+import { VerdictTickRail } from "./fields.jsx";
 
 // LifeEventSheet — the sheet-first life-event placement flow (video-inspired):
 // configure a one-time or duration ("$X/mo for N months") event, watch a live
@@ -59,6 +60,23 @@ export default function LifeEventSheet({
   const result = useMemo(
     () => (whatIfBundle ? evaluateLifeEvent(whatIfBundle, candidate) : null),
     [whatIfBundle, candidate]);
+
+  // Duration tick rail (monthly mode only): one calcWhatIfScenario run per
+  // month of duration, verdict-colored, so the slider shows which durations
+  // are still comfortable before the user drags to the edge. eventBase is the
+  // candidate minus durationMonths (buildDurationRail's contract — it sets
+  // durationMonths per step itself).
+  const durationEventBase = useMemo(() => {
+    if (mode !== "monthly") return null;
+    const { durationMonths: _drop, ...base } = candidate;
+    return base;
+  }, [candidate, mode]);
+
+  const durationRail = useMemo(
+    () => (whatIfBundle && durationEventBase
+      ? buildDurationRail(whatIfBundle, durationEventBase, { maxMonths: DURATION_MAX_MONTHS })
+      : []),
+    [whatIfBundle, durationEventBase]);
 
   const verdict = result ? VERDICT_COPY[result.verdict] : null;
   const vColor  = verdict ? t[verdict.tone] : t.mut;
@@ -180,6 +198,7 @@ export default function LifeEventSheet({
               <input type="range" min="1" max={DURATION_MAX_MONTHS} step="1" value={durationMonths}
                 onChange={e => setDurationMonths(Number(e.target.value))}
                 aria-label="Duration in months" style={{ width: "100%", accentColor: t.accent }} />
+              <VerdictTickRail t={t} rail={durationRail} />
             </div>
           </>
         )}

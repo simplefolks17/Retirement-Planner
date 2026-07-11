@@ -146,7 +146,7 @@ describe("Horizon screens render smoke", () => {
   it("Ideas runs the calcWhatIfScenario one-run path when a scenario card is activated", () => {
     const { renderer, root } = mountApp();
     clickByText(root, "Ideas");
-    clickByText(root, "Horizon suggestions");
+    clickByText(root, "Scenarios");
     const scenarioCard = root.findAll(
       n => typeof n.props?.onClick === "function" && textOf(n).includes("Retire 2 yrs earlier")
     )[0];
