@@ -176,6 +176,34 @@ describe("LifeEventSheet", () => {
     expect(saved.amount).toBeUndefined();
   });
 
+  it("toggling a duration outflow to 'Money in' clears a stale incomeAnnual before save (H2)", () => {
+    const onSave = vi.fn();
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Travel 6 months", icon: "✈️", age: 70,
+          monthlyAmount: 6_000, durationMonths: 6, incomeAnnual: 24_000, isInflow: false },
+        onSave, onCancel: vi.fn(),
+      }));
+    });
+    // The "Income while it runs" field is only rendered for money-out events —
+    // confirm it's present (and carrying the seeded value) before the toggle.
+    expect(allText(tree)).toContain("Income while it runs");
+    const moneyIn = tree.root.findAll(
+      n => typeof n.props?.onClick === "function" && textOf({ children: n.children }) === "Money in"
+    )[0];
+    expect(moneyIn).toBeTruthy();
+    act(() => { moneyIn.props.onClick(); });
+    // Field hides once isInflow is true, but the stale value must not survive to save.
+    expect(allText(tree)).not.toContain("Income while it runs");
+    act(() => { findButton(tree.root, "Add to plan").props.onClick(); });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.isInflow).toBe(true);
+    expect(saved.incomeAnnual).toBe(0);
+  });
+
   it("renders a 36-tick verdict rail for a duration event, and none when the bundle is missing", () => {
     let tree;
     act(() => {

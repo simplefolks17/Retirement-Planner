@@ -55,8 +55,11 @@ export default function LifeEventSheet({
   // new one" and avoid double-counting the original (see modelCandidate below).
   const candidate = useMemo(() => {
     const common = { label, icon, age, isInflow, isTaxable: false, id: initial?.id };
+    // H2: "Income while it runs" is hidden once isInflow is true, but a value
+    // typed earlier (while isInflow was false) stays in state — force it to 0
+    // for money-in events so a stale field never gets saved or evaluated.
     return mode === "monthly"
-      ? { ...common, monthlyAmount, durationMonths, incomeAnnual }
+      ? { ...common, monthlyAmount, durationMonths, incomeAnnual: isInflow ? 0 : incomeAnnual }
       : { ...common, amount };
   }, [label, icon, age, isInflow, mode, amount, monthlyAmount, durationMonths, incomeAnnual, initial?.id]);
 
@@ -67,8 +70,11 @@ export default function LifeEventSheet({
   // only a field that can actually change the model's answer does.
   const modelCandidate = useMemo(() => {
     const common = { age, isInflow, isTaxable: false, id: initial?.id };
+    // H2: same stale-incomeAnnual guard as `candidate` above, applied to the
+    // model-facing candidate independently (the two memos intentionally don't
+    // share a definition — see the comment above `modelCandidate`).
     return mode === "monthly"
-      ? { ...common, monthlyAmount, durationMonths, incomeAnnual }
+      ? { ...common, monthlyAmount, durationMonths, incomeAnnual: isInflow ? 0 : incomeAnnual }
       : { ...common, amount };
   }, [age, isInflow, mode, amount, monthlyAmount, durationMonths, incomeAnnual, initial?.id]);
 

@@ -755,6 +755,16 @@ export default function ArcGraph({
               <g key={`ev-${evIdx}-${ev.age}-${ev.label}`}
                 onClick={() => onEventTap?.(ev)}
                 onPointerDown={(e) => { if (onEventTap) e.stopPropagation(); }}
+                tabIndex={onEventTap ? 0 : undefined}
+                role={onEventTap ? "button" : undefined}
+                aria-label={onEventTap ? `${ev.label}, age ${ev.age} — edit` : undefined}
+                focusable={onEventTap ? "true" : undefined}
+                onKeyDown={onEventTap ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    if (e.key === " ") e.preventDefault();
+                    onEventTap(ev);
+                  }
+                } : undefined}
                 style={{ cursor: onEventTap ? "pointer" : "default" }}>
                 <line x1={cx} x2={cx} y1={cy - 4} y2={by + 13}
                   stroke={color} strokeWidth="1.2" opacity="0.55"

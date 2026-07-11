@@ -377,7 +377,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                     const committed = committedByLabel(ev.l);
                     const placed = !!committed;
                     return (
-                      <div key={ev.l} onClick={() => setEventSheet(placed
+                      <button key={ev.l} type="button" onClick={() => setEventSheet(placed
                         ? { seed: committed, eventId: committed.id }
                         : { seed: presetSeed(ev) })}
                         style={{
@@ -385,10 +385,11 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                           border: `1px solid ${placed ? t.warm : t.line2}`,
                           background: placed ? `${t.warm}14` : "transparent",
                           font: `${placed ? 600 : 400} 13px ${HF}`,
-                          color: placed ? t.ink : t.mut
+                          color: placed ? t.ink : t.mut,
+                          textAlign: "left",
                         }}>
                         {ev.icon}  {placed ? "✓ " : ""}{ev.l}
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -452,26 +453,29 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                       I retire two years earlier, instead of at {retirementAge}?
                     </span>
                   </div>
-                  <div
+                  <button
+                    type="button"
                     onClick={() => setActiveScen("retire63")}
                     style={{
                       padding: "11px 18px", borderRadius: 11, background: t.accent,
-                      cursor: "pointer", flexShrink: 0
+                      border: "none", cursor: "pointer", flexShrink: 0
                     }}
                   >
                     <span style={{ font: `600 14px ${HF}`, color: "#fff" }}>Show on arc →</span>
-                  </div>
+                  </button>
                 </div>
                 <div style={{ display: "flex", gap: 9 }}>
                   {SCENARIOS.map(({ k, label, sub, color }) => {
                     const on = activeScen === k;
                     const c = t[color];
                     return (
-                      <div key={k} onClick={() => setActiveScen(on ? null : k)}
+                      <button key={k} type="button" onClick={() => setActiveScen(on ? null : k)}
+                        aria-pressed={on}
                         style={{
                           flex: 1, padding: "12px 12px", borderRadius: 10, cursor: "pointer",
                           border: `1px solid ${on ? c : t.line2}`,
-                          background: on ? `${c}12` : "transparent"
+                          background: on ? `${c}12` : "transparent",
+                          textAlign: "left",
                         }}>
                         <span style={{
                           width: 8, height: 8, borderRadius: 999,
@@ -479,7 +483,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                         }} />
                         <div style={{ font: `600 14px/1.05 ${HF}`, color: t.ink }}>{label}</div>
                         <div style={{ font: `400 12px ${HF}`, color: t.mut, marginTop: 3 }}>{sub}</div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -497,10 +501,12 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         <ScenStatCard t={t} label="Left at 90"  baseVal={fmt(balAt90)} scenVal={scenLeft90} />
         {(scen || dialsActive) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", flexShrink: 0 }}>
-            <div
+            <button
+              type="button"
               onClick={() => !planSaved && setShowApply(true)}
+              disabled={planSaved}
               style={{
-                padding: "11px 16px", borderRadius: 11,
+                padding: "11px 16px", borderRadius: 11, border: "none",
                 background: planSaved ? t.good : t.accent,
                 cursor: planSaved ? "default" : "pointer",
                 transition: "background .25s",
@@ -509,7 +515,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
               <span style={{ font: `600 13px ${HF}`, color: "#fff" }}>
                 {planSaved ? "✓ Applied" : "Apply to my plan"}
               </span>
-            </div>
+            </button>
           </div>
         )}
       </div>
