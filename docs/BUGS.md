@@ -256,6 +256,83 @@ Still reproduces; `flow-down.js` was not touched by this session's build.
 
 ---
 
+### BUG-65 — `commitPlan` used the bare (uncoupled) `setRetirementAge` (found + fixed 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52.
+**What it was:** `commitPlan` (App.jsx) called `setRetirementAge(ra)` directly instead of the
+coupled `setRetirementAgeCoupled(ra)` that keeps `contribEnd401k`/`contribEndRoth`/
+`contribEndTaxable`/`contribEndHSA` in sync when they track the retirement age. `applyPlanLevers`
+happened to call `setRetirementAgeCoupled` itself just before `commitPlan` (masking the bug there),
+but onboarding's `handleSave` (`HorizonShell.jsx`) calls `commitPlan` directly with no pre-coupling —
+a first-run user picking a retirement age different from the default contribEnd ages would get
+contributions silently continuing past their chosen retirement age.
+**Fix:** reordered `setRetirementAgeCoupled`'s definition above `commitPlan` (it was defined after,
+so `commitPlan` couldn't reference it) and swapped the bare setter for the coupled one inside
+`commitPlan`; updated its dep array accordingly. `applyPlanLevers`'s pre-coupling call is now
+redundant-but-harmless (idempotent). **Files:** `src/App.jsx`. Display-only state-consistency fix;
+golden master untouched; no new test (no model-layer surface to lock — covered by existing
+`setter-bundles.test.js` round-trips).
+
+### BUG-66 — `surplusApplySite`'s `calcWhatIfDelta` calls dropped committed money events (found + fixed 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52.
+**What it was:** `calcWhatIfDelta`'s `moneyEvents` param defaults to `[]`; `surplusApplySite`
+(App.jsx, WI-3.7's Apply-with-preview site for the optimized-allocation suggestion) called it via
+`calcWhatIfDelta({ ...whatIfBundle })` — `whatIfBundle` has no top-level `moneyEvents` key (it lives
+nested in `whatIfBundle.simInputs.moneyEvents`, which `calcWhatIfDelta` doesn't read), so both the
+"current" and "candidate" re-sims silently ran with zero committed events. Symmetric (both sides
+equally wrong), so it never showed a *divergent* delta, but a user with committed money events would
+see a surplus-deployment preview computed against a portfolio walk that doesn't match their real plan.
+**Fix:** both `calcWhatIfDelta` calls in `surplusApplySite` now pass `moneyEvents` explicitly (read
+from the `moneyEvents` App.jsx state), added to the memo's dep array. **Files:** `src/App.jsx`.
+Golden master untouched (default `moneyEvents = []`); no new test (no committed-events fixture existed
+for this site — the bug was in argument wiring, not model logic already covered by
+`what-if.test.js`'s `calcWhatIfDelta` event tests).
+
+### BUG-67 — three CodeRabbit-flagged duplications deduped (found + fixed 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52 (Trivial-severity findings).
+**What it was:** three identical code blocks existed in two places each, risking silent drift:
+(1) `IdeasScreen.jsx`'s dial override-object construction (`{ retirementAge, monthlyExpenses }`)
+was built separately in `dialScenario` and `applyPreview`'s memos; (2) `App.jsx`'s retirement-boundary
+money-events filter (`moneyEvents.filter(ev => eventLastAge(ev) >= safeRetAge)`) was duplicated in
+`retPhaseBase` and `retDrawShared`; (3) `what-if.js`'s Infinity-aware `deltaYears` ternary was
+repeated verbatim in `calcWhatIfDelta`, `calcWhatIfScenario`'s M1 engine path, and its fallback path.
+**Fix:** hoisted each into one shared definition — `dialOverrides` (useMemo, IdeasScreen.jsx),
+`retirementMoneyEvents` (useMemo, App.jsx), and `deltaYearsFrom(scenarioYears, baseYearsSustained)`
+(module-level function, what-if.js) — all three call sites now reference the shared version.
+**Files:** `src/horizon/screens/IdeasScreen.jsx`, `src/App.jsx`, `src/model/what-if.js`.
+Value-preserving refactor; golden master untouched; existing tests cover all three call sites
+unchanged (763/763 pass).
+
+### BUG-68 — `AffordabilityPanel`'s staged ages didn't resync with `affordView`'s bounds (found + fixed 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52 (Minor).
+**What it was:** `purchaseAge`/`targetAge` were seeded once via `useState(affordView.defaultPurchaseAge)`
+/`useState(affordView.defaultTargetAge)`. If `affordView`'s bounds shifted while the Solvers panel
+stayed mounted (e.g. the user edits `currentAge`/`lifeExpect` in My details in another tab/without
+unmounting Ideas), the staged ages could drift outside the field's own (now-updated) min/max.
+**Fix:** two `useEffect`s re-clamp `purchaseAge`/`targetAge` into `[purchaseMin, purchaseMax]`/
+`[targetMin, targetMax]` whenever those bounds change — keyed on the bounds only (not the defaults),
+so it never fights a user's in-progress choice that's still within range. **Files:**
+`src/horizon/AffordabilityPanel.jsx`. Display-only; golden master untouched.
+
+### BUG-69 — `MAX_MONEY_EVENTS` hardcoded outside `ASSUMPTIONS` (found + fixed 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52 (Major-labeled convention finding).
+**What it was:** `MAX_MONEY_EVENTS = 6` (the product-level UI cap on one-time/duration events) was
+defined as a standalone `export const` in `src/model/money-events.js` instead of living in
+`ASSUMPTIONS` (`irs-2026.js`) alongside its closest precedent, `AFFORDABILITY_STEP`/
+`AFFORD_DEFAULT_PURCHASE_OFFSET_YRS` — rule 1's "IRS constants live in irs-2026.js only" extends by
+established convention to product-level UI constants too (named there "so both surfaces stay
+identical by construction"), which this constant had drifted from.
+**Fix:** moved the value into `ASSUMPTIONS.MAX_MONEY_EVENTS`; `money-events.js` now
+`export const MAX_MONEY_EVENTS = ASSUMPTIONS.MAX_MONEY_EVENTS;` so existing import sites
+(`MoneyEventsPanel.jsx`) don't need to change. **Files:** `src/config/irs-2026.js`,
+`src/model/money-events.js`. Value-preserving; golden master untouched.
+
+---
+
 ### BUG-46 — `buildScenarioCommitSite` preview omits the scenario's `scenarioEvents`/expense overrides (found 2026-07-09, closed as obsolete 2026-07-12)
 
 **Owner:** me_theguy. **Found by:** an in-house 8-finder-angle code review of PR #51.
