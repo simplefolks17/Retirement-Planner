@@ -736,6 +736,65 @@ describe("evaluateLifeEvent — edit mode (H1 double-count regression)", () => {
     expect(result.atPlanAge.deltaAbs).toBeGreaterThan(0);
     expect(result.atPlanAge.deltaAbs).toBeLessThan(60_000 * 3);
   });
+
+  // buildDurationRail regression (post-ship verification review): the H1
+  // exclusion originally reached only evaluateLifeEvent, so the sheet's tick
+  // rail (buildDurationRail) still double-counted a committed DURATION event
+  // being edited — the rail could show "unaffordable" at a duration where the
+  // verdict card (evaluateLifeEvent) said "comfortable" for the identical
+  // candidate. A committed duration-event bundle, mirroring editBundle above.
+  const committedDuration = {
+    id: "sabbatical-1", label: "Sabbatical", icon: "🌴",
+    monthlyAmount: 5_000, durationMonths: 24, incomeAnnual: 0,
+    age: 63, isInflow: false,
+  };
+  const durSimInputs = { ...editSimInputsBase, moneyEvents: [committedDuration] };
+  const durSim = runSimulation(durSimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const durAt = durSim[editSafeRetAge - editCurrentAge - 1];
+  const durTradGrossAtRet = durAt.tradGross ?? 0;
+  const durRoth    = durAt["Roth IRA"] ?? 0;
+  const durTaxable = durAt["Taxable"]  ?? 0;
+  const durHsa     = durAt["HSA"]      ?? 0;
+  const durTotalAtRet = durTradGrossAtRet + durRoth + durTaxable + durHsa;
+  const durRetPhaseBase = {
+    ...editRetPhaseBase,
+    tradGross: durTradGrossAtRet, roth: durRoth, taxable: durTaxable, hsa: durHsa,
+    moneyEvents: [committedDuration],
+  };
+  const durRetPhase = buildRetirementPhase({ ...durRetPhaseBase, conversionByAge: {} });
+  const durAccumChart = buildAccumChart({
+    simData: durSim, safeRetAge: editSafeRetAge, currentAge: editCurrentAge,
+    bal401k: editSimInputsBase.bal401k, balRoth: editSimInputsBase.balRoth,
+    balTaxable: editSimInputsBase.balTaxable, balHSA: editSimInputsBase.balHSA,
+  });
+  const durBaseChart = [
+    ...durAccumChart,
+    ...durRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+  const durBundle = {
+    ...editBundle,
+    simInputs: durSimInputs,
+    retDrawShared: { ...editRetDrawShared, moneyEvents: [committedDuration] },
+    baseTotalAtRet: durTotalAtRet, baseYearsSustained: durRetPhase.yearsSustained,
+    retPhaseBase: durRetPhaseBase, baseChart: durBaseChart,
+  };
+
+  it("buildDurationRail excludes the committed original when editing (agrees with evaluateLifeEvent, no double-count)", () => {
+    const { durationMonths: _drop, ...eventBase } = committedDuration;
+    const rail = buildDurationRail(durBundle, eventBase, { maxMonths: 36, step: 6 });
+    expect(rail.length).toBeGreaterThan(0);
+    for (const entry of rail) {
+      const candidate = { ...eventBase, durationMonths: entry.months };
+      const expected = evaluateLifeEvent(durBundle, candidate);
+      expect(entry.verdict).toBe(expected.verdict);
+    }
+    // Unchanged edit (24 months, the committed value) must be priced once —
+    // same verdict as evaluateLifeEvent's own no-double-count guarantee.
+    const unchanged = rail.find(r => r.months === 24);
+    expect(unchanged).toBeDefined();
+    expect(unchanged.verdict).toBe(evaluateLifeEvent(durBundle, committedDuration).verdict);
+  });
 });
 
 // ── buildLeverPreview / buildLeverRail / buildDurationRail ────────────────────

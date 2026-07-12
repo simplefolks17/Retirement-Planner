@@ -7,6 +7,29 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-44 — Ideas re-applying the same scenario duplicates its committed events (found 2026-07-11, PR #52 post-fix verification pass)
+
+**Owner:** me_theguy. **Found by:** the post-fix Fable verification review (checking the H1/M1
+fix commits for new regressions).
+**What:** `IdeasScreen.jsx`'s scenario cards (e.g. "Big trip at 70", which carries a $40k
+`scenarioEvent`) have no "already applied" indicator, unlike the Events pills (`committedByLabel`
+shows a "✓ placed" state and reopens the sheet in edit mode). `handleApplyConfirm` mints a fresh
+id per apply, so re-selecting and re-applying the same scenario after the 2-second "✓ Applied"
+toast clears commits a **second** copy of the event — a $40k trip becomes two $40k trips with no
+warning. Also means Horizon's `saveEvent` can push `moneyEvents` past Classic's `MAX_EVENTS = 6`
+cap silently (Classic just stops offering its own Add button; the "up to 6" copy becomes untrue).
+**Root cause:** scenario cards are stateless presets (no committed-state lookup), unlike the
+Events pills which key off `moneyEvents` by label.
+**Fix path:** give `SCENARIOS` cards the same `committedByLabel`-style check the Events pills use
+(match by the scenario's `scenarioEvents[].label`) and either disable/relabel an already-applied
+card or dedupe on apply (skip events whose label is already committed).
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (`handleApplyConfirm`, the Scenarios panel card
+render).
+**Status:** deferred — a UX/scope judgment call, not a correctness bug in the shipped fix passes;
+recorded so it isn't lost.
+
+---
+
 ### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
 
 **Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
@@ -170,6 +193,36 @@ as described; this session's build never touched `flow-down.js`.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-45 — `buildDurationRail` didn't inherit the H1 exclude-committed-event fix (found + fixed 2026-07-11, post-fix verification pass)
+
+**Owner:** me_theguy. **Found by:** the Fable post-fix verification review (checking the H1/M1/M2
+fix commits themselves for correctness and new regressions).
+**What:** H1 (`0ddfb4d`) fixed `evaluateLifeEvent`'s verdict card so editing an already-committed
+event prices it once via a new `excludeEventId` override on `calcWhatIfScenario`. The fix reached
+only `evaluateLifeEvent` — `buildDurationRail` (the LifeEventSheet's per-month tick rail) still
+called `calcWhatIfScenario` with no exclusion, so opening a committed **duration** event's edit
+sheet (tap a placed pill or arc badge) still double-counted the original at every rail step. The
+rail and the verdict card, computed from the same candidate, could disagree: probe-confirmed at
+concrete spend levels (a $5k/mo × 24mo sabbatical) where the card read "comfortable" while the
+rail tick at the identical 24 months read "tight," and elsewhere "tight" vs "unaffordable." This
+directly contradicted the function's own doc comment ("a rail entry and evaluateLifeEvent's
+verdict for the same months can never disagree").
+**Root cause:** the H1 fix's `excludeEventId` passthrough was added at the `evaluateLifeEvent`
+call site only, not the sibling `buildDurationRail` builder — both call `calcWhatIfScenario` with
+a synthesized candidate, but only one is exercised by the H1 regression test.
+**Fixed:** 2026-07-11, same session. `buildDurationRail` now passes
+`excludeEventId: eventBase.id` (when present) into its `calcWhatIfScenario` call, mirroring
+`evaluateLifeEvent`'s convention exactly. `LifeEventSheet.jsx` needed no change — `modelCandidate`
+already carries `id: initial?.id`, and `durationEventBase` derives from it by spread, so the id
+flows through automatically. New regression test in `what-if.test.js`: a committed duration event
+baked into every committed-event source (mirroring the existing H1 `editBundle` fixture), asserts
+every rail entry's verdict agrees with `evaluateLifeEvent` for the identical candidate, and that
+the unchanged-duration (24 months) entry matches the no-double-count guarantee.
+**Where:** `src/model/what-if.js` (`buildDurationRail`), `src/model/__tests__/what-if.test.js`
+(new fixture + test). 714 → 715 tests; golden master untouched.
 
 ---
 

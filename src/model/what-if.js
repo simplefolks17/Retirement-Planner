@@ -887,7 +887,11 @@ export function buildLeverRail(bundle, { lever, min, max, step } = {}) {
 //
 // eventBase: the candidate event's fields minus durationMonths (must carry
 //   monthlyAmount/age/isInflow — the same shape evaluateLifeEvent takes for a
-//   duration event); durationMonths is set per-step here.
+//   duration event); durationMonths is set per-step here. When eventBase.id
+//   matches a COMMITTED event (edit mode), that id is excluded from every
+//   step's run — mirroring evaluateLifeEvent's own excludeEventId use — so an
+//   edited event's rail can't price the original alongside the edited
+//   candidate (the same double-count H1 fixed for the verdict card).
 // Guards (invalid bundle, missing eventBase, maxMonths <= 0, step <= 0)
 // return [].
 //
@@ -910,7 +914,10 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
   for (let i = 1; i <= count; i++) {
     const months = Math.round(i * effStep);
     const candidate = { ...eventBase, durationMonths: months };
-    const scenario = calcWhatIfScenario(bundle, { scenarioEvents: [candidate] });
+    const scenario = calcWhatIfScenario(bundle, {
+      scenarioEvents: [candidate],
+      ...(eventBase.id != null ? { excludeEventId: eventBase.id } : {}),
+    });
     if (!scenario) continue;
     const marginYears = scenario.scenarioYears === Infinity
       ? Infinity
