@@ -758,7 +758,6 @@ export default function ArcGraph({
                 tabIndex={onEventTap ? 0 : undefined}
                 role={onEventTap ? "button" : undefined}
                 aria-label={onEventTap ? `${ev.label}, age ${ev.age} — edit` : undefined}
-                focusable={onEventTap ? "true" : undefined}
                 onKeyDown={onEventTap ? (e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     if (e.key === " ") e.preventDefault();
