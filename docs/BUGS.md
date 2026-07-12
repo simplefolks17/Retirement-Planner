@@ -256,6 +256,34 @@ Still reproduces; `flow-down.js` was not touched by this session's build.
 
 ---
 
+### BUG-70 — `LifeEventSheet`'s segmented toggles missing `aria-pressed` (found + fixed 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52.
+**What it was:** the 4 money-in/out and one-time/monthly toggle buttons (converted from `div`s to
+native `<button>`s in an earlier fix round for keyboard focus/activation) still didn't expose
+their 2-state toggle-group selection to screen readers — no `aria-pressed`. `IdeasScreen.jsx`'s
+segmented mode control already sets `aria-pressed={on}` for the identical pattern.
+**Fix:** added `aria-pressed` (keyed to `!isInflow`/`isInflow`/`mode === "once"`/`mode ===
+"monthly"`) to all 4 buttons. **Files:** `src/horizon/LifeEventSheet.jsx`. Display-only; golden
+master untouched.
+
+### BUG-71 — `calcWhatIfScenario`'s fallback resim path dropped `addlPreTaxBal` (found + fixed 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52.
+**What it was:** the same basis-mismatch bug class this PR fixed twice already (the per-account-
+engine path and `calcWhatIfDelta`'s resim) existed a third time in `calcWhatIfScenario`'s older
+fallback path (`buildRetirementDrawdown`, dead-in-production — App.jsx always supplies
+`retPhaseBase` so the engine path runs — but kept for any caller/test not yet migrated). Its
+`needsResim` branch rebuilt `startBal` from `resimAt` without adding `addlPreTaxBal` back, so any
+future caller passing a nonzero `addlPreTaxBal` through this path would silently get a wrong
+scenario total.
+**Fix:** added `+ (addlPreTaxBal ?? 0)` to the fallback branch's `startBal`, matching the primary
+path's `seeds.tradGross = (resimAt.tradGross ?? 0) + (addlPreTaxBal ?? 0)`. **Files:**
+`src/model/what-if.js`. Golden master untouched (dead path at default state; `addlPreTaxBal`
+defaults to 0 everywhere).
+
+---
+
 ### BUG-65 — `commitPlan` used the bare (uncoupled) `setRetirementAge` (found + fixed 2026-07-12)
 
 **Owner:** me_theguy. **Found by:** CodeRabbit review of PR #52.
