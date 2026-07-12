@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
-import { fmt, kbActivate } from "./shared.jsx";
+import { fmt } from "./shared.jsx";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
 import { VerdictTickRail } from "./fields.jsx";
 
@@ -165,24 +165,20 @@ export default function LifeEventSheet({
 
         {/* direction + shape */}
         <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
-          <div role="button" tabIndex={0} onClick={() => setIsInflow(false)}
-            onKeyDown={kbActivate(() => setIsInflow(false))} style={seg(!isInflow, t.warm)}>
+          <button type="button" onClick={() => setIsInflow(false)} style={seg(!isInflow, t.warm)}>
             Money out
-          </div>
-          <div role="button" tabIndex={0} onClick={() => setIsInflow(true)}
-            onKeyDown={kbActivate(() => setIsInflow(true))} style={seg(isInflow, t.good)}>
+          </button>
+          <button type="button" onClick={() => setIsInflow(true)} style={seg(isInflow, t.good)}>
             Money in
-          </div>
+          </button>
         </div>
         <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
-          <div role="button" tabIndex={0} onClick={() => setMode("once")}
-            onKeyDown={kbActivate(() => setMode("once"))} style={seg(mode === "once")}>
+          <button type="button" onClick={() => setMode("once")} style={seg(mode === "once")}>
             One-time
-          </div>
-          <div role="button" tabIndex={0} onClick={() => setMode("monthly")}
-            onKeyDown={kbActivate(() => setMode("monthly"))} style={seg(mode === "monthly")}>
+          </button>
+          <button type="button" onClick={() => setMode("monthly")} style={seg(mode === "monthly")}>
             Monthly, for a while
-          </div>
+          </button>
         </div>
 
         {/* amount fields */}
