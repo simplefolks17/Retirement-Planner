@@ -419,8 +419,12 @@ export function calcWhatIfScenario({
   let startBal = baseTotalAtRet ?? 0;
   if (needsResim) {
     // BUG-35: gross basis (no 401k haircut) — consistent with baseTotalAtRet.
+    // addlPreTaxBal added back for the same reason as the primary (engine)
+    // path above and calcWhatIfDelta's resim — baseTotalAtRet already
+    // includes it, so a resim that omits it is a basis mismatch.
     startBal = (resimAt.tradGross ?? 0)
-      + (resimAt["Roth IRA"] ?? 0) + (resimAt["Taxable"] ?? 0) + (resimAt["HSA"] ?? 0);
+      + (resimAt["Roth IRA"] ?? 0) + (resimAt["Taxable"] ?? 0) + (resimAt["HSA"] ?? 0)
+      + (addlPreTaxBal ?? 0);
   }
 
   const endAge = Math.max(safeLifeExp, scenarioRetAge + 5);

@@ -165,18 +165,18 @@ export default function LifeEventSheet({
 
         {/* direction + shape */}
         <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
-          <button type="button" onClick={() => setIsInflow(false)} style={seg(!isInflow, t.warm)}>
+          <button type="button" onClick={() => setIsInflow(false)} aria-pressed={!isInflow} style={seg(!isInflow, t.warm)}>
             Money out
           </button>
-          <button type="button" onClick={() => setIsInflow(true)} style={seg(isInflow, t.good)}>
+          <button type="button" onClick={() => setIsInflow(true)} aria-pressed={isInflow} style={seg(isInflow, t.good)}>
             Money in
           </button>
         </div>
         <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
-          <button type="button" onClick={() => setMode("once")} style={seg(mode === "once")}>
+          <button type="button" onClick={() => setMode("once")} aria-pressed={mode === "once"} style={seg(mode === "once")}>
             One-time
           </button>
-          <button type="button" onClick={() => setMode("monthly")} style={seg(mode === "monthly")}>
+          <button type="button" onClick={() => setMode("monthly")} aria-pressed={mode === "monthly"} style={seg(mode === "monthly")}>
             Monthly, for a while
           </button>
         </div>
