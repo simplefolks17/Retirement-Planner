@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (716 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (715 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (123 items, 61 done, 62 planned)
+- Feature backlog: `feature-tracker.html` (124 items, 62 done, 62 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -935,11 +935,44 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   your plan" once their event(s) are committed, and the shared CTA becomes **"Remove from plan"**
   instead of "Apply to my plan" (`matchCommittedEvents` by-label lookup, mirroring the Events
   pills; `handleRemoveScenario` new). 714 → **716** tests.
+- **Retire the locked "Scenarios" preset grid (2026-07-12, branch
+  `claude/arc-event-placement-video-61zalx`):** owner pushback on Ideas' "Scenarios" tab — its 4
+  preset cards applied a hidden value with one tap and weren't editable, unlike the Events tab's
+  sheet-first flow the owner explicitly liked. Scope: Scenarios only (Events already did it
+  right). `src/horizon/screens/IdeasScreen.jsx`: deleted `SCENARIOS`, the `mode === "suggest"`
+  panel, `activeScen` state, `scen`/`scenario` derivations, `matchCommittedEvents`, `scenApplied`,
+  and `handleRemoveScenario`. The 3 age-only cards became two Dials **quick-jump chips**
+  (`RETIRE_JUMPS`, exported, value-locked) — `retire2Early` (relative, `-2`) and `retire60`
+  (absolute, `targetAge: 60`), resolved uniformly through `handleRetireJump`'s clamp to
+  `sliderBounds.retireMin/retireMax` before converting to the offset the slider state already
+  speaks. Two chip *kinds* exist specifically because a naive `retireAdj: -5` chip breaks once
+  `retirementAge` sits close to `currentAge` (`sliderBounds.retireMin` can exceed the naive
+  target) — without the clamp the range input silently desyncs from its label and
+  `calcWhatIfScenario` returns `null` (dead overlay, dead Apply). `saveMore` ("Save $300
+  more/mo") was dropped, not remapped — Dials has no savings lever (deferred #123) and forcing
+  that framing onto a bare retire-age chip would be dishonest. The 4th card ("Big trip at 70")
+  folded into `LIFE_EVENTS` as a normal editable pill (`🧳`, $40k/age 70, same seed values) —
+  Events' existing `committedByLabel` placed-pill mechanic means the fold-in inherits BUG-44's
+  duplicate-prevention fix for free. `MODES` shrinks to Dials · Events; `askit` now aliases to
+  `dials` (its old job — "what if I retire earlier" — is literally the `retire2Early` chip).
+  This **structurally closes the whole BUG-44 bug class**: quick-jump chips are a pure slider
+  nudge with no committed write, so the only committed-state writes left are Dials' Apply (one
+  path) and the LifeEventSheet's Save/Remove (one path, upsert-by-id) — no "tap a card, a hidden
+  value silently applies" surface remains; BUG-44's fix code retired with the surface it
+  protected (addendum logged in `docs/BUGS.md`). No model-layer change — `buildLeverPreview`/
+  `buildLeverRail` already take `{ retirementAge, monthlyExpenses }` overrides with no event
+  support, so the age-only chips map onto the existing `retirementAge` lever 1:1.
+  `docs/ROADMAP.md` (4 touch-points), `docs/HORIZON.md`, `docs/ARCHITECTURE.md`, and
+  `feature-tracker.html` corrected to drop the retired "Scenarios" naming (dated amendments, not
+  rewrites — the historical Violations-register and WI-0.1/0.2 text are left as written).
+  716 → **715** tests (net: 2 segmented-control tests + 5 Dials-mode tests incl. the two new
+  quick-jump chip tests + 2 Events-mode tests incl. a placed-pill regression replacing the
+  deleted BUG-44 test's coverage — down from 10 in the old 3-segment file).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (716 tests)
+- `npm test` — run model + formatter + render-smoke tests (715 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

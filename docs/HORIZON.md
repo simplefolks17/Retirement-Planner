@@ -22,7 +22,7 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 | `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard + mobile bar/MoreSheet; exports `SCREENS`; imports per-screen files |
 | `src/horizon/screens/PlanScreen.jsx` | arc (full-width), hero, income meter, Try-a-change preview levers (Apply/Discard), stat cards, signals strip |
 | `src/horizon/screens/JourneyScreen.jsx` | Journey screen — the Flow-Down port (3-chapter narrative) |
-| `src/horizon/screens/IdeasScreen.jsx` | segmented Dials · Events · Scenarios workshop; live dial sliders; Apply to my plan |
+| `src/horizon/screens/IdeasScreen.jsx` | segmented Dials · Events workshop; live dial sliders + quick-jump chips; Apply to my plan |
 | `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen — 5 tabs (Statement, Budget, Accounts, Taxes, Year by year); Statement carries a "Retirement income companion strip" (the consolidated former Money-flow retirement view — see below) |
 | `src/horizon/screens/StrategiesScreen.jsx` | Strategies catalogue (WI-3.3) — `STRATEGIES` registry of cards; each opens a `Flow` in the detail slot |
 | `src/horizon/screens/strategies/` | The interactive strategy flows: `SSTimingFlow.jsx` (WI-3.4), `RMDOutlookFlow.jsx` (WI-3.5), `ConversionPlannerFlow.jsx` (WI-3.6); `flow-ui.jsx` = shared `SectionLabel`/`NoteBox`/`StatTile` |
@@ -125,7 +125,7 @@ The signature visual — a full-life portfolio balance curve from today to `life
 | `arc` | Arc | Cubic bezier spline with milestone pills (Today · First Million · Retire · For life) |
 | `stacked` | Sources | Total arc + contributions band (market growth vs contributions split) |
 | `columns` | Decades | 5-year bar chart, green → amber at retirement |
-| `band` | Scenarios | Uncertainty cone (±28% spread growing with time). *Planned rename: "Scenarios" → "Range" (name collides with Ideas' scenario cards); ships with WI-5.3/#114 when the cone becomes real Monte Carlo percentile data (`docs/ROADMAP.md` → SP-3).* |
+| `band` | Scenarios | Uncertainty cone (±28% spread growing with time). *Planned rename: "Scenarios" → "Range"; ships with WI-5.3/#114 when the cone becomes real Monte Carlo percentile data (`docs/ROADMAP.md` → SP-3). Dated correction (2026-07-12): the original justification — a name collision with Ideas' scenario cards — is now moot, since Ideas' "Scenarios" segment was retired the same day (see the Ideas screen section above). The rename itself is unaffected and stays planned; it's just no longer urgent for that reason.* |
 
 ### SVG coordinate system
 
@@ -167,23 +167,51 @@ Right side of nav: "On track" / "Needs attention" status pill + "Classic view" b
 
 ### Ideas screen
 
-Scenario exploration — the arc is always the hero.
+> **Updated 2026-07-12 (owner decision).** This section describes the CURRENT shape after two
+> redesigns: the 2026-07-11 Plan/Ideas re-differentiation (SP-5 tidy — segmented control + live
+> dials + Apply-with-preview) and the 2026-07-12 retirement of the locked "Scenarios" preset grid
+> (the owner found the 4 preset cards restrictive — not editable before applying, unlike the
+> Events tab's sheet-first flow). Full history: `CLAUDE.md` dated status entries; bug context:
+> `docs/BUGS.md` BUG-44 + its addendum.
 
-**4 mode panels** (one active at a time):
-- **Drop life onto timeline** — 5 life-event chips (buy a home, kid's college, etc.) that add an event to `moneyEvents` via `setMoneyEvents` after a ConfirmModal
-- **Dial your future** — steppers for Retire at / Extra savings / Monthly spend; +/− buttons update local offset state and re-run `calcWhatIfChart` for a live dotted arc overlay
-- **Horizon suggestions** — 4 clickable scenario cards that run `calcWhatIfChart` and pass the result as `scenarioData` to ArcGraph
-- **What if…** — question prompt that activates the "retire 2 years earlier" scenario
+The deep workshop — the arc is always the hero, and every number shown comes from ONE
+`calcWhatIfScenario` run per active state (arc overlay + stats row can never disagree).
 
-**Scenario system:**
-- 4 presets: `retire63`, `retire60`, `saveMore`, `bigTrip`
-- Each runs `calcWhatIfChart(whatIfBundle, { retireAdj, scenarioEvents })` — a real model run, not a scaled approximation
-- Stats row shows base values with strikethrough + scenario values when a scenario is active
-- **"Make this my plan"** → ConfirmModal → `commitPlan({ retirementAge: scenRetire })` → 2-second toast
+**2 mode panels** (`MODES`, one active at a time):
+- **Dials** — two live range sliders (Retire at / Monthly spend) with colored verdict tick rails
+  (`buildLeverRail`) under each track; dragging live-updates the dashed arc overlay and the
+  stats-row strikethrough pair from one `calcWhatIfScenario` run. Above the sliders, two
+  **quick-jump chips** (`RETIRE_JUMPS`, exported, value-locked) nudge the retire-at slider offset:
+  "Retire 2 yrs earlier" (relative, `-2`) and "Retire at 60" (absolute, `targetAge: 60`) — both
+  resolve through `handleRetireJump`'s clamp to `sliderBounds.retireMin/retireMax` before
+  converting to the offset the slider state speaks, so a chip can never desync the slider thumb
+  from its label or drive `calcWhatIfScenario` into a dead re-sim index. `askit` deep-links here
+  (aliased to `dials` — its old job, "what if I retire earlier," is literally the
+  `retire2Early` chip).
+- **Events** — life-event pills (`LIFE_EVENTS`, sheet-first placement): tapping a pill opens
+  `LifeEventSheet` pre-filled with the preset's seed values; the user tunes amount/age/duration,
+  sees a live plain-language verdict, and commits via `saveEvent`. A placed event shows "✓ {label}"
+  and re-opens the sheet in edit mode (`committedByLabel`) instead of re-adding — this is the
+  mechanism BUG-44 hardened. `LIFE_EVENTS` includes "Big trip" (🧳, $40k/age 70) — folded in from
+  the retired Scenarios card, same seed values, now a normal editable pill.
+
+**Apply-with-preview (one commit verb):** when either dial has moved, "Apply to my plan" opens
+`ApplyPreviewModal` (via `buildLeverPreview`, the same model call the preview overlay used) →
+confirm fires `applyPlanLevers({ retirementAge, monthlySpend })` (only the dial(s) that actually
+moved) → 2-second "✓ Applied" toast → dials reset to 0 offset.
+
+**Retired (2026-07-12):** the locked "Scenarios" mode (4 non-editable preset cards: `retire63`,
+`retire60`, `saveMore`, `bigTrip`) and its "What if…" prompt row. The 2 age-only cards became the
+Dials quick-jump chips above; `saveMore` was dropped (not remapped — Dials has no savings lever,
+and forcing that framing onto a bare retire-age chip would be dishonest); `bigTrip` folded into
+Events. This structurally closed the BUG-44 bug class: quick-jump chips are a pure slider nudge
+with no committed write, so the only committed-state writes left in Ideas are Dials' Apply (one
+path) and the LifeEventSheet's Save/Remove (one path, upsert-by-id).
 
 **Life event write-back:**
-- Chip "Add to plan" → ConfirmModal → `setMoneyEvents(prev => [...prev, { id: String(Date.now()), label, amount, age, isInflow, isTaxable: false }])`
-- Events immediately flow through `simData` + `retDrawShared` so the arc updates with real model output
+- Sheet "Add to plan" / "Save changes" → `saveEvent(ev)` (wrapped write surface, not a raw
+  `setMoneyEvents` call) — upserts by id, so a placed pill's re-save can never append a duplicate.
+- Events immediately flow through `simData` + `retDrawShared` so the arc updates with real model output.
 
 ### The Numbers screen
 

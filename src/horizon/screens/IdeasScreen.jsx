@@ -7,22 +7,22 @@ import LifeEventSheet from "../LifeEventSheet.jsx";
 import { VerdictTickRail } from "../fields.jsx";
 import { calcWhatIfScenario, buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
 
-// Scenario definitions — overrides only, no display numbers. Every figure shown
-// for a scenario comes from ONE calcWhatIfScenario run (the same run the arc
-// overlay renders), so the stats and the arc can never disagree (V1/principle 7).
-// `scenarioEvents` are one-time events applied to the retirement walk for
-// scenarios that don't shift the retirement age.
+// Retire-age quick-jump chips inside Dials — a pure nudge of the EXISTING
+// `dialRetireOffset` slider state (see handleRetireJump below), never a
+// separate model call or committed write. Replaces the old locked "Scenarios"
+// preset cards (owner decision, 2026-07-12): those cards applied a hidden
+// value with one tap and weren't editable; these chips just move a slider the
+// user can keep dragging from. Two chip KINDS on purpose:
+//   - "relative" nudges the CURRENT retirementAge by a fixed offset.
+//   - "absolute" jumps straight to a target age.
+// A naive single "retireAdj" offset breaks for "Retire at 60" once
+// retirementAge is already close to currentAge (sliderBounds.retireMin can
+// sit above the naive target — see handleRetireJump's clamp), so the two
+// kinds are resolved to a clamped absolute target uniformly.
 // Exported for the preset value-lock tests (V11/principle 14).
-export const SCENARIOS = [
-  { k: "retire63", label: "Retire 2 yrs earlier", sub: "Save $250/mo more.",  color: "good",
-    retireAdj: -2 },
-  { k: "retire60", label: "Retire at 60",          sub: "5 yrs sooner.",       color: "warm",
-    retireAdj: -5 },
-  { k: "saveMore", label: "Save $300 more/mo",     sub: "Retire at 64.",       color: "good",
-    retireAdj: -1 },
-  { k: "bigTrip",  label: "Big trip at 70",        sub: "Still funded.",       color: "accent",
-    retireAdj:  0,
-    scenarioEvents: [{ label: "Big trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false }] },
+export const RETIRE_JUMPS = [
+  { k: "retire2Early", label: "Retire 2 yrs earlier", kind: "relative", retireAdj: -2 },
+  { k: "retire60",     label: "Retire at 60",          kind: "absolute", targetAge: 60 },
 ];
 
 // Life-event presets — SEEDS for the LifeEventSheet (sheet-first placement flow):
@@ -39,19 +39,22 @@ export const LIFE_EVENTS = [
   { l: "Downsize",        icon: "🏡", age: 72, amount: 80_000, isInflow: true  },
   { l: "Part-time at 60", icon: "💼", age: 60, monthlyAmount: 2_000, durationMonths: 12,
     incomeAnnual: 0, isInflow: true  },
+  { l: "Big trip",        icon: "🧳", age: 70, amount: 40_000, isInflow: false },
 ];
 
-// Segmented-control modes. Ids stay "dials"/"life"/"suggest" for deep-link
-// compat (Plan navigates with subView "dials"; signals.js with "suggest") —
-// only the visible labels changed in the SP-5 tidy. "askit" is not a mode
-// anymore; it's aliased to "suggest" below so any stale deep-link still lands
-// on the right segment, and its canned prompt is the first row of that panel.
+// Segmented-control modes. Ids stay "dials"/"life" for deep-link compat (Plan
+// navigates with subView "dials") — the old locked "Scenarios" segment is
+// retired (2026-07-12): its 3 age-only cards became the Dials quick-jump
+// chips above, and its "Big trip" card folded into the Events pills. "askit"
+// is not a mode anymore; it's aliased to "dials" below so any stale deep-link
+// still lands somewhere useful — its old job ("what if I retire earlier") is
+// now literally the retire2Early chip inside Dials. The only live Ideas
+// deep-link today is Plan's navigate("ideas", "dials").
 const MODES = [
-  { k: "dials",   l: "Dials" },
-  { k: "life",    l: "Events" },
-  { k: "suggest", l: "Scenarios" },
+  { k: "dials", l: "Dials" },
+  { k: "life",  l: "Events" },
 ];
-const resolveMode = (m) => (m === "askit" ? "suggest" : m);
+const resolveMode = (m) => (m === "askit" ? "dials" : m);
 
 function ScenStatCard({ t, label, baseVal, scenVal, warm }) {
   const changed = scenVal != null && scenVal !== baseVal;
@@ -100,13 +103,11 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     // Life-event sheet: age bounds computed in App.jsx (rule 10)
     lifeEventBounds,
     // Preview-first apply (2026-07-11 redesign, SP-5 tidy): the ONE write path
-    // for both scenario and dial commits — never a bare setter (mirrors Plan's
-    // TryAChangePanel).
+    // for dial commits — never a bare setter (mirrors Plan's TryAChangePanel).
     sliderBounds, applyPlanLevers,
   } = props;
 
   const [mode, setMode] = useState(() => resolveMode(initialMode) ?? null);
-  const [activeScen, setActiveScen] = useState(null);
 
   // Adopt a new deep-link target if one arrives while already mounted.
   useEffect(() => { if (initialMode) setMode(resolveMode(initialMode)); }, [initialMode]);
@@ -121,41 +122,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   // Apply-with-preview state — one modal at a time.
   const [showApply, setShowApply] = useState(false);
-  // Transient confirmation text on the CTA button ("✓ Applied" / "✓ Removed"),
-  // cleared after 2s. A string (not a plain boolean) so apply and remove
-  // (BUG-44) can each show their own confirmation through one piece of state.
+  // Transient confirmation text on the CTA button ("✓ Applied"), cleared after 2s.
   const [toast, setToast] = useState(null);
-
-  const scen = activeScen ? SCENARIOS.find(s => s.k === activeScen) : null;
-
-  // BUG-44 fix: a scenario carrying its own scenarioEvents (currently just
-  // "Big trip") must be an explicit apply/remove choice — never a silent
-  // duplicate on re-apply. `matchCommittedEvents` reports the ALREADY
-  // COMMITTED events matching a scenario's own events (by label, the same
-  // convention `committedByLabel` below uses for the Events pills); it returns
-  // [] unless EVERY one of the scenario's events already has a match, so
-  // "applied" is exact — no false positive on a partial match. Age-only
-  // scenarios (no scenarioEvents) have no persistent footprint to track here —
-  // reapplying one just moves the retirement age again, a legitimate
-  // repeatable action, not a duplicate.
-  const matchCommittedEvents = (events) => {
-    if (!events?.length) return [];
-    const ids = events.map(ev => (moneyEvents ?? []).find(me => me.label === ev.label)?.id);
-    return ids.every(id => id != null) ? ids : [];
-  };
-  const scenApplied = scen ? matchCommittedEvents(scen.scenarioEvents).length > 0 : false;
-
-  // ONE model run per active scenario (V1): calcWhatIfScenario returns BOTH the
-  // arc chart series and the stat scalars, so the stats row and the overlay can
-  // never show different answers. The screen only passes the scenario's overrides
-  // through and formats what comes back — no arithmetic on model values here.
-  const scenario = useMemo(() => {
-    if (!scen || !whatIfBundle) return null;
-    return calcWhatIfScenario(whatIfBundle, {
-      retireAdj:      scen.retireAdj,
-      scenarioEvents: scen.scenarioEvents ?? [],
-    });
-  }, [scen, whatIfBundle]);
 
   // Dial display values — input staging: the sliders EDIT a value (offset is
   // screen state), seeded from the model's display-ready monthly figure (no
@@ -173,10 +141,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     return calcWhatIfScenario(whatIfBundle, overrides);
   }, [whatIfBundle, dialsActive, dialRetireOffset, dialSpendOffset, dialRetireAge, dialMonthlySpend]);
 
-  // Scenario takes precedence when both happen to be active (e.g. dials dragged,
-  // then a scenario card tapped) — one run drives BOTH the arc overlay and the
-  // strikethrough stats below, so they can never disagree (widened V1 form).
-  const activeRun     = scenario ?? dialScenario;
+  const activeRun     = dialScenario;
   const activeOverlay = activeRun?.chart?.length ? activeRun.chart : null;
 
   // Real scenario stats from the SAME run as the arc. scenarioBalAt90 === null
@@ -202,42 +167,39 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   }, [whatIfBundle, sliderBounds]);
 
   const clearAll = () => {
-    setActiveScen(null);
     setDialRetireOffset(0);
     setDialSpendOffset(0);
   };
 
+  // Quick-jump chip handler (RETIRE_JUMPS): resolves either chip kind to a
+  // clamped absolute target age, then converts to the offset the slider state
+  // already speaks in. The clamp is what keeps an "absolute" chip (e.g.
+  // "Retire at 60") from landing the slider thumb below sliderBounds.retireMin
+  // when retirementAge is already close to currentAge — without it the range
+  // input would silently clamp its own thumb while the label still claimed
+  // the unclamped age, and calcWhatIfScenario would see a negative re-sim
+  // index and return null (dead overlay, dead Apply button).
+  const handleRetireJump = (jump) => {
+    const target = jump.kind === "absolute" ? jump.targetAge : retirementAge + jump.retireAdj;
+    const clamped = Math.min(sliderBounds.retireMax, Math.max(sliderBounds.retireMin, target));
+    setDialRetireOffset(clamped - retirementAge);
+  };
+
   // ── Apply-with-preview (one commit verb) ────────────────────────────────────
-  // Scenario active → preview the scenario's own retirement age. Dial active →
-  // preview whichever dial(s) actually moved. Either way, buildLeverPreview
+  // Dial active → preview whichever dial(s) actually moved. buildLeverPreview
   // (what-if.js) is the SAME model call Plan's TryAChangePanel uses, so the
   // preview metrics and the eventual applyPlanLevers write can never disagree.
   const applyPreview = useMemo(() => {
-    if (!whatIfBundle) return null;
-    if (scen && scenario) {
-      // M1: preview the scenario's FULL overrides, not just the retirement-age
-      // shift — a scenario like bigTrip (no age shift, but a scenarioEvents
-      // outflow) previously previewed as "no change" because only retirementAge
-      // was passed through here.
-      return buildLeverPreview(whatIfBundle, {
-        retirementAge: scenario.scenarioRetAge,
-        scenarioEvents: scen.scenarioEvents ?? [],
-      });
-    }
-    if (dialsActive) {
-      const overrides = {};
-      if (dialRetireOffset !== 0) overrides.retirementAge = dialRetireAge;
-      if (dialSpendOffset  !== 0) overrides.monthlyExpenses = dialMonthlySpend;
-      return buildLeverPreview(whatIfBundle, overrides);
-    }
-    return null;
-  }, [whatIfBundle, scen, scenario, dialsActive, dialRetireOffset, dialSpendOffset, dialRetireAge, dialMonthlySpend]);
+    if (!whatIfBundle || !dialsActive) return null;
+    const overrides = {};
+    if (dialRetireOffset !== 0) overrides.retirementAge = dialRetireAge;
+    if (dialSpendOffset  !== 0) overrides.monthlyExpenses = dialMonthlySpend;
+    return buildLeverPreview(whatIfBundle, overrides);
+  }, [whatIfBundle, dialsActive, dialRetireOffset, dialSpendOffset, dialRetireAge, dialMonthlySpend]);
 
   const applyPayload = applyPreview ? {
     title: "Apply these changes?",
-    action: scen
-      ? `Retire at ${scenario.scenarioRetAge} · Est. income ${fmtMo(scenario.scenarioExpenses)}/mo`
-      : `Retire at ${dialRetireAge} · ${fmt(dialMonthlySpend)}/mo spend`,
+    action: `Retire at ${dialRetireAge} · ${fmt(dialMonthlySpend)}/mo spend`,
     confirmLabel: "Apply changes",
     metrics: applyPreview.metrics,
     note: "Preview uses the same model as your headline numbers.",
@@ -245,29 +207,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   } : null;
 
   const handleApplyConfirm = () => {
-    if (scen && scenario) {
-      // M1: retirement-age write only when the scenario actually shifts it
-      // (bigTrip doesn't — retireAdj: 0 — so applyPlanLevers would be a no-op
-      // write; skip it rather than calling with an unchanged age).
-      if (scenario.scenarioRetAge !== retirementAge) {
-        applyPlanLevers({ retirementAge: scenario.scenarioRetAge });
-      }
-      // M1: merge the scenario's own events (e.g. bigTrip's $40k outflow) into
-      // committed moneyEvents — previously dropped entirely, so "Apply to my
-      // plan" for an event-only scenario never reached the plan.
-      // BUG-44 guard: this whole branch only runs from the "Apply to my plan"
-      // button, which only renders when !scenApplied (see the CTA below) — so
-      // reaching here means these events are NOT already committed, and this
-      // saveEvent call can never create a duplicate.
-      const scenEvents = scen.scenarioEvents ?? [];
-      if (scenEvents.length > 0) {
-        const stamp = Date.now();
-        // saveEvent per event (wrapped write surface — no raw setMoneyEvents):
-        // each gets a fresh id, so every call is an append (never a collision
-        // with an existing committed event or with a sibling in this batch).
-        scenEvents.forEach((ev, i) => saveEvent({ ...ev, id: String(stamp) + i, icon: ev.icon ?? "✨" }));
-      }
-    } else if (dialsActive) {
+    if (dialsActive) {
       applyPlanLevers({
         ...(dialRetireOffset !== 0 ? { retirementAge: dialRetireAge } : {}),
         ...(dialSpendOffset  !== 0 ? { monthlySpend: dialMonthlySpend } : {}),
@@ -276,16 +216,6 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     setShowApply(false);
     clearAll();
     setToast("✓ Applied");
-    setTimeout(() => setToast(null), 2000);
-  };
-
-  // BUG-44: the explicit undo for an applied scenario's event(s) — one click,
-  // removes exactly the events this scenario added (matched above), leaving no
-  // orphaned "limbo" state: an event is either fully committed or fully gone.
-  const handleRemoveScenario = () => {
-    matchCommittedEvents(scen.scenarioEvents).forEach(id => removeEvent(id));
-    clearAll();
-    setToast("✓ Removed");
     setTimeout(() => setToast(null), 2000);
   };
 
@@ -320,22 +250,11 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         <div style={{ font: `600 20px ${HF}`, color: t.ink, letterSpacing: "-0.02em" }}>
           Your future, explored.
         </div>
-        {(scen || dialsActive) && (
+        {dialsActive && (
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {scen && (
-              <span style={{ display: "flex", alignItems: "center", gap: 7,
-                font: `600 12px ${HF}`, color: t.accent }}>
-                <svg width="24" height="8">
-                  <line x1="0" y1="4" x2="24" y2="4" stroke={t.accent} strokeWidth="2.4" strokeDasharray="8 5"/>
-                </svg>
-                {scen.label}
-              </span>
-            )}
-            {!scen && dialsActive && (
-              <span style={{ font: `600 12px ${HF}`, color: t.accent }}>
-                ↗ what-if overlay
-              </span>
-            )}
+            <span style={{ font: `600 12px ${HF}`, color: t.accent }}>
+              ↗ what-if overlay
+            </span>
             <button type="button" onClick={clearAll} style={{
               font: `400 12px ${HF}`, color: t.faint, background: "transparent",
               border: `1px solid ${t.line}`, borderRadius: 6, padding: "3px 9px", cursor: "pointer"
@@ -366,7 +285,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         />
       </div>
 
-      {/* ── segmented control: Dials · Events · Scenarios ── */}
+      {/* ── segmented control: Dials · Events ── */}
       <div style={{
         display: "flex", gap: 7, margin: "10px 0 0", flexShrink: 0,
         flexWrap: isMobile ? "wrap" : "nowrap",
@@ -433,6 +352,22 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
             {/* ── Dials (live sliders) ── */}
             {mode === "dials" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {/* Quick-jump chips — a pure nudge of the retire-at offset
+                    below; the slider stays fully draggable from wherever a
+                    chip lands it. */}
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  {RETIRE_JUMPS.map((jump) => (
+                    <button key={jump.k} type="button" onClick={() => handleRetireJump(jump)}
+                      style={{
+                        padding: "6px 13px", borderRadius: 999, cursor: "pointer",
+                        border: `1px solid ${t.line2}`, background: "transparent",
+                        font: `400 13px ${HF}`, color: t.mut, textAlign: "left",
+                      }}>
+                      {jump.label}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Retire-at slider */}
                 <div>
                   <div style={rowLabel}>
@@ -472,65 +407,6 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                 </div>
               </div>
             )}
-
-            {/* ── Scenarios (Horizon suggestions + the "What if…" prompt) ── */}
-            {mode === "suggest" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
-                  <span style={{ font: `600 16px ${HF}`, color: t.accent, flexShrink: 0 }}>What if…</span>
-                  <div style={{
-                    flex: 1, height: 40, borderRadius: 10,
-                    border: `1px solid ${t.line2}`, background: t.bg,
-                    display: "flex", alignItems: "center", paddingLeft: 12
-                  }}>
-                    <span style={{ font: `400 14px ${HF}`, color: t.mut }}>
-                      I retire two years earlier, instead of at {retirementAge}?
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveScen("retire63")}
-                    style={{
-                      padding: "11px 18px", borderRadius: 11, background: t.accent,
-                      border: "none", cursor: "pointer", flexShrink: 0
-                    }}
-                  >
-                    <span style={{ font: `600 14px ${HF}`, color: "#fff" }}>Show on arc →</span>
-                  </button>
-                </div>
-                <div style={{ display: "flex", gap: 9 }}>
-                  {SCENARIOS.map(({ k, label, sub, color, scenarioEvents }) => {
-                    const on = activeScen === k;
-                    const c = t[color];
-                    // BUG-44: a card whose event(s) are already committed gets
-                    // its own visible state (mirrors the Events pills' ✓
-                    // placed treatment) — never a silently-repeatable action.
-                    const applied = matchCommittedEvents(scenarioEvents).length > 0;
-                    return (
-                      <button key={k} type="button" onClick={() => setActiveScen(on ? null : k)}
-                        aria-pressed={on}
-                        style={{
-                          flex: 1, padding: "12px 12px", borderRadius: 10, cursor: "pointer",
-                          border: `1px solid ${on ? c : (applied ? t.warm : t.line2)}`,
-                          background: on ? `${c}12` : (applied ? `${t.warm}0e` : "transparent"),
-                          textAlign: "left",
-                        }}>
-                        <span style={{
-                          width: 8, height: 8, borderRadius: 999,
-                          background: c, display: "block", marginBottom: 6
-                        }} />
-                        <div style={{ font: `600 14px/1.05 ${HF}`, color: t.ink }}>
-                          {applied ? "✓ " : ""}{label}
-                        </div>
-                        <div style={{ font: `400 12px ${HF}`, color: t.mut, marginTop: 3 }}>
-                          {applied ? "Already on your plan." : sub}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -541,28 +417,24 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         <ScenStatCard t={t} label="Income / mo" baseVal={fmtMo(effectiveExpenses)} scenVal={scenIncome} warm />
         <ScenStatCard t={t} label="Nest egg"    baseVal={fmt(totalAtRet)} scenVal={scenNest} />
         <ScenStatCard t={t} label="Left at 90"  baseVal={fmt(balAt90)} scenVal={scenLeft90} />
-        {(scen || dialsActive) && (
+        {dialsActive && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", flexShrink: 0 }}>
-            {/* BUG-44: an already-applied scenario's CTA is "Remove from plan"
-                instead of "Apply" — no way to re-click your way into a
-                duplicate. An event is either committed once, or not at all. */}
             <button
               type="button"
               onClick={() => {
                 if (toast) return;
-                if (scenApplied) handleRemoveScenario();
-                else setShowApply(true);
+                setShowApply(true);
               }}
               disabled={!!toast}
               style={{
                 padding: "11px 16px", borderRadius: 11, border: "none",
-                background: toast ? t.good : (scenApplied ? t.warm : t.accent),
+                background: toast ? t.good : t.accent,
                 cursor: toast ? "default" : "pointer",
                 transition: "background .25s",
               }}
             >
               <span style={{ font: `600 13px ${HF}`, color: "#fff" }}>
-                {toast ?? (scenApplied ? "Remove from plan" : "Apply to my plan")}
+                {toast ?? "Apply to my plan"}
               </span>
             </button>
           </div>
@@ -583,7 +455,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         />
       )}
 
-      {/* ── Apply-with-preview: scenario or dial diff → applyPlanLevers ── */}
+      {/* ── Apply-with-preview: dial diff → applyPlanLevers ── */}
       {showApply && applyPayload && (
         <ApplyPreviewModal
           t={t}

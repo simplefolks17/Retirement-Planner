@@ -413,7 +413,7 @@ currently covered by `conversion-view-wiring.test.js` + `apply-preview.test.js`)
 | Apply site | Ships | Gate (`available`) | Writes |
 |---|---|---|---|
 | `conversionView.optimizer.applySuggestion` | WI-3.6/3.9 | `isSuggestionApplicable` (healthcare toggle on AND the suggestion differs: \|amount diff\| > $4,999 OR start age differs) | `conversionStartAge`, `conversionMode → "custom"`, `annualConversionAmt` |
-| `applyPlanLevers` (Plan `TryAChangePanel` / Ideas dials + scenario Apply) | 2026-07-11 (#122) | `buildLeverPreview(...).changed` truthy | `retirementAge` (coupled setters) and/or `annualExpenses` (via `commitPlan`, month→year done App-side) |
+| `applyPlanLevers` (Plan `TryAChangePanel` / Ideas dials) | 2026-07-11 (#122) | `buildLeverPreview(...).changed` truthy | `retirementAge` (coupled setters) and/or `annualExpenses` (via `commitPlan`, month→year done App-side) |
 | `surplusView.applyAllocation` | WI-3.7 (future) | — | — |
 | commitPlan sites | L3d (future) | — | — |
 

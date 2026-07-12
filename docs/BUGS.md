@@ -212,6 +212,47 @@ plan"), and clicking it calls `removeEvent` with the real committed id, never `s
 your plan" → CTA is "Remove from plan," not "Apply" → remove → card and arc badge both clear).
 715 → **716** tests; golden master untouched.
 
+**Addendum (2026-07-12) — fix code retired with its surface.** The owner reviewed Ideas'
+"Scenarios" tab separately and found the whole preset-card pattern restrictive (cards applied a
+hidden value with one tap, not editable before applying — unlike the Events tab's sheet-first
+flow). The locked "Scenarios" mode was retired: `SCENARIOS`, the `mode === "suggest"` panel,
+`activeScen` state, `scen`/`scenario` derivations, `matchCommittedEvents`, `scenApplied`, and
+`handleRemoveScenario` were all deleted from `IdeasScreen.jsx`. `SCENARIOS` had 3 age-only cards
+(`retire63` −2, `retire60` −5, `saveMore` −1) plus the event card; 2 of the 3 age-only cards
+became Dials **quick-jump chips** (`RETIRE_JUMPS` — a pure slider-offset nudge, never a committed
+write). `saveMore` ("Save $300 more/mo") was dropped, not remapped — Dials has no savings/
+contribution lever (deferred #123), and forcing that framing onto a bare retire-age chip would be
+dishonest; its `-1` offset was one slider notch, redundant with the two chips kept. The "Big trip"
+card folded into `LIFE_EVENTS` as a normal editable pill (same seed values, new 🧳 icon).
+This **structurally closes the whole BUG-44 bug class**, not just this instance: with the
+scenario-card surface gone, the only things that write committed `moneyEvents` state in Ideas are
+(1) Dials' own Apply (`applyPlanLevers`, unrelated to events) and (2) the LifeEventSheet's
+Save/Remove — and `saveEvent`'s contract is what actually prevents duplication, precisely
+(recorded here so it isn't hand-waved): `committedByLabel(label)` does a **first-match-by-label**
+lookup against `moneyEvents` to decide whether a pill is "placed"; a placed pill always reopens
+the sheet **by id** (`{ seed: committed, eventId: committed.id }`), and `saveEvent` **upserts by
+id** — an edit-and-save on an already-committed event never mints a fresh id, so it can never
+append a duplicate. This is exactly BUG-44's failure mode (a fresh id minted on every re-apply)
+made structurally impossible, not just handled for one case.
+**What this guarantee does NOT provide:** global label dedup. Two committed events can validly
+share the label "Big trip" — e.g. a user manually retitles a different event to that exact string
+(the sheet's name field is freely editable) — and both remain individually reachable and editable
+via their own arc badges; `committedByLabel`'s first-match lookup would show only one of them as
+"✓ placed" on the Events pill, but neither is silently merged or dropped. This is a pre-existing
+property of the by-label placed-pill convention (not new here) — worth stating precisely because
+this addendum leans on it structurally.
+**Forward-compat nicety:** a user who had already applied the old `bigTrip` scenario (before this
+change) has a committed event labeled "Big trip" from that path; the new Events pill's
+`committedByLabel("Big trip")` lookup adopts it as ✓-placed automatically on next load — no
+orphaned state from the migration, no manual cleanup needed.
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (deletions above; `RETIRE_JUMPS`,
+`handleRetireJump` new). **Tests:** `src/horizon/__tests__/presets.test.js` (`RETIRE_JUMPS`
+value-lock replaces `SCENARIOS`); `src/horizon/__tests__/ideas-screen.test.js` (Scenarios-mode
+describe block deleted; 2 new Dials quick-jump chip tests — relative + clamped-absolute; a new
+Events-mode placed-pill regression test replacing this bug's original test coverage now that
+"Big trip" only lives there); `src/__tests__/horizon-screens-smoke.test.js` (Ideas scenario-run
+smoke retargeted to the Dials chip). 716 → **715** tests; golden master untouched.
+
 ---
 
 ### BUG-45 — `buildDurationRail` didn't inherit the H1 exclude-committed-event fix (found + fixed 2026-07-11, post-fix verification pass)

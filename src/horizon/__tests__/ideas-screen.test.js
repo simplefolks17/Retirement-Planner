@@ -1,17 +1,23 @@
-// ── IdeasScreen — SP-5 tidy: segmented control + live dials + Apply-with-preview
+// ── IdeasScreen — SP-5 tidy + Scenarios retirement: segmented control +
+//    live dials + Apply-with-preview
 //
-// Tests the Ideas screen "deep workshop" redesign (2026-07-11):
-//   1. Segmented control renders exactly 3 segments: Dials / Events / Scenarios.
+// Tests the Ideas screen "deep workshop" redesign (2026-07-11) plus the
+// follow-up removal of the locked "Scenarios" segment (2026-07-12, owner
+// decision — preset cards felt restrictive; see docs/BUGS.md BUG-44 addendum):
+//   1. Segmented control renders exactly 2 segments: Dials / Events.
 //   2. Dials mode: two live range sliders + verdict tick rails; dragging updates
 //      the dashed arc overlay AND the strikethrough stats from ONE model run.
+//      Dials also gains two quick-jump chips (RETIRE_JUMPS) that nudge the
+//      retire-at slider offset — a relative chip and a clamped absolute chip.
 //   3. Apply (dial diff) → ApplyPreviewModal → confirm fires applyPlanLevers with
 //      BOTH retirementAge and monthlySpend when both dials moved (the spend-
 //      commit fix this redesign was for).
-//   4. Apply (scenario) → ApplyPreviewModal → confirm fires
-//      applyPlanLevers({ retirementAge }).
-//   5. The "What if…" row lives under Scenarios (not its own mode).
-//   6. SCENARIOS / LIFE_EVENTS preset tables are untouched (see presets.test.js
-//      for the value-lock; this file just checks they still render).
+//   4. Events pills include the folded-in "Big trip" preset, and the
+//      committedByLabel placed-pill guarantee (BUG-44's fix surface) still
+//      holds now that it's the only place an event can be pre-seeded.
+//   5. RETIRE_JUMPS / LIFE_EVENTS preset tables are untouched here (see
+//      presets.test.js for the value-lock; this file just checks they render
+//      and wire correctly).
 //
 // whatIfSimInputs is a REAL what-if bundle (mirrors plan-screen.test.js /
 // life-event-sheet.test.js) so calcWhatIfScenario/buildLeverPreview/buildLeverRail
@@ -165,27 +171,20 @@ function mount(overrides = {}) {
 }
 
 describe("IdeasScreen — segmented control", () => {
-  it("renders exactly 3 segments: Dials, Events, Scenarios", () => {
+  it("renders exactly 2 segments: Dials, Events — no Scenarios segment", () => {
     const { renderer } = mount();
-    for (const label of ["Dials", "Events", "Scenarios"]) {
+    for (const label of ["Dials", "Events"]) {
       expect(buttonsByText(renderer.root, label).length, `${label} segment missing`).toBe(1);
     }
-    // no leftover 4th-mode buttons from the old layout
+    // the locked Scenarios segment (and its old suggestion-panel affordances)
+    // is retired (2026-07-12) — no dead affordance anywhere.
+    expect(buttonsByText(renderer.root, "Scenarios").length).toBe(0);
     expect(buttonsByText(renderer.root, "Horizon suggestions").length).toBe(0);
     expect(buttonsByText(renderer.root, "What if…").length).toBe(0);
     act(() => renderer.unmount());
   });
 
-  it("the 'What if…' prompt lives under Scenarios, not its own mode", () => {
-    const { renderer } = mount();
-    expect(allText(renderer.root)).not.toContain("What if…");
-    act(() => { buttonsByText(renderer.root, "Scenarios")[0].props.onClick(); });
-    expect(allText(renderer.root)).toContain("What if…");
-    expect(allText(renderer.root)).toContain("Retire 2 yrs earlier");
-    act(() => renderer.unmount());
-  });
-
-  it("initialMode 'askit' aliases to the Scenarios segment", () => {
+  it("initialMode 'askit' aliases to the Dials segment", () => {
     const props = makeMockProps();
     let renderer;
     act(() => {
@@ -193,7 +192,8 @@ describe("IdeasScreen — segmented control", () => {
         React.createElement(IdeasScreen, { t, props, isMobile: false, initialMode: "askit" }),
       );
     });
-    expect(allText(renderer.root)).toContain("What if…");
+    expect(allText(renderer.root)).toContain("Retire at");
+    expect(allText(renderer.root)).toContain("Monthly spend");
     act(() => renderer.unmount());
   });
 });
@@ -247,20 +247,21 @@ describe("IdeasScreen — Dials mode", () => {
     });
     act(() => renderer.unmount());
   });
-});
 
-describe("IdeasScreen — Scenarios mode", () => {
-  it("activating a scenario card shows the strikethrough stats + Apply, and Apply fires applyPlanLevers({retirementAge})", () => {
+  // Replaces the retired "Scenarios" mode's retire63 card coverage: the same
+  // outcome (retire 2 years earlier → overlay → Apply → applyPlanLevers) now
+  // flows through the Dials quick-jump chip instead of a locked preset card.
+  it("quick-jump chip 'Retire 2 yrs earlier' nudges the slider, shows the overlay, and Apply fires applyPlanLevers({retirementAge})", () => {
     const { renderer, props } = mount();
-    act(() => { buttonsByText(renderer.root, "Scenarios")[0].props.onClick(); });
-    const scenarioCard = renderer.root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n).includes("Retire 2 yrs earlier")
-    )[0];
-    expect(scenarioCard).toBeTruthy();
-    act(() => { scenarioCard.props.onClick(); });
+    act(() => { buttonsByText(renderer.root, "Dials")[0].props.onClick(); });
 
+    const chip = clickableByText(renderer.root, "Retire 2 yrs earlier")[0];
+    expect(chip).toBeTruthy();
+    act(() => { chip.props.onClick(); });
+
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    expect(Number(retireInput.props.value)).toBe(safeRetAge - 2);
     expect(dashedPaths(renderer.root).length).toBeGreaterThan(0);
-    expect(clickableByText(renderer.root, "Apply to my plan").length).toBeGreaterThan(0);
 
     act(() => { clickableByText(renderer.root, "Apply to my plan")[0].props.onClick(); });
     const applyBtns = buttonsByText(renderer.root, "Apply changes");
@@ -271,78 +272,38 @@ describe("IdeasScreen — Scenarios mode", () => {
     act(() => renderer.unmount());
   });
 
-  // M1 regression: bigTrip (retireAdj: 0, scenarioEvents only) previously
-  // previewed as "no change" (buildLeverPreview never saw the event) and Apply
-  // never wrote the event anywhere — a scenario with a lump-sum event could
-  // never actually be applied to the plan.
-  it("activating bigTrip previews a real change (not all 'no change') and Apply merges the event into moneyEvents", () => {
-    const { renderer, props } = mount();
-    act(() => { buttonsByText(renderer.root, "Scenarios")[0].props.onClick(); });
-    const scenarioCard = renderer.root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n).includes("Big trip at 70")
-    )[0];
-    expect(scenarioCard).toBeTruthy();
-    act(() => { scenarioCard.props.onClick(); });
+  // Fable review regression: the "Retire at 60" ABSOLUTE chip must clamp to
+  // sliderBounds.retireMin, never land the slider thumb below it. Without the
+  // clamp, a fixture where retirementAge sits close to sliderBounds.retireMin
+  // (mirroring currentAge 62 / retirementAge 65 → retireMin 63) would silently
+  // desync the range input from the label AND make calcWhatIfScenario compute
+  // a negative re-sim index (null overlay, dead Apply button).
+  it("quick-jump chip 'Retire at 60' clamps to sliderBounds.retireMin and keeps the overlay/Apply live", () => {
+    const tightBounds = { retireMin: 63, retireMax: 75, spendMin: 2_000, spendMax: 10_000 };
+    const { renderer, props } = mount({ sliderBounds: tightBounds });
+    act(() => { buttonsByText(renderer.root, "Dials")[0].props.onClick(); });
 
-    act(() => { clickableByText(renderer.root, "Apply to my plan")[0].props.onClick(); });
-    expect(allText(renderer.root)).toContain("Apply these changes?");
+    const chip = clickableByText(renderer.root, "Retire at 60")[0];
+    expect(chip).toBeTruthy();
+    act(() => { chip.props.onClick(); });
 
-    // At least one preview metric must show a real change — not every metric
-    // reading "no change" (the bug's symptom: retireAdj is 0, so a preview that
-    // ignored scenarioEvents showed nothing moved at all).
-    const noChangeCount = (allText(renderer.root).match(/no change/g) || []).length;
-    expect(noChangeCount).toBeLessThan(3);
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    // Clamped to retireMin (63), never the naive unclamped target (60).
+    expect(Number(retireInput.props.value)).toBe(tightBounds.retireMin);
+    expect(Number(retireInput.props.value)).toBeGreaterThanOrEqual(tightBounds.retireMin);
 
+    // Overlay + Apply stay live (non-null) — the clamp prevents the dead-Apply
+    // symptom the unclamped chip would have produced.
+    expect(dashedPaths(renderer.root).length).toBeGreaterThan(0);
+    const applyBtn = clickableByText(renderer.root, "Apply to my plan")[0];
+    expect(applyBtn).toBeTruthy();
+
+    act(() => { applyBtn.props.onClick(); });
     const applyBtns = buttonsByText(renderer.root, "Apply changes");
     act(() => { applyBtns[applyBtns.length - 1].props.onClick(); });
 
-    // bigTrip's retireAdj is 0 → retirement age is unchanged → applyPlanLevers
-    // must NOT fire a no-op retirementAge write.
-    expect(props.applyPlanLevers).not.toHaveBeenCalled();
-
-    expect(props.saveEvent).toHaveBeenCalledTimes(1);
-    const saved = props.saveEvent.mock.calls[0][0];
-    expect(saved).toMatchObject({
-      label: "Big trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false,
-    });
-    expect(saved.id).toBeTruthy();
-    expect(saved.icon).toBeTruthy();
-    act(() => renderer.unmount());
-  });
-
-  // BUG-44 regression: re-applying a scenario whose event is already committed
-  // must never mint a second copy. The card shows an explicit "already
-  // applied" state and its CTA becomes an explicit "Remove from plan" — an
-  // event is either fully on the plan or fully off it, never a silent extra.
-  it("a scenario whose event is already committed shows Applied and offers Remove, not a second Apply", () => {
-    const committedTrip = {
-      id: "existing-trip", label: "Big trip", amount: 40_000, age: 70,
-      isInflow: false, isTaxable: false, icon: "✈️",
-    };
-    const { renderer, props } = mount({ moneyEvents: [committedTrip] });
-    act(() => { buttonsByText(renderer.root, "Scenarios")[0].props.onClick(); });
-
-    // Card itself shows the applied state.
-    expect(allText(renderer.root)).toContain("✓ Big trip at 70");
-    expect(allText(renderer.root)).toContain("Already on your plan.");
-
-    const scenarioCard = renderer.root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n).includes("Big trip at 70")
-    )[0];
-    act(() => { scenarioCard.props.onClick(); });
-
-    // No "Apply to my plan" — the only CTA is "Remove from plan".
-    expect(clickableByText(renderer.root, "Apply to my plan").length).toBe(0);
-    const removeBtn = clickableByText(renderer.root, "Remove from plan")[0];
-    expect(removeBtn).toBeTruthy();
-
-    act(() => { removeBtn.props.onClick(); });
-
-    // Removes exactly the already-committed event (by its real id) — never
-    // calls saveEvent (which would append a duplicate).
-    expect(props.removeEvent).toHaveBeenCalledTimes(1);
-    expect(props.removeEvent).toHaveBeenCalledWith("existing-trip");
-    expect(props.saveEvent).not.toHaveBeenCalled();
+    expect(props.applyPlanLevers).toHaveBeenCalledTimes(1);
+    expect(props.applyPlanLevers).toHaveBeenCalledWith({ retirementAge: tightBounds.retireMin });
     act(() => renderer.unmount());
   });
 });
@@ -353,6 +314,36 @@ describe("IdeasScreen — Events mode", () => {
     act(() => { buttonsByText(renderer.root, "Events")[0].props.onClick(); });
     expect(allText(renderer.root)).toContain("Buy a home");
     expect(allText(renderer.root)).toContain("Downsize");
+    expect(allText(renderer.root)).toContain("Big trip");
+    act(() => renderer.unmount());
+  });
+
+  // Replaces the deleted BUG-44 regression's coverage (per Fable review — no
+  // other test in the repo exercises committedByLabel's placed state) now
+  // that "Big trip" only lives here (folded in from the retired Scenarios
+  // card, same seed values). Proves the fold-in inherits BUG-44's fix: a
+  // placed pill always reopens by id — saveEvent upserts, never appends — so
+  // re-tapping a placed "Big trip" pill can't duplicate it.
+  it("a placed 'Big trip' pill shows ✓, reopens the sheet in edit mode, and never re-saves as a fresh id", () => {
+    const committedTrip = {
+      id: "existing-trip", label: "Big trip", amount: 40_000, age: 70,
+      isInflow: false, isTaxable: false, icon: "🧳",
+    };
+    const { renderer, props } = mount({ moneyEvents: [committedTrip] });
+    act(() => { buttonsByText(renderer.root, "Events")[0].props.onClick(); });
+
+    const pill = renderer.root.findAll(
+      n => n.type === "button" && textOf(n).includes("Big trip")
+    )[0];
+    expect(pill).toBeTruthy();
+    expect(textOf(pill)).toContain("✓");
+    act(() => { pill.props.onClick(); });
+
+    // Sheet opens in edit mode: the "Remove from plan" affordance is present
+    // (only rendered by LifeEventSheet when isEdit + onRemove — i.e. eventId
+    // was passed through, not a fresh preset seed).
+    expect(buttonsByText(renderer.root, "Remove from plan").length).toBe(1);
+    expect(props.saveEvent).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
 });
