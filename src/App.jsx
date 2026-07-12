@@ -503,6 +503,15 @@ export default function App() {
   // Common engine inputs (everything EXCEPT the conversion schedule), memoized so
   // the main run AND the optimizer's per-candidate search feed the engine the same
   // model — the optimizer can never search a different plan than the screen shows.
+  // Kind-aware filter (money-events.js): a duration event spanning the
+  // retirement boundary reaches both the accumulation sim and the retirement
+  // walk — each applies only its own years. Shared by retPhaseBase and
+  // retDrawShared below so the boundary rule can't drift between the two
+  // (CodeRabbit dedup finding).
+  const retirementMoneyEvents = useMemo(
+    () => moneyEvents.filter(ev => eventLastAge(ev) >= safeRetAge),
+    [moneyEvents, safeRetAge]);
+
   const retPhaseBase = useMemo(() => ({
     tradGross: tradGrossAtRet, roth: retRoth, taxable: retTaxable, hsa: retHsa,
     startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
@@ -513,14 +522,11 @@ export default function App() {
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     filingStatus, retStateRate, rmdStartAge: RMD_START_AGE,
     useTable2, spouseCurrentAge, currentAge,
-    // Kind-aware filter (money-events.js): a duration event spanning the
-    // retirement boundary reaches the walk too; the walk applies only its
-    // post-retirement months (the sim applied the pre-retirement ones).
-    moneyEvents: moneyEvents.filter(ev => eventLastAge(ev) >= safeRetAge),
+    moneyEvents: retirementMoneyEvents,
   }), [tradGrossAtRet, retRoth, retTaxable, retHsa, safeRetAge, safeLifeExp, rReal,
        effectiveExpenses, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
        pensionMonthly, pensionStartAge, filingStatus, retStateRate,
-       useTable2, spouseCurrentAge, currentAge, moneyEvents]);
+       useTable2, spouseCurrentAge, currentAge, retirementMoneyEvents]);
 
   const retPhase = useMemo(
     () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),
@@ -604,10 +610,10 @@ export default function App() {
     pensionAmount:   pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0,
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     rmdTaxByAge, conversionTaxByAge,
-    moneyEvents: moneyEvents.filter(ev => eventLastAge(ev) >= safeRetAge),
+    moneyEvents: retirementMoneyEvents,
   }), [rReal, effectiveExpenses, householdSS, includeSS, ssClaimingAge,
        pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
-       moneyEvents, safeRetAge]);
+       retirementMoneyEvents]);
 
   // Headline longevity + the ONE retirement walk come straight from the engine
   // (retPhase) — no second projection (BUG-35 / BUG-31). retirementWalk exposes
@@ -895,15 +901,29 @@ export default function App() {
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
        employerMatch, moneyEvents, activeConversionEvents, stateRate]);
 
+  // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
+  // contribEnd ages in sync when they track the retirement age.
+  const setRetirementAgeCoupled = useCallback(v => {
+    setRetirementAge(v);
+    if (contribEnd401k    === retirementAge) setContribEnd401k(v);
+    if (contribEndRoth    === retirementAge) setContribEndRoth(v);
+    if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
+    if (contribEndHSA     === retirementAge) setContribEndHSA(v);
+  }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
+
   // Single entry point for Horizon-initiated mutations to App state.
   // Always called after user confirms in a modal — never fired directly by screens.
   // Accepts monthlySpend as an alternative to annualExpenses so the month→year
   // conversion happens HERE, not in screen JSX (principle 6); annualExpenses wins
-  // if both are passed.
+  // if both are passed. Uses the coupled retirement-age setter (not the bare
+  // setRetirementAge) so contribEnd ages stay in sync even for callers — like
+  // onboarding's handleSave — that commit a retirement age directly without
+  // pre-coupling it themselves.
   const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, monthlySpend: ms, currentAge: ca, currentIncome: ci } = {}) => {
     if (ca !== undefined) setCurrentAge(ca);
     if (ci !== undefined) setCurrentIncome(ci);
-    if (ra !== undefined) setRetirementAge(ra);
+    if (ra !== undefined) setRetirementAgeCoupled(ra);
     if (ae !== undefined) setAnnualExpenses(ae);
     else if (ms !== undefined) setAnnualExpenses(ms * ASSUMPTIONS.MONTHS_PER_YEAR);
     // Snapshot of all Quick Tune slider values at commit time — enables Reset-style
@@ -916,7 +936,7 @@ export default function App() {
       lifeExpect, returnRate, inflationRate, incomeGrowth, contrib401k,
       ssClaimingAge, spouseClaimingAge, annualConversionAmt,
     });
-  }, [setCurrentAge, setCurrentIncome, setRetirementAge, setAnnualExpenses,
+  }, [setCurrentAge, setCurrentIncome, setRetirementAgeCoupled, setAnnualExpenses,
       retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
       incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
 
@@ -926,17 +946,6 @@ export default function App() {
     v => setAnnualExpenses(v * ASSUMPTIONS.MONTHS_PER_YEAR),
     [setAnnualExpenses]
   );
-
-  // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
-  // contribEnd ages in sync when they track the retirement age.
-  const setRetirementAgeCoupled = useCallback(v => {
-    setRetirementAge(v);
-    if (contribEnd401k    === retirementAge) setContribEnd401k(v);
-    if (contribEndRoth    === retirementAge) setContribEndRoth(v);
-    if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
-    if (contribEndHSA     === retirementAge) setContribEndHSA(v);
-  }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
 
   // Applies the Plan screen "Try a change" panel's previewed levers to real state.
   // Only called from the ApplyPreviewModal's onConfirm (never fired directly by a
@@ -1384,9 +1393,10 @@ export default function App() {
         applied: preApplySnapshot !== null,
       };
     }
-    const before = calcWhatIfDelta({ ...whatIfBundle });
+    const before = calcWhatIfDelta({ ...whatIfBundle, moneyEvents });
     const after = calcWhatIfDelta({
       ...whatIfBundle,
+      moneyEvents,
       contribOverrides: {
         contrib401k: optimizedAllocation.opt401k,
         contribRoth: optimizedAllocation.optRoth,
@@ -1418,7 +1428,7 @@ export default function App() {
       applied: false, // preApplySnapshot is null here (we're in the `available` branch)
     };
   }, [optimizedAllocation, preApplySnapshot, applyAllocation, revertAllocation, whatIfBundle,
-      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus]);
+      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus, moneyEvents]);
 
   // WI-3.7 (#104): Surplus-deployment flow bundle. Sibling of strategiesView keyed
   // by the "surplus" strategy id — the card face reads props.budget.* directly

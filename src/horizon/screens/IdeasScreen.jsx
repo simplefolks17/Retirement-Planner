@@ -140,13 +140,20 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   const dialMonthlySpend = statementView.monthlyTotal + dialSpendOffset;
   const dialsActive      = dialRetireOffset !== 0 || dialSpendOffset !== 0;
 
-  const dialScenario = useMemo(() => {
-    if (!whatIfBundle || !dialsActive) return null;
+  // Shared override object for both the arc overlay run and the Apply preview —
+  // hoisted so the two calls (calcWhatIfScenario / buildLeverPreview below) can
+  // never build it differently (CodeRabbit dedup finding).
+  const dialOverrides = useMemo(() => {
     const overrides = {};
     if (dialRetireOffset !== 0) overrides.retirementAge = dialRetireAge;
     if (dialSpendOffset  !== 0) overrides.monthlyExpenses = dialMonthlySpend;
-    return calcWhatIfScenario(whatIfBundle, overrides);
-  }, [whatIfBundle, dialsActive, dialRetireOffset, dialSpendOffset, dialRetireAge, dialMonthlySpend]);
+    return overrides;
+  }, [dialRetireOffset, dialSpendOffset, dialRetireAge, dialMonthlySpend]);
+
+  const dialScenario = useMemo(() => {
+    if (!whatIfBundle || !dialsActive) return null;
+    return calcWhatIfScenario(whatIfBundle, dialOverrides);
+  }, [whatIfBundle, dialsActive, dialOverrides]);
 
   const activeRun     = dialScenario;
   const activeOverlay = activeRun?.chart?.length ? activeRun.chart : null;
@@ -198,11 +205,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
   // preview metrics and the eventual applyPlanLevers write can never disagree.
   const applyPreview = useMemo(() => {
     if (!whatIfBundle || !dialsActive) return null;
-    const overrides = {};
-    if (dialRetireOffset !== 0) overrides.retirementAge = dialRetireAge;
-    if (dialSpendOffset  !== 0) overrides.monthlyExpenses = dialMonthlySpend;
-    return buildLeverPreview(whatIfBundle, overrides);
-  }, [whatIfBundle, dialsActive, dialRetireOffset, dialSpendOffset, dialRetireAge, dialMonthlySpend]);
+    return buildLeverPreview(whatIfBundle, dialOverrides);
+  }, [whatIfBundle, dialsActive, dialOverrides]);
 
   const applyPayload = applyPreview ? {
     title: "Apply these changes?",

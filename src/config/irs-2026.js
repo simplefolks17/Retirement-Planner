@@ -360,4 +360,9 @@ export const ASSUMPTIONS = {
   // Default "years from today" offset used to seed a one-time purchase's age
   // in the affordability flow (e.g. "5 years from now").
   AFFORD_DEFAULT_PURCHASE_OFFSET_YRS: 5,
+
+  // Max number of one-time/duration events a user can add in the Money Events
+  // panel (Classic) / LifeEventSheet (Horizon) — a product-level UI cap, not
+  // an IRS rule, named here so both surfaces stay identical by construction.
+  MAX_MONEY_EVENTS: 6,
 };

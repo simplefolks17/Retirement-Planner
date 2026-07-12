@@ -98,6 +98,18 @@ export default function AffordabilityPanel({ t, whatIfBundle, affordView, isMobi
   const { min: purchaseMin, max: purchaseMax, step: purchaseStep } = affordView.purchaseAgeField;
   const { min: targetMin, max: targetMax, step: targetStep } = affordView.targetAgeField;
 
+  // Re-clamp into the current bounds if affordView's min/max shift while the
+  // panel stays mounted (e.g. currentAge/lifeExpect edited elsewhere in My
+  // details) — otherwise a staged age can drift outside its own field's
+  // range. Keyed on the bounds only, not the defaults, so it never fights a
+  // user's in-progress choice within the still-valid range.
+  useEffect(() => {
+    setPurchaseAge(v => Math.max(purchaseMin, Math.min(purchaseMax, v)));
+  }, [purchaseMin, purchaseMax]);
+  useEffect(() => {
+    setTargetAge(v => Math.max(targetMin, Math.min(targetMax, v)));
+  }, [targetMin, targetMax]);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ font: `400 12px/1.5 ${HF}`, color: t.mut }}>

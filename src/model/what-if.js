@@ -19,6 +19,17 @@ import {
 } from "./money-events.js";
 import { buildPreviewMetric } from "./apply-preview.js";
 
+// Infinity-aware longevity delta: scenarioYears vs baseYearsSustained, with
+// the ±Infinity edges handled explicitly (plain subtraction gives NaN when
+// both sides are Infinity). Shared by calcWhatIfDelta, calcWhatIfScenario's
+// two walk paths (M1 engine + fallback) so the three can't drift apart.
+function deltaYearsFrom(scenarioYears, baseYearsSustained) {
+  if (scenarioYears === Infinity && baseYearsSustained === Infinity) return 0;
+  if (scenarioYears === Infinity) return Infinity;
+  if (baseYearsSustained === Infinity) return -Infinity;
+  return scenarioYears - baseYearsSustained;
+}
+
 // ── verdictForMargin ─────────────────────────────────────────────────────────
 // The ONE definition of the comfortable/tight/unaffordable verdict from a
 // sustainability margin (scenarioYears sustained minus the plan horizon in
@@ -151,13 +162,7 @@ export function calcWhatIfDelta({
   });
 
   const scenarioYears = scenarioWalk.yearsSustained;
-  const deltaYears = (scenarioYears === Infinity && baseYearsSustained === Infinity)
-    ? 0
-    : scenarioYears === Infinity
-      ? Infinity
-      : baseYearsSustained === Infinity
-        ? -Infinity
-        : scenarioYears - baseYearsSustained;
+  const deltaYears = deltaYearsFrom(scenarioYears, baseYearsSustained);
 
   return {
     baseTotalAtRet,
@@ -390,13 +395,7 @@ export function calcWhatIfScenario({
     }
 
     const scenarioYears = rp.yearsSustained;
-    const deltaYears = (scenarioYears === Infinity && baseYearsSustained === Infinity)
-      ? 0
-      : scenarioYears === Infinity
-        ? Infinity
-        : baseYearsSustained === Infinity
-          ? -Infinity
-          : scenarioYears - baseYearsSustained;
+    const deltaYears = deltaYearsFrom(scenarioYears, baseYearsSustained);
 
     return {
       chart,
@@ -468,13 +467,7 @@ export function calcWhatIfScenario({
   }
 
   const scenarioYears = farWalk.yearsSustained;
-  const deltaYears = (scenarioYears === Infinity && baseYearsSustained === Infinity)
-    ? 0
-    : scenarioYears === Infinity
-      ? Infinity
-      : baseYearsSustained === Infinity
-        ? -Infinity
-        : scenarioYears - baseYearsSustained;
+  const deltaYears = deltaYearsFrom(scenarioYears, baseYearsSustained);
 
   return {
     chart,

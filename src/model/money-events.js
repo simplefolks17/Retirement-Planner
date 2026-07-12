@@ -1,3 +1,5 @@
+import { ASSUMPTIONS } from "../config/irs-2026.js";
+
 // Money events: windfalls, large purchases, inheritances, travel years, sabbaticals.
 //
 // TWO kinds share one event shape (kind is inferred, never stored):
@@ -90,10 +92,10 @@ export function eventNetTotal(ev) {
   return sum;
 }
 
-// Max number of one-time events a user can add in the Money Events panel
-// (Classic) / its future Horizon equivalent — a product-level UI cap, not an
-// IRS rule, named here so both surfaces stay identical by construction.
-export const MAX_MONEY_EVENTS = 6;
+// Max number of one-time/duration events a user can add — re-exported from
+// ASSUMPTIONS (irs-2026.js, rule 1) so this file's existing import sites
+// (MoneyEventsPanel, eventsView) don't need to change.
+export const MAX_MONEY_EVENTS = ASSUMPTIONS.MAX_MONEY_EVENTS;
 
 export function applyMoneyEvents(events = [], age) {
   let portfolioAdjustment = 0;
