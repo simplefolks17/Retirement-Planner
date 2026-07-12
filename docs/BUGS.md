@@ -33,6 +33,18 @@ under-delivering on what should be a complete, verifiable a11y pass.
 **Fix path:** a dedicated WI/session auditing every interactive `<div>`/`<span onClick>` in
 `src/horizon/` and `src/components/HorizonShell.jsx` against the `kbActivate` pattern, with a
 render-smoke-style test asserting every clickable surface has a keyboard path.
+**Re-verified 2026-07-12 (Scenarios-removal + L3d-merge close-out) — scope narrowed, still open.**
+The `IdeasScreen.jsx` portion of this finding (6 mode buttons, dial ± pairs, "Show on arc" buttons,
+scenario cards, "Make this my plan") is **now moot** — that whole UI was replaced by #122's
+preview-first redesign + today's Scenarios removal: the mode segments are real `<button
+type="button">`s, the dials are native `<input type="range">` (keyboard-operable by construction),
+"Show on arc"/scenario cards/dial ± pairs don't exist anymore, and the life-event pills are real
+`<button>`s (confirmed in the current file). **The `HorizonShell.jsx` nav-shell portion still
+reproduces exactly as described** — confirmed against current code: `TabBar` (`:130-148`) is still
+`<div key={id} onClick={() => onChange(id)}>` with no `tabIndex`/`onKeyDown`; the mobile bottom bar,
+`MoreSheet` rows, and onboarding's next/back/save controls are likewise still bare
+`<div onClick>`/`<span onClick>`. Scope narrows to `HorizonShell.jsx` only; the fix path is
+unchanged.
 
 ### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
 
@@ -47,67 +59,7 @@ fixed this session, and deferred rather than rushed.
 `ConfirmModal`'s pattern) that closes the popover on any click outside it, plus an `Escape` key
 handler for keyboard parity (ties into BUG-49's broader keyboard-access gap).
 
-### BUG-51 — Events editor: amount-field zero-render and pill-unchecking on edit (found 2026-07-09, Fable UI review of PR #51)
-
-**Owner:** me_theguy. **Found by:** the same Fable UI review as BUG-49/50.
-**What:** two related, minor rough edges in the Events editor (`EventsEditorPanel.jsx:48`,
-`App.jsx`'s `eventsView.rows[].amountField`): (1) `value={row.amountField.value || ""}` renders a
-legitimate $0 draft as the empty placeholder rather than "0"; (2) because the setter coerces per
-keystroke (`Number(v) || 0`), clearing the amount field to retype it briefly sets the row's amount
-to 0, and since the life-event pill's "placed" match (`findPlacedRow`, added this session for
-BUG-47) matches on exact amount, editing a placed event's amount in the Events tab momentarily (or
-permanently, if the new amount differs) un-checks its corresponding pill even though the event row
-still exists — arguably correct for a genuine edit (the event no longer matches the pill's preset
-shape), but surprising for a transient mid-edit state.
-**Why not fixed this pass:** low severity, and the "correct behavior" isn't obvious without a
-product decision (should editing a placed event's amount in the Events tab keep the pill checked,
-since it's "the same event, just adjusted," or unchecked, since it no longer matches the preset
-exactly? `findPlacedRow`'s value-equality match was a deliberate, documented choice — see BUG-47 —
-and CodeRabbit separately flagged the same tradeoff on the label-edit case as a "cosmetic quirk,"
-not a bug, when reviewing the `findPlacedRow` fix this same session).
-**Fix path:** an owner call on the intended semantics before changing `findPlacedRow`'s matching
-rule; the zero-render display nit is separately fixable (`value={row.amountField.value === 0 ? "0"
-: row.amountField.value || ""}` or, more simply, a draft-state pattern like the age field just
-got — but is genuinely minor and not urgent on its own).
-
 ---
-
-### BUG-46 — `buildScenarioCommitSite` preview omits the scenario's `scenarioEvents`/expense overrides (found 2026-07-09, in-house 8-angle diff review on PR #51)
-
-**Owner:** me_theguy. **Found by:** an in-house 8-finder-angle code review (line-by-line +
-cross-file-tracer angles independently converged on the same defect) run against PR #51 after
-the paid bots (CodeRabbit free tier, Gemini) returned nothing further.
-**What:** Ideas' "Big trip at 70" scenario card (`SCENARIOS.bigTrip`, `retireAdj: 0,
-scenarioEvents: [{amount: 40_000, age: 70, isInflow: false, ...}]`) is displayed via
-`calcWhatIfScenario(whatIfBundle, {..., scenarioEvents: scen.scenarioEvents})` — the card's
-totalAtRet/longevity numbers reflect the $40k trip. But `scenarioCommitSite` (`IdeasScreen.jsx`)
-builds its preview by calling `props.buildScenarioCommitSite(scenario.scenarioRetAge)`, passing
-**only the candidate retirement age** — `buildScenarioCommitSite` (`App.jsx`) computes
-`before`/`after` via `calcWhatIfDelta({...whatIfBundle, retirementAgeOverride: candidateRetirementAge})`
-with no `moneyEvents`. For `bigTrip` specifically, `retireAdj: 0` means the candidate age equals
-today's retirement age, so the preview shows an almost-total "no change" delta — even though the
-card the user just looked at showed the $40k hit. The preview's own `note` field claims "Preview
-uses the same what-if walk as your scenario card above," which is false whenever the scenario has
-`scenarioEvents` or an `annualExpenses`/`monthlyExpenses` override.
-**Why this needs an owner decision, not just a patch:** `apply()` (`commitPlan({retirementAge:
-candidateRetirementAge})`) has **never** persisted a scenario's one-time events into the real
-`moneyEvents` array — that's true both before and after this PR ("make this my plan" has always
-meant "adopt this retirement age," not "adopt this scenario's temporary events too"). Two
-possible fixes point in different directions: (a) **copy-only fix** — thread `scenarioEvents`/
-expense overrides into `buildScenarioCommitSite`'s `calcWhatIfDelta` calls so the PREVIEW matches
-the card, while `apply()` still only commits the retirement age — but this would then show a
-preview promising a change that `apply()` doesn't actually make, a different (arguably worse)
-mismatch; (b) **scope-expansion fix** — make `apply()` also persist the scenario's events (via
-`eventsView.add(...)` for each), so "make this my plan" genuinely adopts the whole scenario,
-matching what the preview would then show. (b) changes product behavior beyond a preview-display
-bug and needs an explicit decision before implementing.
-**Inert at the default state:** `bigTrip` (and any preset with `scenarioEvents`) is reachable any
-time a user picks that scenario card and clicks "Make this my plan" — no special setup required;
-this is a default-preset scenario, not an edge-case input.
-**Where:** `src/App.jsx` (`buildScenarioCommitSite`), `src/horizon/screens/IdeasScreen.jsx`
-(`scenario` memo passes `scenarioEvents`; `scenarioCommitSite` memo doesn't forward them),
-`src/horizon/screens/IdeasScreen.jsx` (the `SCENARIOS` array, `bigTrip` entry).
-**Not fixed this pass** — flagged to the owner for a fix-direction decision.
 
 ### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
 
@@ -301,6 +253,43 @@ Still reproduces; `flow-down.js` was not touched by this session's build.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-46 — `buildScenarioCommitSite` preview omits the scenario's `scenarioEvents`/expense overrides (found 2026-07-09, closed as obsolete 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** an in-house 8-finder-angle code review of PR #51.
+**What it was:** Ideas' "Big trip at 70" scenario card (`SCENARIOS.bigTrip`) displayed a $40k-trip
+delta on its card face, but `buildScenarioCommitSite`'s Apply-preview only forwarded the candidate
+retirement age (not `scenarioEvents`), so the preview could show "no change" for a scenario whose
+whole point was a $40k event. Needed an owner call on fix direction (patch the preview vs. expand
+`apply()` to persist scenario events) — never actioned.
+**Closed as obsolete 2026-07-12 (Scenarios-removal + L3d-merge close-out):** `SCENARIOS`,
+`buildScenarioCommitSite`, and the `scenarioCommitSite` memo were all retired the same day this
+entry's parent branch (L3d) merged into `claude/arc-event-placement-video-61zalx` — the whole
+locked-preset-card UI this bug lived on was removed by owner decision (see BUG-44's addendum).
+Confirmed via `grep`: none of `SCENARIOS`, `buildScenarioCommitSite`, or `scenarioCommitSite` exist
+anywhere in `src/` anymore. The sheet-first `LifeEventSheet` flow that replaced it has no
+"card preview vs. apply" split to disagree with itself — the sheet's live verdict IS what
+`saveEvent` commits, by construction (one object, one write). No fix needed.
+
+### BUG-51 — Events editor: amount-field zero-render and pill-unchecking on edit (found 2026-07-09, closed as obsolete 2026-07-12)
+
+**Owner:** me_theguy. **Found by:** a Fable UI review of PR #51 (see BUG-49/50).
+**What it was:** two rough edges in `EventsEditorPanel.jsx`'s amount field and its interaction with
+`findPlacedRow`'s pill-matching (zero-render display nit; editing a placed event's amount briefly
+un-checked its pill via an exact-value match). Needed an owner call on intended semantics before
+fixing — never actioned.
+**Closed as obsolete 2026-07-12 (Scenarios-removal + L3d-merge close-out):** `EventsEditorPanel.jsx`,
+`App.jsx`'s `eventsView` bundle, and `findPlacedRow` were all retired the same day this entry's
+parent branch (L3d) merged into `claude/arc-event-placement-video-61zalx` — the owner had
+separately rejected the raw money-events-editor pattern in favor of the sheet-first
+`LifeEventSheet` flow. Confirmed via `grep`: none of `EventsEditorPanel`, `eventsView`, or
+`findPlacedRow` exist anywhere in `src/` anymore. The sheet-first flow's own placed-pill mechanism
+(`committedByLabel`, upsert-by-id `saveEvent`) doesn't have either rough edge — the amount field is
+a normal controlled input with no zero-render special case, and there's no separate "match" step to
+go stale (the sheet mounts directly from the committed event's own fields). No fix needed; the
+surface this bug lived on doesn't exist anymore.
 
 ---
 
