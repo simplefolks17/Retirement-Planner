@@ -45,6 +45,11 @@ reproduces exactly as described** — confirmed against current code: `TabBar` (
 `MoreSheet` rows, and onboarding's next/back/save controls are likewise still bare
 `<div onClick>`/`<span onClick>`. Scope narrows to `HorizonShell.jsx` only; the fix path is
 unchanged.
+**Re-verified 2026-07-12 (session close-out, PR #52):** `TabBar`'s `<div key={id} onClick={() =>
+onChange(id)}` still at line 134, still no `tabIndex`/`onKeyDown`. `OnTrackPill`'s clickable span
+(`role="button"`, no `tabIndex`) still at line 73. Still reproduces; this session's work was
+CodeRabbit-review fixes in `App.jsx`/`what-if.js`/`IdeasScreen.jsx`/`AffordabilityPanel.jsx`/
+`LifeEventSheet.jsx`/`money-events.js`/`irs-2026.js` — `HorizonShell.jsx` was not touched.
 
 ### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
 
@@ -58,6 +63,9 @@ fixed this session, and deferred rather than rushed.
 **Fix path:** add a document-level click listener (or a transparent full-screen backdrop matching
 `ConfirmModal`'s pattern) that closes the popover on any click outside it, plus an `Escape` key
 handler for keyboard parity (ties into BUG-49's broader keyboard-access gap).
+**Re-verified 2026-07-12 (session close-out, PR #52):** the popover (`open && (<div ...>`) still
+closes only via its own `✕` (line 102) — no outside-click or `Escape` handler. Still reproduces;
+`HorizonShell.jsx` untouched this session.
 
 ---
 
@@ -91,6 +99,11 @@ never touched either file's relevant code.
 confirmed unchanged (now at `App.jsx:1565`, shifted by this session's additions elsewhere in the
 file); `retirement-phase.js` still has no `totalDrawTax` field. Still reproduces; this session's
 WI-3.7/WI-3.8 build touched neither the composition memo nor `retirement-phase.js`.
+**Re-verified 2026-07-12 (session close-out, PR #52):** `composition.total = rmdTax + convTax` still
+present (now `App.jsx:1503`, shifted by this session's `retirementMoneyEvents` hoist + `commitPlan`
+reordering earlier in the file); `retirement-phase.js` still has no `totalDrawTax` field. Still
+reproduces; this session's CodeRabbit-fix work never touched the composition memo or
+`retirement-phase.js`.
 
 ---
 
@@ -177,6 +190,13 @@ caller) now receives a `whatIfBundle` prop for its Max Affordable mode; Delta mo
 `calcAffordabilityMax` test assertions were loose (non-negative/non-positive directional checks) and
 held unchanged across the migration; 2 new tests added (invalid-bundle guard, an engine
 self-consistency check).
+**Re-verified 2026-07-12 (session close-out, PR #52):** `calcWhatIfDelta` (what-if.js) still calls
+`buildRetirementDrawdown` (now at lines 145/155, shifted by this session's `deltaYearsFrom` helper
+addition); `optimization.js`'s `calcOptimizedScenario` still calls it too (line 79). Scope
+unchanged. This session's `what-if.js` changes (BUG-66 `surplusApplySite` moneyEvents fix, BUG-71
+`addlPreTaxBal` fallback-path fix, `deltaYearsFrom` dedup) all touched the blended-walk call sites'
+*correctness* (basis consistency, dropped inputs) without migrating them onto the engine — none of
+them close this gap, they just make the blended walk less wrong in isolation. Still reproduces.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
@@ -201,6 +221,9 @@ gap, rather than silently implying the toggle changes engine behavior.
 `retirement-engine.js`/`retirement-phase.js`. Still reproduces; neither file was touched by this
 session's WI-3.7/WI-3.8 build (which worked in `what-if.js`, `apply-preview.js`, App.jsx wiring,
 and Horizon screens — not the engine).
+**Re-verified 2026-07-12 (session close-out, PR #52):** still zero matches for
+`conversionTaxSource` in `retirement-engine.js`/`retirement-phase.js`. Still reproduces; neither
+file was touched this session.
 
 ### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
 
@@ -228,6 +251,9 @@ at line 150, `needed` still at line 132. Still reproduces; `retirement-engine.js
 by this session's build.
 **Re-verified 2026-07-09 (L3d close-out):** `tFloor` still at line 150 (unchanged since 2026-07-08).
 Still reproduces; `retirement-engine.js` was not touched by this session's build.
+**Re-verified 2026-07-12 (session close-out, PR #52):** `tFloor` still at line 150, `needed` still
+at line 132 — unchanged since 2026-07-08. Still reproduces; `retirement-engine.js` was not touched
+this session.
 
 ### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
@@ -249,6 +275,8 @@ the value is still a residual. **Re-verified 2026-07-08 (L3c close-out):** still
 as described; this session's build never touched `flow-down.js`.
 **Re-verified 2026-07-09 (L3d close-out):** `totalGrowth` still the residual formula at line 34.
 Still reproduces; `flow-down.js` was not touched by this session's build.
+**Re-verified 2026-07-12 (session close-out, PR #52):** `totalGrowth` still the residual formula at
+line 34, unchanged. Still reproduces; `flow-down.js` was not touched this session.
 
 ---
 

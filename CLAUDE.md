@@ -1155,6 +1155,28 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   and why, pointing at the others for full detail rather than duplicating it.
   763 tests (was 715 before the merge, 709 on main's side — net +48 after dedup/renumber/port),
   lint clean, build OK, **golden master byte-identical to this branch's pre-merge tip**.
+- **PR #52 CodeRabbit review-fix round (2026-07-12, same branch, after the L3d merge).** Two
+  fresh CodeRabbit passes over the post-merge diff surfaced 7 real findings, all fixed same-day
+  (BUG-65 through BUG-71 in `docs/BUGS.md`): `commitPlan` used the bare (uncoupled)
+  `setRetirementAge` instead of `setRetirementAgeCoupled` — real for onboarding's `handleSave`,
+  which calls `commitPlan` directly with no pre-coupling, so a first-run retirement-age pick could
+  silently desync `contribEnd*` ages; `surplusApplySite`'s two `calcWhatIfDelta` calls defaulted
+  `moneyEvents` to `[]` instead of the committed state, so the surplus-deployment preview silently
+  ignored any committed events; `MAX_MONEY_EVENTS` moved into `ASSUMPTIONS` (was a standalone
+  export in `money-events.js`, now re-exported from there, matching the `AFFORDABILITY_STEP`
+  precedent); three Trivial dedups (`IdeasScreen`'s `dialOverrides`, `App.jsx`'s
+  `retirementMoneyEvents`, `what-if.js`'s `deltaYearsFrom`); `AffordabilityPanel` now re-clamps
+  its staged ages if `affordView`'s bounds shift while mounted; `LifeEventSheet`'s 4 segmented
+  toggles gained `aria-pressed`; `calcWhatIfScenario`'s dead-in-production fallback resim path
+  now adds `addlPreTaxBal` back into `startBal` (the same basis-mismatch class already fixed
+  twice elsewhere in this PR). Four architecture-pattern findings (ArcGraph `trimScenarioOverlay`,
+  LifeEventSheet's two model-call sites, PlanScreen's lever-derivation calls) were reviewed and
+  replied to inline with the established reasoning — screens calling pure model builders directly
+  for a live per-drag/per-keystroke preview is this repo's documented, deliberate pattern, not a
+  rule-10 violation — and left unchanged. CodeRabbit independently re-verified every fix against
+  the diff both rounds and reported no further findings. 763 tests throughout (no new tests — all
+  fixes were argument-wiring/dedup/a11y with existing coverage), lint clean, build OK, golden
+  master untouched.
 
 ## Commands
 
