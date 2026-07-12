@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (709 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (763 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (120 items, 61 done, 59 planned)
+- Feature backlog: `feature-tracker.html` (124 items, 64 done, 60 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -849,7 +849,9 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   (2026-07-09, branch `claude/l3d-horizon-depth-ladder-dr4gvv`): WI-3.7 (#104) + WI-3.8 (#105)
   shipped, closing the Level 3 "Control" exit gate's build work.** Full recon → plan → adversarial
   plan review (2 Fable agents) → implementation (5 Sonnet slices, model layer first) → post-ship
-  review (2 Opus agents) → docs pipeline, per `docs/ROADMAP.md`'s stated process.
+  review (2 Opus agents) → docs pipeline, per `docs/ROADMAP.md`'s stated process. **Merged into
+  `main` separately from this branch while it was still open** — see the 2026-07-12 correction
+  note at the end of this entry for what changed on integration.
   - **WI-3.7 (#104):** `withdrawalView` bundle feeds a read-only `WithdrawalOrderFlow.jsx`
     (draw-order sequence + tax-optimal-vs-worst-case + a savings callout gated on `hasSavings`).
     Classic's inline optimized-allocation Apply/Revert handlers extracted into
@@ -910,12 +912,14 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     simplification + efficiency + altitude + CLAUDE.md conventions) against the full PR diff,
     independently verified. Found 3 real bugs the paid bots missed (2 fixed immediately, 1 flagged
     for an owner decision) plus several accepted-as-noted architecture observations:
-    **BUG-44 fixed** — `AffordabilityPanel`'s desktop age input had no bounds clamp (the mobile
+    **BUG-63 fixed** (originally numbered BUG-44 on this branch, renumbered 2026-07-12 — see the
+    correction note below) — `AffordabilityPanel`'s desktop age input had no bounds clamp (the mobile
     stepper clamped, the typed-number path didn't), so a typo'd age past the walk horizon made
     `calcAffordabilityMax` converge on `maxSearch`, displaying a nonsensical "$5,000,000
-    affordable" result. **BUG-45 fixed, then BUG-47 deepened it** — the life-event pill's "placed"
+    affordable" result. **BUG-64 fixed, then BUG-47 deepened it** (BUG-64 originally numbered
+    BUG-45) — the life-event pill's "placed"
     checkmark was tracked as local shadow state (`placedEvents`) disconnected from the real
-    `moneyEvents`; independently corroborated by 3 of the 8 finder angles. BUG-45's first pass
+    `moneyEvents`; independently corroborated by 3 of the 8 finder angles. BUG-64's first pass
     added a narrow `atMax` guard (a false-success state once the events cap was hit); asked to
     reconsider rather than accept the rest as debt, BUG-47 removed `placedEvents` entirely and made
     "placed" a live derivation off `eventsView.rows` — fixing two more drift directions in the same
@@ -930,7 +934,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     instead of `fields.jsx`'s `DetailField`; a second `DeltaChip` copy of Classic's), and a few
     architecture observations on `calcWhatIfDelta`'s growing override-param surface and the
     `buildScenarioCommitSite` site-builder shape — recorded in the PR/BUGS.md, not blocking.
-  - 702 → **707** tests (+5: BUG-44's clamp test, BUG-47's rewritten 4-test life-event-pill block),
+  - 702 → **707** tests (+5: BUG-63's clamp test, BUG-47's rewritten 4-test life-event-pill block),
     lint clean, build OK, golden master untouched.
   - **Fable UI/UX review of PR #51 (2026-07-09), by request — separate from the correctness-focused
     reviews above.** With the WI-3.7/3.8 build, post-ship review, and in-house code-review pass all
@@ -973,11 +977,211 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   - 707 → **709** tests (+2: the two new dial-bounds regression tests), lint clean, build OK,
     golden master untouched throughout (checked explicitly — `calcWhatIfScenario` isn't invoked at
     the default App state, so the `scenarioBalAt90` model fix has zero default-state impact).
+  - **Correction (2026-07-12, integration into `claude/arc-event-placement-video-61zalx`):** this
+    branch had independently built its own #121/#122 redesign of Ideas/Plan on an earlier `main`
+    commit, before L3d's work above existed, so the two never saw each other until this merge.
+    Ideas' "Events" mode here (`eventsView`/`EventsEditorPanel.jsx`, a raw moneyEvents CRUD list)
+    was retired on integration — the owner had separately rejected the raw-editor/preset-card
+    pattern that same day in favor of #121's sheet-first `LifeEventSheet` flow (`saveEvent`/
+    `removeEvent`, see `docs/BUGS.md` BUG-44 addendum), which already covers every job `eventsView`
+    did. The "Solvers" mode (`AffordabilityPanel.jsx` + `affordView`) is a genuinely independent
+    addition with no overlap and was kept as a 3rd Ideas segment. `planCommit`/
+    `buildScenarioCommitSite` (the "Save as my plan" Apply-with-preview sites, built against the
+    QuickTunePanel-era UI) were retired along with QuickTunePanel itself, superseded by #122's
+    `applyPlanLevers`. `surplusApplySite`/`surplusView`/`withdrawalView`/`megaView` (WI-3.7) are
+    unaffected — common ancestry both branches already shared, untouched by the integration. Four
+    bug-ID collisions from this batch's own numbering (BUG-42/43/44/45 vs. this branch's unrelated
+    BUG-42/43/44/45) were resolved by renumbering this batch's four colliding entries to
+    BUG-61–BUG-64; see `docs/BUGS.md` for the full renumbering note.
+
+- **Life-event placement on the arc (2026-07-10, branch `claude/arc-event-placement-video-61zalx`,
+  feature #121):** the video-inspired (Copilot Money "Path") what-if event flow, owner decisions:
+  sheet-first placement / duration-based events / verdict + impact bullets / upgrade Ideas + Plan.
+  **Model:** `money-events.js` gains **duration events** (`{ monthlyAmount, durationMonths, age,
+  isInflow, incomeAnnual }` — "$X/mo for N months", income offset prorated; untaxed by design,
+  BUG-36 scope note) beside one-time events; `eventNetForYear` is the ONE per-year source, now
+  consumed by `runSimulation`, `buildRetirementDrawdown`, AND the per-account engine (which already
+  used `applyMoneyEvents`); new `eventFirstAge`/`eventLastAge` make every phase filter
+  (`App.jsx` `retPhaseBase`/`retDrawShared`, `what-if.js` accum/ret splits) **kind-aware**, so a
+  boundary-spanning duration event reaches both walks and each applies only its own years.
+  New `evaluateLifeEvent` (`what-if.js`): baseline + candidate `calcWhatIfScenario` runs → verdict
+  ("comfortable"/"tight"/"unaffordable", buffer `ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS: 5`),
+  `grossCost`/`netTotal`, `atRetirement`/`atPlanAge` deltas with model-computed `dir`, and
+  sustainability flags (`newlyDepletes`/`depletionMoved`) — screens render only (rule 10).
+  **BUG-42 found + fixed en route** (`docs/BUGS.md`): `calcWhatIfScenario` silently dropped
+  pre-retirement `scenarioEvents` (they only reached the retirement walk) and its re-sim excluded
+  events at exactly the retirement age that the main App path counts; pre-/at-retirement scenario
+  events now force a re-sim that includes them. **UI:** new `src/horizon/LifeEventSheet.jsx`
+  (one-time vs "Monthly, for a while" toggle, income-while-it-runs field, age slider bounded by the
+  new memoized `horizonProps.lifeEventBounds`, live verdict card + impact bullets); `ArcGraph`
+  event dots upgraded to **tappable icon badges with stems** (`icon` field, `onEventTap` prop;
+  `events=[]` still renders pixel-identical); Ideas life-event pills open the sheet seeded from the
+  preset (LIFE_EVENTS got icons, `scen` coupling dropped, "Travel 6 months" + "Part-time at 60"
+  became duration seeds — preset value-locks updated deliberately), placed pills + arc badges
+  re-open it in edit mode with Remove; Plan arc badges tap-to-edit too. Classic panels untouched.
+  Golden master untouched (defaults empty). 643 → **674** tests (+23 model, +8 sheet/badge);
+  lint clean; build OK; Playwright verifier all screens + a scripted end-to-end drive of the new
+  flow (open sheet → duration change updates verdict → commit → badge on both arcs → edit →
+  remove).
+
+- **Plan/Ideas re-differentiation + preview-first levers (2026-07-11, branch
+  `claude/arc-event-placement-video-61zalx`, feature #122):** the two screens had converged
+  after #121; two Fable design rounds (owner feedback folded in) re-split them. **Plan** is now
+  a calm dashboard of the COMMITTED plan: full-width arc (54vh desktop / 38vh mobile — the
+  320px scrolling right rail is gone), a 3-column band (PortfolioHero [delta badge retired] |
+  IncomeMeter | new **TryAChangePanel**), then stat cards + signals. TryAChangePanel's two
+  levers (Retire at, Monthly spend) are **preview-first**: dragging draws the DASHED what-if
+  overlay on Plan's own arc + a delta chip (ONE `buildLeverPreview` run feeds both) and
+  explicit **Apply** (via `ApplyPreviewModal` → new App callback `applyPlanLevers` →
+  `commitPlan`, which now accepts `monthlySpend`) / **Discard** — real state never moves on
+  drag. QuickTunePanel and the `planDelta`/`committedOutputs` dirty-state machinery are
+  RETIRED; the 8 assumption sliders live in My details. **Ideas** stays the deep workshop
+  (SP-5 tidy): ONE segmented control Dials · Events · Scenarios (askit folded into Scenarios;
+  mode ids unchanged for deep links), Dials are live sliders whose dashed overlay + strikethrough
+  stats come from ONE run, and the commit verb is unified to **"Apply to my plan"** via
+  `ApplyPreviewModal` — fixing the old bug where the spend dial was never committed.
+  **Overlay-continuity fix (closes the scenario half of BUG-36):** `calcWhatIfScenario` now
+  walks retirement with the per-account engine (`buildRetirementPhase`) using the SAME memoized
+  inputs as the solid arc (whatIfBundle gained `retPhaseBase`/`conversionByAge`/`baseChart`/
+  `addlPreTaxBal`), locked by an invariant test: a no-op scenario's chart deep-equals
+  `totalChartData`; `ArcGraph.trimScenarioOverlay` starts the dashed line exactly at the
+  divergence age. **Colored verdict tick rails** (the video's rail idea): `buildLeverRail` /
+  `buildDurationRail` (what-if.js) run the model once per slider step → comfortable/tight/
+  unaffordable ticks under Plan levers, Ideas dials, and the LifeEventSheet duration slider
+  (shared `VerdictTickRail` in `fields.jsx`); `verdictForMargin` is the ONE verdict formula,
+  shared with `evaluateLifeEvent`. New model exports: `buildLeverPreview`, `buildLeverRail`,
+  `buildDurationRail`. Golden master + preset value-locks untouched throughout. 674 → **686**
+  tests; lint clean; build OK. Execution note: implemented by Sonnet subagents (model layer →
+  App plumbing + Plan re-layout → Ideas tidy) from a Fable-written plan, orchestrator reviewing
+  every diff and committing; docs by Haiku.
+  **Post-ship review battery (2026-07-11, PR #52):** three parallel agents (Fable adversarial,
+  Sonnet interoperability, Fable forward-compat) + CodeRabbit/Gemini. Fixed in three passes
+  (commits `0ddfb4d`, `8937669`, + bot pass): H1 edit-mode double-count (new `excludeEventId`
+  override — unchanged edit of a committed event now shows exactly zero delta, regression-locked);
+  Ideas scenario-event Apply drop (Big trip now previews WITH events and commits them);
+  engine-exact depletion ages (`scenarioDepletionAge`/`baseDepletionAge` replace a
+  round-one-year-early derivation); `calcWhatIfDelta` `<=` boundary; keystroke model-run waste;
+  Classic MoneyEventsPanel duration-event NaN→"$0" (net impact via `totalEventImpact`, duration
+  rows read-only); **BUG-43** (signals deep-linked to the removed numbers/"flow" tab → blank
+  body; retargeted to budget + exported `NUMBERS_TABS` guard); raw `setMoneyEvents` →
+  wrapped `saveEvent`/`removeEvent` (WI-5.2 readiness, write-surface registry in ARCHITECTURE);
+  `calcAffordabilityMax` onto the engine (solver can never contradict the arc; BUG-36 narrowed
+  to calcWhatIfDelta + calcOptimizedScenario); `verdictForMargin` exported + `verdictDisplay`
+  (#85 readiness); `LEVERS` table (#123 readiness); stale `incomeAnnual` zeroed on money-in
+  events; keyboard a11y (Ideas pills/cards/CTAs → native buttons; arc badges focusable with
+  Enter/Space). Skipped with reasons (recorded on the PR): CodeRabbit's "move model calls behind
+  App plumbing" (contradicts the documented screens-call-pure-builders pattern), "overlay trim
+  to model" (chart-layout math in src/components), input-seed defaults (deliberate preset
+  seeding). 686 → **714** tests.
+  **Independent post-fix verification (2026-07-11, same day):** a fresh adversarial pass
+  re-checked the fix commits themselves rather than trusting them — found and fixed **BUG-45**
+  (the H1 exclude-committed-event fix reached `evaluateLifeEvent`'s verdict card but not the
+  sibling `buildDurationRail` tick rail, so editing a committed *duration* event could still show
+  the rail and the verdict card disagreeing) and flagged **BUG-44** (Ideas' scenario cards had no
+  "already applied" state, so re-applying "Big trip at 70" silently duplicated its $40k event).
+  BUG-44 was then fixed same-day per an explicit owner design requirement — "either the event
+  exists or it doesn't, there is no in-between": scenario cards now show "✓ {label} · Already on
+  your plan" once their event(s) are committed, and the shared CTA becomes **"Remove from plan"**
+  instead of "Apply to my plan" (`matchCommittedEvents` by-label lookup, mirroring the Events
+  pills; `handleRemoveScenario` new). 714 → **716** tests.
+- **Retire the locked "Scenarios" preset grid (2026-07-12, branch
+  `claude/arc-event-placement-video-61zalx`):** owner pushback on Ideas' "Scenarios" tab — its 4
+  preset cards applied a hidden value with one tap and weren't editable, unlike the Events tab's
+  sheet-first flow the owner explicitly liked. Scope: Scenarios only (Events already did it
+  right). `src/horizon/screens/IdeasScreen.jsx`: deleted `SCENARIOS`, the `mode === "suggest"`
+  panel, `activeScen` state, `scen`/`scenario` derivations, `matchCommittedEvents`, `scenApplied`,
+  and `handleRemoveScenario`. The 3 age-only cards became two Dials **quick-jump chips**
+  (`RETIRE_JUMPS`, exported, value-locked) — `retire2Early` (relative, `-2`) and `retire60`
+  (absolute, `targetAge: 60`), resolved uniformly through `handleRetireJump`'s clamp to
+  `sliderBounds.retireMin/retireMax` before converting to the offset the slider state already
+  speaks. Two chip *kinds* exist specifically because a naive `retireAdj: -5` chip breaks once
+  `retirementAge` sits close to `currentAge` (`sliderBounds.retireMin` can exceed the naive
+  target) — without the clamp the range input silently desyncs from its label and
+  `calcWhatIfScenario` returns `null` (dead overlay, dead Apply). `saveMore` ("Save $300
+  more/mo") was dropped, not remapped — Dials has no savings lever (deferred #123) and forcing
+  that framing onto a bare retire-age chip would be dishonest. The 4th card ("Big trip at 70")
+  folded into `LIFE_EVENTS` as a normal editable pill (`🧳`, $40k/age 70, same seed values) —
+  Events' existing `committedByLabel` placed-pill mechanic means the fold-in inherits BUG-44's
+  duplicate-prevention fix for free. `MODES` shrinks to Dials · Events; `askit` now aliases to
+  `dials` (its old job — "what if I retire earlier" — is literally the `retire2Early` chip).
+  This **structurally closes the whole BUG-44 bug class**: quick-jump chips are a pure slider
+  nudge with no committed write, so the only committed-state writes left are Dials' Apply (one
+  path) and the LifeEventSheet's Save/Remove (one path, upsert-by-id) — no "tap a card, a hidden
+  value silently applies" surface remains; BUG-44's fix code retired with the surface it
+  protected (addendum logged in `docs/BUGS.md`). No model-layer change — `buildLeverPreview`/
+  `buildLeverRail` already take `{ retirementAge, monthlyExpenses }` overrides with no event
+  support, so the age-only chips map onto the existing `retirementAge` lever 1:1.
+  `docs/ROADMAP.md` (4 touch-points), `docs/HORIZON.md`, `docs/ARCHITECTURE.md`, and
+  `feature-tracker.html` corrected to drop the retired "Scenarios" naming (dated amendments, not
+  rewrites — the historical Violations-register and WI-0.1/0.2 text are left as written).
+  716 → **715** tests (net: 2 segmented-control tests + 5 Dials-mode tests incl. the two new
+  quick-jump chip tests + 2 Events-mode tests incl. a placed-pill regression replacing the
+  deleted BUG-44 test's coverage — down from 10 in the old 3-segment file).
+
+- **Integration: L3d (WI-3.7/3.8) merged into the arc-event-placement branch (2026-07-12).**
+  While PR #52 (this branch — #121/#122 + the Scenarios removal above) sat open, a separate
+  branch (`claude/l3d-horizon-depth-ladder-dr4gvv`) shipped WI-3.7/3.8 and merged to `main`
+  independently — built on an *older* `main` commit, so it never saw #121/#122's redesign of
+  IdeasScreen/PlanScreen. Merging `main` back into this branch surfaced real conflicts requiring
+  judgment, not just text reconciliation (owner-directed integration plan, see the git history for
+  the full back-and-forth): kept this branch's redesigned Ideas (Dials · Events sheet-first, no
+  Scenarios) and Plan (`TryAChangePanel`, `QuickTunePanel` retired) as the base; ported forward
+  WI-3.8's genuinely new, non-overlapping **"Solvers" mode** (`AffordabilityPanel.jsx` +
+  `affordView` — "what's the biggest one-time expense my plan can absorb") as Ideas' 3rd segment;
+  retired WI-3.8's **`eventsView`**/`EventsEditorPanel.jsx` (a raw `moneyEvents` CRUD editor) —
+  functionally superseded by the sheet-first `LifeEventSheet` flow, and the pattern itself is what
+  the owner had rejected earlier that same day; retired `planCommit`/`buildScenarioCommitSite`
+  (the QuickTunePanel-era "Save as my plan" Apply-with-preview sites) since QuickTunePanel itself
+  was gone. `surplusApplySite`/`surplusView`/`withdrawalView`/`megaView` (WI-3.7) were common
+  ancestry both branches already shared — untouched, auto-merged cleanly.
+  **Real bugs found and fixed during the merge itself** (not pre-existing — introduced by the
+  merge's own mechanics, caught by re-testing rather than trusting the auto-merge): (1) a dropped
+  `const BAL_REFERENCE_AGE = 90;` declaration left two call sites referencing an undefined name
+  (`ReferenceError` on every `calcWhatIfScenario`/`buildLeverRail`/`buildDurationRail` call) —
+  fixed by adopting main's own review-fix pattern (use `safeLifeExp`, not a hardcoded 90) for the
+  M1 engine branch too, which a dedicated regression test (`ideas-modes.test.js`, ported over)
+  proves was the intended behavior; (2) `AffordabilityPanel.jsx` called the merged
+  `calcAffordabilityMax` with the OLD single-object-spread signature instead of this branch's
+  newer `(bundle, options)` signature — would have silently misbehaved (Solvers mode's amount/
+  target fields absorbed into the bundle instead of read as options). **Bug-ID collision**: main
+  independently reused BUG-42/43/44/45 for four different bugs than this branch's own BUG-42–45;
+  renumbered to BUG-61–64 (`docs/BUGS.md`), cross-references updated in lockstep. The now-
+  incompatible `ideas-modes.test.js` (tested the retired raw-editor UI) was deleted; its 3 still-
+  relevant Solvers-mode tests (anti-divergence lock, `canAfford:false` edge state, blur-clamp
+  regression) were ported into `ideas-screen.test.js`'s "Solvers mode" describe block; `MODES`
+  gained a 3rd `"solvers"` entry. `EventsEditorPanel.jsx` deleted (dead code post-retirement).
+  Docs reconciled with dated correction notes (not rewrites) in `CLAUDE.md`, `docs/BUGS.md`,
+  `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/HORIZON.md` — each explains what was retired
+  and why, pointing at the others for full detail rather than duplicating it.
+  763 tests (was 715 before the merge, 709 on main's side — net +48 after dedup/renumber/port),
+  lint clean, build OK, **golden master byte-identical to this branch's pre-merge tip**.
+- **PR #52 CodeRabbit review-fix round (2026-07-12, same branch, after the L3d merge).** Two
+  fresh CodeRabbit passes over the post-merge diff surfaced 7 real findings, all fixed same-day
+  (BUG-65 through BUG-71 in `docs/BUGS.md`): `commitPlan` used the bare (uncoupled)
+  `setRetirementAge` instead of `setRetirementAgeCoupled` — real for onboarding's `handleSave`,
+  which calls `commitPlan` directly with no pre-coupling, so a first-run retirement-age pick could
+  silently desync `contribEnd*` ages; `surplusApplySite`'s two `calcWhatIfDelta` calls defaulted
+  `moneyEvents` to `[]` instead of the committed state, so the surplus-deployment preview silently
+  ignored any committed events; `MAX_MONEY_EVENTS` moved into `ASSUMPTIONS` (was a standalone
+  export in `money-events.js`, now re-exported from there, matching the `AFFORDABILITY_STEP`
+  precedent); three Trivial dedups (`IdeasScreen`'s `dialOverrides`, `App.jsx`'s
+  `retirementMoneyEvents`, `what-if.js`'s `deltaYearsFrom`); `AffordabilityPanel` now re-clamps
+  its staged ages if `affordView`'s bounds shift while mounted; `LifeEventSheet`'s 4 segmented
+  toggles gained `aria-pressed`; `calcWhatIfScenario`'s dead-in-production fallback resim path
+  now adds `addlPreTaxBal` back into `startBal` (the same basis-mismatch class already fixed
+  twice elsewhere in this PR). Four architecture-pattern findings (ArcGraph `trimScenarioOverlay`,
+  LifeEventSheet's two model-call sites, PlanScreen's lever-derivation calls) were reviewed and
+  replied to inline with the established reasoning — screens calling pure model builders directly
+  for a live per-drag/per-keystroke preview is this repo's documented, deliberate pattern, not a
+  rule-10 violation — and left unchanged. CodeRabbit independently re-verified every fix against
+  the diff both rounds and reported no further findings. 763 tests throughout (no new tests — all
+  fixes were argument-wiring/dedup/a11y with existing coverage), lint clean, build OK, golden
+  master untouched.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (709 tests)
+- `npm test` — run model + formatter + render-smoke tests (763 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

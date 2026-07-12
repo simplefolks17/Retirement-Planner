@@ -11,7 +11,45 @@
 
 import { runSimulation } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
+import { buildRetirementPhase } from "./retirement-phase.js";
+import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
+import {
+  eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
+} from "./money-events.js";
+import { buildPreviewMetric } from "./apply-preview.js";
+
+// Infinity-aware longevity delta: scenarioYears vs baseYearsSustained, with
+// the ±Infinity edges handled explicitly (plain subtraction gives NaN when
+// both sides are Infinity). Shared by calcWhatIfDelta, calcWhatIfScenario's
+// two walk paths (M1 engine + fallback) so the three can't drift apart.
+function deltaYearsFrom(scenarioYears, baseYearsSustained) {
+  if (scenarioYears === Infinity && baseYearsSustained === Infinity) return 0;
+  if (scenarioYears === Infinity) return Infinity;
+  if (baseYearsSustained === Infinity) return -Infinity;
+  return scenarioYears - baseYearsSustained;
+}
+
+// ── verdictForMargin ─────────────────────────────────────────────────────────
+// The ONE definition of the comfortable/tight/unaffordable verdict from a
+// sustainability margin (scenarioYears sustained minus the plan horizon in
+// years). Used by evaluateLifeEvent (below) and the lever-preview/rail
+// builders (buildLeverPreview/buildLeverRail/buildDurationRail) so every
+// verdict in the app comes from one formula (rule 10 / principle 7).
+//   margin < 0                              → "unaffordable" (depletes before the plan age)
+//   0 <= margin < EVENT_COMFORT_BUFFER_YEARS → "tight"
+//   margin >= EVENT_COMFORT_BUFFER_YEARS     → "comfortable"
+// Exported (#85 readiness, fix pass 2): verdictDisplay (apply-preview.js) maps
+// this string to a render-ready { label, tone } — the vocabulary lives here,
+// the display mapping lives there, so a future consumer never re-derives the
+// three-way threshold itself.
+export function verdictForMargin(marginYears) {
+  return marginYears < 0
+    ? "unaffordable"
+    : marginYears < ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS
+      ? "tight"
+      : "comfortable";
+}
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
 // Computes the impact of scenario overrides vs the baseline.
@@ -55,9 +93,16 @@ export function calcWhatIfDelta({
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
   const scenarioExpenses  = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
 
-  // Split events by phase
-  const accumEvents = moneyEvents.filter(ev => ev.age < scenarioRetAge);
-  const retEvents   = moneyEvents.filter(ev => ev.age >= scenarioRetAge);
+  // Split events by phase — kind-aware (money-events.js): a duration event
+  // spanning the retirement boundary goes to BOTH walks; each walk applies only
+  // the years inside its own age range via eventNetForYear.
+  // Boundary: <= (not <) — an event at exactly the retirement age belongs in the
+  // re-sim, since the sim row read below IS the retirement-age row (matches
+  // calcWhatIfScenario's documented convention below). With `<` an event dated
+  // exactly at scenarioRetAge fell into neither the sim (excluded by `<`) nor the
+  // walk (which starts at startAge+1) — a complete no-op.
+  const accumEvents = moneyEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge);
+  const retEvents   = moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge);
 
   // ── Step 1: determine scenario starting balance at retirement ──────────────
   let scenarioTotalAtRet = baseTotalAtRet;
@@ -117,13 +162,7 @@ export function calcWhatIfDelta({
   });
 
   const scenarioYears = scenarioWalk.yearsSustained;
-  const deltaYears = (scenarioYears === Infinity && baseYearsSustained === Infinity)
-    ? 0
-    : scenarioYears === Infinity
-      ? Infinity
-      : baseYearsSustained === Infinity
-        ? -Infinity
-        : scenarioYears - baseYearsSustained;
+  const deltaYears = deltaYearsFrom(scenarioYears, baseYearsSustained);
 
   return {
     baseTotalAtRet,
@@ -145,19 +184,37 @@ export function calcWhatIfDelta({
 //
 // bundle (the `whatIfBundle` App.jsx passes via horizonProps.whatIfSimInputs):
 //   { simInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
-//     baseTotalAtRet, baseYearsSustained }
+//     baseTotalAtRet, baseYearsSustained,
+//     retPhaseBase, conversionByAge, baseChart, addlPreTaxBal }
+//   retPhaseBase/conversionByAge/baseChart are the SAME memoized objects App.jsx
+//   feeds the main per-account engine (retirement-phase.js) for the solid line —
+//   passing them through here means the scenario walk uses the identical engine
+//   + inputs, so a no-change scenario's dashed overlay sits EXACTLY on the solid
+//   line (the overlay-continuity fix, 2026-07-11). When retPhaseBase is absent
+//   this falls back to the older blended-pool walk (buildRetirementDrawdown) —
+//   App.jsx always supplies retPhaseBase, so that branch is dead in production
+//   (kept only for callers/tests that haven't been migrated).
 //
-// overrides: { retireAdj, retirementAge, annualExpenses, monthlyExpenses, scenarioEvents }
+// overrides: { retireAdj, retirementAge, annualExpenses, monthlyExpenses, scenarioEvents, excludeEventId }
 //   retireAdj       — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
 //   retirementAge   — absolute retirement age override (takes precedence over retireAdj)
 //   annualExpenses  — override for retirement spending
 //   monthlyExpenses — same override expressed monthly (annualExpenses wins if both
 //                     are given); the month→year conversion lives HERE, not in JSX
 //   scenarioEvents  — additional one-time events for this scenario only (e.g. a lump-sum trip spend)
+//   excludeEventId  — strip a committed event (by id) out of every committed-event
+//                     source (simInputs.moneyEvents, retDrawShared.moneyEvents, and
+//                     the gap-events derived from them) before the walk, and force a
+//                     re-sim so the starting-balance baseline recomputes too (H1: lets
+//                     a caller re-price a committed event — e.g. LifeEventSheet's edit
+//                     mode — without it also being priced as part of the "committed"
+//                     background via scenarioEvents, which would double-count it)
 //
 // Returns null when inputs are invalid; otherwise:
 //   {
-//     chart,              // [{age, total}] retirement-phase series for the arc overlay
+//     chart,              // [{age, total}] the FULL lifetime series (accumulation +
+//                         //   retirement) — the same shape as App's totalChartData,
+//                         //   so a no-op scenario's chart deep-equals it exactly.
 //     scenarioRetAge,
 //     scenarioTotalAtRet, // portfolio at the scenario retirement age
 //     scenarioExpenses,   // annual retirement spending under the scenario
@@ -174,9 +231,10 @@ export function calcWhatIfDelta({
 //     scenarioDepletionAge, // age the far-horizon walk hits $0, or null if it never does.
 //   }
 //
-// Never reimplements the walk: both walks are buildRetirementDrawdown, and
-// permanent plan events are honored on both phases (retDrawShared.moneyEvents
-// merged into the retirement walk; simInputs.moneyEvents kept for re-sims).
+// Never reimplements the walk: the retirement-phase portion is buildRetirementPhase
+// (the SAME per-account engine the main chart uses — BUG-35/BUG-31), and permanent
+// plan events are honored on both phases (retDrawShared.moneyEvents merged into the
+// retirement walk; simInputs.moneyEvents kept for re-sims).
 export function calcWhatIfScenario({
   simInputs,
   fedMarginal,
@@ -185,6 +243,10 @@ export function calcWhatIfScenario({
   safeLifeExp,
   baseTotalAtRet,
   baseYearsSustained,
+  retPhaseBase,
+  conversionByAge,
+  baseChart,
+  addlPreTaxBal,
 }, overrides = {}) {
   if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return null;
 
@@ -195,38 +257,177 @@ export function calcWhatIfScenario({
       ? overrides.monthlyExpenses * ASSUMPTIONS.MONTHS_PER_YEAR
       : retDrawShared.effectiveExpenses);
   const scenarioEvents   = overrides.scenarioEvents ?? [];
+  const excludeEventId   = overrides.excludeEventId ?? null;
 
-  // Determine starting portfolio balance at the scenario retirement age
-  let startBal = baseTotalAtRet ?? 0;
+  // H1: strip a committed event (by id) out of every committed-event source
+  // before the walk — used when re-pricing a committed event (e.g. an edit in
+  // LifeEventSheet) so it isn't ALSO counted via the committed background AND
+  // via scenarioEvents. A no-op (identity) when excludeEventId is null.
+  const stripExcluded = (events) => (excludeEventId == null
+    ? (events ?? [])
+    : (events ?? []).filter(ev => ev.id !== excludeEventId));
 
-  if (scenarioRetAge !== safeRetAge) {
+  // Scenario events with pre-retirement activity force a re-sim even when the
+  // retirement age is unchanged — they change the compounded balance AT
+  // retirement. (Previously scenarioEvents reached only the retirement walk, so
+  // a pre-retirement scenario event was silently ignored — BUG-42.)
+  // Boundary: the sim row that is read below IS the retirement-age row, so an
+  // event landing exactly at the retirement age belongs in the sim (this matches
+  // the main App path, where runSimulation gets the full event list) — hence <=.
+  // excludeEventId also forces a re-sim (even with no other override) so the
+  // starting-balance baseline recomputes from a committed-event set that no
+  // longer includes the excluded id (H1) — needed for a pre-retirement or
+  // boundary-spanning excluded event to actually leave the compounding balance.
+  const committedEvents = stripExcluded(simInputs.moneyEvents);
+  const scenarioAccum   = scenarioEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge);
+  const needsResim = scenarioRetAge !== safeRetAge || scenarioAccum.length > 0 || excludeEventId != null;
+
+  let resimRaw = null;
+  if (needsResim) {
     try {
-      // Keep permanent accumulation-phase plan events in the re-sim (BUG-34):
-      // only events at/after the scenario retirement age move to the walk below.
-      const accumEvents = (simInputs.moneyEvents ?? []).filter(ev => ev.age < scenarioRetAge);
-      const raw    = runSimulation({ ...simInputs, moneyEvents: accumEvents });
-      const retIdx = scenarioRetAge - simInputs.currentAge - 1;
-      const at     = raw[retIdx];
-      if (!at) return null;
-      // BUG-35: gross basis (no 401k haircut) — consistent with baseTotalAtRet.
-      startBal = (at.tradGross ?? 0)
-        + (at["Roth IRA"] ?? 0) + (at["Taxable"] ?? 0) + (at["HSA"] ?? 0);
+      // Keep permanent accumulation-phase plan events in the re-sim (BUG-34).
+      // Kind-aware filter (money-events.js): a duration event spanning the
+      // boundary stays in — the sim result is read at the retirement-age row,
+      // so only its months up to that row land in the starting balance; the
+      // walk below applies the later months (it starts one year after).
+      const accumEvents = [
+        ...committedEvents.filter(ev => eventFirstAge(ev) <= scenarioRetAge),
+        ...scenarioAccum,
+      ];
+      // Mirror App.jsx's simData wrapper: buildAccumChart's sumAccountRow reads
+      // the "Trad 401k" key (added after runSimulation from tradGross), which
+      // the raw simulation rows don't carry — without this, a re-sim's
+      // accumulation chart would silently drop the 401k balance (BUG-35 display key).
+      resimRaw = runSimulation({ ...simInputs, moneyEvents: accumEvents })
+        .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     } catch {
       return null;
     }
   }
+  const resimAt = needsResim ? resimRaw[scenarioRetAge - simInputs.currentAge - 1] : null;
+  if (needsResim && !resimAt) return null;
 
-  const endAge = Math.max(safeLifeExp, scenarioRetAge + 5);
   // Permanent plan events + this scenario's own events (same merge the chart
   // always used — see the fixed Batch-A incident in docs/ROADMAP.md). When the
   // scenario retires EARLIER than the base plan, permanent events between the
   // two retirement ages move from the accumulation phase into the walk
   // (retDrawShared.moneyEvents was filtered at the BASE retirement age).
+  // Kind-aware gap filter: an event whose LAST active year falls in the gap moves
+  // to the walk; one that also spans past the base retirement age is already in
+  // retDrawShared.moneyEvents (filtered by eventLastAge in App.jsx) and must not
+  // be duplicated here.
   const gapEvents = scenarioRetAge < safeRetAge
-    ? (simInputs.moneyEvents ?? []).filter(ev => ev.age >= scenarioRetAge && ev.age < safeRetAge)
+    ? committedEvents.filter(ev =>
+        eventLastAge(ev) >= scenarioRetAge && eventLastAge(ev) < safeRetAge)
     : [];
-  const mergedEvents = [...(retDrawShared.moneyEvents ?? []), ...gapEvents, ...scenarioEvents];
+  const mergedEvents = [...stripExcluded(retDrawShared.moneyEvents), ...gapEvents, ...scenarioEvents];
 
+  // ── Primary path: the per-account engine (BUG-35/BUG-31) ──────────────────
+  if (retPhaseBase) {
+    const seeds = needsResim
+      ? {
+          tradGross: (resimAt.tradGross ?? 0) + (addlPreTaxBal ?? 0),
+          roth:      resimAt["Roth IRA"] ?? 0,
+          taxable:   resimAt["Taxable"]  ?? 0,
+          hsa:       resimAt["HSA"]      ?? 0,
+        }
+      : {
+          tradGross: retPhaseBase.tradGross ?? 0,
+          roth:      retPhaseBase.roth ?? 0,
+          taxable:   retPhaseBase.taxable ?? 0,
+          hsa:       retPhaseBase.hsa ?? 0,
+        };
+
+    // Accumulation-phase portion of the chart: reuse the main chart's rows
+    // (no re-sim) or rebuild them from the scenario's own re-sim with the SAME
+    // helper App.jsx uses (buildAccumChart) — one source, no re-derivation.
+    const accumChartRows = needsResim
+      ? buildAccumChart({
+          simData: resimRaw, safeRetAge: scenarioRetAge, currentAge: simInputs.currentAge,
+          bal401k: simInputs.bal401k, balRoth: simInputs.balRoth,
+          balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
+        })
+      : (baseChart ?? []).filter(r => r.age <= scenarioRetAge);
+
+    // lifeExp mirrors App's own safeLifeExp guard (≥ startAge + 1); longevityHorizon
+    // is the far cap for yearsSustained — buildRetirementPhase computes BOTH from
+    // ONE walk (it runs to longevityHorizon, then truncates rows to lifeExp for
+    // display), so a single call covers both the chart and the headline longevity.
+    const lifeExp = Math.max(safeLifeExp, scenarioRetAge + 1);
+
+    let rp;
+    try {
+      rp = buildRetirementPhase({
+        ...retPhaseBase,
+        tradGross: seeds.tradGross, roth: seeds.roth, taxable: seeds.taxable, hsa: seeds.hsa,
+        startAge: scenarioRetAge,
+        lifeExp,
+        longevityHorizon: scenarioRetAge + 130,
+        effectiveExpenses: scenarioExpenses,
+        // The conversion schedule stays at ABSOLUTE ages even when the retirement
+        // age shifts — the same approximation the blended walk already made with
+        // its per-age tax maps (rmdTaxByAge/conversionTaxByAge above); a schedule
+        // that re-anchors to the new retirement age is a documented follow-up,
+        // not a regression introduced here.
+        conversionByAge: conversionByAge ?? {},
+        moneyEvents: mergedEvents,
+      });
+    } catch {
+      return null;
+    }
+
+    const walkRows = rp.rows ?? [];
+    const scenarioTotalAtRet = seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa;
+    const chart = [...accumChartRows, ...walkRows.map(r => ({ age: r.age, total: r.total }))];
+
+    // Balance at safeLifeExp (the field keeps its historical "90" name — see
+    // the fallback branch below for the same fix's rationale: a hardcoded 90
+    // here would be apples-to-oranges against baseTotalAtRet's balAt90
+    // whenever lifeExpect != 90). null means "the walk never reaches
+    // safeLifeExp" (not applicable, NOT zero); a genuine depletion at/before
+    // safeLifeExp is a real 0.
+    let scenarioBalAt90;
+    if (rp.depletionAge != null && rp.depletionAge <= safeLifeExp) {
+      scenarioBalAt90 = 0;
+    } else {
+      const row90 = walkRows.find(r => r.age === safeLifeExp);
+      scenarioBalAt90 = row90 ? row90.total : null;
+    }
+
+    const scenarioYears = rp.yearsSustained;
+    const deltaYears = deltaYearsFrom(scenarioYears, baseYearsSustained);
+
+    return {
+      chart,
+      scenarioRetAge,
+      scenarioTotalAtRet,
+      scenarioExpenses,
+      scenarioYears,
+      deltaYears,
+      scenarioBalAt90,
+      // M2: the engine's own depletion age (rp.depletionAge) — exact, not a
+      // round(retAge + yearsSustained) derivation, which lands one year early
+      // whenever the failure year is < 50% funded (yearsSustained's fractional
+      // part < 0.5 rounds DOWN past a depletion that already happened).
+      scenarioDepletionAge: rp.depletionAge ?? null,
+    };
+  }
+
+  // ── Fallback: the older blended-pool walk (buildRetirementDrawdown). App.jsx
+  // always supplies retPhaseBase, so this branch does not run in production —
+  // kept for any caller/test that hasn't been migrated to the engine bundle.
+  let startBal = baseTotalAtRet ?? 0;
+  if (needsResim) {
+    // BUG-35: gross basis (no 401k haircut) — consistent with baseTotalAtRet.
+    // addlPreTaxBal added back for the same reason as the primary (engine)
+    // path above and calcWhatIfDelta's resim — baseTotalAtRet already
+    // includes it, so a resim that omits it is a basis mismatch.
+    startBal = (resimAt.tradGross ?? 0)
+      + (resimAt["Roth IRA"] ?? 0) + (resimAt["Taxable"] ?? 0) + (resimAt["HSA"] ?? 0)
+      + (addlPreTaxBal ?? 0);
+  }
+
+  const endAge = Math.max(safeLifeExp, scenarioRetAge + 5);
   let lifeWalk, farWalk;
   try {
     // Chart walk to life expectancy — what the arc renders.
@@ -270,13 +471,7 @@ export function calcWhatIfScenario({
   }
 
   const scenarioYears = farWalk.yearsSustained;
-  const deltaYears = (scenarioYears === Infinity && baseYearsSustained === Infinity)
-    ? 0
-    : scenarioYears === Infinity
-      ? Infinity
-      : baseYearsSustained === Infinity
-        ? -Infinity
-        : scenarioYears - baseYearsSustained;
+  const deltaYears = deltaYearsFrom(scenarioYears, baseYearsSustained);
 
   return {
     chart,
@@ -286,6 +481,11 @@ export function calcWhatIfScenario({
     scenarioYears,
     deltaYears,
     scenarioBalAt90,
+    // Fallback path only (dead in production — App.jsx always supplies
+    // retPhaseBase, see the M1 engine branch above): use the walk's own exact
+    // depletion age rather than the local round(retAge + yearsSustained)
+    // derivation, which can land one year early (same fix as the M1 branch's
+    // rp.depletionAge, applied here for consistency).
     scenarioDepletionAge: farWalk.depletionAge,
   };
 }
@@ -302,19 +502,155 @@ export function calcWhatIfChart(bundle, overrides = {}) {
   return scenario ? scenario.chart : [];
 }
 
+// ── evaluateLifeEvent ────────────────────────────────────────────────────────
+// The model behind the Horizon life-event sheet (sheet-first placement flow):
+// ONE candidate event → a plain-language verdict plus concrete impact deltas,
+// all computed HERE so the sheet renders and formats only (rule 10).
+//
+// Both runs are calcWhatIfScenario (baseline = no overrides, scenario = the
+// candidate event), so the verdict, the deltas, and any arc overlay drawn from
+// scenario.chart come from the SAME walk and can never disagree (V1/principle 7).
+//
+// Verdict (thresholds in ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS):
+//   "unaffordable" — with the event, the portfolio depletes before the plan age
+//   "tight"        — sustains to plan age with less than the buffer to spare
+//   "comfortable"  — sustains at least buffer years past plan age (or forever)
+//
+// Returns null when inputs are invalid; otherwise:
+//   {
+//     verdict,               // "comfortable" | "tight" | "unaffordable"
+//     grossCost,             // total $ of the event itself (duration: monthly × months)
+//     netTotal,              // signed net portfolio impact across all event years
+//     chart,                 // scenario arc series (same run as the verdict)
+//     atRetirement: { age, base, scenario, deltaAbs, dir },
+//         // portfolio at the retirement age; dir "down" | "up" | null (no change —
+//         // e.g. a post-retirement event never moves this number)
+//     atPlanAge: { age, base, scenario, deltaAbs, dir },
+//         // balance at the plan (life-expectancy) age from the walk rows;
+//         // base/scenario are null when the walk doesn't reach that age —
+//         // "not applicable", NOT zero (screens render "—")
+//     sustainability: {
+//       baseYears, scenarioYears,          // years sustained; Infinity = never depletes
+//       baseDepletionAge, scenarioDepletionAge,  // null = never depletes
+//       marginYears,                       // scenarioYears − plan horizon (Infinity ok)
+//       stillSustainable,                  // scenario sustains to the plan age
+//       newlyDepletes, depletionMoved,     // display flags (rule 10 — no comparisons in JSX)
+//     },
+//   }
+export function evaluateLifeEvent(bundle, event) {
+  if (!event) return null;
+  // H1: when editing a committed event (event.id set — LifeEventSheet's edit
+  // mode), the bundle's committed-event lists already bake the ORIGINAL event
+  // into every walk. Pricing the (possibly edited) candidate on top of that via
+  // scenarioEvents alone would count it twice (an unchanged edit of a $40k trip
+  // showed ≈ −$59k instead of "no change"). Only the SCENARIO run excludes the
+  // original and re-adds the candidate in its place; the BASE run stays the
+  // plan exactly as currently committed, so an edit that changes nothing
+  // reproduces the base run (small resim-vs-direct rounding noise is expected
+  // and tolerated by callers). New (unsaved) events carry no id, so this is a
+  // no-op for the add-new-event flow — unchanged from before.
+  const excludeEventId = event.id ?? null;
+  const base = calcWhatIfScenario(bundle, {});
+  const scen = calcWhatIfScenario(bundle, {
+    ...(excludeEventId != null ? { excludeEventId } : {}),
+    scenarioEvents: [event],
+  });
+  if (!base || !scen) return null;
+
+  const { safeRetAge, safeLifeExp } = bundle;
+
+  const balAt = (run, age) => {
+    const row = (run.chart ?? []).find(r => r.age === age);
+    return row ? row.total : null;
+  };
+  const dirOf = (delta) =>
+    Math.round(delta) < 0 ? "down" : Math.round(delta) > 0 ? "up" : null;
+
+  const retBase = base.scenarioTotalAtRet;
+  const retScen = scen.scenarioTotalAtRet;
+  const planBase = balAt(base, safeLifeExp);
+  const planScen = balAt(scen, safeLifeExp);
+
+  const planHorizon = safeLifeExp - safeRetAge;
+  const marginYears = scen.scenarioYears === Infinity
+    ? Infinity
+    : scen.scenarioYears - planHorizon;
+  const verdict = verdictForMargin(marginYears);
+
+  const walkDepletion = (run) => {
+    if (run.scenarioYears === Infinity) return null;
+    // M2: prefer the engine's own scenarioDepletionAge (exact) over the
+    // round(retAge + yearsSustained) derivation, which can land one year early.
+    return run.scenarioDepletionAge ?? Math.round(run.scenarioRetAge + run.scenarioYears);
+  };
+
+  return {
+    verdict,
+    grossCost: Math.round(eventGrossCost(event)),
+    netTotal:  Math.round(eventNetTotal(event)),
+    chart: scen.chart,
+    atRetirement: {
+      age: safeRetAge,
+      base: retBase,
+      scenario: retScen,
+      deltaAbs: Math.abs(Math.round(retScen - retBase)),
+      dir: dirOf(retScen - retBase),
+    },
+    atPlanAge: {
+      age: safeLifeExp,
+      base: planBase,
+      scenario: planScen,
+      deltaAbs: (planBase != null && planScen != null)
+        ? Math.abs(Math.round(planScen - planBase))
+        : null,
+      dir: (planBase != null && planScen != null) ? dirOf(planScen - planBase) : null,
+    },
+    sustainability: (() => {
+      const baseDepletionAge     = walkDepletion(base);
+      const scenarioDepletionAge = walkDepletion(scen);
+      return {
+        baseYears: base.scenarioYears,
+        scenarioYears: scen.scenarioYears,
+        baseDepletionAge,
+        scenarioDepletionAge,
+        marginYears,
+        stillSustainable: marginYears >= 0,
+        // Pre-computed display flags so screens never compare model values (rule 10):
+        // the event newly introduced a depletion / moved an existing depletion age.
+        newlyDepletes: scenarioDepletionAge != null && baseDepletionAge == null,
+        depletionMoved: scenarioDepletionAge != null && baseDepletionAge != null
+          && baseDepletionAge !== scenarioDepletionAge,
+      };
+    })(),
+  };
+}
+
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
 // Binary search for the largest one-time outflow at `purchaseAge` such that
 // the portfolio still sustains to `targetLifeExpectancy`.
+//
+// Takes the SAME bundle shape as calcWhatIfScenario (the `whatIfBundle` shape
+// documented above it) rather than the older calcWhatIfDelta arg shape — this
+// is the "must precede any solver UI" fix (fix-pass-2, 2026-07-11): everything
+// visible on the Ideas/Plan arc already walks retirement with the per-account
+// engine (buildRetirementPhase) via calcWhatIfScenario; a future affordability
+// solver built on the OLD blended calcWhatIfDelta walk would silently contradict
+// what the arc shows for the same candidate purchase. The probe below is exactly
+// evaluateLifeEvent's pattern — one candidate one-time outflow via
+// `scenarioEvents`, sustainability read off `scenarioYears` — so a solver and
+// the life-event sheet can never disagree about whether an amount is affordable.
+//
 // Returns { maxAmount, deltaYears, canAfford } for the affordable amount.
-export function calcAffordabilityMax({
+// `deltaYears` is calcWhatIfScenario's own `deltaYears` for the final
+// candidate (±Infinity handled there), not a locally recomputed value.
+export function calcAffordabilityMax(bundle, {
   purchaseAge,
   targetLifeExpectancy,
   step = ASSUMPTIONS.AFFORDABILITY_STEP,
   maxSearch = ASSUMPTIONS.AFFORDABILITY_MAX_SEARCH,
-  // all other args forwarded to calcWhatIfDelta
-  ...deltaArgs
-}) {
-  const { safeRetAge } = deltaArgs;
+} = {}) {
+  if (!bundle) return { maxAmount: 0, deltaYears: 0, canAfford: false };
+  const { safeRetAge } = bundle;
   const targetYears = targetLifeExpectancy - safeRetAge;
 
   // Guard degenerate inputs: a non-positive step would loop forever in the
@@ -324,12 +660,14 @@ export function calcAffordabilityMax({
     return { maxAmount: 0, deltaYears: 0, canAfford: false };
   }
 
+  const runScenario = (amount) => calcWhatIfScenario(bundle, {
+    scenarioEvents: [{ label: "Affordability check", amount, age: purchaseAge, isInflow: false, isTaxable: false }],
+  });
+
   const isSustainable = (amount) => {
-    const result = calcWhatIfDelta({
-      ...deltaArgs,
-      moneyEvents: [{ label: "Affordability check", amount, age: purchaseAge, isInflow: false, isTaxable: false }],
-    });
-    const years = result.scenarioYears === Infinity ? targetYears + 1 : result.scenarioYears;
+    const scenario = runScenario(amount);
+    if (!scenario) return false;
+    const years = scenario.scenarioYears === Infinity ? targetYears + 1 : scenario.scenarioYears;
     return years >= targetYears;
   };
 
@@ -345,14 +683,265 @@ export function calcAffordabilityMax({
     else hi = mid - step;
   }
 
-  const finalResult = calcWhatIfDelta({
-    ...deltaArgs,
-    moneyEvents: [{ label: "Affordability max", amount: lo, age: purchaseAge, isInflow: false, isTaxable: false }],
-  });
+  const finalScenario = runScenario(lo);
 
   return {
     maxAmount: lo,
-    deltaYears: finalResult.deltaYears,
+    deltaYears: finalScenario ? finalScenario.deltaYears : 0,
     canAfford: lo > 0,
   };
+}
+
+// Balance at a given age from a chart series ([{age, total}]). Shared by
+// buildLeverPreview below (mirrors evaluateLifeEvent's local `balAt`).
+function balAtAge(chart, age) {
+  const row = (chart ?? []).find(r => r.age === age);
+  return row ? row.total : null;
+}
+
+// Depletion age implied by a years-sustained figure measured from `retAge`.
+// Infinity years → null (never depletes — "not applicable", not a real age);
+// mirrors evaluateLifeEvent's walkDepletion.
+function depletionAgeFrom(years, retAge) {
+  return years === Infinity ? null : Math.round(retAge + years);
+}
+
+// ── LEVERS ───────────────────────────────────────────────────────────────────
+// Per-lever knowledge shared by buildLeverPreview's `changed` computation and
+// buildLeverRail's lever whitelist + override construction (#123 readiness,
+// fix pass 2) — lifted verbatim from the branching each function already did,
+// not new behavior:
+//   overrideKey  — the calcWhatIfScenario override field this lever writes.
+//                  Identical to the lever's own key today, but kept explicit
+//                  rather than assumed: #123's future lever will NOT share its
+//                  name with its override key (see the reserved note below).
+//   round        — buildLeverRail's per-step value rounding (retirementAge:
+//                  whole years; monthlyExpenses: cents) — was a ternary on
+//                  `lever === "retirementAge"` inline in that function.
+//   toComparable — normalizes a raw lever value into the SAME units as
+//                  baseValue(bundle), for buildLeverPreview's `changed` check.
+//                  retirementAge needs no conversion; monthlyExpenses is
+//                  annualized (× ASSUMPTIONS.MONTHS_PER_YEAR) to compare
+//                  against the annual `effectiveExpenses` baseline — mirrors
+//                  what calcWhatIfScenario itself does with the override.
+//   baseValue    — reads the current/committed value off the bundle to diff
+//                  the candidate against (safeRetAge;
+//                  retDrawShared.effectiveExpenses).
+//
+// RESERVED (future #123): an `annualSavings` lever — override key
+// `annualContributions` — unit is ANNUAL dollars (the owner's unit decision;
+// NOT monthly, unlike the spend lever). See the matching savingsMin/savingsMax
+// reservation note in App.jsx's sliderBounds memo. Not added as a table entry
+// until #123 actually threads a savings override through calcWhatIfScenario —
+// an empty reservation entry here would be dead code no caller exercises.
+export const LEVERS = {
+  retirementAge: {
+    overrideKey: "retirementAge",
+    round: v => Math.round(v),
+    toComparable: v => v,
+    baseValue: bundle => bundle.safeRetAge,
+  },
+  monthlyExpenses: {
+    overrideKey: "monthlyExpenses",
+    round: v => Math.round(v * 100) / 100,
+    toComparable: v => v * ASSUMPTIONS.MONTHS_PER_YEAR,
+    baseValue: bundle => bundle.retDrawShared.effectiveExpenses,
+  },
+};
+
+// ── buildLeverPreview ────────────────────────────────────────────────────────
+// The model behind the Plan screen's "Try a change" panel: ONE candidate
+// override (a new retirement age and/or a new monthly spend) → the dashed
+// overlay chart AND the three headline preview metrics, all from the SAME
+// calcWhatIfScenario run (so the panel's numbers and its chart overlay can
+// never disagree — V1/principle 7). Metrics are built with buildPreviewMetric
+// (apply-preview.js, WI-3.9) — the ONE dir/tone/formatting implementation —
+// never hand-rolled here (rule 10).
+//
+// bundle: the `whatIfBundle` shape documented above calcWhatIfScenario.
+// overrides: { retirementAge, monthlyExpenses, scenarioEvents } — any subset.
+//   Omitted fields simply aren't overridden (calcWhatIfScenario semantics).
+//   scenarioEvents (M1) — one-time/duration events for this preview only (e.g.
+//   an Ideas scenario card's lump-sum trip) — passed straight through to
+//   calcWhatIfScenario so the preview and the eventual moneyEvents commit can
+//   never disagree about what "applying this scenario" means.
+//
+// Returns null when the bundle is invalid (calcWhatIfScenario itself returns
+// null); otherwise:
+//   {
+//     changed,        // true when a provided override actually differs from
+//                     // the base (retirementAge vs bundle.safeRetAge, the
+//                     // annualized monthly value vs bundle.retDrawShared.effectiveExpenses,
+//                     // or a non-empty scenarioEvents list)
+//     chart,          // the scenario's full lifetime series (for the dashed overlay)
+//     metrics,        // [portfolio-at-retirement, longevity, balance-at-plan-age]
+//                     // — buildPreviewMetric rows, ready to render verbatim
+//     verdict,        // "comfortable" | "tight" | "unaffordable" — from the
+//                     // scenario's own retirement age (a retire-later override
+//                     // shifts the plan horizon, not just the balance)
+//     scenarioStats,  // { scenarioRetAge, scenarioExpenses, scenarioTotalAtRet,
+//                     //   scenarioYears, scenarioBalAt90 } — passthrough scalars
+//   }
+export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses, scenarioEvents = [] } = {}) {
+  if (!bundle) return null;
+
+  const overrides = {};
+  if (retirementAge != null) overrides[LEVERS.retirementAge.overrideKey] = retirementAge;
+  if (monthlyExpenses != null) overrides[LEVERS.monthlyExpenses.overrideKey] = monthlyExpenses;
+  if (scenarioEvents.length > 0) overrides.scenarioEvents = scenarioEvents;
+
+  const scenario = calcWhatIfScenario(bundle, overrides);
+  if (!scenario) return null;
+
+  const {
+    safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, baseChart,
+    baseDepletionAge,
+  } = bundle;
+
+  // LEVERS table (below): toComparable normalizes each lever's raw preview
+  // value into the same units as baseValue(bundle) before comparing — identity
+  // for retirementAge, annualized for monthlyExpenses (mirrors what
+  // calcWhatIfScenario itself does with the override).
+  const changedRetAge = retirementAge != null
+    && LEVERS.retirementAge.toComparable(retirementAge) !== LEVERS.retirementAge.baseValue(bundle);
+  const changedExpenses = monthlyExpenses != null
+    && LEVERS.monthlyExpenses.toComparable(monthlyExpenses) !== LEVERS.monthlyExpenses.baseValue(bundle);
+  const changed = changedRetAge || changedExpenses || scenarioEvents.length > 0;
+
+  const metrics = [
+    buildPreviewMetric({
+      id: "totalAtRet", label: "Portfolio at retirement",
+      before: baseTotalAtRet, after: scenario.scenarioTotalAtRet, betterDir: "up",
+    }),
+    buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity",
+      // M2: prefer the bundle/scenario's own engine-derived depletion age over
+      // the round(retAge + years) derivation (which can land one year early).
+      before: { years: baseYearsSustained, depletionAge: baseDepletionAge ?? depletionAgeFrom(baseYearsSustained, safeRetAge) },
+      after: { years: scenario.scenarioYears, depletionAge: scenario.scenarioDepletionAge ?? depletionAgeFrom(scenario.scenarioYears, scenario.scenarioRetAge) },
+      betterDir: "up",
+    }),
+    buildPreviewMetric({
+      id: "balAtPlanAge", label: `Balance at ${safeLifeExp}`,
+      before: balAtAge(baseChart, safeLifeExp), after: balAtAge(scenario.chart, safeLifeExp), betterDir: "up",
+    }),
+  ];
+
+  const planHorizon = safeLifeExp - scenario.scenarioRetAge;
+  const marginYears = scenario.scenarioYears === Infinity
+    ? Infinity
+    : scenario.scenarioYears - planHorizon;
+  const verdict = verdictForMargin(marginYears);
+
+  return {
+    changed,
+    chart: scenario.chart,
+    metrics,
+    verdict,
+    scenarioStats: {
+      scenarioRetAge: scenario.scenarioRetAge,
+      scenarioExpenses: scenario.scenarioExpenses,
+      scenarioTotalAtRet: scenario.scenarioTotalAtRet,
+      scenarioYears: scenario.scenarioYears,
+      scenarioBalAt90: scenario.scenarioBalAt90,
+    },
+  };
+}
+
+// Entries cap shared by buildLeverRail and buildDurationRail — a slider tick
+// rail with more than this many points has no visual value and would just be
+// extra model runs; both coarsen their step to fit rather than truncate the
+// range (so the rail still spans min..max / the full duration).
+const RAIL_MAX_ENTRIES = 80;
+
+// ── buildLeverRail ───────────────────────────────────────────────────────────
+// A verdict at every step of a lever's range, for the colored tick rail under
+// a Plan/Ideas slider (e.g. "which retirement ages are still comfortable").
+// One calcWhatIfScenario run per step — never a special-cased walk (BUG-31
+// rule; the model is 1-2ms/run so this is cheap even at the entry cap).
+//
+// lever: a key in the LEVERS table (today: "retirementAge" | "monthlyExpenses")
+// — which override each step sets. Guards (invalid bundle, min > max,
+// step <= 0, unrecognized lever) return [].
+//
+// Returns [{ value, verdict }] — verdict is per-step, using THAT step's own
+// scenario retirement age for the plan horizon (so a retirementAge rail's
+// verdict reflects retiring at that step's age, not the current plan's).
+export function buildLeverRail(bundle, { lever, min, max, step } = {}) {
+  if (!bundle) return [];
+  const leverDef = LEVERS[lever];
+  if (!leverDef) return [];
+  if (!(min <= max) || !(step > 0)) return [];
+
+  const rawCount = Math.floor((max - min) / step + 1e-9) + 1;
+  const count = Math.min(rawCount, RAIL_MAX_ENTRIES);
+  // Coarsen the step to fit the cap while still spanning min..max exactly.
+  const effStep = count === rawCount ? step : (max - min) / (count - 1);
+
+  const { safeLifeExp } = bundle;
+  const rail = [];
+  for (let i = 0; i < count; i++) {
+    const raw = min + i * effStep;
+    const value = leverDef.round(raw);
+    const overrides = { [leverDef.overrideKey]: value };
+    const scenario = calcWhatIfScenario(bundle, overrides);
+    if (!scenario) continue;
+    const planHorizon = safeLifeExp - scenario.scenarioRetAge;
+    const marginYears = scenario.scenarioYears === Infinity
+      ? Infinity
+      : scenario.scenarioYears - planHorizon;
+    rail.push({ value, verdict: verdictForMargin(marginYears) });
+  }
+  return rail;
+}
+
+// ── buildDurationRail ────────────────────────────────────────────────────────
+// A verdict at every duration step for the LifeEventSheet's "how many months"
+// slider — lets the sheet show a tick rail alongside the live verdict card.
+// One calcWhatIfScenario run per step (scenarioEvents: [candidate]); the plan
+// horizon is the CURRENT plan's (safeLifeExp − safeRetAge — the event never
+// moves the retirement age), matching evaluateLifeEvent's own margin formula
+// exactly so a rail entry and evaluateLifeEvent's verdict for the same months
+// can never disagree.
+//
+// eventBase: the candidate event's fields minus durationMonths (must carry
+//   monthlyAmount/age/isInflow — the same shape evaluateLifeEvent takes for a
+//   duration event); durationMonths is set per-step here. When eventBase.id
+//   matches a COMMITTED event (edit mode), that id is excluded from every
+//   step's run — mirroring evaluateLifeEvent's own excludeEventId use — so an
+//   edited event's rail can't price the original alongside the edited
+//   candidate (the same double-count H1 fixed for the verdict card).
+// Guards (invalid bundle, missing eventBase, maxMonths <= 0, step <= 0)
+// return [].
+//
+// Returns [{ months, verdict }] for months = step, 2*step, … up to maxMonths
+// (coarsened to fit the RAIL_MAX_ENTRIES cap, same as buildLeverRail).
+export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {}) {
+  if (!bundle || !eventBase) return [];
+  if (!(maxMonths > 0) || !(step > 0)) return [];
+
+  const rawCount = Math.floor(maxMonths / step + 1e-9);
+  if (rawCount <= 0) return [];
+  const count = Math.min(rawCount, RAIL_MAX_ENTRIES);
+  // Coarsen the step to fit the cap while still spanning up to maxMonths.
+  const effStep = count === rawCount ? step : maxMonths / count;
+
+  const { safeRetAge, safeLifeExp } = bundle;
+  const planHorizon = safeLifeExp - safeRetAge;
+
+  const rail = [];
+  for (let i = 1; i <= count; i++) {
+    const months = Math.round(i * effStep);
+    const candidate = { ...eventBase, durationMonths: months };
+    const scenario = calcWhatIfScenario(bundle, {
+      scenarioEvents: [candidate],
+      ...(eventBase.id != null ? { excludeEventId: eventBase.id } : {}),
+    });
+    if (!scenario) continue;
+    const marginYears = scenario.scenarioYears === Infinity
+      ? Infinity
+      : scenario.scenarioYears - planHorizon;
+    rail.push({ months, verdict: verdictForMargin(marginYears) });
+  }
+  return rail;
 }

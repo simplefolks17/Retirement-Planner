@@ -1,17 +1,29 @@
-// ── PlanScreen — QuickTunePanel tests ─────────────────────────────────────────
+// ── PlanScreen — Command Center + "Try a change" panel ────────────────────────
 //
-// Tests the Plan screen's new Quick Tune interactive panel:
-//   1. Panel renders (smoke).
-//   2. All core sliders present with aria-label attributes.
-//   3. Each slider fires its setter when changed.
-//   4. Reset button absent when committedPlan is null.
-//   5. Reset button present when committedPlan exists and values differ.
-//   6. Conditional sliders: spouse SS only when isMarried; Roth only when conversionWindowYrs > 0.
+// Tests the Plan screen's preview-first lever panel (2026-07-11 redesign):
+//   1. Command-Center survivors: PortfolioHero (value + multiplier, no delta
+//      badge), IncomeMeter, stat cards + subtitles.
+//   2. TryAChangePanel renders both sliders with aria-labels + a tick rail.
+//   3. Dragging a slider shows a live delta chip + Apply/Discard, and the
+//      dashed scenario overlay reaches ArcGraph.
+//   4. Discard clears the preview back to idle.
+//   5. Apply opens ApplyPreviewModal; confirming fires applyPlanLevers with
+//      the dragged value(s) and returns the panel to idle.
+//   6. The idle footer's "More in Ideas →" button navigates.
+//
+// whatIfSimInputs is a REAL what-if bundle (mirrors the life-event-sheet.test.js
+// fixture) so buildLeverPreview/buildLeverRail run the actual model — the panel
+// is never tested against a mocked preview result.
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
 import PlanScreen from "../screens/PlanScreen.jsx";
+import { runSimulation } from "../../model/simulation.js";
+import { buildRetirementDrawdown } from "../../model/retirement-drawdown.js";
+import { buildRetirementPhase } from "../../model/retirement-phase.js";
+import { buildAccumChart } from "../../model/accumulation.js";
+import { calcEmployerMatch } from "../../model/employer-match.js";
 
 beforeAll(() => {
   if (typeof globalThis.window === "undefined") {
@@ -37,573 +49,243 @@ const t = {
   faint: "#b0a99e", accent: "#7c4a2e", good: "#2d7a4f", warm: "#c05f1e",
 };
 
-// ── Stable no-op setters (spies) ──────────────────────────────────────────────
+// ── Real what-if bundle (mirrors life-event-sheet.test.js) ────────────────────
+const em = (s, c) => calcEmployerMatch(s, c, {
+  matchMode: "flat", matchFormulaCap: 6, matchFormulaRate: 50, employerMatchPct: 3,
+});
+const safeRetAge = 65, safeLifeExp = 90, currentAge = 30;
+const rReal = (1 + 5 / 100) / (1 + 4 / 100) - 1;
+const simInputs = {
+  totalYears: safeLifeExp - currentAge, currentAge,
+  currentIncome: 100_000, incomeGrowth: 3,
+  filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 3, returnRate: 5,
+  bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
+  contrib401k: 10_000, contribRoth: 7_000, contribTaxable: 4_000, contribHSA: 3_850,
+  contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+  calcEmployerMatchFn: em, moneyEvents: [],
+};
+const _at = runSimulation(simInputs)[safeRetAge - currentAge - 1];
+const baseTotalAtRet = (_at.tradGross ?? 0) + _at["Roth IRA"] + _at["Taxable"] + _at["HSA"];
+const retDrawShared = {
+  rReal, effectiveExpenses: 75_000,
+  ssAmount: 30_000, ssClaimAge: 67,
+  pensionAmount: 0, pensionStartAge: Infinity,
+  rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [],
+};
+const { yearsSustained: baseYearsSustained } = buildRetirementDrawdown({
+  ...retDrawShared, startBal: baseTotalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130,
+});
+const retPhaseBase = {
+  tradGross: 0, roth: 0, taxable: baseTotalAtRet, hsa: 0,
+  startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+  rReal, effectiveExpenses: retDrawShared.effectiveExpenses,
+  ssGross: retDrawShared.ssAmount, ssTaxable: retDrawShared.ssAmount,
+  ssClaimAge: retDrawShared.ssClaimAge,
+  pension: retDrawShared.pensionAmount, pensionStartAge: retDrawShared.pensionStartAge,
+  filingStatus: "single", retStateRate: 0,
+  rmdStartAge: Infinity, useTable2: false, spouseCurrentAge: null, currentAge,
+  moneyEvents: retDrawShared.moneyEvents ?? [],
+};
+const _simWithTrad = runSimulation(simInputs)
+  .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+const _accumChart = buildAccumChart({
+  simData: _simWithTrad, safeRetAge, currentAge,
+  bal401k: simInputs.bal401k, balRoth: simInputs.balRoth,
+  balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
+});
+const _retPhase = buildRetirementPhase({ ...retPhaseBase, conversionByAge: {} });
+const baseChart = [
+  ..._accumChart,
+  ..._retPhase.rows.map(r => ({ age: r.age, total: r.total })),
+];
+const whatIfBundle = {
+  simInputs, fedMarginal: 0.22, retDrawShared,
+  safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained,
+  retPhaseBase, conversionByAge: {}, baseChart, addlPreTaxBal: 0,
+};
+
+// ── Mock props (real model bundle + plain display scalars) ────────────────────
 const makeMockProps = (overrides = {}) => ({
-  // Core display values
-  chartData:        [{ age: 35, total: 165_000 }, { age: 65, total: 3_950_000 }],
-  currentAge:       35,
-  retirementAge:    65,
-  lifeExpect:       90,
-  totalAtRet:       3_950_000,
-  isSustainable:    true,
-  takeHome:         6_000,
-  effectiveExpenses: 4_787,
-  annualExpenses:   57_444,
-  balAt90:          4_000_000,
-  contribSeries:    [],
-  activity:         "golf course",
-  moneyEvents:      [],
-  retirementWalk:   { rows: [] },
+  chartData:         baseChart,
+  currentAge,
+  retirementAge:     safeRetAge,
+  lifeExpect:        safeLifeExp,
+  totalAtRet:        baseTotalAtRet,
+  isSustainable:     true,
+  takeHome:          6_000,
+  effectiveExpenses: retDrawShared.effectiveExpenses,
+  balAt90:           1_000_000,
+  contribSeries:     [],
+  activity:          "golf course",
   planView: {
     progressPct: 100,
-    drivers: [
-      { id: "withdrawal", ok: true, withdrawalRatePct: 1.42, guidelinePct: 4 },
-      { id: "longevity",  ok: null, sustainedYears: null, horizonYears: 55 },
-      { id: "savings",    ok: true, savingsRatePct: 17, guidelinePct: 15 },
-    ],
+    drivers: [{ id: "withdrawal", ok: true }],
   },
-  signals: [],
-  // Quick Tune raw values
-  returnRate:          5,
-  inflationRate:       4,
-  incomeGrowth:        3,
-  contrib401k:         10_000,
-  ssClaimingAge:       67,
-  spouseClaimingAge:   67,
-  annualConversionAmt: 20_000,
-  trad401kMax:         24_500,
-  isMarried:           false,
-  conversionWindowYrs: 0,
-  committedPlan:       null,
-  // Setters (spies)
-  setRetirementAge:          vi.fn(),
-  setAnnualExpenses:         vi.fn(),
-  setLifeExpect:             vi.fn(),
-  setContrib401k:            vi.fn(),
-  setIncomeGrowth:           vi.fn(),
-  setReturnRate:             vi.fn(),
-  setInflationRate:          vi.fn(),
-  setSsClaimingAge:          vi.fn(),
-  setSpouseClaimingAge:      vi.fn(),
-  setAnnualConversionAmt:    vi.fn(),
-  // Coupled callbacks passed from App.jsx (rule 10 + invariant-preserving)
-  setRetirementAgeCoupled:   vi.fn(),
-  setMonthlySpend:           vi.fn(),
-  setConversionMode:         vi.fn(),
-  // Pre-computed monthly spend (rule 10: no division in PlanScreen)
-  monthlySpend:              Math.round(57_444 / 12),
-  // Pre-computed slider bounds (rule 10: no bounds math in PlanScreen)
-  sliderBounds: {
-    retireMin: 36, retireMax: 80,
-    spendMin: 500, spendMax: 30_000,
-    horizonMin: 70, horizonMax: 115,
-    contribMax: 24_500, rothMax: 200_000,
-    canTuneRothConversion: false,
-  },
-  commitPlan:                vi.fn(),
-  planCommit: {
-    available: true,
-    preview: {
-      title: "Save this as your plan?",
-      action: "Retire at 65 · $4,787/mo spend",
-      confirmLabel: "Save plan",
-      metrics: [
-        { id: "totalAtRet", label: "Nest egg at retirement",
-          before: "—", after: "$3.95M", delta: { dir: "up", label: "+$3.95M", tone: "good" } },
-      ],
-      note: null,
-      verdict: null,
+  signals:           [],
+  moneyEvents:       [],
+  retirementWalk:    { rows: _retPhase.rows },
+  planHighlights: {
+    wealthMultiplier: 14.2,
+    incomeReplacementPct: 82,
+    retIncomeFlow: {
+      ss: 25_200, pension: 0, portfolioDraw: 44_664,
+      hasSS: true, hasPension: false,
+      ssPct: 36, pensionPct: 0, portfolioPct: 64,
     },
-    apply: vi.fn(),
+    lifetimeTaxBurden: 207_557,
+    yearsToRetirement: 14,
+    retirementDuration: 25,
   },
+  statementView:     { keepPct: 52 },
+  whatIfSimInputs:   whatIfBundle,
+  monthlySpend:      Math.round(retDrawShared.effectiveExpenses / 12),
+  sliderBounds: {
+    retireMin: 60, retireMax: 75,
+    spendMin: 2_000, spendMax: 10_000,
+  },
+  applyPlanLevers:   vi.fn(),
+  saveEvent:         vi.fn(),
+  removeEvent:       vi.fn(),
+  lifeEventBounds:   { minAge: currentAge + 1, maxAge: safeLifeExp, retirementAge: safeRetAge },
   ...overrides,
 });
 
-// Collect all text from a react-test-renderer tree.
+// ── Tree helpers ────────────────────────────────────────────────────────────
 function textOf(node) {
+  if (node == null) return "";
   if (typeof node === "string") return node;
   return (node.children ?? []).map(textOf).join("");
 }
+const allText = (root) => textOf({ children: [root] });
+const rangeInputs = (root) => root.findAll(n => n.type === "input" && n.props?.type === "range");
+const buttonsByText = (root, label) =>
+  root.findAll(n => n.type === "button" && textOf({ children: n.children }) === label);
+const dashedPaths = (root) =>
+  root.findAll(n => n.type === "path" && n.props?.strokeDasharray === "8 5");
+const tickDivs = (root) =>
+  root.findAll(n => n.type === "div" && n.props?.style?.borderRadius === 2);
 
-// Find all nodes matching a predicate in the tree.
-function findAll(node, pred, results = []) {
-  if (!node || typeof node === "string") return results;
-  if (pred(node)) results.push(node);
-  (node.children ?? []).forEach(c => findAll(c, pred, results));
-  return results;
-}
-
-// Find all range inputs.
-function rangeInputs(root) {
-  return findAll(root, n => n.type === "input" && n.props?.type === "range");
-}
-
-// Click the first clickable node (onClick handler) whose text matches exactly.
-function clickByText(root, label) {
-  const target = root.findAll(
-    n => typeof n.props?.onClick === "function" && textOf(n) === label
-  )[0];
-  expect(target, `clickable element "${label}" not found`).toBeTruthy();
-  act(() => { target.props.onClick(); });
+function mount(overrides = {}) {
+  const props = makeMockProps(overrides);
+  let renderer;
+  act(() => {
+    renderer = create(
+      React.createElement(PlanScreen, { t, props, navigate: vi.fn(), isMobile: false }),
+    );
+  });
+  return { renderer, props };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("PlanScreen — QuickTunePanel smoke", () => {
-  it("renders without crashing", () => {
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(renderer.toJSON()).toBeTruthy();
+describe("PlanScreen — command center survivors", () => {
+  it("renders portfolio hero with totalAtRet and wealth multiplier, no delta badge", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    expect(text).toContain("Portfolio at retirement");
+    expect(text).toContain("grows 14.2× from today");
+    expect(text).not.toContain("vs saved plan");
     act(() => renderer.unmount());
   });
 
-  it("renders the 'Tune your plan' section header", () => {
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root).toLowerCase()).toContain("tune your plan");
+  it("renders income replacement meter", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    expect(text).toContain("Retirement income");
+    expect(text).toContain("82% of current income");
+    expect(text).toContain("Soc. Security");
+    act(() => renderer.unmount());
+  });
+
+  it("renders stat cards with subtitles", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    expect(text).toContain("52% of income");
+    expect(text).toContain("in 14 yrs");
+    expect(text).toContain("82% replaced");
+    expect(text).toContain("after 25 yrs");
+    expect(text).toContain("Retirement taxes");
     act(() => renderer.unmount());
   });
 });
 
-describe("PlanScreen — pill rail renders all core sliders", () => {
-  const CORE_PILLS = ["Retire at", "Monthly spend", "Plan to age", "401k savings",
-                      "Income growth", "Growth rate", "Inflation", "SS age"];
-
-  it("all 8 core pill labels are present", () => {
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    for (const pill of CORE_PILLS) {
-      expect(allText).toContain(pill);
-    }
-    act(() => renderer.unmount());
-  });
-
-  it("active slider has aria-label attribute", () => {
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
+describe("PlanScreen — Try a change panel", () => {
+  it("renders both sliders with aria-labels and a non-empty tick rail, idle by default", () => {
+    const { renderer } = mount();
     const inputs = rangeInputs(renderer.root);
-    expect(inputs.length).toBeGreaterThan(0);
-    // The active slider must have an aria-label set to the slider headline
-    expect(inputs[0].props["aria-label"]).toBeTruthy();
+    const labels = inputs.map(n => n.props["aria-label"]);
+    expect(labels).toContain("Retire at");
+    expect(labels).toContain("Monthly spend");
+    expect(tickDivs(renderer.root).length).toBeGreaterThan(0);
+    // Idle: no dashed overlay, no Apply/Discard, the "More in Ideas" link shows.
+    expect(dashedPaths(renderer.root).length).toBe(0);
+    expect(allText(renderer.root)).toContain("More in Ideas");
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
     act(() => renderer.unmount());
   });
-});
 
-describe("PlanScreen — slider onChange fires the correct setter", () => {
-  it("changing the active (retire) slider calls setRetirementAgeCoupled", () => {
+  it("dragging the retire slider shows a delta chip + Apply/Discard, and a dashed overlay reaches ArcGraph", () => {
+    const { renderer } = mount();
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
+
+    const text = allText(renderer.root);
+    expect(text).toContain("Portfolio lasts"); // a buildPreviewMetric row label
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBeGreaterThan(0);
+    expect(buttonsByText(renderer.root, "Discard").length).toBe(1);
+    expect(dashedPaths(renderer.root).length).toBeGreaterThan(0);
+    act(() => renderer.unmount());
+  });
+
+  it("Discard clears the preview back to idle", () => {
+    const { renderer } = mount();
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
+    expect(buttonsByText(renderer.root, "Discard").length).toBe(1);
+
+    act(() => { buttonsByText(renderer.root, "Discard")[0].props.onClick(); });
+
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
+    expect(dashedPaths(renderer.root).length).toBe(0);
+    expect(allText(renderer.root)).toContain("More in Ideas");
+    act(() => renderer.unmount());
+  });
+
+  it("Apply opens ApplyPreviewModal; confirming fires applyPlanLevers and returns to idle", () => {
+    const { renderer, props } = mount();
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
+
+    // First "Apply changes" click opens the modal (the panel's own inline button).
+    act(() => { buttonsByText(renderer.root, "Apply changes")[0].props.onClick(); });
+    expect(allText(renderer.root)).toContain("Apply these changes?");
+
+    // Confirm inside the modal (the LAST "Apply changes"-labeled button once open).
+    const applyBtns = buttonsByText(renderer.root, "Apply changes");
+    expect(applyBtns.length).toBeGreaterThan(1);
+    act(() => { applyBtns[applyBtns.length - 1].props.onClick(); });
+
+    expect(props.applyPlanLevers).toHaveBeenCalledTimes(1);
+    expect(props.applyPlanLevers).toHaveBeenCalledWith({ retirementAge: safeRetAge - 2 });
+
+    // Back to idle: offsets cleared, modal closed.
+    expect(allText(renderer.root)).not.toContain("Apply these changes?");
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
+    act(() => renderer.unmount());
+  });
+
+  it("the idle footer's 'More in Ideas' button navigates to Ideas/dials", () => {
+    const navigate = vi.fn();
     const props = makeMockProps();
     let renderer;
     act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
+      renderer = create(React.createElement(PlanScreen, { t, props, navigate, isMobile: false }));
     });
-    const inputs = rangeInputs(renderer.root);
-    act(() => {
-      inputs[0].props.onChange({ target: { value: "62" } });
-    });
-    expect(props.setRetirementAgeCoupled).toHaveBeenCalledWith(62);
-    act(() => renderer.unmount());
-  });
-});
+    const link = buttonsByText(renderer.root, "More in Ideas →");
+    expect(link.length).toBe(1);
+    act(() => { link[0].props.onClick(); });
+    expect(navigate).toHaveBeenCalledWith("ideas", "dials");
 
-describe("PlanScreen — Reset button visibility", () => {
-  it("Reset button is absent when committedPlan is null", () => {
-    const props = makeMockProps({ committedPlan: null });
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root)).not.toContain("Reset");
-    act(() => renderer.unmount());
-  });
-
-  it("Reset button is absent when committed values match current values", () => {
-    const props = makeMockProps({
-      committedPlan: {
-        retirementAge: 65, annualExpenses: 57_444, lifeExpect: 90,
-        returnRate: 5, inflationRate: 4, incomeGrowth: 3, contrib401k: 10_000,
-        ssClaimingAge: 67, spouseClaimingAge: 67, annualConversionAmt: 20_000,
-      },
-    });
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root)).not.toContain("Reset");
-    act(() => renderer.unmount());
-  });
-
-  it("Reset button is present when a slider value differs from the snapshot", () => {
-    const props = makeMockProps({
-      retirementAge: 62,   // changed from snapshot's 65
-      committedPlan: {
-        retirementAge: 65, annualExpenses: 57_444, lifeExpect: 90,
-        returnRate: 5, inflationRate: 4, incomeGrowth: 3, contrib401k: 10_000,
-        ssClaimingAge: 67, spouseClaimingAge: 67, annualConversionAmt: 20_000,
-      },
-    });
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root)).toContain("Reset");
-    act(() => renderer.unmount());
-  });
-});
-
-describe("PlanScreen — Save as my plan (Apply-with-preview, WI-3.9)", () => {
-  it("opens ApplyPreviewModal sourced from planCommit.preview", () => {
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    clickByText(renderer.root, "Save as my plan");
-    const allText = textOf(renderer.root);
-    expect(allText).toContain(props.planCommit.preview.title);
-    expect(allText).toContain(props.planCommit.preview.action);
-    expect(allText).toContain("Nest egg at retirement");
-    act(() => renderer.unmount());
-  });
-
-  it("Cancel closes the modal without calling planCommit.apply", () => {
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    clickByText(renderer.root, "Save as my plan");
-    clickByText(renderer.root, "Cancel");
-    expect(props.planCommit.apply).not.toHaveBeenCalled();
-    expect(textOf(renderer.root)).not.toContain(props.planCommit.preview.title);
-    act(() => renderer.unmount());
-  });
-
-  it("Confirm calls planCommit.apply() and shows the saved state", () => {
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    clickByText(renderer.root, "Save as my plan");
-    clickByText(renderer.root, "Save plan");
-    expect(props.planCommit.apply).toHaveBeenCalledTimes(1);
-    expect(textOf(renderer.root)).toContain("✓ Plan saved");
-    act(() => renderer.unmount());
-  });
-});
-
-describe("PlanScreen — conditional sliders", () => {
-  it("Spouse SS pill is absent when isMarried = false", () => {
-    const props = makeMockProps({ isMarried: false });
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root)).not.toContain("Spouse SS");
-    act(() => renderer.unmount());
-  });
-
-  it("Spouse SS pill is present when isMarried = true", () => {
-    const props = makeMockProps({ isMarried: true });
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root)).toContain("Spouse SS");
-    act(() => renderer.unmount());
-  });
-
-  it("Roth conv. pill is absent when conversionWindowYrs = 0", () => {
-    const props = makeMockProps({ conversionWindowYrs: 0 });
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root)).not.toContain("Roth conv.");
-    act(() => renderer.unmount());
-  });
-
-  it("Roth conv. pill is present when conversionWindowYrs > 0", () => {
-    const props = makeMockProps({
-      conversionWindowYrs: 7,
-      sliderBounds: {
-        retireMin: 36, retireMax: 80,
-        spendMin: 500, spendMax: 30_000,
-        horizonMin: 70, horizonMax: 115,
-        contribMax: 24_500, rothMax: 200_000,
-        canTuneRothConversion: true,
-      },
-    });
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    expect(textOf(renderer.root)).toContain("Roth conv.");
-    act(() => renderer.unmount());
-  });
-});
-
-describe("plan screen wow additions", () => {
-  const wowProps = {
-    chartData:        [{ age: 35, total: 165_000 }, { age: 65, total: 3_950_000 }],
-    currentAge:       35,
-    retirementAge:    65,
-    lifeExpect:       90,
-    totalAtRet:       3_950_000,
-    isSustainable:    true,
-    takeHome:         6_000,
-    effectiveExpenses: 4_787,
-    annualExpenses:   57_444,
-    balAt90:          4_000_000,
-    contribSeries:    [],
-    activity:         "golf course",
-    moneyEvents:      [],
-    retirementWalk:   { rows: [] },
-    planView: {
-      progressPct: 100,
-      drivers: [
-        { id: "withdrawal", ok: true, withdrawalRatePct: 1.42, guidelinePct: 4 },
-        { id: "longevity",  ok: null, sustainedYears: null, horizonYears: 55 },
-        { id: "savings",    ok: true, savingsRatePct: 17, guidelinePct: 15 },
-      ],
-    },
-    signals: [],
-    returnRate:          5,
-    inflationRate:       4,
-    incomeGrowth:        3,
-    contrib401k:         10_000,
-    ssClaimingAge:       67,
-    spouseClaimingAge:   67,
-    annualConversionAmt: 20_000,
-    trad401kMax:         24_500,
-    isMarried:           false,
-    conversionWindowYrs: 0,
-    committedPlan:       null,
-    setRetirementAge:          vi.fn(),
-    setAnnualExpenses:         vi.fn(),
-    setLifeExpect:             vi.fn(),
-    setContrib401k:            vi.fn(),
-    setIncomeGrowth:           vi.fn(),
-    setReturnRate:             vi.fn(),
-    setInflationRate:          vi.fn(),
-    setSsClaimingAge:          vi.fn(),
-    setSpouseClaimingAge:      vi.fn(),
-    setAnnualConversionAmt:    vi.fn(),
-    setRetirementAgeCoupled:   vi.fn(),
-    setMonthlySpend:           vi.fn(),
-    setConversionMode:         vi.fn(),
-    monthlySpend:              Math.round(57_444 / 12),
-    sliderBounds: {
-      retireMin: 36, retireMax: 80,
-      spendMin: 500, spendMax: 30_000,
-      horizonMin: 70, horizonMax: 115,
-      contribMax: 24_500, rothMax: 200_000,
-      canTuneRothConversion: false,
-    },
-    commitPlan:             vi.fn(),
-    planCommit: {
-      available: true,
-      preview: {
-        title: "Save this as your plan?",
-        action: "Retire at 65 · $4,787/mo spend",
-        confirmLabel: "Save plan",
-        metrics: [
-          { id: "totalAtRet", label: "Nest egg at retirement",
-            before: "—", after: "$3.95M", delta: { dir: "up", label: "+$3.95M", tone: "good" } },
-        ],
-        note: null,
-        verdict: null,
-      },
-      apply: vi.fn(),
-    },
-    planHighlights: {
-      wealthMultiplier: 14.2,
-      incomeReplacementPct: 82,
-      retIncomeFlow: {
-        ss: 25_200,
-        pension: 0,
-        portfolioDraw: 44_664,
-        hasSS: true,
-        hasPension: false,
-        ssPct: 36,
-        pensionPct: 0,
-        portfolioPct: 64,
-      },
-      lifetimeTaxBurden: 207_557,
-      yearsToRetirement: 14,
-      retirementDuration: 25,
-    },
-    planDelta: null,
-    statementView: { keepPct: 52 },
-  };
-
-  it("renders portfolio hero with totalAtRet", () => {
-    const props = wowProps;
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("Portfolio at retirement");
-    expect(allText).toContain("$4.0M");
-    act(() => renderer.unmount());
-  });
-
-  it("renders wealth multiplier when wealthMultiplier is non-null", () => {
-    const props = wowProps;
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("grows 14.2× from today");
-    act(() => renderer.unmount());
-  });
-
-  it("renders income replacement percent", () => {
-    const props = wowProps;
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("Retirement income");
-    expect(allText).toContain("82% of current income");
-    act(() => renderer.unmount());
-  });
-
-  it("renders SS bar in income meter when ss > 0", () => {
-    const props = wowProps;
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("Soc. Security");
-    expect(allText).toContain("2,100/mo");
-    act(() => renderer.unmount());
-  });
-
-  it("renders retirement taxes stat card", () => {
-    const props = wowProps;
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("Retirement taxes");
-    expect(allText).toContain("$208k");
-    expect(allText).toContain("RMDs + conversions");
-    act(() => renderer.unmount());
-  });
-
-  it("renders stat card subtitles (sub prop)", () => {
-    const props = wowProps;
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("52% of income");
-    expect(allText).toContain("in 14 yrs");
-    expect(allText).toContain("82% replaced");
-    expect(allText).toContain("after 25 yrs");
-    act(() => renderer.unmount());
-  });
-
-  it("delta badge absent when planDelta is null", () => {
-    const props = wowProps;
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).not.toContain("vs saved plan");
-    act(() => renderer.unmount());
-  });
-
-  it("delta badge shows increase when planDelta.badge.dir is 'up' and isDirty", () => {
-    const props = {
-      ...wowProps,
-      retirementAge: 62,  // differs from committedPlan.retirementAge → isDirty = true
-      committedPlan: {
-        retirementAge: 65, annualExpenses: 57_444, lifeExpect: 90,
-        returnRate: 5, inflationRate: 4, incomeGrowth: 3, contrib401k: 10_000,
-        ssClaimingAge: 67, spouseClaimingAge: 67, annualConversionAmt: 20_000,
-      },
-      planDelta: {
-        atRet: 125_000,
-        yearsSustained: 2,
-        badge: { dir: "up", atRetAbs: 125_000, yearsGain: 2 },
-      },
-    };
-    let renderer;
-    act(() => {
-      renderer = create(
-        React.createElement(PlanScreen, { t, props, navigate: () => {}, isMobile: false }),
-      );
-    });
-    const allText = textOf(renderer.root);
-    expect(allText).toContain("vs saved plan");
-    expect(allText).toContain("$125k");
-    expect(allText).toContain("+2 yrs");
     act(() => renderer.unmount());
   });
 });

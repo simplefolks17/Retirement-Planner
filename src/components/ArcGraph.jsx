@@ -16,9 +16,12 @@
 //   glow (bool), strokeWidth (number), activeView, onViewChange, showToggle,
 //   compact (bool — fewer pills/ticks for small viewports),
 //   scenarioData [{age,total}] (optional dotted overlay on the arc view),
-//   events [{age,label,isInflow}] (optional, WI-1.3/#90) — committed
-//     moneyEvents shown as dots on the arc; inflow = good token, outflow = warm.
-//     events=[] renders pixel-identical to no prop (no extra chrome).
+//   events [{age,label,isInflow,icon?}] (optional, WI-1.3/#90 upgraded) —
+//     committed moneyEvents shown as icon badges with a stem down to the curve;
+//     inflow = good token, outflow = warm. events=[] renders pixel-identical to
+//     no prop (no extra chrome).
+//   onEventTap (fn(ev), optional) — badge tap handler; Plan/Ideas open the
+//     life-event edit sheet. Badge taps stopPropagation so they never scrub.
 
 import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
@@ -97,6 +100,30 @@ function totalAtAge(chartData, age) {
   }
   if (age < chartData[0].age) return chartData[0].total;
   return chartData[chartData.length - 1].total;
+}
+
+// ── Scenario overlay trimming (Plan "Try a change", 2026-07-11) ────────────────
+// A scenario series (from calcWhatIfScenario) is a FULL lifetime walk that
+// coincides with the solid chartData line right up until the change actually
+// bites (e.g. a retire-later override doesn't move the balance until the new
+// retirement age). Retracing the dashed line from the very start would just
+// draw a second line on top of the first one — so this drops LEADING points
+// whose total matches chartData's total at the same age within $1, keeping the
+// LAST matching point so the dashed line starts exactly ON the solid line at
+// the divergence age. Pure layout trimming (no model math): if every point
+// matches, the caller's own `sPts.length >= 2` guard renders nothing.
+function trimScenarioOverlay(scenarioData, mainData) {
+  if (!scenarioData?.length) return scenarioData ?? [];
+  let cut = 0;
+  for (let i = 0; i < scenarioData.length; i++) {
+    const d = scenarioData[i];
+    if (Math.abs(d.total - totalAtAge(mainData, d.age)) <= 1) {
+      cut = i;
+    } else {
+      break;
+    }
+  }
+  return scenarioData.slice(cut);
 }
 
 // ── Scrub lookup (WI-2.7) ─────────────────────────────────────────────────────
@@ -597,6 +624,7 @@ export default function ArcGraph({
   showToggle = true,
   compact = false,
   scenarioData = null,
+  onEventTap = null,
 }) {
   // Per-instance id so multiple ArcGraphs on one page don't share SVG gradient/
   // filter ids (which would cross-wire their fills). Combined with activeView below.
@@ -721,7 +749,7 @@ export default function ArcGraph({
             <BandSvg t={t} chartData={validData} currentAge={currentAge} retirementAge={retirementAge} s={s} vmax={vmax} />
           )}
           {activeView === "arc" && scenarioData?.length >= 2 && (() => {
-            const sPts = scenarioData
+            const sPts = trimScenarioOverlay(scenarioData, chartData)
               .filter(d => d.age >= ageMin && d.age <= ageMax)
               .map(d => [s.xOf(d.age), +s.yOf(Math.max(0, Math.min(d.total, vmax * 1.02))).toFixed(1)]);
             return sPts.length >= 2 ? (
@@ -729,21 +757,46 @@ export default function ArcGraph({
                 strokeDasharray="8 5" opacity="0.85" vectorEffect="non-scaling-stroke" />
             ) : null;
           })()}
-          {/* WI-1.3 (#90): money-event markers — small dot on the arc at each
-              committed event age. Inflow = good token (green), outflow = warm
-              (amber). A <title> child provides hover text. events=[] → nothing
-              rendered (pixel-identical to today — no prop needed). */}
+          {/* WI-1.3 (#90), upgraded (life-event placement): committed moneyEvents
+              render as icon badges pinned to the curve with a stem — the video-
+              inspired treatment. Inflow = good token, outflow = warm. Tapping a
+              badge fires onEventTap(ev) (Plan/Ideas open the edit sheet); the
+              pointerDown stops propagation so a badge tap never scrubs.
+              events=[] → nothing rendered (pixel-identical to no prop). */}
           {activeView === "arc" && events.map((ev, evIdx) => {
             const cx = s.xOf(ev.age);
             const cy = s.yOf(totalAtAge(validData, ev.age));
             if (cx < s.pad.l || cx > VW - s.pad.r) return null;
             const color = ev.isInflow ? t.good : t.warm;
+            // Badge floats above the curve; clamped so it never leaves the plot.
+            const by = Math.max(s.top + 16, cy - 36);
             return (
-              <g key={`ev-${evIdx}-${ev.age}-${ev.label}`}>
-                <circle cx={cx} cy={cy} r="5" fill={color} stroke={t.surf} strokeWidth="1.5"
-                  opacity="0.9" vectorEffect="non-scaling-stroke">
+              <g key={`ev-${evIdx}-${ev.age}-${ev.label}`}
+                onClick={() => onEventTap?.(ev)}
+                onPointerDown={(e) => { if (onEventTap) e.stopPropagation(); }}
+                tabIndex={onEventTap ? 0 : undefined}
+                role={onEventTap ? "button" : undefined}
+                aria-label={onEventTap ? `${ev.label}, age ${ev.age} — edit` : undefined}
+                onKeyDown={onEventTap ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    if (e.key === " ") e.preventDefault();
+                    onEventTap(ev);
+                  }
+                } : undefined}
+                style={{ cursor: onEventTap ? "pointer" : "default" }}>
+                <line x1={cx} x2={cx} y1={cy - 4} y2={by + 13}
+                  stroke={color} strokeWidth="1.2" opacity="0.55"
+                  vectorEffect="non-scaling-stroke" />
+                <circle cx={cx} cy={cy} r="3.5" fill={color} stroke={t.surf}
+                  strokeWidth="1.5" opacity="0.9" vectorEffect="non-scaling-stroke" />
+                <circle cx={cx} cy={by} r="13" fill={t.surf} stroke={color}
+                  strokeWidth="2" vectorEffect="non-scaling-stroke">
                   <title>{ev.label} · age {ev.age}</title>
                 </circle>
+                <text x={cx} y={by} textAnchor="middle" dominantBaseline="central"
+                  fontSize="13" style={{ userSelect: "none", pointerEvents: "none" }}>
+                  {ev.icon ?? (ev.isInflow ? "＋" : "－")}
+                </text>
               </g>
             );
           })}

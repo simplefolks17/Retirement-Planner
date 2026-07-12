@@ -1,4 +1,5 @@
 import { ASSUMPTIONS } from "../config/irs-2026.js";
+import { eventNetForYear } from "./money-events.js";
 
 // ── Single source of truth for the retirement-phase portfolio walk ──────────
 //
@@ -37,7 +38,7 @@ export function buildRetirementDrawdown({
   pensionStartAge = Infinity,
   rmdTaxByAge = {},         // { [age]: tax }  — 0 where absent
   conversionTaxByAge = {},  // { [age]: tax }  — 0 where absent
-  moneyEvents = [],         // { amount, age, isInflow } — applied at matching age after draw
+  moneyEvents = [],         // one-time or duration events (see money-events.js) — applied per active year after draw
 }) {
   const rows = [];
   let bal = startBal;
@@ -52,9 +53,10 @@ export function buildRetirementDrawdown({
     const tax         = (rmdTaxByAge[age] ?? 0) + (conversionTaxByAge[age] ?? 0);
     const growth      = balStart * rReal;
     const afterGrowth = balStart + growth;          // balStart*(1+rReal)
-    // One-time events (windfalls, large purchases) applied after normal recurrence.
-    const eventAdj    = moneyEvents.reduce((s, ev) =>
-      ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
+    // Money events (windfalls, purchases, duration events like a travel year)
+    // applied after normal recurrence. eventNetForYear is the ONE per-year source
+    // (it splits duration events across their active years).
+    const eventAdj    = moneyEvents.reduce((s, ev) => s + eventNetForYear(ev, age), 0);
     const balEnd      = afterGrowth - draw - tax + eventAdj;
 
     rows.push({

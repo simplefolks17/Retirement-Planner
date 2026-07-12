@@ -344,23 +344,12 @@ Tests: `src/horizon/__tests__/strategies-screen.test.js` (per-flow render + the 
 Apply/Revert smoke — modal open/cancel/confirm-once, Revert visibility gated on `applied`);
 `horizon-props-stability.test.js` auto-covers stability.
 
-### `horizonProps.eventsView` / `affordView` (WI-3.8 / #105) — Ideas' events editor + affordability solver
+### `horizonProps.affordView` (WI-3.8 / #105) — Ideas' "Solvers" affordability mode
 
-**Added 2026-07-09.**
+**Added 2026-07-09; merged into the Scenarios-retirement change (2026-07-12) as an
+independent, non-overlapping addition** — see the dated note in `docs/BUGS.md` BUG-44
+addendum and `CLAUDE.md`'s status entry for that day.
 
-- **`eventsView`** — the **wrapped write surface** for `moneyEvents` (per the
-  gating-composition rule below: "no bundle exposes a raw setter"). Shape: `{ rows, add,
-  atMax, count, maxEvents, hasEvents, netImpactLabel }`. Each `rows[]` entry is
-  `{ id, labelField, amountField, ageField, directionField, taxableField, showTaxable,
-  remove }` — all `{value,set,...}` field objects except `remove` (a list-mutation
-  callback), mirroring `conversionView.events`'s row-object precedent. `add(overrides = {})`
-  merges over a default blank-event shape (so a caller can pass a full preset, e.g. Ideas'
-  life-event pills, or nothing for a blank new row). **This bundle REPLACES the raw
-  `setMoneyEvents` that was previously exposed directly on `horizonProps`** — `moneyEvents`
-  itself stays exposed read-only (the arc dots, WI-1.3, and any other read-only consumer);
-  every *write* now goes through `eventsView`. `MAX_MONEY_EVENTS` is one exported constant
-  (`money-events.js`) shared by this bundle and Classic's `MoneyEventsPanel.jsx` (no
-  duplicate cap to drift).
 - **`affordView`** — defaults/bounds only for the affordability solver:
   `{ defaultPurchaseAge, purchaseAgeField, defaultTargetAge, targetAgeField, step }`. The
   actual `calcAffordabilityMax` call happens **in the screen** (`AffordabilityPanel.jsx`),
@@ -368,12 +357,73 @@ Apply/Revert smoke — modal open/cancel/confirm-once, Revert visibility gated o
   sanctioned in-screen-pure-function-call pattern `IdeasScreen` already used for
   `calcWhatIfScenario` (rule 10 exempts calling a pure model function with model-provided
   inputs; it does not exempt arithmetic/comparisons on the result beyond branching on the
-  model's own output, e.g. `result.canAfford`).
+  model's own output, e.g. `result.canAfford`). `calcAffordabilityMax` takes the SAME
+  `(bundle, options)` shape as `calcWhatIfScenario` (the "must precede any solver UI" fix,
+  2026-07-11) — it is called as `calcAffordabilityMax(whatIfBundle, { purchaseAge,
+  targetLifeExpectancy, step })`, never the older single-object-spread shape.
 
-Tests: `src/horizon/__tests__/ideas-modes.test.js` (events round-trip, `atMax` gating, the
-affordability anti-divergence lock — the panel's displayed max equals a direct
+**WI-3.8 originally shipped `eventsView` alongside `affordView`** — a wrapped raw CRUD
+editor for `moneyEvents` (add/remove rows, edit fields directly), Ideas' "Events" mode at
+the time. It was retired the same day it merged into this branch (2026-07-12): the owner
+had separately rejected the raw-editor / preset-card pattern in favor of the sheet-first
+`LifeEventSheet` flow (`docs/BUGS.md` BUG-44 addendum), which already covers every job
+`eventsView` did — so the two were never both shipped together. `moneyEvents` writes go
+through `saveEvent`/`removeEvent` (see "Other wrapped write surfaces" below), not a
+`eventsView`-shaped bundle.
+
+Tests: `src/horizon/__tests__/ideas-screen.test.js` "Solvers mode" (explainer copy render,
+the affordability anti-divergence lock — the panel's displayed max equals a direct
 `calcAffordabilityMax` call with the same args, so it can't diverge from Classic's
-`WhatIfPanel`); `horizon-props-stability.test.js` auto-covers stability.
+`WhatIfPanel` — and the desktop age-input blur-clamp regression);
+`horizon-props-stability.test.js` auto-covers stability.
+
+---
+
+### Life-event placement (sheet-first flow) — `lifeEventBounds` + `evaluateLifeEvent`
+
+**Added 2026-07-10** (video-inspired arc-event placement). The user picks an event seed
+(Ideas life-event pills), configures it in `src/horizon/LifeEventSheet.jsx` with a **live
+verdict**, and on save it joins committed `moneyEvents` — rendering as a tappable **icon
+badge with a stem** on the Plan/Ideas arcs (`ArcGraph` `events` + `onEventTap` props;
+badge tap re-opens the sheet in edit mode with a Remove action).
+
+- **Model:** `evaluateLifeEvent(whatIfBundle, event)` (`what-if.js`) runs baseline +
+  candidate through `calcWhatIfScenario` (ONE walk each — the verdict and any overlay can
+  never disagree, V1) and returns `verdict` ("comfortable"/"tight"/"unaffordable",
+  threshold `ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS`), cost scalars, `atRetirement` /
+  `atPlanAge` deltas with model-computed `dir` strings, and a `sustainability` block with
+  pre-computed display flags (`newlyDepletes`, `depletionMoved`) — the sheet renders and
+  formats only (rule 10).
+- **Event kinds:** one-time (`amount`) and **duration** (`monthlyAmount` × `durationMonths`
+  from `age`, optional `incomeAnnual` inflow offset) — see `src/model/money-events.js`.
+  `eventNetForYear` is the ONE per-year source consumed by `runSimulation`,
+  `buildRetirementDrawdown`, and the per-account engine; `eventFirstAge`/`eventLastAge`
+  drive every phase filter so boundary-spanning duration events hit each walk's years
+  exactly once (BUG-42).
+- **`horizonProps.lifeEventBounds`** — `{ minAge, maxAge, retirementAge }`, separately
+  memoized (V9): the sheet's age-slider bounds, computed in App.jsx (rule 10 — no age math
+  in the screen). The sheet's model runs use the existing `whatIfSimInputs` bundle.
+
+Tests: `src/horizon/__tests__/life-event-sheet.test.js` (sheet + badges),
+duration/`evaluateLifeEvent` coverage in `money-events.test.js` / `what-if.test.js`.
+
+### Preview-first levers + verdict tick rails (2026-07-11, #122)
+
+Plan's `TryAChangePanel` and Ideas' Dials are **preview-first**: screen-local offsets feed ONE
+`buildLeverPreview(whatIfBundle, { retirementAge, monthlyExpenses })` run (what-if.js) whose
+`chart` is the arc's dashed overlay and whose `metrics` (buildPreviewMetric rows) are the delta
+chip AND the ApplyPreviewModal payload — one run, three surfaces, no divergence. Apply goes
+through the single App write path `applyPlanLevers({ retirementAge, monthlySpend })`
+(coupled setters + `commitPlan`, which now accepts `monthlySpend`; month→year conversion stays
+App-side). `buildLeverRail` / `buildDurationRail` produce `[{ value|months, verdict }]` per
+slider step (verdictForMargin — the same formula as `evaluateLifeEvent`); screens render them
+with the shared `VerdictTickRail` (fields.jsx) mapping verdict strings to tokens only.
+`calcWhatIfScenario` itself walks retirement with `buildRetirementPhase` on the bundle's
+`retPhaseBase`/`conversionByAge` (whatIfBundle also carries `baseChart` + `addlPreTaxBal`),
+locked by the no-op invariant (scenario chart === totalChartData); `ArcGraph.trimScenarioOverlay`
+starts the dashed line at the divergence age. `calcWhatIfDelta`/the optimizer remain on the
+blended walk (BUG-36's narrowed scope); `calcAffordabilityMax` moved onto the engine
+(`calcWhatIfScenario`) in the 2026-07-11 fix pass — see BUG-36's scope note.
 
 ---
 
@@ -386,9 +436,11 @@ payload, and the modal (`src/horizon/ApplyPreviewModal.jsx`) renders it VERBATIM
 arithmetic, no comparisons, not even a sign (rule 10).
 
 **Payload shape** (built by `buildConversionPreview` (WI-3.9), `buildSurplusPreview` (WI-3.7),
-`buildCommitPlanPreview` (WI-3.8 — ONE shared builder for both `planCommit` and
-`buildScenarioCommitSite`, since they show identical metrics and differ only in the
-`action` copy the payload already parameterizes for) — all in `src/model/apply-preview.js`):
+`buildCommitPlanPreview` (WI-3.8 — a shared builder for "save this as your committed plan"
+sites; not currently wired to a screen — its `planCommit`/`buildScenarioCommitSite` call
+sites were part of the QuickTunePanel-era Plan/Ideas UI retired by #122's preview-first
+redesign and the same-day Scenarios removal; kept as a tested, reusable builder for a
+future commit-with-preview site) — all in `src/model/apply-preview.js`):
 
 ```js
 preview = {
@@ -436,21 +488,21 @@ currently covered by `conversion-view-wiring.test.js` + `apply-preview.test.js`)
 | Apply site | Ships | Gate (`available`) | Writes |
 |---|---|---|---|
 | `conversionView.optimizer.applySuggestion` | WI-3.6/3.9 | `isSuggestionApplicable` (healthcare toggle on AND the suggestion differs: \|amount diff\| > $4,999 OR start age differs) | `conversionStartAge`, `conversionMode → "custom"`, `annualConversionAmt` |
+| `applyPlanLevers` (Plan `TryAChangePanel` / Ideas dials) | 2026-07-11 (#122) | `buildLeverPreview(...).changed` truthy | `retirementAge` (coupled setters) and/or `annualExpenses` (via `commitPlan`, month→year done App-side) |
 | `surplusView.applyAllocation` | WI-3.7 | `totalExtra > 0 && preApplySnapshot === null` | `contrib401k/Roth/HSA/Taxable`, `preApplySnapshot` (snapshot on apply); `revert` restores the 4 contribs from the snapshot and nulls it |
-| `horizonProps.planCommit` (Plan screen "Save as my plan") | WI-3.8 | `true` (always allowed) | `currentAge?`, `currentIncome?`, `retirementAge?`, `annualExpenses?`, `committedPlan`, `committedOutputs` (all via `commitPlan`) |
-| `horizonProps.buildScenarioCommitSite(candidateRetirementAge)` (Ideas "make this scenario my plan") | WI-3.8 | `true` (site-builder variant — see below; a future entitlements AND would live inside the builder, not on a static object) | same as `planCommit`, via `commitPlan({retirementAge: candidateRetirementAge})` |
 
-**Site-builder variant (WI-3.8):** `buildScenarioCommitSite` is a **callback that returns a
-site object** rather than a static site object itself — the one documented exception to "a
-site is a plain object." It exists because the candidate (Ideas' selected scenario's
-retirement age) is ephemeral screen state the App memo can't see ahead of time; a static
-object can't parameterize on it. The callback still does all the model work App-side (both
-"current" and "candidate" through the same `calcWhatIfDelta` mechanism, same anti-divergence
-property as every other site), and the screen only calls it — it never builds a preview or
-performs a write itself. Future consumers with the same "candidate varies per screen
-interaction" shape should use this pattern, named as `build<X>Site(...)`, not invent a new
-one; a static object remains the default for any site whose candidate is App-known ahead of
-time (like `surplusView.applyAllocation`).
+**Other wrapped write surfaces (non-`ApplyPreviewModal`, fix-pass-2 / 2026-07-11):** the
+`horizonProps.setMoneyEvents` raw setter was replaced with two list-mutation callbacks — the
+concrete instance of the "list-mutation callback" shape the companion convention above names.
+Neither routes through `ApplyPreviewModal` (no preview needed for an explicit add/edit/delete in
+LifeEventSheet), but both are still wrapped at construction (App.jsx), never a bare setter on the
+props bundle:
+
+| Write surface | Writes | Called by |
+|---|---|---|
+| `saveEvent(ev)` | upsert into `moneyEvents` by `ev.id` (replace if present, else append) | `LifeEventSheet`'s `onSave`, via Plan's arc-badge edit-in-place and Ideas' preset placement / edit / scenario-apply merge |
+| `removeEvent(id)` | filters `moneyEvents` to drop the matching id | `LifeEventSheet`'s `onRemove`, via Plan's + Ideas' edit-in-place "Remove from plan" |
+| `commitPlan({...})` | `retirementAge`, `annualExpenses` (or `monthlySpend`), optionally `currentAge`/`currentIncome`, and snapshots `committedPlan` | onboarding's done screen ("Save as my plan"); internally by `applyPlanLevers` after it writes the coupled setters, so every lever apply also refreshes the `committedPlan` snapshot |
 
 **Gating composition point (for WI-5.2):** all gating composes in the App memo that
 computes `available` — entitlements/`readOnly` flags will be AND-ed into `available` and

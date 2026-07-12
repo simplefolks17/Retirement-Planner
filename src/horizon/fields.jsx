@@ -48,6 +48,29 @@ export function seg(t, on) {
   };
 }
 
+// ── Verdict tick rail ────────────────────────────────────────────────────────
+// Shared by the Plan "Try a change" sliders, the Ideas "Dials" sliders, and the
+// LifeEventSheet duration slider: a row of colored ticks under a range input,
+// one tick per buildLeverRail/buildDurationRail entry. Rule 10: this component
+// maps a verdict STRING (comfortable/tight/unaffordable) to a theme token and
+// nothing else — it never computes or compares dollars; every verdict comes
+// straight from the model (what-if.js).
+export const VERDICT_TINT = { comfortable: "good", tight: "warm", unaffordable: "accent" };
+
+export function VerdictTickRail({ t, rail }) {
+  if (!rail?.length) return null;
+  return (
+    <div style={{ display: "flex", gap: 2, marginTop: 6 }} aria-hidden="true">
+      {rail.map(entry => (
+        <div key={entry.value ?? entry.months} style={{
+          flex: 1, height: 4, borderRadius: 2,
+          background: t[VERDICT_TINT[entry.verdict]] ?? t.line,
+        }} />
+      ))}
+    </div>
+  );
+}
+
 export function StepBtn({ t, children, onClick, disabled, ariaLabel }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled} aria-label={ariaLabel}

@@ -174,6 +174,18 @@ function IncomeWaterfall({ t, view }) {
   );
 }
 
+// The 5 tab ids, exported so consumers that deep-link here (signals.js) — and
+// their tests — have ONE source for "does this tab still exist" rather than a
+// second hardcoded copy that can drift (BUG-43: signals.js targeted a "flow"
+// tab that PR #38 had already removed).
+export const NUMBERS_TABS = [
+  ["statement", "Statement"],
+  ["budget",    "Budget"],
+  ["accounts",  "Accounts"],
+  ["taxes",     "Taxes"],
+  ["yearly",    "Year by year"],
+];
+
 // initialTab (optional, WI-1.1): tab id to land on when another screen
 // deep-links here via navigate("numbers", tabId) — e.g. the Plan stat cards
 // and signals strip. The user's own tab clicks still control the state after
@@ -282,13 +294,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         background: t.line, alignSelf: "flex-start", marginBottom: 12, flexShrink: 0,
         flexWrap: "wrap",
       }}>
-        {[
-          ["statement", "Statement"],
-          ["budget",    "Budget"],
-          ["accounts",  "Accounts"],
-          ["taxes",     "Taxes"],
-          ["yearly",    "Year by year"],
-        ].map(([k, l]) => {
+        {NUMBERS_TABS.map(([k, l]) => {
           const on = tab === k;
           return (
             <button key={k} type="button" aria-pressed={on} onClick={() => setTab(k)} style={{

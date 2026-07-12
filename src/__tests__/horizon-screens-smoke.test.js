@@ -143,15 +143,15 @@ describe("Horizon screens render smoke", () => {
     act(() => renderer.unmount());
   });
 
-  it("Ideas runs the calcWhatIfScenario one-run path when a scenario card is activated", () => {
+  it("Ideas runs the calcWhatIfScenario one-run path when a Dials quick-jump chip is tapped", () => {
     const { renderer, root } = mountApp();
     clickByText(root, "Ideas");
-    clickByText(root, "Horizon suggestions");
-    const scenarioCard = root.findAll(
+    clickByText(root, "Dials");
+    const jumpChip = root.findAll(
       n => typeof n.props?.onClick === "function" && textOf(n).includes("Retire 2 yrs earlier")
     )[0];
-    expect(scenarioCard, "Ideas scenario card not found").toBeTruthy();
-    act(() => { scenarioCard.props.onClick(); });
+    expect(jumpChip, "Ideas Dials quick-jump chip not found").toBeTruthy();
+    act(() => { jumpChip.props.onClick(); });
     expect(renderer.toJSON()).toBeTruthy();
     act(() => renderer.unmount());
   });

@@ -343,15 +343,26 @@ export const ASSUMPTIONS = {
   INCOME_REPLACEMENT_GOOD_PCT: 70,
   INCOME_REPLACEMENT_WARN_PCT: 50,
 
+  // Life-event verdict buffer (evaluateLifeEvent, what-if.js): with the event
+  // applied, the portfolio must outlast the plan age by at least this many years
+  // to read "comfortable"; sustaining to plan age with less margin reads "tight";
+  // depleting before plan age reads "unaffordable". A planning heuristic, not an
+  // IRS rule.
+  EVENT_COMFORT_BUFFER_YEARS: 5,
+
   // calcAffordabilityMax's binary search: dollar granularity of the search
   // and the upper bound it searches up to. Product-level defaults, not IRS
-  // rules — named here so Classic (WhatIfPanel) and the future Horizon
-  // affordability flow are step-identical by construction.
+  // rules — named here so Classic (WhatIfPanel) and Horizon's Solvers panel
+  // are step-identical by construction.
   AFFORDABILITY_STEP:      1_000,
   AFFORDABILITY_MAX_SEARCH: 5_000_000,
 
   // Default "years from today" offset used to seed a one-time purchase's age
-  // in the affordability flow (e.g. "5 years from now"). Not yet consumed —
-  // reserved for the Horizon affordability panel wiring.
+  // in the affordability flow (e.g. "5 years from now").
   AFFORD_DEFAULT_PURCHASE_OFFSET_YRS: 5,
+
+  // Max number of one-time/duration events a user can add in the Money Events
+  // panel (Classic) / LifeEventSheet (Horizon) — a product-level UI cap, not
+  // an IRS rule, named here so both surfaces stay identical by construction.
+  MAX_MONEY_EVENTS: 6,
 };

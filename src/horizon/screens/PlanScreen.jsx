@@ -1,8 +1,11 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo, kbActivate } from "../shared.jsx";
-import ApplyPreviewModal from "../ApplyPreviewModal.jsx";
+import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
+import LifeEventSheet from "../LifeEventSheet.jsx";
+import { VerdictTickRail } from "../fields.jsx";
+import { buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
 function SignalsStrip({ t, signals, navigate, isMobile }) {
@@ -66,10 +69,13 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
 }
 
 // ── Portfolio Hero Block ───────────────────────────────────────────────────────
-// Shows the single most emotionally impactful number: total portfolio at retirement,
-// the wealth multiplier, and a live delta badge when sliders have moved from the
-// committed plan.
-function PortfolioHero({ t, totalAtRet, planHighlights, planDelta, isDirty }) {
+// Shows the single most emotionally impactful number: total portfolio at
+// retirement and the wealth multiplier. The live "vs saved plan" delta badge
+// (planDelta) was removed with the Plan "Try a change" redesign (2026-07-11):
+// a preview-first panel with its own delta chip replaced the old always-on
+// QuickTunePanel that mutated real state directly, so there is no longer a
+// meaningful "current sliders vs saved plan" comparison to show here.
+function PortfolioHero({ t, totalAtRet, planHighlights }) {
   const { wealthMultiplier } = planHighlights ?? {};
   return (
     <div style={{
@@ -87,22 +93,6 @@ function PortfolioHero({ t, totalAtRet, planHighlights, planDelta, isDirty }) {
       {wealthMultiplier !== null && wealthMultiplier !== undefined && (
         <div style={{ font: `500 12px ${HF}`, color: t.good, marginTop: 4 }}>
           grows {wealthMultiplier}× from today
-        </div>
-      )}
-      {isDirty && planDelta?.badge && (
-        <div style={{
-          marginTop: 8, padding: "5px 10px",
-          background: planDelta.badge.dir === "up" ? `${t.good}18` : `${t.warm}18`,
-          borderRadius: 8,
-          font: `600 12px ${HF}`,
-          color: planDelta.badge.dir === "up" ? t.good : t.warm,
-        }}>
-          {planDelta.badge.dir === "up" ? "↑" : "↓"} {fmt(planDelta.badge.atRetAbs)} vs saved plan
-          {planDelta.badge.yearsGain != null && (
-            <span style={{ fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>
-              · +{planDelta.badge.yearsGain} yrs
-            </span>
-          )}
         </div>
       )}
     </div>
@@ -183,307 +173,200 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
   );
 }
 
-// ── Quick Tune Panel ───────────────────────────────────────────────────────────
-// One active slider at a time; pill rail lets the user switch which lever is live.
-// Sliders call App.jsx setters directly — the arc re-renders in the same cycle.
-// Rule 10: no math here; all values come from model-provided horizonProps fields.
-function QuickTunePanel({ t, isMobile, props, onDirtyChange }) {
-  const {
-    // Current values (what the sliders display)
-    retirementAge, annualExpenses, lifeExpect,
-    returnRate, inflationRate, incomeGrowth, contrib401k,
-    ssClaimingAge, spouseClaimingAge, annualConversionAmt,
-    currentAge,
-    // Pre-computed display values and slider bounds (rule 10: no bounds math in screens)
-    monthlySpend, sliderBounds,
-    // Conditional flags
-    isMarried,
-    // Setters
-    setAnnualExpenses, setLifeExpect, setContrib401k,
-    setIncomeGrowth, setReturnRate, setInflationRate,
-    setSsClaimingAge, setSpouseClaimingAge, setAnnualConversionAmt,
-    // Coupled callbacks (invariant-preserving + rule 10 write-backs)
-    setRetirementAgeCoupled, setMonthlySpend, setConversionMode,
-    // Save + Reset (WI-3.9: planCommit is the Apply-with-preview site — preview +
-    // apply() come pre-built from App.jsx, this screen never calls commitPlan directly)
-    planCommit, committedPlan,
-  } = props;
+// ── Try a change panel ──────────────────────────────────────────────────────────
+// Preview-first levers (2026-07-11 redesign): dragging a slider NEVER touches
+// real App state — it only moves a local offset, which feeds buildLeverPreview
+// (what-if.js) for a live dashed-overlay + delta chip. Real state changes only
+// when the user explicitly confirms in the ApplyPreviewModal (applyPlanLevers).
+// Rule 10: every verdict/delta/tick color comes straight from the model
+// (buildLeverPreview / buildLeverRail) — the shared VerdictTickRail (fields.jsx)
+// maps a verdict STRING to a theme token and nothing else; it never computes or
+// compares dollars.
 
-  const [activeKey, setActiveKey] = useState("retire");
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [saved, setSaved]           = useState(false);
+function TryAChangePanel({
+  t, isMobile, navigate,
+  retirementAge, monthlySpend, sliderBounds, whatIfSimInputs, applyPlanLevers,
+  // Controlled from PlanScreen (not local state here) so the arc — rendered
+  // ABOVE this panel — reads the exact same offsets/preview and can never
+  // show a different scenario than this panel's own delta chip (V1/principle 7).
+  retireOffset, spendOffset, setRetireOffset, setSpendOffset, preview,
+}) {
+  const [showApply, setShowApply] = useState(false);
 
-  // Build slider definitions — only filtering out conditionally absent ones.
-  const sliders = [
-    {
-      key: "retire",
-      label: "Retire at",
-      headline: "When do you retire?",
-      value: retirementAge,
-      min: sliderBounds.retireMin, max: sliderBounds.retireMax, step: 1,
-      format: v => `age ${v}`,
-      onChange: v => setRetirementAgeCoupled(v),
-    },
-    {
-      key: "spend",
-      label: "Monthly spend",
-      headline: "How much will you spend in retirement?",
-      value: monthlySpend,
-      min: sliderBounds.spendMin, max: sliderBounds.spendMax, step: 100,
-      format: v => `$${v.toLocaleString()}/mo`,
-      onChange: v => setMonthlySpend(v),
-    },
-    {
-      key: "horizon",
-      label: "Plan to age",
-      headline: "How long should your money last?",
-      value: lifeExpect,
-      min: sliderBounds.horizonMin, max: sliderBounds.horizonMax, step: 1,
-      format: v => `age ${v}`,
-      onChange: v => setLifeExpect(v),
-    },
-    {
-      key: "contrib",
-      label: "401k savings",
-      headline: "How much do you save in your 401k each year?",
-      value: contrib401k,
-      min: 0, max: sliderBounds.contribMax, step: 500,
-      format: v => `$${v.toLocaleString()}/yr`,
-      onChange: v => setContrib401k(v),
-    },
-    {
-      key: "growth",
-      label: "Income growth",
-      headline: "How fast does your income grow each year?",
-      value: incomeGrowth,
-      min: 0, max: 10, step: 0.5,
-      format: v => `${v}%/yr`,
-      onChange: v => setIncomeGrowth(v),
-    },
-    {
-      key: "return",
-      label: "Growth rate",
-      headline: "How fast will your investments grow?",
-      value: returnRate,
-      min: 1, max: 12, step: 0.5,
-      format: v => `${v}%/yr`,
-      onChange: v => setReturnRate(v),
-    },
-    {
-      key: "inflation",
-      label: "Inflation",
-      headline: "What inflation rate do you want to plan for?",
-      value: inflationRate,
-      min: 0, max: 6, step: 0.5,
-      format: v => `${v}%/yr`,
-      onChange: v => setInflationRate(v),
-    },
-    {
-      key: "ss",
-      label: "SS age",
-      headline: "When will you claim Social Security?",
-      value: ssClaimingAge,
-      min: sliderBounds.ssMin, max: sliderBounds.ssMax, step: 1,
-      format: v => `age ${v}`,
-      onChange: v => setSsClaimingAge(v),
-    },
-    isMarried && {
-      key: "spouseSS",
-      label: "Spouse SS",
-      headline: "When will your spouse claim Social Security?",
-      value: spouseClaimingAge,
-      min: 62, max: 70, step: 1,
-      format: v => `age ${v}`,
-      onChange: v => setSpouseClaimingAge(v),
-    },
-    sliderBounds.canTuneRothConversion && {
-      key: "roth",
-      label: "Roth conv.",
-      headline: "How much do you convert to Roth each year?",
-      value: annualConversionAmt,
-      min: 0, max: sliderBounds.rothMax, step: 1_000,
-      format: v => `$${v.toLocaleString()}/yr`,
-      // Switch to custom mode so the amount actually takes effect (bracket mode ignores it).
-      onChange: v => { setConversionMode("custom"); setAnnualConversionAmt(v); },
-    },
-  ].filter(Boolean);
+  const draggedAge     = retirementAge + retireOffset;
+  const draggedMonthly = monthlySpend + spendOffset;
 
-  // Guard: if activeKey was for a conditional slider that's now hidden, fall back.
-  const activeSlider = sliders.find(s => s.key === activeKey) ?? sliders[0];
+  const retireRail = useMemo(() => {
+    const { retireMin: min, retireMax: max } = sliderBounds;
+    const step = Math.max(1, Math.ceil((max - min) / 40));
+    return buildLeverRail(whatIfSimInputs, { lever: "retirementAge", min, max, step });
+  }, [whatIfSimInputs, sliderBounds]);
 
-  // isDirty: any slider value differs from the committed snapshot.
-  const isDirty = committedPlan !== null && (
-    retirementAge                                !== committedPlan.retirementAge          ||
-    annualExpenses                               !== committedPlan.annualExpenses         ||
-    lifeExpect             !== committedPlan.lifeExpect             ||
-    returnRate             !== committedPlan.returnRate             ||
-    inflationRate          !== committedPlan.inflationRate          ||
-    incomeGrowth           !== committedPlan.incomeGrowth           ||
-    contrib401k            !== committedPlan.contrib401k            ||
-    ssClaimingAge          !== committedPlan.ssClaimingAge          ||
-    spouseClaimingAge      !== committedPlan.spouseClaimingAge      ||
-    annualConversionAmt    !== committedPlan.annualConversionAmt
-  );
+  const spendRail = useMemo(() => {
+    const { spendMin: min, spendMax: max } = sliderBounds;
+    const step = Math.max(100, Math.ceil((max - min) / 40 / 100) * 100);
+    return buildLeverRail(whatIfSimInputs, { lever: "monthlyExpenses", min, max, step });
+  }, [whatIfSimInputs, sliderBounds]);
 
-  useEffect(() => { onDirtyChange?.(isDirty); }, [isDirty, onDirtyChange]);
+  const discard = () => { setRetireOffset(0); setSpendOffset(0); };
 
-  // Clear the "Plan saved" badge immediately when the user edits a slider after saving.
-  useEffect(() => { if (isDirty) setSaved(false); }, [isDirty]);
+  const applyPayload = (preview?.changed) ? {
+    title: "Apply these changes?",
+    action: `Retire at ${draggedAge} · ${fmt(draggedMonthly)}/mo spend`,
+    confirmLabel: "Apply changes",
+    metrics: preview.metrics,
+    note: "Preview uses the same model as your headline numbers.",
+    verdict: null, // reserved slot (WI-5.4) — not filled by a lever preview
+  } : null;
 
-  // Clear the "Plan saved" checkmark after 2 s; cleanup prevents the fire-on-unmount leak.
-  useEffect(() => {
-    if (!saved) return;
-    const timer = setTimeout(() => setSaved(false), 2000);
-    return () => clearTimeout(timer);
-  }, [saved]);
+  const handleConfirm = () => {
+    applyPlanLevers({
+      ...(retireOffset !== 0 ? { retirementAge: draggedAge } : {}),
+      ...(spendOffset  !== 0 ? { monthlySpend: draggedMonthly } : {}),
+    });
+    discard();
+    setShowApply(false);
+  };
 
-  const handleConfirmSave = useCallback(() => {
-    planCommit.apply();
-    setShowConfirm(false);
-    setSaved(true);
-  }, [planCommit]);
-
-  const handleReset = useCallback(() => {
-    if (!committedPlan) return;
-    setRetirementAgeCoupled(committedPlan.retirementAge);
-    setAnnualExpenses(committedPlan.annualExpenses);
-    setLifeExpect(committedPlan.lifeExpect);
-    setReturnRate(committedPlan.returnRate);
-    setInflationRate(committedPlan.inflationRate);
-    setIncomeGrowth(committedPlan.incomeGrowth);
-    setContrib401k(committedPlan.contrib401k);
-    setSsClaimingAge(committedPlan.ssClaimingAge);
-    setSpouseClaimingAge(committedPlan.spouseClaimingAge);
-    setAnnualConversionAmt(committedPlan.annualConversionAmt);
-  }, [committedPlan, setRetirementAgeCoupled, setAnnualExpenses, setLifeExpect, setReturnRate,
-      setInflationRate, setIncomeGrowth, setContrib401k, setSsClaimingAge,
-      setSpouseClaimingAge, setAnnualConversionAmt]);
-
-  const panelPad = isMobile ? "14px 0 0" : "0";
+  const rowLabel = { display: "flex", justifyContent: "space-between", marginBottom: 6 };
+  const sliderInput = { width: "100%", cursor: "pointer", accentColor: t.accent, height: 6 };
 
   return (
-    <div style={{ padding: panelPad, display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* section header */}
+    <div style={{
+      background: t.surf, borderRadius: 14,
+      border: `1px solid ${t.line}`,
+      padding: "16px 18px",
+      display: "flex", flexDirection: "column", gap: 16,
+    }}>
       <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-        Tune your plan
+        Try a change
       </div>
 
-      {/* pill rail — horizontally scrollable, one pill per slider.
-          Toggle buttons with aria-pressed (matches the Numbers tab strip
-          pattern); not an ARIA tablist since there's no arrow-key tab nav. */}
-      <div
-        aria-label="Select a plan lever"
-        style={{
-          display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2,
-          scrollbarWidth: "none",
-        }}>
-        {sliders.map(s => {
-          const isActive = s.key === activeSlider.key;
-          return (
-            <button
-              key={s.key}
-              type="button"
-              aria-pressed={isActive}
-              onClick={() => setActiveKey(s.key)}
-              style={{
-                flexShrink: 0,
-                font: `${isActive ? 600 : 500} 12px ${HF}`,
-                color: isActive ? t.ink : t.mut,
-                background: isActive ? t.surf2 : "transparent",
-                border: `1px solid ${isActive ? t.line2 : t.line}`,
-                borderRadius: 20, padding: "5px 12px",
-                cursor: "pointer", whiteSpace: "nowrap",
-                transition: "all .15s",
-              }}
-            >
-              {s.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* active slider area */}
-      <div style={{
-        background: t.surf, borderRadius: 14,
-        border: `1px solid ${t.line}`,
-        padding: "16px 18px",
-      }}>
-        <div style={{ font: `500 13px ${HF}`, color: t.mut, marginBottom: 6 }}>
-          {activeSlider.headline}
-        </div>
-        <div style={{
-          font: `700 28px/1 ${HM}`, color: t.ink, marginBottom: 14,
-        }}>
-          {activeSlider.format(activeSlider.value)}
+      {/* Retire-at slider */}
+      <div>
+        <div style={rowLabel}>
+          <span style={{ font: `500 13px ${HF}`, color: t.ink }}>Retire at</span>
+          <span style={{ font: `600 13px ${HM}`, color: t.accent }}>age {draggedAge}</span>
         </div>
         <input
           type="range"
-          aria-label={activeSlider.headline}
-          aria-valuetext={activeSlider.format(activeSlider.value)}
-          min={activeSlider.min}
-          max={activeSlider.max}
-          step={activeSlider.step}
-          value={activeSlider.value}
-          onChange={e => activeSlider.onChange(Number(e.target.value))}
-          style={{
-            width: "100%", cursor: "pointer",
-            accentColor: t.accent,
-            height: 6,
-          }}
+          aria-label="Retire at"
+          min={sliderBounds.retireMin}
+          max={sliderBounds.retireMax}
+          step={1}
+          value={draggedAge}
+          onChange={e => setRetireOffset(Number(e.target.value) - retirementAge)}
+          style={sliderInput}
         />
-        <div style={{
-          display: "flex", justifyContent: "space-between",
-          font: `400 11px ${HF}`, color: t.faint, marginTop: 6,
-        }}>
-          <span>{activeSlider.format(activeSlider.min)}</span>
-          <span>{activeSlider.format(activeSlider.max)}</span>
-        </div>
+        <VerdictTickRail t={t} rail={retireRail} />
       </div>
 
-      {/* save + reset buttons */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      {/* Monthly-spend slider */}
+      <div>
+        <div style={rowLabel}>
+          <span style={{ font: `500 13px ${HF}`, color: t.ink }}>Monthly spend</span>
+          <span style={{ font: `600 13px ${HM}`, color: t.accent }}>${draggedMonthly.toLocaleString()}/mo</span>
+        </div>
+        <input
+          type="range"
+          aria-label="Monthly spend"
+          min={sliderBounds.spendMin}
+          max={sliderBounds.spendMax}
+          step={100}
+          value={draggedMonthly}
+          onChange={e => setSpendOffset(Number(e.target.value) - monthlySpend)}
+          style={sliderInput}
+        />
+        <VerdictTickRail t={t} rail={spendRail} />
+      </div>
+
+      {/* Footer: idle link, or a live delta chip + Apply/Discard */}
+      {preview?.changed ? (
+        <div>
+          <div style={{ marginBottom: 4 }}>
+            {preview.metrics.map(metric => (
+              <PreviewMetricRow key={metric.id} t={t} metric={metric} />
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => setShowApply(true)}
+              style={{
+                flex: 1, font: `600 13px ${HF}`, color: "#fff",
+                background: t.accent, border: `1px solid ${t.accent}`,
+                borderRadius: 10, padding: "9px 16px", cursor: "pointer",
+              }}
+            >
+              Apply changes
+            </button>
+            <button
+              type="button"
+              onClick={discard}
+              style={{
+                font: `500 12px ${HF}`, color: t.mut, background: "transparent",
+                border: `1px solid ${t.line}`, borderRadius: 10, padding: "9px 14px",
+                cursor: "pointer", whiteSpace: "nowrap",
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      ) : (
         <button
           type="button"
-          onClick={() => !saved && setShowConfirm(true)}
+          onClick={() => navigate("ideas", "dials")}
           style={{
-            flex: 1, font: `600 13px ${HF}`,
-            color: saved ? t.good : t.ink,
-            background: saved ? "transparent" : t.accent,
-            border: `1px solid ${saved ? t.good : t.accent}`,
-            borderRadius: 10, padding: "9px 16px",
-            cursor: saved ? "default" : "pointer",
-            transition: "all .2s",
+            font: `500 12.5px ${HF}`, color: t.mut, cursor: "pointer",
+            background: "transparent", border: "none", padding: 0, textAlign: "left",
           }}
         >
-          <span style={{ color: saved ? t.good : "#fff" }}>
-            {saved ? "✓ Plan saved" : "Save as my plan"}
-          </span>
+          More in Ideas <span style={{ color: t.accent }}>→</span>
         </button>
-        {isDirty && (
-          <button
-            type="button"
-            onClick={handleReset}
-            aria-label="Reset to saved plan"
-            style={{
-              font: `500 12px ${HF}`, color: t.mut,
-              background: "transparent",
-              border: `1px solid ${t.line}`,
-              borderRadius: 10, padding: "9px 14px",
-              cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >
-            ↺ Reset
-          </button>
-        )}
-      </div>
+      )}
 
-      {showConfirm && (
+      {showApply && applyPayload && (
         <ApplyPreviewModal
           t={t}
-          preview={planCommit.preview}
-          onConfirm={handleConfirmSave}
-          onCancel={() => setShowConfirm(false)}
+          preview={applyPayload}
+          onConfirm={handleConfirm}
+          onCancel={() => setShowApply(false)}
         />
+      )}
+
+      {/* Mobile: a slim sticky bar above the tab bar so Apply/Discard stay
+          reachable without scrolling back up to the panel. */}
+      {isMobile && preview?.changed && (
+        <div style={{
+          position: "fixed", left: 12, right: 12, bottom: 64, zIndex: 40,
+          display: "flex", gap: 8, padding: "10px 12px",
+          background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 12,
+          boxShadow: "0 6px 24px rgba(0,0,0,.18)",
+        }}>
+          <button
+            type="button"
+            onClick={() => setShowApply(true)}
+            style={{
+              flex: 1, font: `600 13px ${HF}`, color: "#fff",
+              background: t.accent, border: `1px solid ${t.accent}`,
+              borderRadius: 9, padding: "9px 14px", cursor: "pointer",
+            }}
+          >
+            Apply changes
+          </button>
+          <button
+            type="button"
+            onClick={discard}
+            style={{
+              font: `500 12px ${HF}`, color: t.mut, background: "transparent",
+              border: `1px solid ${t.line}`, borderRadius: 9, padding: "9px 12px",
+              cursor: "pointer",
+            }}
+          >
+            Discard
+          </button>
+        </div>
       )}
     </div>
   );
@@ -496,17 +379,84 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     takeHome, effectiveExpenses, balAt90,
     contribSeries, activity,
     planView, signals, moneyEvents, retirementWalk,
-    planHighlights, planDelta, statementView,
+    planHighlights, statementView,
+    // Try-a-change panel + life-event edit-in-place.
+    whatIfSimInputs, monthlySpend, sliderBounds, applyPlanLevers,
+    saveEvent, removeEvent, lifeEventBounds,
   } = props;
 
   const [arcView, setArcView] = useState("arc");
-  const [isDirty, setIsDirty] = useState(false);
+
+  // Preview-first lever state lives here (not inside TryAChangePanel) so the
+  // arc's dashed overlay and the panel's delta chip share the SAME model run
+  // and offsets, even though the arc renders above the panel in the layout.
+  const [retireOffset, setRetireOffset] = useState(0);
+  const [spendOffset, setSpendOffset]   = useState(0);
+  const draggedAge     = retirementAge + retireOffset;
+  const draggedMonthly = monthlySpend + spendOffset;
+  const arcPreview = useMemo(() => {
+    const overrides = {};
+    if (retireOffset !== 0) overrides.retirementAge = draggedAge;
+    if (spendOffset !== 0) overrides.monthlyExpenses = draggedMonthly;
+    return buildLeverPreview(whatIfSimInputs, overrides);
+  }, [whatIfSimInputs, retireOffset, spendOffset, draggedAge, draggedMonthly]);
+
+  // Committed-event edit sheet ({ seed, eventId }) — opened by tapping an arc badge.
+  const [eventSheet, setEventSheet] = useState(null);
+  const openEventSheet = (ev) => setEventSheet({ seed: ev, eventId: ev.id });
+  const handleEventSave = (ev) => {
+    saveEvent(ev);
+    setEventSheet(null);
+  };
+  const handleEventRemove = () => {
+    removeEvent(eventSheet.eventId);
+    setEventSheet(null);
+  };
 
   const { progressPct } = planView;
   const wrOk = planView.drivers.find(d => d.id === "withdrawal")?.ok;
 
   const progressLabel = isSustainable ? "self-sustaining ↗" : `${progressPct}% there`;
   const progressColor = isSustainable ? t.good : progressPct >= 75 ? t.good : t.warm;
+
+  const progressBar = (
+    <div style={{ width: isMobile ? "100%" : 210, paddingTop: isMobile ? 0 : 5, flexShrink: 0 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{progressLabel}</span>
+        <span style={{ font: `600 11.5px ${HF}`, color: progressColor }}>
+          {isSustainable ? "↗ gaining" : wrOk ? "↗ on target" : "↗ adjust"}
+        </span>
+      </div>
+      <div style={{ height: 7, borderRadius: 6, background: t.line, overflow: "hidden" }}>
+        <div style={{
+          height: "100%", width: `${progressPct}%`,
+          background: `linear-gradient(90deg, ${t.good}, ${t.warm})`,
+        }} />
+      </div>
+    </div>
+  );
+
+  const arc = (
+    <ArcGraph
+      t={t}
+      chartData={chartData}
+      currentAge={currentAge}
+      retirementAge={retirementAge}
+      lifeExpect={lifeExpect}
+      contribSeries={contribSeries}
+      compact={isMobile}
+      fillHeight
+      glow={glow}
+      strokeWidth={strokeWidth}
+      activeView={arcView}
+      onViewChange={setArcView}
+      showToggle={!isMobile}
+      events={moneyEvents ?? []}
+      walkRows={retirementWalk?.rows ?? []}
+      onEventTap={openEventSheet}
+      scenarioData={arcPreview?.changed ? arcPreview.chart : null}
+    />
+  );
 
   return (
     <div style={{
@@ -540,95 +490,58 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
             mandatory.
           </div>
         </div>
-        {/* progress bar */}
-        <div style={{ width: isMobile ? "100%" : 210, paddingTop: isMobile ? 0 : 5, flexShrink: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{progressLabel}</span>
-            <span style={{ font: `600 11.5px ${HF}`, color: progressColor }}>
-              {isSustainable ? "↗ gaining" : wrOk ? "↗ on target" : "↗ adjust"}
-            </span>
-          </div>
-          <div style={{ height: 7, borderRadius: 6, background: t.line, overflow: "hidden" }}>
-            <div style={{
-              height: "100%", width: `${progressPct}%`,
-              background: `linear-gradient(90deg, ${t.good}, ${t.warm})`,
-            }} />
-          </div>
-        </div>
+        {!isMobile && progressBar}
       </div>
 
-      {/* ── main content: arc + Quick Tune panel ─────────────────────────────── */}
+      {/* ── full-width arc ───────────────────────────────────────────────────── */}
+      <div style={{
+        display: "flex",
+        height: isMobile ? "38vh" : "54vh",
+        minHeight: isMobile ? 220 : 300,
+        flexShrink: 0,
+        marginBottom: isMobile ? 14 : 18,
+      }}>
+        {arc}
+      </div>
+
+      {isMobile && <div style={{ marginBottom: 14, flexShrink: 0 }}>{progressBar}</div>}
+
+      {/* ── hero row + Try a change panel ────────────────────────────────────── */}
       {isMobile ? (
-        // Mobile: arc stacked above the tune panel
         <div style={{ display: "flex", flexDirection: "column", gap: 14, flexShrink: 0 }}>
-          <div style={{ minHeight: 220 }}>
-            <ArcGraph
-              t={t}
-              chartData={chartData}
-              currentAge={currentAge}
-              retirementAge={retirementAge}
-              lifeExpect={lifeExpect}
-              contribSeries={contribSeries}
-              height={220}
-              compact
-              glow={glow}
-              strokeWidth={strokeWidth}
-              activeView={arcView}
-              onViewChange={setArcView}
-              showToggle={false}
-              events={moneyEvents ?? []}
-              walkRows={retirementWalk?.rows ?? []}
-            />
-          </div>
-          {/* Hero row — 2-up on mobile */}
           <div style={{ display: "flex", gap: 10 }}>
             <div style={{ flex: 1 }}>
-              <PortfolioHero
-                t={t}
-                totalAtRet={totalAtRet}
-                planHighlights={planHighlights}
-                planDelta={planDelta}
-                isDirty={isDirty}
-              />
+              <PortfolioHero t={t} totalAtRet={totalAtRet} planHighlights={planHighlights} />
             </div>
             <div style={{ flex: 1 }}>
               <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
             </div>
           </div>
-          <QuickTunePanel t={t} isMobile props={props} onDirtyChange={setIsDirty} />
+          <TryAChangePanel
+            t={t} isMobile navigate={navigate}
+            retirementAge={retirementAge} monthlySpend={monthlySpend}
+            sliderBounds={sliderBounds} whatIfSimInputs={whatIfSimInputs}
+            applyPlanLevers={applyPlanLevers}
+            retireOffset={retireOffset} spendOffset={spendOffset}
+            setRetireOffset={setRetireOffset} setSpendOffset={setSpendOffset}
+            preview={arcPreview}
+          />
         </div>
       ) : (
-        // Desktop: arc on the left, tune panel fixed-width on the right
-        <div style={{ display: "flex", gap: 24, flex: "1 1 0", minHeight: 0 }}>
-          <div style={{ flex: 1, minHeight: 260 }}>
-            <ArcGraph
-              t={t}
-              chartData={chartData}
-              currentAge={currentAge}
-              retirementAge={retirementAge}
-              lifeExpect={lifeExpect}
-              contribSeries={contribSeries}
-              fillHeight
-              glow={glow}
-              strokeWidth={strokeWidth}
-              activeView={arcView}
-              onViewChange={setArcView}
-              showToggle
-              events={moneyEvents ?? []}
-              walkRows={retirementWalk?.rows ?? []}
-            />
-          </div>
-          <div style={{ width: 320, flexShrink: 0, overflowY: "auto" }}>
-            <PortfolioHero
-              t={t}
-              totalAtRet={totalAtRet}
-              planHighlights={planHighlights}
-              planDelta={planDelta}
-              isDirty={isDirty}
-            />
-            <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
-            <QuickTunePanel t={t} isMobile={false} props={props} onDirtyChange={setIsDirty} />
-          </div>
+        <div style={{
+          display: "grid", gridTemplateColumns: "1fr 1.1fr 1.2fr", gap: 14, flexShrink: 0,
+        }}>
+          <PortfolioHero t={t} totalAtRet={totalAtRet} planHighlights={planHighlights} />
+          <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
+          <TryAChangePanel
+            t={t} isMobile={false} navigate={navigate}
+            retirementAge={retirementAge} monthlySpend={monthlySpend}
+            sliderBounds={sliderBounds} whatIfSimInputs={whatIfSimInputs}
+            applyPlanLevers={applyPlanLevers}
+            retireOffset={retireOffset} spendOffset={spendOffset}
+            setRetireOffset={setRetireOffset} setSpendOffset={setSpendOffset}
+            preview={arcPreview}
+          />
         </div>
       )}
 
@@ -667,6 +580,19 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
 
       {/* ── signals strip ────────────────────────────────────────────────────── */}
       <SignalsStrip t={t} signals={signals} navigate={navigate} isMobile={isMobile} />
+
+      {/* ── life-event edit sheet (opened by tapping an arc badge) ───────────── */}
+      {eventSheet && (
+        <LifeEventSheet
+          t={t}
+          whatIfBundle={whatIfSimInputs}
+          bounds={lifeEventBounds}
+          initial={eventSheet.seed}
+          onSave={handleEventSave}
+          onRemove={handleEventRemove}
+          onCancel={() => setEventSheet(null)}
+        />
+      )}
     </div>
   );
 }

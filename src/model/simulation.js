@@ -13,6 +13,7 @@ import {
 } from "../config/irs-2026.js";
 import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
+import { eventNetForYear } from "./money-events.js";
 
 // Runs the accumulation simulation.
 // Returns an array of yearly rows from year 1 through totalYears.
@@ -33,7 +34,7 @@ export function runSimulation({
   contrib401k, contribRoth, contribTaxable, contribHSA,
   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
   calcEmployerMatchFn,
-  moneyEvents = [],   // { amount, age, isInflow } — applied to taxable account at matching age
+  moneyEvents = [],   // one-time or duration events (see money-events.js) — applied to taxable account per active year
   conversionEvents = [], // { age, amount } — one-time 401k→Roth conversion in a working year
   stateRate = 0,      // working-year state income-tax rate, applied only to conversion-event tax
 }) {
@@ -116,11 +117,12 @@ export function runSimulation({
     roth = rothBase * (1 + r);
     hsa  = hsaBase  * (1 + r);
 
-    // One-time money events applied to the taxable account before growth compounds.
+    // Money events applied to the taxable account before growth compounds.
     // Outflows (purchases) reduce the base; inflows (windfalls) increase it.
     // Clamped at 0 so a large purchase can't produce a negative balance.
-    const eventAdj = moneyEvents.reduce((s, ev) =>
-      ev.age === age ? s + (ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount)) : s, 0);
+    // eventNetForYear is the ONE source for an event's per-year effect (it also
+    // splits duration events — $X/mo for N months — across their active years).
+    const eventAdj = moneyEvents.reduce((s, ev) => s + eventNetForYear(ev, age), 0);
 
     // Capped working-year conversion for THIS age (0 when none). Computed before the
     // LTCG-rate selection because the conversion is ordinary income that can push this

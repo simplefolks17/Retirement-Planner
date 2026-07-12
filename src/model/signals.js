@@ -37,7 +37,11 @@ export function calcSignals({
       title: "Free employer match on the table",
       body: "Your 401k contribution is below what your employer will match. Redirecting surplus captures it.",
       dollars: Math.round(extraMatch),
-      target: { screen: "numbers", subView: "flow" },
+      // BUG-43: "numbers"/"flow" hasn't existed since PR #38 consolidated the
+      // Money-flow tab into Statement (2026-06-24) — the tab list is
+      // statement/budget/accounts/taxes/yearly. Retargeted to Budget, which
+      // owns the savings waterfall this nudge is about.
+      target: { screen: "numbers", subView: "budget" },
     });
   }
 
@@ -64,7 +68,8 @@ export function calcSignals({
       title: "Your plan spends more than you earn",
       body: "Living expenses plus contributions exceed after-tax income. Something has to give.",
       dollars: Math.round(budgetDeficit),
-      target: { screen: "numbers", subView: "flow" },
+      // BUG-43: see the match signal's comment above — retargeted to Budget.
+      target: { screen: "numbers", subView: "budget" },
     });
   }
 

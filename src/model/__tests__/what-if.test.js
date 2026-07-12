@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario } from "../what-if.js";
+import {
+  calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
+  buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS,
+} from "../what-if.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
+import { buildRetirementPhase } from "../retirement-phase.js";
+import { buildAccumChart } from "../accumulation.js";
 
 // ── Shared baseline setup ────────────────────────────────────────────────────
 const em = (s, c) => calcEmployerMatch(s, c, {
@@ -48,6 +53,26 @@ const { yearsSustained: depletingBaseYears } = buildRetirementDrawdown({
   startBal: depletingBase, startAge: safeRetAge, endAge: safeRetAge + 130,
 });
 
+// ── Per-account engine fixtures (2026-07-11, overlay-continuity migration) ────
+// calcWhatIfScenario now walks retirement with buildRetirementPhase (the same
+// per-account engine the main chart uses) whenever the bundle carries a
+// `retPhaseBase`. These fixtures seed the ENTIRE retirement balance into
+// `taxable` (rmdStartAge: Infinity, conversionByAge: {}) so the engine's
+// per-account walk degenerates to the exact same bal*(1+r) − draw recurrence
+// buildRetirementDrawdown used above (no RMD/conversion/draw tax leaks) — the
+// existing expected values below (computed against the blended walk) still hold.
+const depletingRetPhaseBase = {
+  tradGross: 0, roth: 0, taxable: depletingBase, hsa: 0,
+  startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+  rReal, effectiveExpenses: depletingRetDrawShared.effectiveExpenses,
+  ssGross: depletingRetDrawShared.ssAmount, ssTaxable: depletingRetDrawShared.ssAmount,
+  ssClaimAge: depletingRetDrawShared.ssClaimAge,
+  pension: depletingRetDrawShared.pensionAmount, pensionStartAge: depletingRetDrawShared.pensionStartAge,
+  filingStatus: "single", retStateRate: 0,
+  rmdStartAge: Infinity, useTable2: false, spouseCurrentAge: null, currentAge,
+  moneyEvents: depletingRetDrawShared.moneyEvents ?? [],
+};
+
 // Standard (sustainable) scenario for qualitative tests
 const retDrawShared = {
   rReal, effectiveExpenses: 75_000,
@@ -59,10 +84,40 @@ const { yearsSustained: baseYearsSustained } = buildRetirementDrawdown({
   ...retDrawShared, startBal: realBaseTotalAtRet, startAge: safeRetAge, endAge: safeRetAge + 130,
 });
 
+const baseRetPhaseBase = {
+  tradGross: 0, roth: 0, taxable: realBaseTotalAtRet, hsa: 0,
+  startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
+  rReal, effectiveExpenses: retDrawShared.effectiveExpenses,
+  ssGross: retDrawShared.ssAmount, ssTaxable: retDrawShared.ssAmount,
+  ssClaimAge: retDrawShared.ssClaimAge,
+  pension: retDrawShared.pensionAmount, pensionStartAge: retDrawShared.pensionStartAge,
+  filingStatus: "single", retStateRate: 0,
+  rmdStartAge: Infinity, useTable2: false, spouseCurrentAge: null, currentAge,
+  moneyEvents: retDrawShared.moneyEvents ?? [],
+};
+// baseChart mirrors App.jsx's totalChartData: accumulation rows (from the REAL
+// per-account sim) + the engine's retirement rows (from the all-taxable seed —
+// the total at the boundary is the same either way, so the chart is continuous).
+// buildAccumChart's sumAccountRow reads the "Trad 401k" key that App.jsx adds
+// after runSimulation (from tradGross) — raw sim rows don't carry it, so it's
+// added here too (mirrors the same fix in what-if.js's own re-sim path).
+const _baseSimWithTrad = _baseSim.map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+const _baseAccumChart = buildAccumChart({
+  simData: _baseSimWithTrad, safeRetAge, currentAge,
+  bal401k: simInputs.bal401k, balRoth: simInputs.balRoth,
+  balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
+});
+const _baseRetPhase = buildRetirementPhase({ ...baseRetPhaseBase, conversionByAge: {} });
+const baseChart = [
+  ..._baseAccumChart,
+  ..._baseRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+];
+
 const baseArgs = {
   simInputs, fedMarginal, retDrawShared,
   safeRetAge, safeLifeExp,
   baseTotalAtRet: realBaseTotalAtRet, baseYearsSustained,
+  retPhaseBase: baseRetPhaseBase, conversionByAge: {}, baseChart, addlPreTaxBal: 0,
 };
 
 const depletingArgs = {
@@ -70,6 +125,7 @@ const depletingArgs = {
   retDrawShared: depletingRetDrawShared,
   safeRetAge, safeLifeExp,
   baseTotalAtRet: depletingBase, baseYearsSustained: depletingBaseYears,
+  retPhaseBase: depletingRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
 };
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
@@ -155,6 +211,18 @@ describe("calcWhatIfDelta", () => {
     expect(result.scenarioExpenses).toBe(90_000);
   });
 
+  it("an event dated exactly at safeRetAge reaches the accumulation re-sim (M3 boundary regression)", () => {
+    // Before the fix, `<` excluded an event dated exactly at scenarioRetAge from
+    // BOTH the sim (excluded by `<`) and the retirement walk (which starts at
+    // startAge+1) — a complete no-op. `<=` puts it in the sim, whose read row IS
+    // the retirement-age row.
+    const result = calcWhatIfDelta({
+      ...baseArgs,
+      moneyEvents: [{ label: "Boundary", amount: 50_000, age: safeRetAge, isInflow: false, isTaxable: false }],
+    });
+    expect(result.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
+  });
+
   it("scenarioDepletionAge matches a direct buildRetirementDrawdown call for the same walk", () => {
     const result = calcWhatIfDelta({ ...depletingArgs, moneyEvents: [] });
     const direct = buildRetirementDrawdown({
@@ -222,10 +290,17 @@ describe("calcWhatIfDelta", () => {
 });
 
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
+// 2026-07-11 (fix-pass-2): calcAffordabilityMax moved from the blended walk
+// (calcWhatIfDelta) onto the per-account engine (calcWhatIfScenario), matching
+// every other Ideas/Plan surface — it now takes the SAME bundle shape
+// (depletingArgs / baseArgs already have the right fields: retPhaseBase,
+// conversionByAge, addlPreTaxBal). The three assertions here were already loose
+// (non-negative / non-positive directional checks, not exact-value locks), so
+// they hold across the blended→engine migration; noted here rather than
+// silently re-passing.
 describe("calcAffordabilityMax", () => {
   it("returns a non-negative maxAmount", () => {
-    const result = calcAffordabilityMax({
-      ...depletingArgs,
+    const result = calcAffordabilityMax(depletingArgs, {
       purchaseAge: 40,
       targetLifeExpectancy: 75,  // modest target well within depleting scenario
       step: 10_000,
@@ -235,8 +310,7 @@ describe("calcAffordabilityMax", () => {
 
   it("returns 0 when baseline can't sustain to target age", () => {
     // Force scenario that barely sustains to 74 — target 80 is impossible
-    const result = calcAffordabilityMax({
-      ...depletingArgs,
+    const result = calcAffordabilityMax(depletingArgs, {
       purchaseAge: 40,
       targetLifeExpectancy: 80,  // beyond depleting scenario longevity (~75–77)
       step: 10_000,
@@ -248,8 +322,7 @@ describe("calcAffordabilityMax", () => {
 
   it("delta is non-positive when max amount is spent (retirement-phase purchase)", () => {
     // Retirement-phase purchase avoids re-simulation; depletingBase stays consistent.
-    const result = calcAffordabilityMax({
-      ...depletingArgs,
+    const result = calcAffordabilityMax(depletingArgs, {
       purchaseAge: 68,   // >= safeRetAge — stays within retirement walk
       targetLifeExpectancy: 74,
       step: 10_000,
@@ -258,10 +331,32 @@ describe("calcAffordabilityMax", () => {
     expect(result.deltaYears).toBeLessThanOrEqual(0);
   });
 
+  it("returns a safe zero result for a missing/invalid bundle", () => {
+    expect(calcAffordabilityMax(null, { purchaseAge: 40, targetLifeExpectancy: 75 }))
+      .toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
+  });
+
+  it("the found maxAmount actually sustains to the target age when priced through calcWhatIfScenario directly", () => {
+    // Self-consistency check on the new engine-based probe: calcAffordabilityMax's
+    // own isSustainable() closure isn't exported, so re-derive the same candidate
+    // through calcWhatIfScenario (what the probe calls internally) and confirm the
+    // years-sustained figure actually clears the target — i.e. the binary search
+    // converged on a genuinely affordable amount, not just "didn't crash".
+    const targetLifeExpectancy = 74;
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy, step: 10_000,
+    });
+    const scenario = calcWhatIfScenario(depletingArgs, {
+      scenarioEvents: [{ label: "Check", amount: result.maxAmount, age: 68, isInflow: false, isTaxable: false }],
+    });
+    const years = scenario.scenarioYears === Infinity ? Infinity : scenario.scenarioYears;
+    expect(years).toBeGreaterThanOrEqual(targetLifeExpectancy - depletingArgs.safeRetAge);
+  });
+
   it("boundary-optimality: sustains to target at maxAmount, fails at maxAmount + step", () => {
     const purchaseAge = 68, targetLifeExpectancy = 74, step = 10_000;
-    const { maxAmount } = calcAffordabilityMax({
-      ...depletingArgs, purchaseAge, targetLifeExpectancy, step,
+    const { maxAmount } = calcAffordabilityMax(depletingArgs, {
+      purchaseAge, targetLifeExpectancy, step,
     });
     expect(maxAmount % step).toBe(0);
 
@@ -279,23 +374,23 @@ describe("calcAffordabilityMax", () => {
   });
 
   it("returns canAfford:false and a zero result when step is non-positive", () => {
-    const result = calcAffordabilityMax({
-      ...depletingArgs, purchaseAge: 68, targetLifeExpectancy: 74, step: 0,
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy: 74, step: 0,
     });
     expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
   });
 
   it("returns canAfford:false and a zero result when targetLifeExpectancy is at/before retirement", () => {
-    const result = calcAffordabilityMax({
-      ...depletingArgs, purchaseAge: 68, targetLifeExpectancy: safeRetAge, step: 10_000,
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy: safeRetAge, step: 10_000,
     });
     expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
   });
 
   it("returns canAfford:false when the baseline itself can't sustain to the target age", () => {
     // depletingBase (~10-12 yrs sustained) cannot reach a 90-yr target (25 yrs).
-    const result = calcAffordabilityMax({
-      ...depletingArgs, purchaseAge: 68, targetLifeExpectancy: safeLifeExp, step: 10_000,
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy: safeLifeExp, step: 10_000,
     });
     expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
   });
@@ -304,8 +399,8 @@ describe("calcAffordabilityMax", () => {
     // baseArgs (SS-offset, well-funded scenario) with a tiny maxSearch — every
     // amount tested is sustainable, so the search should exhaust the range
     // rather than spin, and the result documents the cap.
-    const result = calcAffordabilityMax({
-      ...baseArgs, purchaseAge: 70, targetLifeExpectancy: safeLifeExp,
+    const result = calcAffordabilityMax(baseArgs, {
+      purchaseAge: 70, targetLifeExpectancy: safeLifeExp,
       step: 10_000, maxSearch: 30_000,
     });
     expect(result.maxAmount).toBeGreaterThanOrEqual(30_000 - 10_000);
@@ -322,31 +417,46 @@ const chartBundle = {
   safeRetAge,
   safeLifeExp,
   baseTotalAtRet: realBaseTotalAtRet,
+  retPhaseBase: baseRetPhaseBase, conversionByAge: {}, baseChart, addlPreTaxBal: 0,
 };
 
+// NOTE (2026-07-11 overlay-continuity migration): calcWhatIfScenario's `chart`
+// now covers the FULL lifetime (accumulation + retirement), not just the
+// retirement phase — see the header comment on calcWhatIfScenario. The three
+// "no overrides"/"retireAdj" assertions below were written against the old
+// retirement-only chart and are rewritten here for the new scope; the
+// "returns [] for missing inputs" case is unaffected.
 describe("calcWhatIfChart", () => {
-  it("no overrides: returns series starting at safeRetAge+1 and ending at safeLifeExp", () => {
+  it("no overrides: returns the full lifetime series, from just after current age through safeLifeExp", () => {
     const series = calcWhatIfChart(chartBundle);
     expect(Array.isArray(series)).toBe(true);
     expect(series.length).toBeGreaterThan(0);
-    expect(series[0].age).toBe(safeRetAge + 1);
+    expect(series[0].age).toBe(currentAge + 1);
     expect(series[series.length - 1].age).toBe(safeLifeExp);
   });
 
-  it("no overrides: first-year total matches baseTotalAtRet minus draw", () => {
+  it("no overrides: the retirement-age row matches baseTotalAtRet, and the walk continues from it", () => {
     const series = calcWhatIfChart(chartBundle);
-    // The first row should be close to (but no more than) baseTotalAtRet
-    // (it has grown by rReal but lost the first draw)
-    expect(series[0].total).toBeGreaterThan(0);
-    expect(series[0].total).toBeLessThanOrEqual(realBaseTotalAtRet * 1.1);
+    const retRow  = series.find(r => r.age === safeRetAge);
+    const nextRow = series.find(r => r.age === safeRetAge + 1);
+    expect(retRow).toBeDefined();
+    expect(retRow.total).toBe(Math.round(realBaseTotalAtRet));
+    // The next row has grown by rReal but lost the first year's draw.
+    expect(nextRow.total).toBeGreaterThan(0);
+    expect(nextRow.total).toBeLessThanOrEqual(realBaseTotalAtRet * 1.1);
   });
 
-  it("retireAdj shifts the series start age", () => {
+  it("retireAdj moves the accumulation→retirement boundary within the full series", () => {
     const seriesEarly = calcWhatIfChart(chartBundle, { retireAdj: -2 });
+    const scenarioRetAge = safeRetAge - 2;
     expect(Array.isArray(seriesEarly)).toBe(true);
-    expect(seriesEarly.length).toBeGreaterThan(0);
-    // Series starts from the earlier retirement age
-    expect(seriesEarly[0].age).toBe(safeRetAge - 2 + 1);
+    // The series still spans the whole lifetime — start age is unaffected by
+    // WHEN retirement happens, only the boundary between the two phases moves.
+    expect(seriesEarly[0].age).toBe(currentAge + 1);
+    expect(seriesEarly[seriesEarly.length - 1].age).toBe(safeLifeExp);
+    const boundaryIdx = seriesEarly.findIndex(r => r.age === scenarioRetAge);
+    expect(boundaryIdx).toBeGreaterThanOrEqual(0);
+    expect(seriesEarly[boundaryIdx + 1].age).toBe(scenarioRetAge + 1);
   });
 
   it("returns [] for missing inputs", () => {
@@ -407,12 +517,15 @@ describe("calcWhatIfScenario", () => {
     expect(s.scenarioBalAt90).toBe(0);
   });
 
-  it("scenarioDepletionAge matches the far-horizon walk's depletionAge", () => {
-    const s = calcWhatIfScenario(depletingArgs);
-    const farWalk = buildRetirementDrawdown({
-      ...depletingRetDrawShared, startBal: depletingBase, startAge: safeRetAge, endAge: safeRetAge + 130,
-    });
-    expect(s.scenarioDepletionAge).toBe(farWalk.depletionAge);
+  it("scenarioDepletionAge is the engine's exact depletion age, not a rounded derivation (M2 regression)", () => {
+    // $800k taxable-only, $92k/yr spend: the engine's own depletionAge is 75,
+    // but the failure-year fraction is < 50% funded, so the naive
+    // round(retAge + yearsSustained) derivation lands on 74 — one year early.
+    const s = calcWhatIfScenario(depletingArgs, { annualExpenses: 92_000 });
+    expect(s.scenarioDepletionAge).toBe(75);
+    const derivedWouldBe = Math.round(safeRetAge + s.scenarioYears);
+    expect(derivedWouldBe).toBe(74);
+    expect(derivedWouldBe).not.toBe(s.scenarioDepletionAge);
   });
 
   it("monthlyExpenses override equals the annualExpenses override × 12 (conversion in the model)", () => {
@@ -440,5 +553,535 @@ describe("calcWhatIfScenario", () => {
   it("returns null for missing inputs (and calcWhatIfChart maps that to [])", () => {
     expect(calcWhatIfScenario({})).toBeNull();
     expect(calcWhatIfChart({})).toEqual([]);
+  });
+});
+
+// ── calcWhatIfScenario — engine migration (2026-07-11 overlay-continuity fix) ──
+// These tests exercise the PRIMARY (per-account engine) path directly, using a
+// bundle built the exact way App.jsx builds it — not the all-taxable fixtures
+// above — so a real, mixed-account plan (401k + Roth + Taxable + HSA, SS,
+// conversions, RMDs) is under test, not just the degenerate recurrence case.
+describe("calcWhatIfScenario — engine migration", () => {
+  const appSimInputs = {
+    totalYears: 60, currentAge: 40, currentIncome: 120_000, incomeGrowth: 2,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 6,
+    bal401k: 100_000, balRoth: 40_000, balTaxable: 60_000, balHSA: 15_000,
+    contrib401k: 15_000, contribRoth: 6_000, contribTaxable: 5_000, contribHSA: 3_000,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: em, moneyEvents: [],
+  };
+  const appSafeRetAge = 65, appSafeLifeExp = 90, appCurrentAge = 40;
+
+  // Mirrors App.jsx exactly: sim → "Trad 401k" key → accumChart → retPhaseBase →
+  // buildRetirementPhase → totalChartData.
+  const appSim = runSimulation(appSimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const appAt = appSim[appSafeRetAge - appCurrentAge - 1];
+  const appTradGrossAtRet = appAt.tradGross ?? 0;
+  const appRoth    = appAt["Roth IRA"] ?? 0;
+  const appTaxable = appAt["Taxable"]  ?? 0;
+  const appHsa     = appAt["HSA"]      ?? 0;
+  const appTotalAtRet = appTradGrossAtRet + appRoth + appTaxable + appHsa;
+
+  const appRetPhaseBase = {
+    tradGross: appTradGrossAtRet, roth: appRoth, taxable: appTaxable, hsa: appHsa,
+    startAge: appSafeRetAge, lifeExp: appSafeLifeExp, longevityHorizon: appSafeRetAge + 130,
+    rReal: 0.02, effectiveExpenses: 60_000,
+    ssGross: 24_000, ssTaxable: 20_000, ssClaimAge: 67,
+    pension: 0, pensionStartAge: Infinity,
+    filingStatus: "single", retStateRate: 0,
+    rmdStartAge: 73, useTable2: false, spouseCurrentAge: null, currentAge: appCurrentAge,
+    moneyEvents: [],
+  };
+  const appConversionByAge = { 66: 20_000, 67: 20_000 }; // a small realistic conversion window
+  const appRetPhase = buildRetirementPhase({ ...appRetPhaseBase, conversionByAge: appConversionByAge });
+  const appAccumChart = buildAccumChart({
+    simData: appSim, safeRetAge: appSafeRetAge, currentAge: appCurrentAge,
+    bal401k: appSimInputs.bal401k, balRoth: appSimInputs.balRoth,
+    balTaxable: appSimInputs.balTaxable, balHSA: appSimInputs.balHSA,
+  });
+  const appTotalChartData = [
+    ...appAccumChart,
+    ...appRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+  // retDrawShared is still required by the guard clause but is otherwise unused
+  // on the engine path — it's never read for the walk itself.
+  const appRetDrawShared = {
+    rReal: appRetPhaseBase.rReal, effectiveExpenses: appRetPhaseBase.effectiveExpenses,
+    ssAmount: appRetPhaseBase.ssGross, ssClaimAge: appRetPhaseBase.ssClaimAge,
+    pensionAmount: 0, pensionStartAge: Infinity,
+    rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [],
+  };
+  const appBundle = {
+    simInputs: appSimInputs, fedMarginal: 0.22, retDrawShared: appRetDrawShared,
+    safeRetAge: appSafeRetAge, safeLifeExp: appSafeLifeExp,
+    baseTotalAtRet: appTotalAtRet, baseYearsSustained: appRetPhase.yearsSustained,
+    retPhaseBase: appRetPhaseBase, conversionByAge: appConversionByAge,
+    baseChart: appTotalChartData, addlPreTaxBal: 0,
+  };
+
+  // ── THE invariant test ──────────────────────────────────────────────────────
+  it("a no-op scenario's chart deep-equals App's own totalChartData (every row, age and total)", () => {
+    const result = calcWhatIfScenario(appBundle, {});
+    expect(result.chart).toEqual(appTotalChartData);
+  });
+
+  it("a post-retirement scenario event leaves pre-event rows identical and changes the event-age row", () => {
+    const noOp = calcWhatIfScenario(appBundle, {});
+    const withEvent = calcWhatIfScenario(appBundle, {
+      scenarioEvents: [{ label: "Trip", amount: 50_000, age: 70, isInflow: false, isTaxable: false }],
+    });
+    const preRows     = noOp.chart.filter(r => r.age < 70);
+    const preRowsScen = withEvent.chart.filter(r => r.age < 70);
+    expect(preRowsScen).toEqual(preRows);
+    const baseRow70  = noOp.chart.find(r => r.age === 70);
+    const scenRow70  = withEvent.chart.find(r => r.age === 70);
+    expect(scenRow70.total).toBeLessThan(baseRow70.total);
+  });
+
+  it("retire-earlier scenario: pre-retirement rows equal the re-sim's accumulation portion, and the walk begins the next year", () => {
+    const scenarioRetAge = appSafeRetAge - 2;
+    const s = calcWhatIfScenario(appBundle, { retireAdj: -2 });
+    const resim = runSimulation({ ...appSimInputs, moneyEvents: appSimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const expectedAccum = buildAccumChart({
+      simData: resim, safeRetAge: scenarioRetAge, currentAge: appSimInputs.currentAge,
+      bal401k: appSimInputs.bal401k, balRoth: appSimInputs.balRoth,
+      balTaxable: appSimInputs.balTaxable, balHSA: appSimInputs.balHSA,
+    });
+    const actualAccum = s.chart.slice(0, expectedAccum.length);
+    expect(actualAccum).toEqual(expectedAccum);
+    expect(s.chart[expectedAccum.length].age).toBe(scenarioRetAge + 1);
+  });
+});
+
+// ── evaluateLifeEvent (life-event sheet: verdict + impact deltas) ─────────────
+describe("evaluateLifeEvent", () => {
+  it("returns null for a missing event or invalid bundle", () => {
+    expect(evaluateLifeEvent(baseArgs, null)).toBeNull();
+    expect(evaluateLifeEvent({ ...baseArgs, simInputs: null },
+      { amount: 10_000, age: 70, isInflow: false })).toBeNull();
+  });
+
+  it("a pre-retirement outflow reduces the portfolio at retirement (BUG-42 regression)", () => {
+    const result = evaluateLifeEvent(baseArgs, {
+      label: "Home", amount: 100_000, age: 40, isInflow: false, isTaxable: false,
+    });
+    expect(result.atRetirement.dir).toBe("down");
+    // Lost compounding: the delta at retirement exceeds the sticker price.
+    expect(result.atRetirement.deltaAbs).toBeGreaterThan(100_000);
+    expect(result.grossCost).toBe(100_000);
+    expect(result.netTotal).toBe(-100_000);
+  });
+
+  it("calcWhatIfScenario no longer drops pre-retirement scenarioEvents (BUG-42 regression)", () => {
+    const scen = calcWhatIfScenario(baseArgs, {
+      scenarioEvents: [{ label: "Home", amount: 100_000, age: 40, isInflow: false, isTaxable: false }],
+    });
+    expect(scen.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
+  });
+
+  it("a post-retirement event leaves the retirement balance unchanged but moves the plan-age balance", () => {
+    const result = evaluateLifeEvent(baseArgs, {
+      label: "Trip", amount: 200_000, age: 70, isInflow: false, isTaxable: false,
+    });
+    expect(result.atRetirement.dir).toBeNull();
+    expect(result.atRetirement.deltaAbs).toBe(0);
+    expect(result.atPlanAge.dir).toBe("down");
+    expect(result.atPlanAge.deltaAbs).toBeGreaterThan(0);
+  });
+
+  it("a duration event is costed as monthly × months with income offset in netTotal", () => {
+    const result = evaluateLifeEvent(baseArgs, {
+      label: "Travel", monthlyAmount: 6_000, durationMonths: 6, age: 40,
+      isInflow: false, incomeAnnual: 24_000,
+    });
+    expect(result.grossCost).toBe(36_000);
+    expect(result.netTotal).toBe(-24_000);
+    expect(result.atRetirement.dir).toBe("down");
+  });
+
+  it("a duration event spanning the retirement boundary hits both phases exactly once", () => {
+    // 24 months starting the year BEFORE retirement (64): 12 months land at 64
+    // (accumulation) and 12 at 65 (the retirement-age sim row); the walk from 66
+    // adds nothing. Zero-rate variant so the arithmetic is exact.
+    const flatSim = { ...simInputs, returnRate: 0, incomeGrowth: 0,
+      contrib401k: 0, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+      calcEmployerMatchFn: () => 0 };
+    const flatBase = runSimulation(flatSim)[safeRetAge - currentAge - 1];
+    const flatTotal = (flatBase.tradGross ?? 0) + flatBase["Roth IRA"] + flatBase["Taxable"] + flatBase["HSA"];
+    // retPhaseBase deliberately unset: this test overrides baseTotalAtRet directly
+    // to a value the (unrelated) baseArgs.retPhaseBase fixture doesn't know about —
+    // clearing retPhaseBase forces the no-resim path to honor baseTotalAtRet via
+    // the older blended-walk fallback, which is exactly what this test needs
+    // (it's testing event-splitting mechanics, not the engine migration).
+    const bundle = { ...baseArgs, simInputs: flatSim, baseTotalAtRet: flatTotal, retPhaseBase: undefined };
+    const result = evaluateLifeEvent(bundle, {
+      label: "Span", monthlyAmount: 1_000, durationMonths: 24, age: 64,
+      isInflow: false, incomeAnnual: 0,
+    });
+    expect(result.atRetirement.deltaAbs).toBe(24_000);
+    expect(result.atRetirement.dir).toBe("down");
+  });
+
+  // Verdict thresholds — depleting bundle with tuned expenses. Plan horizon is
+  // 25 years (65 → 90); the probe event is small so the pre-computed margins hold:
+  //   $30k spend → ~31.0 yrs sustained → margin ~+6.0 → comfortable
+  //   $33k spend → ~27.7 yrs           → margin ~+2.7 → tight
+  //   $40k spend → ~22.3 yrs           → margin ~−2.7 → unaffordable
+  const verdictBundle = (expenses) => ({
+    ...depletingArgs,
+    retDrawShared: { ...depletingRetDrawShared, effectiveExpenses: expenses },
+  });
+  const probeEvent = { label: "Probe", amount: 1_000, age: 70, isInflow: false, isTaxable: false };
+
+  it("verdict = comfortable when the portfolio outlasts plan age by the buffer", () => {
+    const r = evaluateLifeEvent(verdictBundle(30_000), probeEvent);
+    expect(r.verdict).toBe("comfortable");
+    expect(r.sustainability.stillSustainable).toBe(true);
+  });
+
+  it("verdict = tight when it sustains to plan age with little margin", () => {
+    const r = evaluateLifeEvent(verdictBundle(33_000), probeEvent);
+    expect(r.verdict).toBe("tight");
+    expect(r.sustainability.stillSustainable).toBe(true);
+    expect(r.sustainability.marginYears).toBeGreaterThanOrEqual(0);
+    expect(r.sustainability.marginYears).toBeLessThan(5);
+  });
+
+  it("verdict = unaffordable when the event depletes the portfolio before plan age", () => {
+    const r = evaluateLifeEvent(verdictBundle(40_000), probeEvent);
+    expect(r.verdict).toBe("unaffordable");
+    expect(r.sustainability.stillSustainable).toBe(false);
+    expect(r.sustainability.scenarioDepletionAge).not.toBeNull();
+    expect(r.sustainability.scenarioDepletionAge).toBeLessThan(safeLifeExp);
+  });
+
+  it("verdict = comfortable with infinite margin when the portfolio never depletes", () => {
+    // retPhaseBase deliberately unset — same reason as the flatSim bundle above:
+    // this test overrides baseTotalAtRet to $10M directly, which the fixed
+    // depletingArgs.retPhaseBase (seeded at $800k) doesn't reflect.
+    const r = evaluateLifeEvent({
+      ...depletingArgs,
+      baseTotalAtRet: 10_000_000,
+      retDrawShared: { ...depletingRetDrawShared, effectiveExpenses: 30_000 },
+      retPhaseBase: undefined,
+    }, probeEvent);
+    expect(r.verdict).toBe("comfortable");
+    expect(r.sustainability.marginYears).toBe(Infinity);
+    expect(r.sustainability.scenarioDepletionAge).toBeNull();
+  });
+});
+
+// ── evaluateLifeEvent — edit mode (H1 double-count regression) ────────────────
+// A real per-account-engine bundle (mirrors the "engine migration" fixtures
+// above — the all-taxable-seed trick used elsewhere in this file is NOT valid
+// here because excludeEventId forces a re-sim, which reads REAL per-account
+// balances from the simulation, not an artificially-collapsed retPhaseBase) with
+// a COMMITTED event already baked into every committed-event source: bundle
+// simInputs.moneyEvents, retDrawShared.moneyEvents, retPhaseBase.moneyEvents, and
+// baseChart/baseYearsSustained built from a walk that includes it — exactly how
+// App.jsx wires a real committed moneyEvents entry through.
+describe("evaluateLifeEvent — edit mode (H1 double-count regression)", () => {
+  const em2 = (s, c) => calcEmployerMatch(s, c, {
+    matchMode: "flat", matchFormulaCap: 6, matchFormulaRate: 50, employerMatchPct: 3,
+  });
+  const editSimInputsBase = {
+    totalYears: 60, currentAge: 40, currentIncome: 120_000, incomeGrowth: 2,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 6,
+    bal401k: 100_000, balRoth: 40_000, balTaxable: 60_000, balHSA: 15_000,
+    contrib401k: 15_000, contribRoth: 6_000, contribTaxable: 5_000, contribHSA: 3_000,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: em2, moneyEvents: [],
+  };
+  const editSafeRetAge = 65, editSafeLifeExp = 90, editCurrentAge = 40;
+
+  const committedEvent = {
+    id: "trip-1", label: "Big trip", icon: "✈️", amount: 40_000, age: 70,
+    isInflow: false, isTaxable: false,
+  };
+  const editSimInputs = { ...editSimInputsBase, moneyEvents: [committedEvent] };
+
+  const editSim = runSimulation(editSimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const editAt = editSim[editSafeRetAge - editCurrentAge - 1];
+  const editTradGrossAtRet = editAt.tradGross ?? 0;
+  const editRoth    = editAt["Roth IRA"] ?? 0;
+  const editTaxable = editAt["Taxable"]  ?? 0;
+  const editHsa     = editAt["HSA"]      ?? 0;
+  const editTotalAtRet = editTradGrossAtRet + editRoth + editTaxable + editHsa;
+
+  const editRetPhaseBase = {
+    tradGross: editTradGrossAtRet, roth: editRoth, taxable: editTaxable, hsa: editHsa,
+    startAge: editSafeRetAge, lifeExp: editSafeLifeExp, longevityHorizon: editSafeRetAge + 130,
+    rReal: 0.02, effectiveExpenses: 60_000,
+    ssGross: 24_000, ssTaxable: 20_000, ssClaimAge: 67,
+    pension: 0, pensionStartAge: Infinity,
+    filingStatus: "single", retStateRate: 0,
+    rmdStartAge: 73, useTable2: false, spouseCurrentAge: null, currentAge: editCurrentAge,
+    moneyEvents: [committedEvent],
+  };
+  const editRetPhase = buildRetirementPhase({ ...editRetPhaseBase, conversionByAge: {} });
+  const editAccumChart = buildAccumChart({
+    simData: editSim, safeRetAge: editSafeRetAge, currentAge: editCurrentAge,
+    bal401k: editSimInputsBase.bal401k, balRoth: editSimInputsBase.balRoth,
+    balTaxable: editSimInputsBase.balTaxable, balHSA: editSimInputsBase.balHSA,
+  });
+  const editBaseChart = [
+    ...editAccumChart,
+    ...editRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+  const editRetDrawShared = {
+    rReal: editRetPhaseBase.rReal, effectiveExpenses: editRetPhaseBase.effectiveExpenses,
+    ssAmount: editRetPhaseBase.ssGross, ssClaimAge: editRetPhaseBase.ssClaimAge,
+    pensionAmount: 0, pensionStartAge: Infinity,
+    rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [committedEvent],
+  };
+  const editBundle = {
+    simInputs: editSimInputs, fedMarginal: 0.22, retDrawShared: editRetDrawShared,
+    safeRetAge: editSafeRetAge, safeLifeExp: editSafeLifeExp,
+    baseTotalAtRet: editTotalAtRet, baseYearsSustained: editRetPhase.yearsSustained,
+    retPhaseBase: editRetPhaseBase, conversionByAge: {},
+    baseChart: editBaseChart, addlPreTaxBal: 0,
+  };
+
+  it("editing a committed event with unchanged values prices it once (no double-count)", () => {
+    const result = evaluateLifeEvent(editBundle, committedEvent);
+    expect(result.atRetirement.dir).toBeNull();
+    expect(Math.abs(result.atPlanAge.deltaAbs)).toBeLessThanOrEqual(1);
+  });
+
+  it("editing a committed event with CHANGED values prices only the incremental difference (not stacked with the original)", () => {
+    const editedEvent = { ...committedEvent, amount: 60_000 };
+    const result = evaluateLifeEvent(editBundle, editedEvent);
+    // The naive pre-fix path (scenarioEvents:[event] with no exclusion) would
+    // stack the edited event ON TOP of the already-committed original — a much
+    // larger hit than the incremental $20k. Bound the delta well under what a
+    // double-count of the full amended event ($60k, compounded ~25 yrs) would be.
+    expect(result.atPlanAge.dir).toBe("down");
+    expect(result.atPlanAge.deltaAbs).toBeGreaterThan(0);
+    expect(result.atPlanAge.deltaAbs).toBeLessThan(60_000 * 3);
+  });
+
+  // buildDurationRail regression (post-ship verification review): the H1
+  // exclusion originally reached only evaluateLifeEvent, so the sheet's tick
+  // rail (buildDurationRail) still double-counted a committed DURATION event
+  // being edited — the rail could show "unaffordable" at a duration where the
+  // verdict card (evaluateLifeEvent) said "comfortable" for the identical
+  // candidate. A committed duration-event bundle, mirroring editBundle above.
+  const committedDuration = {
+    id: "sabbatical-1", label: "Sabbatical", icon: "🌴",
+    monthlyAmount: 5_000, durationMonths: 24, incomeAnnual: 0,
+    age: 63, isInflow: false,
+  };
+  const durSimInputs = { ...editSimInputsBase, moneyEvents: [committedDuration] };
+  const durSim = runSimulation(durSimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const durAt = durSim[editSafeRetAge - editCurrentAge - 1];
+  const durTradGrossAtRet = durAt.tradGross ?? 0;
+  const durRoth    = durAt["Roth IRA"] ?? 0;
+  const durTaxable = durAt["Taxable"]  ?? 0;
+  const durHsa     = durAt["HSA"]      ?? 0;
+  const durTotalAtRet = durTradGrossAtRet + durRoth + durTaxable + durHsa;
+  const durRetPhaseBase = {
+    ...editRetPhaseBase,
+    tradGross: durTradGrossAtRet, roth: durRoth, taxable: durTaxable, hsa: durHsa,
+    moneyEvents: [committedDuration],
+  };
+  const durRetPhase = buildRetirementPhase({ ...durRetPhaseBase, conversionByAge: {} });
+  const durAccumChart = buildAccumChart({
+    simData: durSim, safeRetAge: editSafeRetAge, currentAge: editCurrentAge,
+    bal401k: editSimInputsBase.bal401k, balRoth: editSimInputsBase.balRoth,
+    balTaxable: editSimInputsBase.balTaxable, balHSA: editSimInputsBase.balHSA,
+  });
+  const durBaseChart = [
+    ...durAccumChart,
+    ...durRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+  const durBundle = {
+    ...editBundle,
+    simInputs: durSimInputs,
+    retDrawShared: { ...editRetDrawShared, moneyEvents: [committedDuration] },
+    baseTotalAtRet: durTotalAtRet, baseYearsSustained: durRetPhase.yearsSustained,
+    retPhaseBase: durRetPhaseBase, baseChart: durBaseChart,
+  };
+
+  it("buildDurationRail excludes the committed original when editing (agrees with evaluateLifeEvent, no double-count)", () => {
+    const { durationMonths: _drop, ...eventBase } = committedDuration;
+    const rail = buildDurationRail(durBundle, eventBase, { maxMonths: 36, step: 6 });
+    expect(rail.length).toBeGreaterThan(0);
+    for (const entry of rail) {
+      const candidate = { ...eventBase, durationMonths: entry.months };
+      const expected = evaluateLifeEvent(durBundle, candidate);
+      expect(entry.verdict).toBe(expected.verdict);
+    }
+    // Unchanged edit (24 months, the committed value) must be priced once —
+    // same verdict as evaluateLifeEvent's own no-double-count guarantee.
+    const unchanged = rail.find(r => r.months === 24);
+    expect(unchanged).toBeDefined();
+    expect(unchanged.verdict).toBe(evaluateLifeEvent(durBundle, committedDuration).verdict);
+  });
+});
+
+// ── buildLeverPreview / buildLeverRail / buildDurationRail ────────────────────
+// The Plan-screen "Try a change" panel + Ideas dials + LifeEventSheet duration
+// rail all read these — every delta, dir/tone, and verdict must come from here
+// (rule 10), never be recomputed in a screen.
+const VALID_VERDICTS = ["comfortable", "tight", "unaffordable"];
+const verdictRank = { unaffordable: 0, tight: 1, comfortable: 2 };
+
+// ── LEVERS (#123 readiness) ──────────────────────────────────────────────────
+// The per-lever table buildLeverPreview/buildLeverRail now iterate instead of
+// hand-rolling per-lever ternaries. Locks the shape + the exact per-lever
+// behavior each was lifted from, so a future edit can't silently change
+// rounding/comparison semantics without a test noticing.
+describe("LEVERS table", () => {
+  it("has exactly the two currently-wired levers, each with the four documented fields", () => {
+    expect(Object.keys(LEVERS).sort()).toEqual(["monthlyExpenses", "retirementAge"]);
+    for (const def of Object.values(LEVERS)) {
+      expect(typeof def.overrideKey).toBe("string");
+      expect(typeof def.round).toBe("function");
+      expect(typeof def.toComparable).toBe("function");
+      expect(typeof def.baseValue).toBe("function");
+    }
+  });
+
+  it("retirementAge: overrideKey/round/toComparable/baseValue match the old inline behavior", () => {
+    expect(LEVERS.retirementAge.overrideKey).toBe("retirementAge");
+    expect(LEVERS.retirementAge.round(64.6)).toBe(65); // whole-year rounding
+    expect(LEVERS.retirementAge.toComparable(63)).toBe(63); // identity
+    expect(LEVERS.retirementAge.baseValue(baseArgs)).toBe(safeRetAge);
+  });
+
+  it("monthlyExpenses: overrideKey/round/toComparable/baseValue match the old inline behavior", () => {
+    expect(LEVERS.monthlyExpenses.overrideKey).toBe("monthlyExpenses");
+    expect(LEVERS.monthlyExpenses.round(1234.567)).toBe(1234.57); // cents rounding
+    expect(LEVERS.monthlyExpenses.toComparable(1_000))
+      .toBe(1_000 * 12); // annualized (ASSUMPTIONS.MONTHS_PER_YEAR)
+    expect(LEVERS.monthlyExpenses.baseValue(baseArgs)).toBe(baseArgs.retDrawShared.effectiveExpenses);
+  });
+});
+
+describe("buildLeverPreview", () => {
+  it("no-op preview: changed=false and chart equals the base chart", () => {
+    const preview = buildLeverPreview(baseArgs, {});
+    expect(preview.changed).toBe(false);
+    expect(preview.chart).toEqual(baseArgs.baseChart);
+  });
+
+  it("retire-earlier preview: changed=true, and the portfolio-at-retirement metric reads down", () => {
+    const preview = buildLeverPreview(baseArgs, { retirementAge: safeRetAge - 2 });
+    expect(preview.changed).toBe(true);
+    expect(preview.scenarioStats.scenarioRetAge).toBe(safeRetAge - 2);
+    const totalAtRetMetric = preview.metrics.find(m => m.id === "totalAtRet");
+    expect(totalAtRetMetric).toBeDefined();
+    expect(totalAtRetMetric.delta.dir).toBe("down");
+  });
+
+  it("monthlyExpenses-only override annualizes in the model (month → year)", () => {
+    const preview = buildLeverPreview(depletingArgs, { monthlyExpenses: 90_000 / 12 });
+    expect(preview.changed).toBe(true);
+    expect(preview.scenarioStats.scenarioExpenses).toBe(90_000);
+  });
+
+  it("scenarioEvents-only override is passed through: changed=true and the plan-age balance reflects it (M1)", () => {
+    // No retirementAge/monthlyExpenses override — mirrors the Ideas bigTrip
+    // scenario (retireAdj: 0, only a scenarioEvents outflow). Before the fix,
+    // buildLeverPreview had no scenarioEvents parameter at all, so this override
+    // was silently dropped and the preview showed "no change".
+    const noOp = buildLeverPreview(baseArgs, {});
+    const withEvent = buildLeverPreview(baseArgs, {
+      scenarioEvents: [{ label: "Trip", amount: 40_000, age: 70, isInflow: false, isTaxable: false }],
+    });
+    expect(withEvent.changed).toBe(true);
+    expect(noOp.changed).toBe(false);
+    const balMetric = withEvent.metrics.find(m => m.id === "balAtPlanAge");
+    expect(balMetric.delta.dir).toBe("down");
+  });
+
+  it("metrics reuse buildPreviewMetric's documented row shape", () => {
+    const preview = buildLeverPreview(baseArgs, { retirementAge: safeRetAge - 2 });
+    expect(preview.metrics).toHaveLength(3);
+    for (const m of preview.metrics) {
+      expect(typeof m.id).toBe("string");
+      expect(typeof m.label).toBe("string");
+      expect(typeof m.before).toBe("string");
+      expect(typeof m.after).toBe("string");
+      expect(m.delta).toHaveProperty("dir");
+      expect(m.delta).toHaveProperty("label");
+      expect(m.delta).toHaveProperty("tone");
+    }
+  });
+
+  it("returns null for an invalid bundle", () => {
+    expect(buildLeverPreview(null, {})).toBeNull();
+    expect(buildLeverPreview({}, {})).toBeNull();
+  });
+});
+
+describe("buildLeverRail", () => {
+  it("returns (max−min)/step + 1 entries, all with valid verdict strings", () => {
+    const rail = buildLeverRail(depletingArgs, {
+      lever: "monthlyExpenses", min: 30_000 / 12, max: 90_000 / 12, step: 10_000 / 12,
+    });
+    expect(rail).toHaveLength(7);
+    for (const entry of rail) {
+      expect(VALID_VERDICTS).toContain(entry.verdict);
+    }
+  });
+
+  it("a higher monthly spend never gets a better verdict than a lower one", () => {
+    const rail = buildLeverRail(depletingArgs, {
+      lever: "monthlyExpenses", min: 30_000 / 12, max: 90_000 / 12, step: 10_000 / 12,
+    });
+    const low = rail[0];
+    const high = rail[rail.length - 1];
+    expect(verdictRank[high.verdict]).toBeLessThanOrEqual(verdictRank[low.verdict]);
+  });
+
+  it("retirementAge rail uses each step's own plan horizon (retiring later is never worse)", () => {
+    const rail = buildLeverRail(baseArgs, { lever: "retirementAge", min: 55, max: 75, step: 5 });
+    expect(rail.length).toBeGreaterThan(1);
+    const earliest = rail[0];
+    const latest = rail[rail.length - 1];
+    expect(earliest.value).toBe(55);
+    expect(latest.value).toBe(75);
+    // More accumulation time + a shorter retirement horizon → retiring later
+    // is never a worse verdict than retiring earlier.
+    expect(verdictRank[latest.verdict]).toBeGreaterThanOrEqual(verdictRank[earliest.verdict]);
+  });
+
+  it("guards return [] for invalid bundle, min > max, step <= 0, or an unrecognized lever", () => {
+    expect(buildLeverRail(null, { lever: "retirementAge", min: 60, max: 70, step: 1 })).toEqual([]);
+    expect(buildLeverRail(baseArgs, { lever: "retirementAge", min: 70, max: 60, step: 1 })).toEqual([]);
+    expect(buildLeverRail(baseArgs, { lever: "retirementAge", min: 60, max: 70, step: 0 })).toEqual([]);
+    expect(buildLeverRail(baseArgs, { lever: "somethingElse", min: 60, max: 70, step: 1 })).toEqual([]);
+  });
+
+  it("caps at 80 entries by coarsening the step, still spanning min..max", () => {
+    const rail = buildLeverRail(baseArgs, { lever: "retirementAge", min: 55, max: 75, step: 0.01 });
+    expect(rail.length).toBeLessThanOrEqual(80);
+    expect(rail[0].value).toBe(55);
+    expect(rail[rail.length - 1].value).toBe(75);
+  });
+});
+
+describe("buildDurationRail", () => {
+  const durationEventBase = { label: "Probe", monthlyAmount: 2_000, age: 70, isInflow: false, incomeAnnual: 0 };
+
+  it("verdict at N months agrees with evaluateLifeEvent for the same candidate", () => {
+    const rail = buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 36, step: 6 });
+    expect(rail.length).toBeGreaterThan(0);
+    const entry = rail.find(r => r.months === 18);
+    expect(entry).toBeDefined();
+    const expected = evaluateLifeEvent(depletingArgs, { ...durationEventBase, durationMonths: 18 });
+    expect(entry.verdict).toBe(expected.verdict);
+  });
+
+  it("guards return [] for invalid bundle, missing eventBase, or non-positive maxMonths/step", () => {
+    expect(buildDurationRail(null, durationEventBase, { maxMonths: 24, step: 6 })).toEqual([]);
+    expect(buildDurationRail(depletingArgs, null, { maxMonths: 24, step: 6 })).toEqual([]);
+    expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 0, step: 6 })).toEqual([]);
+    expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 24, step: 0 })).toEqual([]);
   });
 });

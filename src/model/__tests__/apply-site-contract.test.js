@@ -14,6 +14,13 @@ import { buildConversionPreview, buildSurplusPreview, buildCommitPlanPreview } f
 // enum membership, shape), never a specific dollar figure — value-locks for a
 // given site's numbers live in that site's own builder test
 // (apply-preview.test.js's buildConversionPreview describe block).
+//
+// The non-preview wrapped write surfaces (`applyPlanLevers`, `saveEvent`/
+// `removeEvent`, `commitPlan`) are documented in docs/ARCHITECTURE.md's
+// "Other wrapped write surfaces" list, right after this table — they don't
+// build an ApplyPreviewModal payload (no preview needed for an explicit
+// add/edit/delete), so they aren't REGISTRY rows here, but they satisfy the
+// SAME "no bundle exposes a raw setter" convention this file's title refers to.
 
 const REGISTRY = [
   {
