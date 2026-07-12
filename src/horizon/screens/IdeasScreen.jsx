@@ -417,7 +417,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         <ScenStatCard t={t} label="Income / mo" baseVal={fmtMo(effectiveExpenses)} scenVal={scenIncome} warm />
         <ScenStatCard t={t} label="Nest egg"    baseVal={fmt(totalAtRet)} scenVal={scenNest} />
         <ScenStatCard t={t} label="Left at 90"  baseVal={fmt(balAt90)} scenVal={scenLeft90} />
-        {dialsActive && (
+        {(dialsActive || toast) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", flexShrink: 0 }}>
             <button
               type="button"
