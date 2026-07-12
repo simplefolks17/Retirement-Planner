@@ -7,29 +7,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-### BUG-44 — Ideas re-applying the same scenario duplicates its committed events (found 2026-07-11, PR #52 post-fix verification pass)
-
-**Owner:** me_theguy. **Found by:** the post-fix Fable verification review (checking the H1/M1
-fix commits for new regressions).
-**What:** `IdeasScreen.jsx`'s scenario cards (e.g. "Big trip at 70", which carries a $40k
-`scenarioEvent`) have no "already applied" indicator, unlike the Events pills (`committedByLabel`
-shows a "✓ placed" state and reopens the sheet in edit mode). `handleApplyConfirm` mints a fresh
-id per apply, so re-selecting and re-applying the same scenario after the 2-second "✓ Applied"
-toast clears commits a **second** copy of the event — a $40k trip becomes two $40k trips with no
-warning. Also means Horizon's `saveEvent` can push `moneyEvents` past Classic's `MAX_EVENTS = 6`
-cap silently (Classic just stops offering its own Add button; the "up to 6" copy becomes untrue).
-**Root cause:** scenario cards are stateless presets (no committed-state lookup), unlike the
-Events pills which key off `moneyEvents` by label.
-**Fix path:** give `SCENARIOS` cards the same `committedByLabel`-style check the Events pills use
-(match by the scenario's `scenarioEvents[].label`) and either disable/relabel an already-applied
-card or dedupe on apply (skip events whose label is already committed).
-**Where:** `src/horizon/screens/IdeasScreen.jsx` (`handleApplyConfirm`, the Scenarios panel card
-render).
-**Status:** deferred — a UX/scope judgment call, not a correctness bug in the shipped fix passes;
-recorded so it isn't lost.
-
----
-
 ### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
 
 **Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
@@ -193,6 +170,47 @@ as described; this session's build never touched `flow-down.js`.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-44 — Ideas re-applying the same scenario duplicates its committed events (found + fixed 2026-07-11)
+
+**Owner:** me_theguy. **Found by:** the post-fix Fable verification review (checking the H1/M1
+fix commits for new regressions); **fixed same-day at owner's request** after asking for the
+duplication to be impossible rather than just documented.
+**What:** `IdeasScreen.jsx`'s scenario cards (e.g. "Big trip at 70", which carries a $40k
+`scenarioEvent`) had no "already applied" indicator, unlike the Events pills (`committedByLabel`
+shows a "✓ placed" state and reopens the sheet in edit mode). `handleApplyConfirm` minted a fresh
+id per apply, so re-selecting and re-applying the same scenario after the 2-second "✓ Applied"
+toast cleared committed a **second** copy of the event — a $40k trip became two $40k trips with no
+warning, discoverable only via the Events tab or a second arc badge.
+**Root cause:** scenario cards were stateless presets with no committed-state lookup, unlike the
+Events pills which key off `moneyEvents` by label.
+**Owner's design requirement (verbatim intent):** an event must be an explicit, binary choice —
+"either the event exists or it doesn't, there is no in-between." No silent limbo state.
+**Fixed:** `IdeasScreen.jsx` gains `matchCommittedEvents(events)` — the same by-label matching
+convention `committedByLabel` uses for the Events pills — returning the committed ids for a
+scenario's own events, or `[]` unless *every* one of the scenario's events already has a match.
+- **Card face:** a scenario whose events are already committed shows "✓ {label}" + "Already on
+  your plan." (mirrors the pill's ✓ placed treatment), with warm-token styling instead of the
+  color-dot accent.
+- **CTA:** the shared bottom-row button becomes **"Remove from plan"** (warm) instead of "Apply to
+  my plan" (accent) whenever the active scenario is already applied — one click removes exactly
+  the committed event(s) this scenario added (`removeEvent` per matched id), via a new
+  `handleRemoveScenario`. The "Apply to my plan" branch is now unreachable for an already-applied
+  scenario (the button that calls it doesn't render), so `saveEvent` can never fire a duplicate.
+- `planSaved` (a boolean, "✓ Applied" only) generalized to `toast` (a string) so Apply and Remove
+  each show their own transient confirmation through one piece of state.
+- Age-only scenarios (no `scenarioEvents`) are unaffected — reapplying one just moves the
+  retirement age again, a legitimate repeatable action with no persistent object to duplicate.
+**Where:** `src/horizon/screens/IdeasScreen.jsx` (`matchCommittedEvents`, `scenApplied`,
+`handleRemoveScenario`, the scenario-card render, the CTA button).
+**Tests:** new `src/horizon/__tests__/ideas-screen.test.js` case — a scenario whose event is
+pre-committed shows the applied card state and a "Remove from plan" button (not "Apply to my
+plan"), and clicking it calls `removeEvent` with the real committed id, never `saveEvent`.
+**Verification:** scripted Playwright drive (apply → card shows "✓ Big trip at 70 · Already on
+your plan" → CTA is "Remove from plan," not "Apply" → remove → card and arc badge both clear).
+715 → **716** tests; golden master untouched.
 
 ---
 

@@ -309,6 +309,42 @@ describe("IdeasScreen — Scenarios mode", () => {
     expect(saved.icon).toBeTruthy();
     act(() => renderer.unmount());
   });
+
+  // BUG-44 regression: re-applying a scenario whose event is already committed
+  // must never mint a second copy. The card shows an explicit "already
+  // applied" state and its CTA becomes an explicit "Remove from plan" — an
+  // event is either fully on the plan or fully off it, never a silent extra.
+  it("a scenario whose event is already committed shows Applied and offers Remove, not a second Apply", () => {
+    const committedTrip = {
+      id: "existing-trip", label: "Big trip", amount: 40_000, age: 70,
+      isInflow: false, isTaxable: false, icon: "✈️",
+    };
+    const { renderer, props } = mount({ moneyEvents: [committedTrip] });
+    act(() => { buttonsByText(renderer.root, "Scenarios")[0].props.onClick(); });
+
+    // Card itself shows the applied state.
+    expect(allText(renderer.root)).toContain("✓ Big trip at 70");
+    expect(allText(renderer.root)).toContain("Already on your plan.");
+
+    const scenarioCard = renderer.root.findAll(
+      n => typeof n.props?.onClick === "function" && textOf(n).includes("Big trip at 70")
+    )[0];
+    act(() => { scenarioCard.props.onClick(); });
+
+    // No "Apply to my plan" — the only CTA is "Remove from plan".
+    expect(clickableByText(renderer.root, "Apply to my plan").length).toBe(0);
+    const removeBtn = clickableByText(renderer.root, "Remove from plan")[0];
+    expect(removeBtn).toBeTruthy();
+
+    act(() => { removeBtn.props.onClick(); });
+
+    // Removes exactly the already-committed event (by its real id) — never
+    // calls saveEvent (which would append a duplicate).
+    expect(props.removeEvent).toHaveBeenCalledTimes(1);
+    expect(props.removeEvent).toHaveBeenCalledWith("existing-trip");
+    expect(props.saveEvent).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
 });
 
 describe("IdeasScreen — Events mode", () => {

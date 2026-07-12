@@ -121,9 +121,29 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
 
   // Apply-with-preview state — one modal at a time.
   const [showApply, setShowApply] = useState(false);
-  const [planSaved, setPlanSaved] = useState(false);
+  // Transient confirmation text on the CTA button ("✓ Applied" / "✓ Removed"),
+  // cleared after 2s. A string (not a plain boolean) so apply and remove
+  // (BUG-44) can each show their own confirmation through one piece of state.
+  const [toast, setToast] = useState(null);
 
   const scen = activeScen ? SCENARIOS.find(s => s.k === activeScen) : null;
+
+  // BUG-44 fix: a scenario carrying its own scenarioEvents (currently just
+  // "Big trip") must be an explicit apply/remove choice — never a silent
+  // duplicate on re-apply. `matchCommittedEvents` reports the ALREADY
+  // COMMITTED events matching a scenario's own events (by label, the same
+  // convention `committedByLabel` below uses for the Events pills); it returns
+  // [] unless EVERY one of the scenario's events already has a match, so
+  // "applied" is exact — no false positive on a partial match. Age-only
+  // scenarios (no scenarioEvents) have no persistent footprint to track here —
+  // reapplying one just moves the retirement age again, a legitimate
+  // repeatable action, not a duplicate.
+  const matchCommittedEvents = (events) => {
+    if (!events?.length) return [];
+    const ids = events.map(ev => (moneyEvents ?? []).find(me => me.label === ev.label)?.id);
+    return ids.every(id => id != null) ? ids : [];
+  };
+  const scenApplied = scen ? matchCommittedEvents(scen.scenarioEvents).length > 0 : false;
 
   // ONE model run per active scenario (V1): calcWhatIfScenario returns BOTH the
   // arc chart series and the stat scalars, so the stats row and the overlay can
@@ -235,6 +255,10 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
       // M1: merge the scenario's own events (e.g. bigTrip's $40k outflow) into
       // committed moneyEvents — previously dropped entirely, so "Apply to my
       // plan" for an event-only scenario never reached the plan.
+      // BUG-44 guard: this whole branch only runs from the "Apply to my plan"
+      // button, which only renders when !scenApplied (see the CTA below) — so
+      // reaching here means these events are NOT already committed, and this
+      // saveEvent call can never create a duplicate.
       const scenEvents = scen.scenarioEvents ?? [];
       if (scenEvents.length > 0) {
         const stamp = Date.now();
@@ -251,8 +275,18 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     }
     setShowApply(false);
     clearAll();
-    setPlanSaved(true);
-    setTimeout(() => setPlanSaved(false), 2000);
+    setToast("✓ Applied");
+    setTimeout(() => setToast(null), 2000);
+  };
+
+  // BUG-44: the explicit undo for an applied scenario's event(s) — one click,
+  // removes exactly the events this scenario added (matched above), leaving no
+  // orphaned "limbo" state: an event is either fully committed or fully gone.
+  const handleRemoveScenario = () => {
+    matchCommittedEvents(scen.scenarioEvents).forEach(id => removeEvent(id));
+    clearAll();
+    setToast("✓ Removed");
+    setTimeout(() => setToast(null), 2000);
   };
 
   // ── Life-event sheet handlers (sheet-first placement) ──────────────────────
@@ -465,24 +499,32 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                   </button>
                 </div>
                 <div style={{ display: "flex", gap: 9 }}>
-                  {SCENARIOS.map(({ k, label, sub, color }) => {
+                  {SCENARIOS.map(({ k, label, sub, color, scenarioEvents }) => {
                     const on = activeScen === k;
                     const c = t[color];
+                    // BUG-44: a card whose event(s) are already committed gets
+                    // its own visible state (mirrors the Events pills' ✓
+                    // placed treatment) — never a silently-repeatable action.
+                    const applied = matchCommittedEvents(scenarioEvents).length > 0;
                     return (
                       <button key={k} type="button" onClick={() => setActiveScen(on ? null : k)}
                         aria-pressed={on}
                         style={{
                           flex: 1, padding: "12px 12px", borderRadius: 10, cursor: "pointer",
-                          border: `1px solid ${on ? c : t.line2}`,
-                          background: on ? `${c}12` : "transparent",
+                          border: `1px solid ${on ? c : (applied ? t.warm : t.line2)}`,
+                          background: on ? `${c}12` : (applied ? `${t.warm}0e` : "transparent"),
                           textAlign: "left",
                         }}>
                         <span style={{
                           width: 8, height: 8, borderRadius: 999,
                           background: c, display: "block", marginBottom: 6
                         }} />
-                        <div style={{ font: `600 14px/1.05 ${HF}`, color: t.ink }}>{label}</div>
-                        <div style={{ font: `400 12px ${HF}`, color: t.mut, marginTop: 3 }}>{sub}</div>
+                        <div style={{ font: `600 14px/1.05 ${HF}`, color: t.ink }}>
+                          {applied ? "✓ " : ""}{label}
+                        </div>
+                        <div style={{ font: `400 12px ${HF}`, color: t.mut, marginTop: 3 }}>
+                          {applied ? "Already on your plan." : sub}
+                        </div>
                       </button>
                     );
                   })}
@@ -501,19 +543,26 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
         <ScenStatCard t={t} label="Left at 90"  baseVal={fmt(balAt90)} scenVal={scenLeft90} />
         {(scen || dialsActive) && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", flexShrink: 0 }}>
+            {/* BUG-44: an already-applied scenario's CTA is "Remove from plan"
+                instead of "Apply" — no way to re-click your way into a
+                duplicate. An event is either committed once, or not at all. */}
             <button
               type="button"
-              onClick={() => !planSaved && setShowApply(true)}
-              disabled={planSaved}
+              onClick={() => {
+                if (toast) return;
+                if (scenApplied) handleRemoveScenario();
+                else setShowApply(true);
+              }}
+              disabled={!!toast}
               style={{
                 padding: "11px 16px", borderRadius: 11, border: "none",
-                background: planSaved ? t.good : t.accent,
-                cursor: planSaved ? "default" : "pointer",
+                background: toast ? t.good : (scenApplied ? t.warm : t.accent),
+                cursor: toast ? "default" : "pointer",
                 transition: "background .25s",
               }}
             >
               <span style={{ font: `600 13px ${HF}`, color: "#fff" }}>
-                {planSaved ? "✓ Applied" : "Apply to my plan"}
+                {toast ?? (scenApplied ? "Remove from plan" : "Apply to my plan")}
               </span>
             </button>
           </div>
