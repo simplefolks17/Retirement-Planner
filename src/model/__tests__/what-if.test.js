@@ -222,6 +222,71 @@ describe("calcWhatIfDelta", () => {
     });
     expect(result.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
   });
+
+  it("scenarioDepletionAge matches a direct buildRetirementDrawdown call for the same walk", () => {
+    const result = calcWhatIfDelta({ ...depletingArgs, moneyEvents: [] });
+    const direct = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: depletingBase, startAge: safeRetAge, endAge: safeRetAge + 130,
+    });
+    expect(result.scenarioDepletionAge).toBe(direct.depletionAge);
+  });
+
+  // ── addlPreTaxBal basis-symmetry lock (post-ship review fix) ───────────────
+  // baseTotalAtRet (App.jsx) already includes addlPreTaxBal; a forced re-sim's
+  // scenarioTotalAtRet must add it back too, or "current" (baseTotalAtRet
+  // passthrough) and "candidate" (re-sim) silently diverge by exactly
+  // addlPreTaxBal — a real basis mismatch surfaced by the WI-3.7 surplus
+  // Apply-preview, which compares the two through the SAME mechanism.
+  it("addlPreTaxBal is added to scenarioTotalAtRet on a forced re-sim, not silently dropped", () => {
+    const forceResimEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+    const without = calcWhatIfDelta({ ...baseArgs, moneyEvents: [forceResimEvent] });
+    const withAddl = calcWhatIfDelta({
+      ...baseArgs, moneyEvents: [forceResimEvent], addlPreTaxBal: 500_000,
+    });
+    expect(withAddl.scenarioTotalAtRet - without.scenarioTotalAtRet).toBeCloseTo(500_000, 6);
+  });
+
+  it("addlPreTaxBal defaults to 0 (no-op) when omitted", () => {
+    const omitted = calcWhatIfDelta({ ...baseArgs, moneyEvents: [] });
+    const explicitZero = calcWhatIfDelta({ ...baseArgs, moneyEvents: [], addlPreTaxBal: 0 });
+    expect(explicitZero).toEqual(omitted);
+  });
+
+  // ── contribOverrides no-op lock (WI-3.7 extension) ─────────────────────────
+  // The param must be a true no-op when omitted/null — nothing on the golden
+  // path should move now that this param exists.
+  const accumEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+
+  it("contribOverrides omitted vs explicit null produce identical results", () => {
+    const omitted = calcWhatIfDelta({ ...baseArgs, moneyEvents: [accumEvent] });
+    const explicitNull = calcWhatIfDelta({ ...baseArgs, moneyEvents: [accumEvent], contribOverrides: null });
+    expect(explicitNull).toEqual(omitted);
+  });
+
+  it("contribOverrides matching the existing simInputs contributions is a no-op on scenarioTotalAtRet", () => {
+    const withoutOverride = calcWhatIfDelta({ ...baseArgs, moneyEvents: [accumEvent] });
+    const withMatchingOverride = calcWhatIfDelta({
+      ...baseArgs,
+      moneyEvents: [accumEvent],
+      contribOverrides: {
+        contrib401k: simInputs.contrib401k,
+        contribRoth: simInputs.contribRoth,
+        contribTaxable: simInputs.contribTaxable,
+        contribHSA: simInputs.contribHSA,
+      },
+    });
+    expect(withMatchingOverride.scenarioTotalAtRet).toBeCloseTo(withoutOverride.scenarioTotalAtRet, 6);
+  });
+
+  it("contribOverrides forces a re-sim even with no money events or retirement-age override", () => {
+    // No accum events, no retirementAgeOverride — only contribOverrides should trigger the resim.
+    const higherContrib = calcWhatIfDelta({
+      ...baseArgs,
+      moneyEvents: [],
+      contribOverrides: { contrib401k: simInputs.contrib401k + 20_000 },
+    });
+    expect(higherContrib.scenarioTotalAtRet).toBeGreaterThan(realBaseTotalAtRet);
+  });
 });
 
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
@@ -268,7 +333,7 @@ describe("calcAffordabilityMax", () => {
 
   it("returns a safe zero result for a missing/invalid bundle", () => {
     expect(calcAffordabilityMax(null, { purchaseAge: 40, targetLifeExpectancy: 75 }))
-      .toEqual({ maxAmount: 0, deltaYears: 0 });
+      .toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
   });
 
   it("the found maxAmount actually sustains to the target age when priced through calcWhatIfScenario directly", () => {
@@ -286,6 +351,61 @@ describe("calcAffordabilityMax", () => {
     });
     const years = scenario.scenarioYears === Infinity ? Infinity : scenario.scenarioYears;
     expect(years).toBeGreaterThanOrEqual(targetLifeExpectancy - depletingArgs.safeRetAge);
+  });
+
+  it("boundary-optimality: sustains to target at maxAmount, fails at maxAmount + step", () => {
+    const purchaseAge = 68, targetLifeExpectancy = 74, step = 10_000;
+    const { maxAmount } = calcAffordabilityMax(depletingArgs, {
+      purchaseAge, targetLifeExpectancy, step,
+    });
+    expect(maxAmount % step).toBe(0);
+
+    const targetYears = targetLifeExpectancy - safeRetAge;
+    const sustainsAt = (amount) => {
+      const r = calcWhatIfDelta({
+        ...depletingArgs,
+        moneyEvents: [{ label: "chk", amount, age: purchaseAge, isInflow: false, isTaxable: false }],
+      });
+      const years = r.scenarioYears === Infinity ? targetYears + 1 : r.scenarioYears;
+      return years >= targetYears;
+    };
+    expect(sustainsAt(maxAmount)).toBe(true);
+    expect(sustainsAt(maxAmount + step)).toBe(false);
+  });
+
+  it("returns canAfford:false and a zero result when step is non-positive", () => {
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy: 74, step: 0,
+    });
+    expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
+  });
+
+  it("returns canAfford:false and a zero result when targetLifeExpectancy is at/before retirement", () => {
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy: safeRetAge, step: 10_000,
+    });
+    expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
+  });
+
+  it("returns canAfford:false when the baseline itself can't sustain to the target age", () => {
+    // depletingBase (~10-12 yrs sustained) cannot reach a 90-yr target (25 yrs).
+    const result = calcAffordabilityMax(depletingArgs, {
+      purchaseAge: 68, targetLifeExpectancy: safeLifeExp, step: 10_000,
+    });
+    expect(result).toEqual({ maxAmount: 0, deltaYears: 0, canAfford: false });
+  });
+
+  it("caps at maxSearch when the scenario is trivially sustainable at any spend within range", () => {
+    // baseArgs (SS-offset, well-funded scenario) with a tiny maxSearch — every
+    // amount tested is sustainable, so the search should exhaust the range
+    // rather than spin, and the result documents the cap.
+    const result = calcAffordabilityMax(baseArgs, {
+      purchaseAge: 70, targetLifeExpectancy: safeLifeExp,
+      step: 10_000, maxSearch: 30_000,
+    });
+    expect(result.maxAmount).toBeGreaterThanOrEqual(30_000 - 10_000);
+    expect(result.maxAmount).toBeLessThanOrEqual(30_000);
+    expect(result.canAfford).toBe(true);
   });
 });
 
@@ -371,23 +491,29 @@ describe("calcWhatIfScenario", () => {
     expect(s.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
   });
 
-  it("scenarioBalAt90 reads the age-90 row of the SAME walk the chart shows", () => {
-    const s = calcWhatIfScenario(baseArgs);
-    const row90 = s.chart.find(r => r.age === 90);
-    expect(row90).toBeDefined();
-    expect(s.scenarioBalAt90).toBe(row90.total);
+  it("scenarioBalAt90 reads the safeLifeExp row of the SAME walk the chart shows", () => {
+    const s = calcWhatIfScenario(baseArgs); // baseArgs.safeLifeExp === 90
+    const rowAtLifeExp = s.chart.find(r => r.age === safeLifeExp);
+    expect(rowAtLifeExp).toBeDefined();
+    expect(s.scenarioBalAt90).toBe(rowAtLifeExp.total);
   });
 
-  it("scenarioBalAt90 is null (not 0) when the walk never reaches 90", () => {
-    // Life expectancy 85 → walk ends at 85; age 90 is NOT APPLICABLE, not zero.
+  it("scenarioBalAt90 tracks safeLifeExp, not a hardcoded age 90 (review fix)", () => {
+    // Before the fix, this field always read literal age 90, so a user with
+    // lifeExpect=85 got a "not applicable" null here while the baseline card
+    // (balAt90 in App.jsx, already lifeExp-based) showed a real balance at 85 —
+    // an apples-to-oranges comparison. It must now read the SAME reference age
+    // the baseline uses: the walk's own safeLifeExp, whatever that is.
     const s = calcWhatIfScenario({ ...baseArgs, safeLifeExp: 85 });
     expect(s.chart[s.chart.length - 1].age).toBe(85);
-    expect(s.scenarioBalAt90).toBeNull();
+    const rowAt85 = s.chart.find(r => r.age === 85);
+    expect(s.scenarioBalAt90).toBe(rowAt85.total);
+    expect(s.scenarioBalAt90).not.toBeNull();
   });
 
-  it("scenarioBalAt90 is a real 0 on genuine depletion at/before 90", () => {
+  it("scenarioBalAt90 is a real 0 on genuine depletion at/before safeLifeExp", () => {
     const s = calcWhatIfScenario(depletingArgs);
-    expect(s.scenarioYears).toBeLessThan(90 - safeRetAge); // depletes before 90
+    expect(s.scenarioYears).toBeLessThan(safeLifeExp - safeRetAge); // depletes before safeLifeExp
     expect(s.scenarioBalAt90).toBe(0);
   });
 

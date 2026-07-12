@@ -285,6 +285,7 @@ describe("PlanScreen — Try a change panel", () => {
     expect(link.length).toBe(1);
     act(() => { link[0].props.onClick(); });
     expect(navigate).toHaveBeenCalledWith("ideas", "dials");
+
     act(() => renderer.unmount());
   });
 });

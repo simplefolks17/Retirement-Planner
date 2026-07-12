@@ -90,6 +90,11 @@ export function eventNetTotal(ev) {
   return sum;
 }
 
+// Max number of one-time events a user can add in the Money Events panel
+// (Classic) / its future Horizon equivalent — a product-level UI cap, not an
+// IRS rule, named here so both surfaces stay identical by construction.
+export const MAX_MONEY_EVENTS = 6;
+
 export function applyMoneyEvents(events = [], age) {
   let portfolioAdjustment = 0;
   let taxableIncomeAdjustment = 0;

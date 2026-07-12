@@ -9,9 +9,7 @@
 
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
-import { isDurationEvent, totalEventImpact } from "../model/money-events.js";
-
-const MAX_EVENTS = 6;
+import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS } from "../model/money-events.js";
 
 function emptyEvent(currentAge) {
   return {
@@ -26,7 +24,7 @@ function emptyEvent(currentAge) {
 
 export function MoneyEventsPanel({ events, onChange, currentAge }) {
   const add = () => {
-    if (events.length >= MAX_EVENTS) return;
+    if (events.length >= MAX_MONEY_EVENTS) return;
     onChange([...events, emptyEvent(currentAge)]);
   };
 
@@ -123,7 +121,7 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
         );
       })}
 
-      {events.length < MAX_EVENTS && (
+      {events.length < MAX_MONEY_EVENTS && (
         <button onClick={add} style={{
           fontSize: 12, padding: "5px 14px", borderRadius: 6,
           border: `1px solid ${C.border}`, background: "transparent",

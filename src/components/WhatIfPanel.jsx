@@ -9,6 +9,7 @@ import { useState, useMemo } from "react";
 import { C } from "../theme.js";
 import { fmt, fmtPct } from "../formatters.js";
 import { calcWhatIfDelta, calcAffordabilityMax } from "../model/what-if.js";
+import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 const PRESETS = [
   { label: "Work 2 more years",  retirementAgeOffset: +2 },
@@ -52,8 +53,11 @@ export function WhatIfPanel({
   // per-account engine (calcAffordabilityMax, 2026-07-11) so a solved amount
   // can never disagree with what the Horizon arc would show for the same
   // candidate purchase. Delta mode is unchanged (calcWhatIfDelta, the blended
-  // walk — BUG-36's narrowed scope).
+  // walk — BUG-36's narrowed scope), which is where addlPreTaxBal is needed:
+  // baseTotalAtRet already includes it, and a forced re-sim must add it back
+  // or a scenario re-sim silently drops it (basis mismatch — review fix).
   whatIfBundle,
+  addlPreTaxBal = 0,
 }) {
   const [open,     setOpen]     = useState(false);
   const [mode,     setMode]     = useState("delta");
@@ -77,8 +81,9 @@ export function WhatIfPanel({
     simInputs, fedMarginal, retDrawShared,
     safeRetAge, safeLifeExp,
     baseTotalAtRet, baseYearsSustained,
+    addlPreTaxBal,
   }), [simInputs, fedMarginal, retDrawShared,
-       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained]);
+       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, addlPreTaxBal]);
 
   const deltaResult = useMemo(() => {
     if (mode !== "delta") return null;
@@ -109,7 +114,7 @@ export function WhatIfPanel({
     return calcAffordabilityMax(whatIfBundle, {
       purchaseAge: Number(affAge),
       targetLifeExpectancy: Number(targetAge),
-      step: 1_000,
+      step: ASSUMPTIONS.AFFORDABILITY_STEP,
     });
   }, [mode, affAge, targetAge, whatIfBundle]);
 

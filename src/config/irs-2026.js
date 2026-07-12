@@ -349,4 +349,15 @@ export const ASSUMPTIONS = {
   // depleting before plan age reads "unaffordable". A planning heuristic, not an
   // IRS rule.
   EVENT_COMFORT_BUFFER_YEARS: 5,
+
+  // calcAffordabilityMax's binary search: dollar granularity of the search
+  // and the upper bound it searches up to. Product-level defaults, not IRS
+  // rules — named here so Classic (WhatIfPanel) and Horizon's Solvers panel
+  // are step-identical by construction.
+  AFFORDABILITY_STEP:      1_000,
+  AFFORDABILITY_MAX_SEARCH: 5_000_000,
+
+  // Default "years from today" offset used to seed a one-time purchase's age
+  // in the affordability flow (e.g. "5 years from now").
+  AFFORD_DEFAULT_PURCHASE_OFFSET_YRS: 5,
 };

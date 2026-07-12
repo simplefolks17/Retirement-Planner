@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   fmtMoney, buildPreviewMetric, isSuggestionApplicable, buildConversionPreview, verdictDisplay,
+  buildSurplusPreview, buildCommitPlanPreview,
 } from "../apply-preview.js";
 import { buildRmdComparison, walkBalanceAt } from "../retirement-phase.js";
 import { verdictForMargin } from "../what-if.js";
@@ -171,6 +172,150 @@ describe("buildPreviewMetric — longevity format", () => {
       after: { years: 21.3, depletionAge: 87 },
     });
     expect(lost.delta).toEqual({ dir: "down", label: "−3.5 yrs", tone: "warm" });
+  });
+});
+
+describe("buildPreviewMetric — longevity null-years guard", () => {
+  it("null before.years renders '—' and a neutral no-op delta", () => {
+    const m = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: { years: null, depletionAge: null },
+      after: { years: 21.3, depletionAge: 87 },
+    });
+    expect(m.before).toBe("—");
+    expect(m.after).toBe("depletes at 87 (21.3 yrs)");
+    expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
+  });
+
+  it("null after.years renders '—' and a neutral no-op delta", () => {
+    const m = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: { years: 21.3, depletionAge: 87 },
+      after: { years: null, depletionAge: null },
+    });
+    expect(m.before).toBe("depletes at 87 (21.3 yrs)");
+    expect(m.after).toBe("—");
+    expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
+  });
+
+  it("both null renders '—'/'—' and a neutral no-op delta", () => {
+    const m = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: { years: null, depletionAge: null },
+      after: { years: null, depletionAge: null },
+    });
+    expect(m.before).toBe("—");
+    expect(m.after).toBe("—");
+    expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
+  });
+
+  it("a null before/after OBJECT (not just null years) is handled the same way", () => {
+    const m = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: null,
+      after: { years: 21.3, depletionAge: 87 },
+    });
+    expect(m.before).toBe("—");
+    expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
+  });
+});
+
+describe("buildPreviewMetric — percent format", () => {
+  it("renders one decimal place with a % sign", () => {
+    const m = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down",
+      before: 15, after: 15,
+    });
+    expect(m.before).toBe("15.0%");
+    expect(m.after).toBe("15.0%");
+  });
+
+  it("dir up / tone good when the delta matches betterDir", () => {
+    const m = buildPreviewMetric({
+      id: "rate", label: "Savings rate", format: "percent", betterDir: "up",
+      before: 18.2, after: 27.9,
+    });
+    expect(m.delta).toEqual({ dir: "up", label: "+9.7 pts", tone: "good" });
+  });
+
+  it("betterDir 'down' flips the tone mapping", () => {
+    const lower = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down",
+      before: 6.5, after: 4.2,
+    });
+    expect(lower.delta.dir).toBe("down");
+    expect(lower.delta.tone).toBe("good");
+
+    const higher = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down",
+      before: 4.2, after: 6.5,
+    });
+    expect(higher.delta.dir).toBe("up");
+    expect(higher.delta.tone).toBe("warm");
+  });
+
+  it("uses U+2212 minus (not ASCII hyphen) for a negative delta", () => {
+    const m = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down",
+      before: 6.5, after: 4.2,
+    });
+    expect(m.delta.label).toBe("−2.3 pts");
+    expect(m.delta.label[0]).toBe("−");
+  });
+
+  it("zero delta reports dir none / tone neutral / label 'no change'", () => {
+    const m = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down",
+      before: 4.2, after: 4.2,
+    });
+    expect(m.delta).toEqual({ dir: "none", label: "no change", tone: "neutral" });
+  });
+
+  it("rounds before diffing — displayed values that round to the SAME 1-decimal figure show 'no change'", () => {
+    // 15.001 and 15.004 both round to 15.0% — the delta must not contradict
+    // two identically-displayed percent strings.
+    const m = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down",
+      before: 15.001, after: 15.004,
+    });
+    expect(m.before).toBe("15.0%");
+    expect(m.after).toBe("15.0%");
+    expect(m.delta).toEqual({ dir: "none", label: "no change", tone: "neutral" });
+  });
+
+  it("rounds before diffing — a delta that crosses a 1-decimal boundary is honestly shown", () => {
+    // 15.04 rounds to 15.0%, 15.06 rounds to 15.1% — the two displayed figures
+    // genuinely differ by 0.1 pt, so the delta must say so (not "no change",
+    // which a naive raw-float diff of 0.02 rounded to 0.0 would wrongly show).
+    const m = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "up",
+      before: 15.04, after: 15.06,
+    });
+    expect(m.before).toBe("15.0%");
+    expect(m.after).toBe("15.1%");
+    expect(m.delta).toEqual({ dir: "up", label: "+0.1 pts", tone: "good" });
+  });
+
+  it("null before or after yields '—' text and a neutral no-op delta", () => {
+    const m1 = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down", before: null, after: 4.2,
+    });
+    expect(m1.before).toBe("—");
+    expect(m1.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
+
+    const m2 = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down", before: 4.2, after: null,
+    });
+    expect(m2.after).toBe("—");
+    expect(m2.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
+  });
+
+  it("non-finite (NaN/Infinity) before or after yields '—' and a neutral no-op delta", () => {
+    const m = buildPreviewMetric({
+      id: "wr", label: "Withdrawal rate", format: "percent", betterDir: "down", before: NaN, after: 4.2,
+    });
+    expect(m.before).toBe("—");
+    expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
   });
 });
 
