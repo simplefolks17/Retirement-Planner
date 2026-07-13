@@ -181,15 +181,63 @@ export function runSimulation({
     // also splits duration events — $X/mo for N months — across their active years.
     const eventAdj = moneyEvents.reduce((s, ev) => s + eventSimAdjustmentForYear(ev, age), 0);
 
+    // ── BUG-74 fix: fund event outflows that exceed the taxable account ──────
+    // The old `Math.max(0, taxable + cTaxable + eventAdj)` silently FORGAVE the
+    // excess — a $540k trip against an $80k brokerage charged only $80k, so big
+    // events barely dented the plan (user-reported). Now the shortfall cascades
+    // the way a person actually funds one:
+    //   taxable (exhausted above) → Roth (withdrawn as contributions — basis
+    //   simplification, no tax/penalty modeled, documented) → Traditional 401k,
+    //   GROSSED UP so the net covers the need: the withdrawal is ordinary income
+    //   stacked on this year's income (same stackedIncomeTax the conversion path
+    //   uses) plus the 10% early-withdrawal penalty under 59½ (fixed-point solve,
+    //   engine precedent). HSA is never touched (medical-restricted).
+    // Anything still unfunded once every account is empty is reported as
+    // eventShortfall on the row — the plan literally cannot pay for the event
+    // that year, and the what-if verdict treats that as "unaffordable".
+    // Inert when events never overdraw the taxable account (and at moneyEvents
+    // = [] — golden master unaffected).
+    let taxablePreGrowth = taxable + cTaxable + eventAdj;
+    let eventDrawRoth = 0, eventDraw401k = 0, eventDrawTax = 0, eventShortfall = 0;
+    if (taxablePreGrowth < 0) {
+      let need = -taxablePreGrowth;
+      taxablePreGrowth = 0;
+      eventDrawRoth = Math.min(need, Math.max(0, roth));
+      roth -= eventDrawRoth;
+      need -= eventDrawRoth;
+      if (need > 0 && trad > 0) {
+        const pen = age < EARLY_WITHDRAWAL_AGE ? EARLY_WITHDRAWAL_PENALTY : 0;
+        // Gross-up: find gross g with g − tax(g) − pen·g = need (tax-on-tax).
+        // The iteration converges from below (geometrically), so run it to
+        // sub-dollar convergence — stopping early leaves a phantom shortfall.
+        let g = need;
+        for (let i = 0; i < 50; i++) {
+          const next = need + stackedIncomeTax(g, netOrdinaryIncome, filingStatus, stateRate) + pen * g;
+          if (Math.abs(next - g) < 0.5) { g = next; break; }
+          g = next;
+        }
+        g = Math.min(g, trad);
+        eventDrawTax  = stackedIncomeTax(g, netOrdinaryIncome, filingStatus, stateRate) + pen * g;
+        eventDraw401k = g;
+        trad -= g;
+        need -= Math.max(0, g - eventDrawTax);
+      }
+      eventShortfall = Math.max(0, need);
+    }
+
     // Capped working-year conversion for THIS age (0 when none). Computed before the
     // LTCG-rate selection because the conversion is ordinary income that can push this
     // year's capital gains into a higher LTCG bracket. Inert when no events (conv = 0).
+    // Capped at the POST-event-draw 401k balance, and its tax stacks on top of any
+    // event-shortfall 401k draw (both are ordinary income in the same year).
     const requestedConv = conversionEvents.length
       ? applyConversionEvents(conversionEvents, age).convAmount : 0;
     const conv = Math.min(Math.max(0, requestedConv), Math.max(0, trad));
 
-    const capGainsRate       = ltcgRate(netOrdinaryIncome + conv, filingStatus);
-    const taxableBase        = Math.max(0, taxable + cTaxable + eventAdj);
+    // The event-shortfall 401k draw is ordinary income too — it joins the
+    // conversion in the LTCG-bracket stack.
+    const capGainsRate       = ltcgRate(netOrdinaryIncome + conv + eventDraw401k, filingStatus);
+    const taxableBase        = taxablePreGrowth;
     const taxableRate        = r * (1 - capGainsRate);
     const taxableGrowth      = taxableBase * taxableRate;
     taxable = taxableBase * (1 + taxableRate);
@@ -207,7 +255,9 @@ export function runSimulation({
     // when under 59½ (retirement-phase conversions never see this — they're post-59½).
     let convEvent = 0, convEventTax = 0, convEventPenalty = 0;
     if (conv > 0) {
-      const tax = stackedIncomeTax(conv, netOrdinaryIncome, filingStatus, stateRate);
+      // Stacks on top of any event-shortfall 401k draw — both are ordinary
+      // income this year, so the conversion pays the higher-bracket dollars.
+      const tax = stackedIncomeTax(conv, netOrdinaryIncome + eventDraw401k, filingStatus, stateRate);
       trad -= conv;
       roth += conv;                                  // principal moves in full
       const taxFromTaxable   = Math.min(tax, Math.max(0, taxable));
@@ -237,6 +287,11 @@ export function runSimulation({
       convEvent:        Math.round(convEvent),        // pre-tax $ converted this working year (0 = none)
       convEventTax:     Math.round(convEventTax),     // ordinary tax + any early-withdrawal penalty
       convEventPenalty: Math.round(convEventPenalty), // 10% penalty component (under-59½ shortfall)
+      eventNet:       Math.round(eventAdj),        // signed event cash this year (0 = no events)
+      eventDrawRoth:  Math.round(eventDrawRoth),   // BUG-74 cascade: Roth drawn to fund the event
+      eventDraw401k:  Math.round(eventDraw401k),   // gross 401k drawn (incl. its own tax+penalty)
+      eventDrawTax:   Math.round(eventDrawTax),    // tax + penalty leaked by that 401k draw
+      eventShortfall: Math.round(eventShortfall),  // event $ NO account could fund (plan can't pay)
     });
   }
 

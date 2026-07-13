@@ -115,15 +115,33 @@ export function marginForScenario(scenario, safeLifeExp) {
 
 // Human sentence for a margin (whole-year rounding — rule 10: the sheet/rail
 // callers render this verbatim, never re-deriving the wording).
+// Cushion labels cap at CUSHION_LABEL_CAP_YEARS: SS/pension-covered plans can
+// compute a technically-true but absurd-looking runway ("≈366 yrs" — the net
+// draw at the plan age is nearly zero); the label says "50+ yrs" while the
+// underlying marginYears stays exact for the verdict math.
 function buildMarginLabel({ marginYears, marginBasis }, safeLifeExp) {
   if (marginBasis === "cushion") {
-    return marginYears === Infinity
-      ? "still growing at your plan age"
-      : `≈${Math.round(marginYears)} yrs of runway left at ${safeLifeExp}`;
+    const cap = ASSUMPTIONS.CUSHION_LABEL_CAP_YEARS;
+    if (marginYears === Infinity) return "still growing at your plan age";
+    if (marginYears > cap) return `${cap}+ yrs of runway left at ${safeLifeExp}`;
+    return `≈${Math.round(marginYears)} yrs of runway left at ${safeLifeExp}`;
   }
   return marginYears >= 0
     ? `${Math.round(marginYears)} yrs to spare past ${safeLifeExp}`
     : `runs out ${Math.round(Math.abs(marginYears))} yrs early`;
+}
+
+// ── verdictForScenarioResult ─────────────────────────────────────────────────
+// THE one scenario → verdict resolution, shared by verdictInfoForScenario and
+// both tick rails so a rail tick can never disagree with the verdict card.
+// BUG-74: a scenario whose events could not be fully funded during accumulation
+// (eventFundingShortfall > 0 — every account was drained and dollars were still
+// owed) is "unaffordable" by definition, regardless of how the walk looks
+// afterward — the walk was computed on spending the plan couldn't actually do.
+export function verdictForScenarioResult(scenario, safeLifeExp) {
+  if ((scenario?.eventFundingShortfall ?? 0) > 0) return "unaffordable";
+  const { marginYears } = marginForScenario(scenario, safeLifeExp);
+  return verdictForMargin(marginYears);
 }
 
 // ── buildVerdictLegend ───────────────────────────────────────────────────────
@@ -148,6 +166,22 @@ export function buildVerdictLegend(planAge) {
 // buildMarginLabel + buildVerdictLegend into ONE call.
 export function verdictInfoForScenario(scenario, safeLifeExp) {
   const { marginYears, marginBasis } = marginForScenario(scenario, safeLifeExp);
+  // BUG-74 override: an unfundable event forces "unaffordable" and an honest
+  // label — the margin math ran on spending the plan couldn't actually do.
+  const shortfall = scenario?.eventFundingShortfall ?? 0;
+  if (shortfall > 0) {
+    return {
+      verdict: "unaffordable",
+      marginYears,
+      marginBasis,
+      marginLabel: `$${Math.round(shortfall).toLocaleString()} of this can't be funded from savings`,
+      rangeLegend: buildVerdictLegend(safeLifeExp),
+      thresholds: {
+        comfortableMin: ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS,
+        tightMin: 0,
+      },
+    };
+  }
   return {
     verdict: verdictForMargin(marginYears),
     marginYears,
@@ -417,6 +451,19 @@ export function calcWhatIfScenario({
   const resimAt = needsResim ? resimRaw[scenarioRetAge - simInputs.currentAge - 1] : null;
   if (needsResim && !resimAt) return null;
 
+  // BUG-74: event dollars NO account could fund during accumulation (the sim's
+  // funding cascade drained taxable → Roth → 401k and still came up short).
+  // Summed over the sim years this scenario actually uses (through the
+  // retirement-age row). A positive value means the plan literally cannot pay
+  // for its events — the verdict layer treats that as "unaffordable" regardless
+  // of how the (unfunded) walk looks afterward.
+  const eventFundingShortfall = needsResim
+    ? resimRaw.reduce((s, d) => (d.age <= scenarioRetAge ? s + (d.eventShortfall ?? 0) : s), 0)
+    : 0;
+  const firstShortfallAge = needsResim
+    ? (resimRaw.find(d => d.age <= scenarioRetAge && (d.eventShortfall ?? 0) > 0)?.age ?? null)
+    : null;
+
   // Permanent plan events + this scenario's own events (same merge the chart
   // always used — see the fixed Batch-A incident in docs/ROADMAP.md). When the
   // scenario retires EARLIER than the base plan, permanent events between the
@@ -521,6 +568,8 @@ export function calcWhatIfScenario({
       deltaYears,
       scenarioBalAt90,
       scenarioDrawAtPlanAge,
+      eventFundingShortfall,   // BUG-74: unfundable event $ (0 = fully funded)
+      firstShortfallAge,       //   … and the first age it happens (null = none)
       // M2: the engine's own depletion age (rp.depletionAge) — exact, not a
       // round(retAge + yearsSustained) derivation, which lands one year early
       // whenever the failure year is < 50% funded (yearsSustained's fractional
@@ -603,6 +652,8 @@ export function calcWhatIfScenario({
     deltaYears,
     scenarioBalAt90,
     scenarioDrawAtPlanAge,
+    eventFundingShortfall,   // BUG-74: unfundable event $ (0 = fully funded)
+    firstShortfallAge,       //   … and the first age it happens (null = none)
     // Fallback path only (dead in production — App.jsx always supplies
     // retPhaseBase, see the M1 engine branch above): use the walk's own exact
     // depletion age rather than the local round(retAge + yearsSustained)
@@ -788,6 +839,13 @@ export function evaluateLifeEvent(bundle, event) {
     netTotal:  Math.round(eventNetTotal(event)),
     chart: scen.chart,
     incomeImpact: eventIncomeImpact(event, bundle.simInputs, safeRetAge),
+    // BUG-74: non-null when the event can't be fully funded — every account
+    // (taxable → Roth → 401k) was drained and dollars were still owed. The
+    // verdict above is already forced to "unaffordable" in that case; this
+    // named field lets the sheet render the honest warning line (rule 10).
+    fundingShortfall: (scen.eventFundingShortfall ?? 0) > 0
+      ? { amount: Math.round(scen.eventFundingShortfall), firstAge: scen.firstShortfallAge }
+      : null,
     atRetirement: {
       age: safeRetAge,
       base: retBase,
@@ -1089,9 +1147,9 @@ export function buildLeverRail(bundle, { lever, min, max, step } = {}) {
     if (!scenario) continue;
     // BUG-73: marginForScenario is THE margin computation (same one
     // evaluateLifeEvent/buildLeverPreview use) — never a locally-inlined
-    // Infinity/depletion branch.
-    const { marginYears } = marginForScenario(scenario, safeLifeExp);
-    rail.push({ value, verdict: verdictForMargin(marginYears) });
+    // Infinity/depletion branch. verdictForScenarioResult also applies the
+    // BUG-74 unfundable-event override, so a tick can't disagree with the card.
+    rail.push({ value, verdict: verdictForScenarioResult(scenario, safeLifeExp) });
   }
   return rail;
 }
@@ -1142,8 +1200,9 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
     // equals bundle.safeRetAge here (a duration event never overrides the
     // retirement age) — identical to the old local planHorizon, so this is
     // the same margin evaluateLifeEvent computes for the same candidate.
-    const { marginYears } = marginForScenario(scenario, safeLifeExp);
-    rail.push({ months, verdict: verdictForMargin(marginYears) });
+    // verdictForScenarioResult also applies the BUG-74 unfundable-event
+    // override, so a tick can't disagree with the verdict card.
+    rail.push({ months, verdict: verdictForScenarioResult(scenario, safeLifeExp) });
   }
   return rail;
 }

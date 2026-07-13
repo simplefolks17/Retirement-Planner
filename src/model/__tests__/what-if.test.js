@@ -3,6 +3,7 @@ import {
   calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
   buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS, eventIncomeImpact,
   marginForScenario, verdictInfoForScenario, buildVerdictLegend, verdictForMargin,
+  verdictForScenarioResult,
 } from "../what-if.js";
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
 import { calcEmployerMatch } from "../employer-match.js";
@@ -942,6 +943,35 @@ describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-7
       expect(Number.isFinite(s.scenarioDrawAtPlanAge)).toBe(true);
       expect(s.scenarioDrawAtPlanAge).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it("BUG-74: an unfundable event forces 'unaffordable' everywhere — card, info package, and rail ticks agree", () => {
+    // Synthetic scenario with a funding shortfall: the margin math alone would
+    // say "comfortable", but the walk ran on spending the plan couldn't do.
+    const scenario = {
+      scenarioYears: Infinity, scenarioRetAge: 65,
+      scenarioBalAt90: 1_000_000, scenarioExpenses: 30_000, scenarioDrawAtPlanAge: 10_000,
+      eventFundingShortfall: 80_000, firstShortfallAge: 47,
+    };
+    expect(verdictForScenarioResult(scenario, safeLifeExp)).toBe("unaffordable");
+    const info = verdictInfoForScenario(scenario, safeLifeExp);
+    expect(info.verdict).toBe("unaffordable");
+    expect(info.marginLabel).toContain("can't be funded from savings");
+    // No shortfall → the override is inert and the margin verdict applies.
+    const funded = { ...scenario, eventFundingShortfall: 0 };
+    expect(verdictForScenarioResult(funded, safeLifeExp)).toBe("comfortable");
+  });
+
+  it("cushion label caps at CUSHION_LABEL_CAP_YEARS ('366 yrs' reads as '50+')", () => {
+    const covered = verdictInfoForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 3_400_000,
+        scenarioExpenses: 57_000, scenarioDrawAtPlanAge: 9_300 },
+      safeLifeExp);
+    // 3.4M / 9.3k ≈ 366 — the label must cap, the verdict math must not.
+    expect(covered.marginYears).toBeGreaterThan(300);
+    expect(covered.marginLabel).toBe(
+      `${ASSUMPTIONS.CUSHION_LABEL_CAP_YEARS}+ yrs of runway left at 90`);
+    expect(covered.verdict).toBe("comfortable");
   });
 
   it("depletion basis equals the old inline expression for finite scenarioYears (value-preserving)", () => {

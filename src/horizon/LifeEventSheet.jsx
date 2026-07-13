@@ -339,10 +339,20 @@ export default function LifeEventSheet({
               )}
               {result.atRetirement.dir && (
                 <li style={{ font: `500 12.5px ${HF}`, color: t.ink }}>
-                  Portfolio at {result.atRetirement.age}:{" "}
+                  {/* Absolute balance + delta, matching the "Left at" bullet's
+                      format — a bare "−$857k" read as a NEGATIVE BALANCE, not
+                      a change (user-reported). */}
+                  Portfolio at {result.atRetirement.age}: {fmt(result.atRetirement.scenario)}{" "}
                   <span style={{ color: result.atRetirement.dir === "down" ? t.warm : t.good }}>
-                    {result.atRetirement.dir === "down" ? "−" : "+"}{fmt(result.atRetirement.deltaAbs)}
+                    ({result.atRetirement.dir === "down" ? "−" : "+"}{fmt(result.atRetirement.deltaAbs)})
                   </span>
+                </li>
+              )}
+              {result.fundingShortfall && (
+                <li style={{ font: `600 12.5px ${HF}`, color: t.warm }}>
+                  {fmt(result.fundingShortfall.amount)} of this can't be funded from
+                  your savings{result.fundingShortfall.firstAge != null
+                    ? ` (accounts run dry at ${result.fundingShortfall.firstAge})` : ""}
                 </li>
               )}
               {result.atPlanAge.dir && (

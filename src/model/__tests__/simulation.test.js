@@ -606,3 +606,101 @@ describe("runSimulation — income-replacement channel (duration outflow incomeA
     expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(noParam));
   });
 });
+
+// ── BUG-74: event outflows beyond the taxable balance must be FUNDED, not
+// silently forgiven. The old Math.max(0, ...) clamp meant a $540k trip against
+// a small brokerage charged only the brokerage balance — tripling the trip's
+// monthly spend barely moved the impact (user-reported). The cascade drains
+// taxable → Roth (basis simplification) → 401k (grossed up: stacked ordinary
+// tax + 10% early-withdrawal penalty under 59½), and reports any residual as
+// eventShortfall. ──────────────────────────────────────────────────────────────
+describe("runSimulation — BUG-74 event-funding cascade", () => {
+  const base = {
+    totalYears: 20, currentAge: 30, currentIncome: 100_000, incomeGrowth: 0,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 0,
+    bal401k: 400_000, balRoth: 50_000, balTaxable: 30_000, balHSA: 5_000,
+    contrib401k: 0, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: () => 0,
+  };
+  const at = (rows, age) => rows.find(r => r.age === age);
+  const totalAt = row => (row.tradGross ?? 0) + row["Roth IRA"] + row["Taxable"] + row["HSA"];
+
+  it("drains taxable, then Roth, then a grossed-up 401k draw — the full spend actually leaves the portfolio", () => {
+    // One-time $200k purchase at 40 against $30k taxable + $50k Roth: the
+    // remaining $120k must come from the 401k, grossed up for tax + penalty.
+    const purchase = { label: "Purchase", amount: 200_000, age: 40, isInflow: false };
+    const rows = runSimulation({ ...base, moneyEvents: [purchase] });
+    const row = at(rows, 40);
+
+    expect(row["Taxable"]).toBe(0);
+    expect(row["Roth IRA"]).toBe(0);
+    expect(row.eventDrawRoth).toBe(50_000);
+    expect(row.eventShortfall).toBe(0);
+    // The 401k funded the last $120k NET: gross draw > 120k (tax + 10% penalty),
+    // and the gross-up identity holds: gross − tax = the net that was needed.
+    expect(row.eventDraw401k).toBeGreaterThan(120_000);
+    expect(row.eventDraw401k - row.eventDrawTax).toBeCloseTo(120_000, -1);
+    // Conservation: the portfolio lost the full $200k PLUS the leaked tax/penalty.
+    const noEvent = runSimulation(base);
+    const delta = totalAt(at(noEvent, 40)) - totalAt(at(rows, 40));
+    expect(delta).toBeCloseTo(200_000 + row.eventDrawTax, -1);
+  });
+
+  it("age ≥ 59½ pays no early-withdrawal penalty on the funding draw", () => {
+    const older = { ...base, currentAge: 58, totalYears: 10 };
+    const purchase = { label: "Purchase", amount: 150_000, age: 61, isInflow: false };
+    const young = at(runSimulation({ ...base, moneyEvents: [{ ...purchase, age: 40 }] }), 40);
+    const old   = at(runSimulation({ ...older, moneyEvents: [purchase] }), 61);
+    // Same net need from the 401k in both runs → the under-59½ run's gross
+    // draw and leaked tax are strictly larger (the 10% penalty).
+    expect(young.eventDraw401k).toBeGreaterThan(old.eventDraw401k);
+    expect(young.eventDrawTax).toBeGreaterThan(old.eventDrawTax);
+    expect(old.eventShortfall).toBe(0);
+  });
+
+  it("reports eventShortfall when EVERY account is drained (plan can't pay)", () => {
+    const poor = { ...base, bal401k: 20_000, balRoth: 5_000, balTaxable: 5_000 };
+    const purchase = { label: "Purchase", amount: 200_000, age: 40, isInflow: false };
+    const row = at(runSimulation({ ...poor, moneyEvents: [purchase] }), 40);
+    expect(row["Taxable"]).toBe(0);
+    expect(row["Roth IRA"]).toBe(0);
+    expect(row.tradGross).toBe(0);
+    expect(row.eventShortfall).toBeGreaterThan(150_000); // most of the 200k is unfundable
+  });
+
+  it("USER-REPORTED regression: tripling a big trip's monthly spend scales the impact (no silent swallowing)", () => {
+    // With the old clamp, $6k/mo → $15k/mo (+$324k of spend) moved the
+    // at-retirement impact by only ~$75k — the taxable account drained and the
+    // rest was free. Now the extra spend is funded from Roth/401k (with its
+    // tax), so the impact must grow by AT LEAST the extra net spend.
+    const mk = (monthly) => ({
+      label: "Trip", monthlyAmount: monthly, durationMonths: 36, age: 40,
+      isInflow: false, incomeAnnual: 0,
+    });
+    // A 401k big enough to fund the whole trip after gross-up — the point of
+    // THIS test is scaling when funding exists; the shortfall case is above.
+    const funded = { ...base, bal401k: 1_500_000 };
+    const noEvent = runSimulation(funded);
+    const small = runSimulation({ ...funded, moneyEvents: [mk(6_000)] });
+    const big   = runSimulation({ ...funded, moneyEvents: [mk(15_000)] });
+    const impact = (rows) => totalAt(at(noEvent, 45)) - totalAt(at(rows, 45));
+    const extraSpend = (15_000 - 6_000) * 36; // 324k
+    expect(impact(big) - impact(small)).toBeGreaterThanOrEqual(extraSpend);
+    // And neither run left anything unfunded (base has a $400k 401k to draw on).
+    for (const age of [40, 41, 42]) {
+      expect(at(big, age).eventShortfall).toBe(0);
+    }
+  });
+
+  it("cascade is inert when the taxable account covers the event (old behavior preserved)", () => {
+    const rich = { ...base, balTaxable: 500_000 };
+    const purchase = { label: "Purchase", amount: 100_000, age: 40, isInflow: false };
+    const row = at(runSimulation({ ...rich, moneyEvents: [purchase] }), 40);
+    expect(row.eventDrawRoth).toBe(0);
+    expect(row.eventDraw401k).toBe(0);
+    expect(row.eventDrawTax).toBe(0);
+    expect(row.eventShortfall).toBe(0);
+    expect(row["Taxable"]).toBe(400_000);
+  });
+});

@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (812 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (819 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1220,11 +1220,32 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   removed (CodeRabbit rule-10 nitpick — the model table already zeroes post-retirement ages) while
   the "you'd be retired" hint copy kept its own explicit age gate (so a working user with genuinely
   $0 projected income isn't told they're retired). 807 → **812 tests**.
+- **BUG-74 fixed — event-funding cascade (2026-07-13, post-merge follow-up, same branch restarted
+  from `main`).** The user re-tested with a bigger trip ($15k/mo × 36 mo, $0 income) and the impact
+  barely moved — root cause was BUG-74's deferred clamp: `Math.max(0, taxable + cTaxable + eventAdj)`
+  silently FORGAVE any event spend beyond the taxable balance (tripling the trip's spend, +$324k,
+  moved the at-65 impact by only ~$75k). Now the shortfall cascades: taxable → Roth (basis
+  simplification) → Traditional 401k GROSSED UP (stacked ordinary tax + 10% early-withdrawal
+  penalty under 59½, fixed-point solve to sub-dollar convergence; the draw joins the LTCG-bracket
+  stack and same-year conversions stack on it); HSA never touched. Residual = per-row
+  `eventShortfall` → `calcWhatIfScenario.eventFundingShortfall`/`firstShortfallAge` → the NEW shared
+  `verdictForScenarioResult` (used by `verdictInfoForScenario` AND both tick rails — one resolver)
+  forces **"unaffordable"** with "$X of this can't be funded from savings"; `evaluateLifeEvent`
+  exposes `fundingShortfall`, the sheet renders the warning. Ledger honesty: accumulation rows'
+  `draw` column (was hardcoded 0) now shows the funded event outflow; `tax` includes the funding
+  draw's tax/penalty. Two display fixes from the same report: the sheet's "Portfolio at 65" bullet
+  now shows absolute + delta (a bare "−$857k" read as a negative BALANCE), and cushion labels cap at
+  `ASSUMPTIONS.CUSHION_LABEL_CAP_YEARS` (50) so an SS-covered plan shows "50+ yrs of runway," not a
+  trust-eroding "≈366 yrs" (marginYears stays exact for verdict math). User's scenario verified in
+  the browser: Portfolio at 65 now $2.4M (−$1.7M), Left at 90 $2.4M (−$2.0M) — the impact doubled
+  once the swallowed spend + funding taxes actually left the portfolio. Follow-up noted in BUGS.md:
+  committed-plan surfaces (arc/Plan) don't yet read a committed event's `eventShortfall` — only the
+  what-if path does. Golden master untouched. 812 → **819 tests**.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (812 tests)
+- `npm test` — run model + formatter + render-smoke tests (819 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
