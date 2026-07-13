@@ -314,6 +314,21 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 
 ---
 
+### BUG-74 — Accumulation taxable-account event spend can be silently "free" if it exceeds the balance (filed 2026-07-13, Open)
+
+**Owner:** me_theguy. **Found during:** duration-event income model pass code review.
+**What:** `src/model/simulation.js` clamps `taxable + cTaxable + eventAdj` to `Math.max(0, ...)` before computing growth. An accumulation-phase purchase event (`eventAdj` < 0) that exceeds the available `taxable` balance silently "spends" only what exists, stubs the amount as paid (no error, no underflow), and moves on — a $50k purchase with $30k in the account just silently becomes a $30k purchase with $0 in the account, no remaining amount to fail or warn. The retirement engine (rule 2b) handles depletion honestly: `buildRetirementWalkByAccount` computes a `spendShort` (the shortfall amount), which the user sees as "depletes at age X." Accumulation silently swallows the shortfall instead.
+
+**Why filed but not fixed:** this is a correctness gap (silently discarding a purchase intent) that needs cross-account draws or early-withdrawal penalties to model honestly; the fix is out of scope for the current work. The retirement engine's honest depletion model already shows the net result to the user once any accumulation shortfall is deferred to the retirement phase.
+
+**Known scope note:** one-time events with `isTaxable: true` (e.g., inherited pre-tax IRA inflow) are taxed as ordinary income on the floor via `inflowTax` component (the retire engine already charges this); the silent-clamp gap applies only to event **outflows** (purchases, sabbatical cash) where the amount might exceed the available taxable balance.
+
+**Where:** `src/model/simulation.js:192` — the `Math.max(0, taxable + cTaxable + eventAdj)` line in the per-year loop (line ref trued 2026-07-13 close-out — was cited as :175 at filing time; shifted by unrelated additions earlier in the file). A proper fix would thread a `shortfallByType` return field (or similar) back to App.jsx so the UI can either warn the user ("this purchase would require early-withdrawal penalties") or auto-promote it to a deferred-to-retirement purchase (needs cross-account draw logic in the engine).
+
+**Re-verified 2026-07-13 (session close-out, PR #53):** confirmed reproduces at current line 192 (`src/model/simulation.js`). Also found **mis-filed**: this entry's text was written as Open but had been placed in the "Resolved Issues" section by mistake when filed; moved to Open Issues here (doc-consistency fix, no code change).
+
+---
+
 ## Resolved Issues
 
 ---
@@ -387,19 +402,6 @@ defaults to 0 everywhere).
 **Where:** `src/model/what-if.js` (margin/verdict/legend builders, pre-computed in `evaluateLifeEvent`, `buildLeverPreview`, `buildDurationRail`), `src/horizon/fields.jsx` (optional legend prop on VerdictTickRail), `src/App.jsx` (verdictLegend added to horizonProps), `src/horizon/LifeEventSheet.jsx` (legend render).
 
 **Tests:** +11 (cushion-saturation regression — a never-depleting plan with a thin cushion now reads "tight"; cushion never yields "unaffordable"; depletion-basis value-preservation vs the old inline expression; rail-vs-direct anti-divergence; label/legend value-locks; sheet marginLabel + legend render; Plan/Ideas legend-shown-once).
-
----
-
-### BUG-74 — Accumulation taxable-account event spend can be silently "free" if it exceeds the balance (filed 2026-07-13, Open)
-
-**Owner:** me_theguy. **Found during:** duration-event income model pass code review.
-**What:** `src/model/simulation.js:175` clamps `taxable + cTaxable + eventAdj` to `Math.max(0, ...)` before computing growth. An accumulation-phase purchase event (`eventAdj` < 0) that exceeds the available `taxable` balance silently "spends" only what exists, stubs the amount as paid (no error, no underflow), and moves on — a $50k purchase with $30k in the account just silently becomes a $30k purchase with $0 in the account, no remaining amount to fail or warn. The retirement engine (rule 2b) handles depletion honestly: `buildRetirementWalkByAccount` computes a `spendShort` (the shortfall amount), which the user sees as "depletes at age X." Accumulation silently swallows the shortfall instead.
-
-**Why filed but not fixed:** this is a correctness gap (silently discarding a purchase intent) that needs cross-account draws or early-withdrawal penalties to model honestly; the fix is out of scope for the current work. The retirement engine's honest depletion model already shows the net result to the user once any accumulation shortfall is deferred to the retirement phase.
-
-**Known scope note:** one-time events with `isTaxable: true` (e.g., inherited pre-tax IRA inflow) are taxed as ordinary income on the floor via `inflowTax` component (the retire engine already charges this); the silent-clamp gap applies only to event **outflows** (purchases, sabbatical cash) where the amount might exceed the available taxable balance.
-
-**Where:** `src/model/simulation.js:175` — the `Math.max(0, taxable + cTaxable + eventAdj)` line in the per-year loop. A proper fix would thread a `shortfallByType` return field (or similar) back to App.jsx so the UI can either warn the user ("this purchase would require early-withdrawal penalties") or auto-promote it to a deferred-to-retirement purchase (needs cross-account draw logic in the engine).
 
 ---
 
