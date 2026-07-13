@@ -78,4 +78,20 @@ describe("MoneyEventsPanel — duration + one-time mix", () => {
     );
     expect(numberInputs).toHaveLength(1);
   });
+
+  it("a duration row with a positive incomeAnnual appends the income annotation", () => {
+    const partTime = { ...duration, id: "dur-2", incomeAnnual: 24_000 };
+    const flat = JSON.stringify(renderPanel([partTime]).toJSON());
+    expect(flat).toContain("income $24K/yr");
+  });
+
+  it("a duration row with incomeAnnual 0 (or absent) shows no income annotation", () => {
+    const flat = JSON.stringify(renderPanel([duration]).toJSON()); // incomeAnnual: 0
+    expect(flat).not.toContain("income $");
+  });
+
+  it("footer label reads 'Net cash flow of events' (cash-flow basis, not a portfolio-delta claim)", () => {
+    const flat = JSON.stringify(renderPanel([oneTime]).toJSON());
+    expect(flat).toContain("Net cash flow of events");
+  });
 });

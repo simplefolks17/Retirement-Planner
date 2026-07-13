@@ -8,7 +8,7 @@ import {
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
-import { runSimulation } from "./model/simulation.js";
+import { runSimulation, buildProjectedIncomeByAge } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -1795,7 +1795,15 @@ export default function App() {
     minAge: currentAge + 1,
     maxAge: safeLifeExp,
     retirementAge: safeRetAge,
-  }), [currentAge, safeLifeExp, safeRetAge]);
+    // Projected salary by age (0 past retirement) — the LifeEventSheet's "usual
+    // pay" seed/hint for a new working-year duration event (rule 10: the growth
+    // projection lives here, not in the sheet).
+    projectedIncomeByAge: buildProjectedIncomeByAge({
+      currentIncome, incomeGrowth, incomeGrowthEndAge,
+      currentAge, retirementAge: safeRetAge,
+      minAge: currentAge + 1, maxAge: safeLifeExp,
+    }),
+  }), [currentAge, safeLifeExp, safeRetAge, currentIncome, incomeGrowth, incomeGrowthEndAge]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),

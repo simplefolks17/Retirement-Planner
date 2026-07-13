@@ -9,13 +9,14 @@
 // accumulation-phase events) — never reimplements the walk (BUG-31 rule).
 // Baseline values are passed in from App.jsx to avoid re-computing them.
 
-import { runSimulation } from "./simulation.js";
+import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
+  isDurationEvent, monthsActiveInYear,
 } from "./money-events.js";
 import { buildPreviewMetric } from "./apply-preview.js";
 
@@ -502,6 +503,67 @@ export function calcWhatIfChart(bundle, overrides = {}) {
   return scenario ? scenario.chart : [];
 }
 
+// ── eventIncomeImpact ────────────────────────────────────────────────────────
+// Income impact of ONE candidate duration event over its WORKING-phase months
+// (owner decision: a duration outflow's incomeAnnual now means "my total
+// income during this period," replacing salary — see money-events.js's
+// module header). This is the "what did I actually give up in pay" figure,
+// separate from the portfolio-cost bullets evaluateLifeEvent already builds:
+// a sabbatical that pauses salary shows up on the walk via
+// eventsIncomeAdjustment (lower contributions, lower MAGI), but nothing in
+// evaluateLifeEvent's existing fields names the lost PAYCHECK itself — this
+// does, so LifeEventSheet can show it as its own bullet (rule 10 — the sheet
+// renders this verbatim, never re-derives it).
+//
+// Returns null for: one-time events (no incomeAnnual concept), inflow
+// duration events (additive side income, not a salary replacement — see
+// eventsIncomeAdjustment's own isInflow gate), events with a non-finite
+// incomeAnnual (legacy/undefined = "no statement about income"), or events
+// entirely past safeRetAge (no salary to lose once retired — post-retirement
+// incomeAnnual is additive side income, handled elsewhere). Otherwise:
+//   {
+//     monthsWorking,     // Σ months of the event that land at ages <= safeRetAge
+//     usualPay,          // Σ (monthsInYear/12) × projectedIncomeAtAge(simInputs, age)
+//                        //   over those working years — what the person would have
+//                        //   earned WITHOUT the event
+//     eventPay,          // Σ (monthsInYear/12) × |incomeAnnual| over the same years —
+//                        //   what the event says they'll actually earn
+//     netLostIncome,     // usualPay − eventPay (negative = a net income GAIN,
+//                        //   e.g. incomeAnnual set above usual pay)
+//     netLostIncomeAbs,  // Math.abs(netLostIncome), pre-computed so the sheet never
+//                        //   does Math.abs in JSX (matches deltaAbs's convention below)
+//     dir,               // "down" when netLostIncome > 0 (a real pay cut),
+//                        // "up" when netLostIncome < 0 (a net gain),
+//                        // null when exactly 0 (no change) — rule 10, no sign math in JSX
+//   }
+export function eventIncomeImpact(event, simInputs, safeRetAge) {
+  if (!event || !isDurationEvent(event) || event.isInflow) return null;
+  if (!Number.isFinite(event.incomeAnnual)) return null;
+  if (eventFirstAge(event) > safeRetAge) return null;
+
+  let monthsWorking = 0;
+  let usualPay = 0;
+  let eventPay = 0;
+  const lastWorkingAge = Math.min(eventLastAge(event), safeRetAge);
+  for (let age = eventFirstAge(event); age <= lastWorkingAge; age++) {
+    const months = monthsActiveInYear(event, age);
+    if (months <= 0) continue;
+    monthsWorking += months;
+    usualPay += (months / 12) * projectedIncomeAtAge(simInputs, age);
+    eventPay += (months / 12) * Math.abs(event.incomeAnnual);
+  }
+  if (monthsWorking <= 0) return null;
+
+  const netLostIncome = usualPay - eventPay;
+  const dir = netLostIncome > 0 ? "down" : netLostIncome < 0 ? "up" : null;
+
+  return {
+    monthsWorking, usualPay, eventPay, netLostIncome,
+    netLostIncomeAbs: Math.abs(netLostIncome),
+    dir,
+  };
+}
+
 // ── evaluateLifeEvent ────────────────────────────────────────────────────────
 // The model behind the Horizon life-event sheet (sheet-first placement flow):
 // ONE candidate event → a plain-language verdict plus concrete impact deltas,
@@ -536,6 +598,9 @@ export function calcWhatIfChart(bundle, overrides = {}) {
 //       stillSustainable,                  // scenario sustains to the plan age
 //       newlyDepletes, depletionMoved,     // display flags (rule 10 — no comparisons in JSX)
 //     },
+//     incomeImpact,           // eventIncomeImpact(event, bundle.simInputs, safeRetAge) — null
+//                             //   unless the event is a working-phase, income-replacing outflow
+//                             //   duration event (see eventIncomeImpact's own doc above)
 //   }
 export function evaluateLifeEvent(bundle, event) {
   if (!event) return null;
@@ -589,6 +654,7 @@ export function evaluateLifeEvent(bundle, event) {
     grossCost: Math.round(eventGrossCost(event)),
     netTotal:  Math.round(eventNetTotal(event)),
     chart: scen.chart,
+    incomeImpact: eventIncomeImpact(event, bundle.simInputs, safeRetAge),
     atRetirement: {
       age: safeRetAge,
       base: retBase,

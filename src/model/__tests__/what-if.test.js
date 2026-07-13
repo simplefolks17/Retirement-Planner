@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
-  buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS,
+  buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS, eventIncomeImpact,
 } from "../what-if.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
@@ -656,6 +656,71 @@ describe("calcWhatIfScenario — engine migration", () => {
 });
 
 // ── evaluateLifeEvent (life-event sheet: verdict + impact deltas) ─────────────
+// ── eventIncomeImpact ────────────────────────────────────────────────────────
+// Flat (0% growth) simInputs so projectedIncomeAtAge is a constant — makes the
+// expected usualPay/eventPay/netLostIncome arithmetic exact, not approximate.
+describe("eventIncomeImpact", () => {
+  const flatSimInputs = { currentIncome: 120_000, incomeGrowth: 0, incomeGrowthEndAge: null, currentAge: 50 };
+  const impactSafeRetAge = 65;
+
+  it("returns null for a one-time event", () => {
+    const event = { amount: 10_000, age: 55, isInflow: false };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("returns null for an inflow duration event (additive side income, not a salary replacement)", () => {
+    const event = { monthlyAmount: 2_000, durationMonths: 6, age: 55, isInflow: true, incomeAnnual: 40_000 };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("returns null when incomeAnnual is not finite (legacy event = no statement about income)", () => {
+    const event = { monthlyAmount: 2_000, durationMonths: 6, age: 55, isInflow: false };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("returns null when the event is entirely past retirement", () => {
+    const event = { monthlyAmount: 2_000, durationMonths: 6, age: 70, isInflow: false, incomeAnnual: 0 };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("computes exact usualPay/eventPay/netLostIncome for a working-year event", () => {
+    // 6 months at age 55: usualPay = 0.5 × $120k = $60k; eventPay = 0.5 × $60k = $30k.
+    const event = { monthlyAmount: 5_000, durationMonths: 6, age: 55, isInflow: false, incomeAnnual: 60_000 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    expect(result).toEqual({
+      monthsWorking: 6, usualPay: 60_000, eventPay: 30_000,
+      netLostIncome: 30_000, netLostIncomeAbs: 30_000, dir: "down",
+    });
+  });
+
+  it("a boundary-spanning event counts only the working months (not the post-retirement ones)", () => {
+    // 36 months starting at 64 spans ages 64, 65, 66 — only 64 and 65 are <= safeRetAge (65),
+    // so monthsWorking is 24, not 36.
+    const event = { monthlyAmount: 1_000, durationMonths: 36, age: 64, isInflow: false, incomeAnnual: 0 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    expect(result.monthsWorking).toBe(24);
+    expect(result.usualPay).toBe(240_000); // 2 full years × $120k
+    expect(result.eventPay).toBe(0);
+    expect(result.dir).toBe("down");
+  });
+
+  it("an income GAIN (incomeAnnual above usual pay) reports dir 'up'", () => {
+    const event = { monthlyAmount: 8_000, durationMonths: 6, age: 55, isInflow: false, incomeAnnual: 200_000 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    // usualPay = $60k, eventPay = 0.5 × $200k = $100k → netLostIncome = −$40k (a gain).
+    expect(result.netLostIncome).toBe(-40_000);
+    expect(result.netLostIncomeAbs).toBe(40_000);
+    expect(result.dir).toBe("up");
+  });
+
+  it("no change (incomeAnnual exactly equals usual pay) reports dir null", () => {
+    const event = { monthlyAmount: 8_000, durationMonths: 6, age: 55, isInflow: false, incomeAnnual: 120_000 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    expect(result.netLostIncome).toBe(0);
+    expect(result.dir).toBeNull();
+  });
+});
+
 describe("evaluateLifeEvent", () => {
   it("returns null for a missing event or invalid bundle", () => {
     expect(evaluateLifeEvent(baseArgs, null)).toBeNull();
@@ -699,6 +764,21 @@ describe("evaluateLifeEvent", () => {
     expect(result.grossCost).toBe(36_000);
     expect(result.netTotal).toBe(-24_000);
     expect(result.atRetirement.dir).toBe("down");
+  });
+
+  it("wires eventIncomeImpact into the result — non-null for a working-year salary-replacing event, null for a one-time event", () => {
+    const durationResult = evaluateLifeEvent(baseArgs, {
+      label: "Sabbatical", monthlyAmount: 4_000, durationMonths: 6, age: 40,
+      isInflow: false, incomeAnnual: 0,
+    });
+    expect(durationResult.incomeImpact).not.toBeNull();
+    expect(durationResult.incomeImpact.dir).toBe("down");
+    expect(durationResult.incomeImpact.eventPay).toBe(0);
+
+    const oneTimeResult = evaluateLifeEvent(baseArgs, {
+      label: "Home", amount: 100_000, age: 40, isInflow: false, isTaxable: false,
+    });
+    expect(oneTimeResult.incomeImpact).toBeNull();
   });
 
   it("a duration event spanning the retirement boundary hits both phases exactly once", () => {

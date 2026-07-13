@@ -64,7 +64,11 @@ export function isDurationEvent(ev) {
 
 // Months of a duration event that fall inside the year the person is `age`.
 // Year k (k = age − ev.age, 0-based) covers months [12k, 12k+12).
-function monthsActiveInYear(ev, age) {
+// Exported (layout-internal): used by eventIncomeImpact (what-if.js) to walk
+// the same per-year month split as eventIncomeForYear, but needs the raw
+// months count (not the incomeAnnual-scaled dollar figure) to compute the
+// "usual pay" side of the comparison.
+export function monthsActiveInYear(ev, age) {
   const k = age - ev.age;
   if (k < 0) return 0;
   return Math.max(0, Math.min(12, ev.durationMonths - 12 * k));
