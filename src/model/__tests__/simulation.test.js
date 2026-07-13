@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runSimulation } from "../simulation.js";
+import { runSimulation, projectedIncomeAtAge, buildProjectedIncomeByAge } from "../simulation.js";
 import { calcEmployerMatch } from "../employer-match.js";
 
 const defaultSim = (overrides = {}) => {
@@ -415,5 +415,138 @@ describe("runSimulation — income growth plateau (incomeGrowthEndAge)", () => {
     const uncapped  = defaultSim({ incomeGrowthEndAge: null, incomeGrowth: 5 });
     // After plateau, employer match + employee deferral freeze; final balance must be lower.
     expect(capped[34].tradGross).toBeLessThan(uncapped[34].tradGross);
+  });
+});
+
+describe("projectedIncomeAtAge / buildProjectedIncomeByAge", () => {
+  it("matches the sim row's own salary formula for several ages (no plateau)", () => {
+    const args = { currentIncome: 100_000, incomeGrowth: 5, incomeGrowthEndAge: null, currentAge: 30 };
+    expect(projectedIncomeAtAge(args, 31)).toBeCloseTo(100_000, 6);              // growthYears = 0
+    expect(projectedIncomeAtAge(args, 35)).toBeCloseTo(100_000 * 1.05 ** 4, 6);  // growthYears = 4
+    expect(projectedIncomeAtAge(args, 50)).toBeCloseTo(100_000 * 1.05 ** 19, 6); // growthYears = 19
+  });
+
+  it("honors the incomeGrowthEndAge plateau", () => {
+    const args = { currentIncome: 100_000, incomeGrowth: 5, incomeGrowthEndAge: 40, currentAge: 30 };
+    expect(projectedIncomeAtAge(args, 36)).toBeCloseTo(100_000 * 1.05 ** 5, 6);   // pre-plateau: growthYears = 5
+    expect(projectedIncomeAtAge(args, 41)).toBeCloseTo(100_000 * 1.05 ** 10, 6);  // at plateau: growthYears = 10
+    expect(projectedIncomeAtAge(args, 45)).toBeCloseTo(100_000 * 1.05 ** 10, 6);  // past plateau: capped at 10
+  });
+
+  it("buildProjectedIncomeByAge returns 0 for ages past retirementAge", () => {
+    const table = buildProjectedIncomeByAge({
+      currentIncome: 100_000, incomeGrowth: 5, incomeGrowthEndAge: null,
+      currentAge: 30, retirementAge: 60, minAge: 58, maxAge: 62,
+    });
+    expect(table[58]).toBeGreaterThan(0);
+    expect(table[60]).toBeGreaterThan(0);
+    expect(table[61]).toBe(0);
+    expect(table[62]).toBe(0);
+  });
+});
+
+// ── Income-replacement channel: a duration outflow event's incomeAnnual now
+// means "my TOTAL income during this period" (owner decision), replacing salary
+// in a working year instead of bolting an addition onto it. Retirement-walk
+// years are untouched (no salary there to replace) — see money-events.js. ─────
+describe("runSimulation — income-replacement channel (duration outflow incomeAnnual)", () => {
+  const bigTripBase = {
+    totalYears: 15, currentAge: 30, currentIncome: 100_000, incomeGrowth: 0,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 0,
+    bal401k: 0, balRoth: 0, balTaxable: 500_000, balHSA: 0,
+    contrib401k: 10_000, contribRoth: 5_000, contribTaxable: 2_000, contribHSA: 3_000,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    // Deterministic flat 3% match, independent of the employee contribution —
+    // isolates the income-replacement effect from any match-formula interaction.
+    calcEmployerMatchFn: (salary) => salary * 0.03,
+  };
+  const at = (rows, age) => rows.find(r => r.age === age);
+  const totalAt = row => (row.tradGross ?? 0) + row["Roth IRA"] + row["Taxable"] + row["HSA"];
+
+  it("BIG-TRIP regression: a full-pause sabbatical (incomeAnnual: 0) zeroes payroll contributions and charges only the spend to the portfolio", () => {
+    const sabbatical = { label: "Sabbatical", monthlyAmount: 6_000, durationMonths: 36, age: 40, isInflow: false, incomeAnnual: 0 };
+    const withEvent = runSimulation({ ...bigTripBase, moneyEvents: [sabbatical] });
+    const noEvent   = runSimulation(bigTripBase);
+
+    // (a) each fully-paused year (40, 41, 42) has zero employee deferral, zero
+    // match (both folded into c401k), and zero HSA/Roth/taxable contributions.
+    for (const age of [40, 41, 42]) {
+      const row = at(withEvent, age);
+      expect(row.c401k).toBe(0);
+      expect(row.cHSA).toBe(0);
+      expect(row.cRoth).toBe(0);
+      expect(row.cTaxable).toBe(0);
+    }
+
+    // (b) the taxable-account event deduction equals the spend (72k/yr) — isolated
+    // from the row's own cTaxable (0 during the paused years), no second run needed.
+    for (const age of [40, 41, 42]) {
+      const row = at(withEvent, age);
+      const prevRow = at(withEvent, age - 1);
+      const eventDeduction = row["Taxable"] - prevRow["Taxable"] - row.cTaxable;
+      expect(eventDeduction).toBe(-72_000);
+    }
+
+    // (c) total portfolio delta at the last event year vs a no-event run = 216,000
+    // (3 × 72k spend) + 3 × (all annual contributions incl. match) — exact at 0% return.
+    const noEventContribYr = at(noEvent, 31); // flat every year: incomeGrowth = 0
+    const annualContribAndMatch = noEventContribYr.c401k + noEventContribYr.cRoth
+      + noEventContribYr.cHSA + noEventContribYr.cTaxable;
+    const delta = totalAt(at(noEvent, 42)) - totalAt(at(withEvent, 42));
+    expect(delta).toBe(216_000 + 3 * annualContribAndMatch);
+  });
+
+  it("BIG-TRIP sibling: incomeAnnual === salary means no income change — portfolio delta is only the 216k spend", () => {
+    const fullPayLeave = { label: "Paid leave", monthlyAmount: 6_000, durationMonths: 36, age: 40, isInflow: false, incomeAnnual: 100_000 };
+    const withEvent = runSimulation({ ...bigTripBase, moneyEvents: [fullPayLeave] });
+    const noEvent   = runSimulation(bigTripBase);
+
+    for (const age of [40, 41, 42]) {
+      const evRow = at(withEvent, age);
+      const noRow = at(noEvent, age);
+      expect(evRow.c401k).toBe(noRow.c401k);
+      expect(evRow.cRoth).toBe(noRow.cRoth);
+      expect(evRow.cHSA).toBe(noRow.cHSA);
+      expect(evRow.cTaxable).toBe(noRow.cTaxable);
+    }
+
+    const delta = totalAt(at(noEvent, 42)) - totalAt(at(withEvent, 42));
+    expect(delta).toBe(216_000);
+  });
+
+  it("a paused year with partial pay re-opens a phased-out Roth contribution", () => {
+    // NOTE on the fixture: incomeFrac gates BOTH the MAGI (income term) and the
+    // desired-contribution scaling (per the cRoth spec: "scale the DESIRED amount
+    // before the min with rothCap"), so a FULL pause (incomeAnnual: 0) drops MAGI
+    // to 0 but *also* drops incomeFrac to 0 — desired Roth is scaled to 0 right
+    // alongside it, and no contribution happens at all. A PARTIAL pause (some
+    // incomeAnnual > 0) is what actually demonstrates "MAGI drop reopens the
+    // phase-out": MAGI clears the phase-out band while incomeFrac stays > 0, so a
+    // real (partial, correctly-scaled) contribution goes through.
+    const base = {
+      totalYears: 20, currentAge: 30, currentIncome: 200_000, incomeGrowth: 0,
+      filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 0,
+      bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0,
+      contrib401k: 0, contribRoth: 6_000, contribTaxable: 0, contribHSA: 0,
+      contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+      calcEmployerMatchFn: () => 0,
+    };
+    const noEvent = at(runSimulation(base), 45);
+    expect(noEvent.cRoth).toBe(0); // $200k MAGI is fully above the single phase-out ($168k)
+
+    // Half-pay sabbatical: incomeAnnual = 100k (half of the 200k salary) →
+    // primaryIncomeYr = MAGI = 100k, well under the $153k phase-out start
+    // (full base contribution eligible before the incomeFrac scale), and
+    // incomeFrac = 100k / 200k = 0.5 → cRoth = min(6,000 × 0.5, 7,500) = 3,000.
+    const sabbatical = { monthlyAmount: 100, durationMonths: 12, age: 45, isInflow: false, incomeAnnual: 100_000 };
+    const withEvent = at(runSimulation({ ...base, moneyEvents: [sabbatical] }), 45);
+    expect(withEvent.cRoth).toBe(3_000); // MAGI drop re-opens the phase-out, scaled by incomeFrac
+    expect(withEvent.cRoth).toBeGreaterThan(noEvent.cRoth);
+  });
+
+  it("empty moneyEvents leaves the channel fully inert (no golden-master impact)", () => {
+    const withEmpty = runSimulation({ ...bigTripBase, moneyEvents: [] });
+    const noParam   = runSimulation(bigTripBase);
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(noParam));
   });
 });

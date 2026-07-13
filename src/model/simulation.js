@@ -13,7 +13,27 @@ import {
 } from "../config/irs-2026.js";
 import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
-import { eventNetForYear } from "./money-events.js";
+import { eventAmountForYear, eventsIncomeAdjustment } from "./money-events.js";
+
+// The salary in the year the person turns `age`, using the SAME growthYears
+// clamp the sim row uses (incomeGrowthEndAge plateau). The sim loop calls this
+// directly for its own salary — ONE formula, no parallel copy (anti-divergence).
+export function projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge = null, currentAge }, age) {
+  const growthYears = incomeGrowthEndAge != null
+    ? Math.min(age - currentAge - 1, incomeGrowthEndAge - currentAge)
+    : age - currentAge - 1;
+  return currentIncome * Math.pow(1 + incomeGrowth / 100, growthYears);
+}
+
+// Projected salary by age over a range, 0 past retirementAge (no salary in
+// retirement). Feeds a UI seed in a later slice — pure lookup, no side effects.
+export function buildProjectedIncomeByAge({ currentIncome, incomeGrowth, incomeGrowthEndAge = null, currentAge, retirementAge, minAge, maxAge }) {
+  const out = {};
+  for (let age = minAge; age <= maxAge; age++) {
+    out[age] = age > retirementAge ? 0 : projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge }, age);
+  }
+  return out;
+}
 
 // Runs the accumulation simulation.
 // Returns an array of yearly rows from year 1 through totalYears.
@@ -54,6 +74,21 @@ export function runSimulation({
       : y - 1;
     const growFactor = Math.pow(1 + g, growthYears);
 
+    // Income-replacement channel (owner decision: incomeAnnual on a duration
+    // outflow event means "my TOTAL income during this period", not a bolt-on).
+    // baseSalary is exactly currentIncome * growFactor (projectedIncomeAtAge
+    // uses the identical growthYears clamp) — the sim's own salary now goes
+    // through the shared helper so there's one formula, not two (anti-divergence).
+    const { workedFrac, eventIncome } = eventsIncomeAdjustment(moneyEvents, age);
+    const baseSalary      = projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge }, age);
+    const primaryIncomeYr = baseSalary * workedFrac + eventIncome;
+    // Savings scale with INCOME, not worked months: incomeAnnual === salary ⇒
+    // frac 1 ⇒ contributions/match continue (behavior-preserving default);
+    // incomeAnnual === 0 ⇒ frac = workedFrac ⇒ payroll savings stop for paused
+    // months. Capped at 1: income above salary raises MAGI but never conjures
+    // extra savings capacity.
+    const incomeFrac = baseSalary > 0 ? Math.min(1, primaryIncomeYr / baseSalary) : 1;
+
     const isEligibleForCatchup = age >= CATCHUP_AGE;
     const limit415cYr    = isEligibleForCatchup ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
     const electiveLimit  = isEligibleForCatchup
@@ -61,16 +96,18 @@ export function runSimulation({
       : TRAD_401K_LIMIT_2026;
 
     const employeeDeferral = age <= contribEnd401k
-      ? Math.min(contrib401k * growFactor, electiveLimit)
+      ? Math.min(contrib401k * growFactor * incomeFrac, electiveLimit)
       : 0;
     const matchAmt = age <= contribEnd401k
-      ? calcEmployerMatchFn(currentIncome * growFactor, employeeDeferral)
+      ? calcEmployerMatchFn(primaryIncomeYr, employeeDeferral)
       : 0;
     const c401k = Math.min(employeeDeferral + matchAmt, limit415cYr);
-    const cHSA  = age <= contribEndHSA ? Math.min(contribHSA, HSA_LIMIT_2026) : 0;
+    const cHSA  = age <= contribEndHSA ? Math.min(contribHSA * incomeFrac, HSA_LIMIT_2026) : 0;
 
-    const primaryMAGI = currentIncome * growFactor;
-    // Spouse income plateaus at incomeGrowthEndAge too (same growthYears cap as primary)
+    const primaryMAGI = primaryIncomeYr;
+    // Spouse income plateaus at incomeGrowthEndAge too (same growthYears cap as primary).
+    // Income replacement is PRIMARY-ONLY (spouse modeling is premium feature #30) —
+    // spouseGrown is untouched by workedFrac/incomeFrac.
     const spouseGrown = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, growthYears);
     // MAGI ≈ AGI: net out this year's pre-tax deductions (401k deferral + HSA). Used for
     // BOTH the Roth phase-out and the LTCG bracket so the two can't diverge. MFJ adds spouse
@@ -83,7 +120,7 @@ export function runSimulation({
       const rothCap = isEligibleForCatchup
         ? ROTH_IRA_LIMIT_2026 + CATCHUP_ROTH_2026
         : ROTH_IRA_LIMIT_2026;
-      const baseContrib = Math.min(contribRoth, rothCap);
+      const baseContrib = Math.min(contribRoth * incomeFrac, rothCap);
       // AGI-net MAGI (see netOrdinaryIncome): MFJ uses combined, every other status uses
       // primary-only (spouse income/contributions tracked separately). CLAUDE.md rules 3 & 9, BUG-12.
       const yearMAGI    = netOrdinaryIncome;
@@ -96,10 +133,10 @@ export function runSimulation({
       // fix. IRS also rounds the reduced limit up to the nearest $10 / $200 floor — omitted.)
       const phasePct   = (po.end - yearMAGI) / (po.end - po.start);
       const reducedCap = rothCap * phasePct;
-      return Math.round(Math.min(contribRoth, reducedCap));
+      return Math.round(Math.min(contribRoth * incomeFrac, reducedCap));
     })();
 
-    const cTaxable = age <= contribEndTaxable ? contribTaxable * growFactor : 0;
+    const cTaxable = age <= contribEndTaxable ? contribTaxable * growFactor * incomeFrac : 0;
 
     // Per-account growth = investment earnings this year = base × rate, where the
     // base is the prior balance PLUS this year's contribution (contributions are
@@ -120,9 +157,12 @@ export function runSimulation({
     // Money events applied to the taxable account before growth compounds.
     // Outflows (purchases) reduce the base; inflows (windfalls) increase it.
     // Clamped at 0 so a large purchase can't produce a negative balance.
-    // eventNetForYear is the ONE source for an event's per-year effect (it also
-    // splits duration events — $X/mo for N months — across their active years).
-    const eventAdj = moneyEvents.reduce((s, ev) => s + eventNetForYear(ev, age), 0);
+    // eventAmountForYear is the event's OWN cash, EXCLUDING incomeAnnual — that
+    // term already flowed through the salary channel above (eventsIncomeAdjustment)
+    // and must not be double-counted here (see money-events.js's NO-DOUBLE-COUNT
+    // RULE). It also splits duration events — $X/mo for N months — across their
+    // active years.
+    const eventAdj = moneyEvents.reduce((s, ev) => s + eventAmountForYear(ev, age), 0);
 
     // Capped working-year conversion for THIS age (0 when none). Computed before the
     // LTCG-rate selection because the conversion is ordinary income that can push this

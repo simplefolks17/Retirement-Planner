@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applyMoneyEvents, totalEventImpact,
   eventNetForYear, eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
-  isDurationEvent,
+  isDurationEvent, eventAmountForYear, eventIncomeForYear, eventsIncomeAdjustment,
 } from "../money-events.js";
 
 describe("applyMoneyEvents", () => {
@@ -299,5 +299,87 @@ describe("duration events", () => {
     expect(at(without, 70) - at(withEvent, 70)).toBe(60_000);
     expect(at(without, 71) - at(withEvent, 71)).toBe(120_000);
     expect(at(without, 72) - at(withEvent, 72)).toBe(120_000);
+  });
+});
+
+// ── Income-replacement channel: eventAmountForYear / eventIncomeForYear /
+//    eventsIncomeAdjustment (owner decision: incomeAnnual on a duration outflow
+//    event now means "my TOTAL income during this period", replacing salary in a
+//    working year rather than bolting on) ─────────────────────────────────────
+describe("eventAmountForYear + eventIncomeForYear (channel split)", () => {
+  it("sum to eventNetForYear for a mixed set: one-time, duration in/outflow, with/without incomeAnnual", () => {
+    const events = [
+      { amount: 40_000, age: 70, isInflow: false, isTaxable: false },              // one-time outflow
+      { amount: 25_000, age: 70, isInflow: true, isTaxable: false },               // one-time inflow (same age)
+      { monthlyAmount: 6_000, durationMonths: 6, age: 40, isInflow: false, incomeAnnual: 24_000 }, // duration outflow w/ income
+      { monthlyAmount: 2_000, durationMonths: 12, age: 60, isInflow: true, incomeAnnual: 0 },      // duration inflow, no income
+      { monthlyAmount: 1_500, durationMonths: 12, age: 50, isInflow: false },      // duration outflow, incomeAnnual undefined
+    ];
+    for (const age of [40, 50, 60, 70, 71]) {
+      for (const ev of events) {
+        expect(eventAmountForYear(ev, age) + eventIncomeForYear(ev, age)).toBe(eventNetForYear(ev, age));
+      }
+    }
+    // Spot-check the split itself for the income-bearing event.
+    expect(eventAmountForYear(events[2], 40)).toBe(-36_000);
+    expect(eventIncomeForYear(events[2], 40)).toBe(12_000);
+    // Undefined incomeAnnual never contributes an income term.
+    expect(eventIncomeForYear(events[4], 50)).toBe(0);
+    expect(eventAmountForYear(events[4], 50)).toBe(-18_000);
+  });
+
+  it("eventIncomeForYear is always >= 0 even for an inflow event's own monthly amount", () => {
+    const partTime = { monthlyAmount: 2_000, durationMonths: 12, age: 60, isInflow: true, incomeAnnual: 5_000 };
+    expect(eventIncomeForYear(partTime, 60)).toBe(5_000);
+    expect(eventAmountForYear(partTime, 60)).toBe(24_000); // still additive — duration inflow unaffected
+  });
+
+  it("one-time events never carry an income term", () => {
+    const ev = { amount: 100_000, age: 65, isInflow: true, isTaxable: false };
+    expect(eventIncomeForYear(ev, 65)).toBe(0);
+    expect(eventAmountForYear(ev, 65)).toBe(100_000);
+  });
+});
+
+describe("eventsIncomeAdjustment", () => {
+  it("defaults to no-op for an empty array", () => {
+    expect(eventsIncomeAdjustment([], 45)).toEqual({ pausedMonths: 0, workedFrac: 1, eventIncome: 0 });
+  });
+
+  it("mid-event proration: an 18-month event pauses 12 months yr1, 6 yr2", () => {
+    const ev = { monthlyAmount: 6_000, durationMonths: 18, age: 40, isInflow: false, incomeAnnual: 12_000 };
+    const yr1 = eventsIncomeAdjustment([ev], 40);
+    expect(yr1.pausedMonths).toBe(12);
+    expect(yr1.workedFrac).toBe(0);
+    expect(yr1.eventIncome).toBe(12_000); // 12/12 × 12k
+
+    const yr2 = eventsIncomeAdjustment([ev], 41);
+    expect(yr2.pausedMonths).toBe(6);
+    expect(yr2.workedFrac).toBe(0.5);
+    expect(yr2.eventIncome).toBe(6_000); // 6/12 × 12k
+  });
+
+  it("two overlapping qualifying events cap pausedMonths at 12 while eventIncome adds uncapped", () => {
+    const evA = { monthlyAmount: 1_000, durationMonths: 12, age: 40, isInflow: false, incomeAnnual: 10_000 };
+    const evB = { monthlyAmount: 500, durationMonths: 12, age: 40, isInflow: false, incomeAnnual: 5_000 };
+    const result = eventsIncomeAdjustment([evA, evB], 40);
+    expect(result.pausedMonths).toBe(12); // 12 + 12 = 24, capped
+    expect(result.workedFrac).toBe(0);
+    expect(result.eventIncome).toBe(15_000); // 10k + 5k, uncapped
+  });
+
+  it("a duration INFLOW event is a no-op (stays additive side cash, not salary replacement)", () => {
+    const partTime = { monthlyAmount: 2_000, durationMonths: 12, age: 60, isInflow: true, incomeAnnual: 5_000 };
+    expect(eventsIncomeAdjustment([partTime], 60)).toEqual({ pausedMonths: 0, workedFrac: 1, eventIncome: 0 });
+  });
+
+  it("a one-time event is a no-op", () => {
+    const ev = { amount: 40_000, age: 60, isInflow: false };
+    expect(eventsIncomeAdjustment([ev], 60)).toEqual({ pausedMonths: 0, workedFrac: 1, eventIncome: 0 });
+  });
+
+  it("a duration outflow with undefined incomeAnnual does not qualify (legacy event = no statement about income)", () => {
+    const ev = { monthlyAmount: 1_500, durationMonths: 12, age: 50, isInflow: false };
+    expect(eventsIncomeAdjustment([ev], 50)).toEqual({ pausedMonths: 0, workedFrac: 1, eventIncome: 0 });
   });
 });
