@@ -284,7 +284,7 @@ export default function LifeEventSheet({
               <input type="range" min="1" max={DURATION_MAX_MONTHS} step="1" value={durationMonths}
                 onChange={e => setDurationMonths(Number(e.target.value))}
                 aria-label="Duration in months" style={{ width: "100%", accentColor: t.accent }} />
-              <VerdictTickRail t={t} rail={durationRail} />
+              <VerdictTickRail t={t} rail={durationRail} legend={result?.verdictInfo?.rangeLegend} />
             </div>
           </>
         )}
@@ -307,9 +307,14 @@ export default function LifeEventSheet({
             borderRadius: 13, padding: "13px 15px", marginBottom: 16,
           }}>
             <div style={{ font: `400 12px ${HF}`, color: t.mut }}>This plan…</div>
-            <div style={{ font: `700 17px ${HF}`, color: vColor, margin: "2px 0 9px" }}>
+            <div style={{ font: `700 17px ${HF}`, color: vColor, margin: "2px 0 2px" }}>
               {verdict.word}
             </div>
+            {result.verdictInfo?.marginLabel && (
+              <div style={{ font: `400 11.5px ${HF}`, color: t.mut, marginBottom: 7 }}>
+                {result.verdictInfo.marginLabel}
+              </div>
+            )}
             <ul style={{ margin: 0, padding: "0 0 0 16px", display: "grid", gap: 5 }}>
               <li style={{ font: `500 12.5px ${HF}`, color: t.ink }}>
                 Total: {fmt(result.grossCost)}

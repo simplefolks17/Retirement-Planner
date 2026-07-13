@@ -37,6 +37,7 @@ import { buildRetirementDrawdown } from "../../model/retirement-drawdown.js";
 import { buildRetirementPhase } from "../../model/retirement-phase.js";
 import { buildAccumChart } from "../../model/accumulation.js";
 import { calcEmployerMatch } from "../../model/employer-match.js";
+import { buildVerdictLegend } from "../../model/what-if.js";
 
 beforeAll(() => {
   if (typeof globalThis.window === "undefined") {
@@ -141,6 +142,7 @@ const makeMockProps = (overrides = {}) => ({
     spendMin: 2_000, spendMax: 10_000,
   },
   applyPlanLevers:   vi.fn(),
+  verdictLegend:     buildVerdictLegend(safeLifeExp),
   ...overrides,
 });
 
@@ -231,6 +233,20 @@ describe("IdeasScreen — Dials mode", () => {
     expect(labels).toContain("Retire at");
     expect(labels).toContain("Monthly spend");
     expect(tickDivs(renderer.root).length).toBeGreaterThan(0);
+    act(() => renderer.unmount());
+  });
+
+  // BUG-73: the labeled comfortable/tight/unaffordable ranges must be visible
+  // (owner requirement), sourced from props.verdictLegend, shown once — not
+  // once per rail (retire-at AND monthly-spend both render a rail here).
+  it("shows the verdict legend once from props.verdictLegend, not once per rail", () => {
+    const { renderer } = mount();
+    act(() => { buttonsByText(renderer.root, "Dials")[0].props.onClick(); });
+    const text = allText(renderer.root);
+    expect(text).toContain("5+ yrs of runway");
+    expect(text).toContain("runs out before 90");
+    const occurrences = text.split("5+ yrs of runway").length - 1;
+    expect(occurrences).toBe(1);
     act(() => renderer.unmount());
   });
 

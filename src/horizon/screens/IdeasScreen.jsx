@@ -112,6 +112,8 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     // Preview-first apply (2026-07-11 redesign, SP-5 tidy): the ONE write path
     // for dial commits — never a bare setter (mirrors Plan's TryAChangePanel).
     sliderBounds, applyPlanLevers,
+    // BUG-73: labeled comfortable/tight/unaffordable ranges for the rail legend.
+    verdictLegend,
   } = props;
 
   const [mode, setMode] = useState(() => resolveMode(initialMode) ?? null);
@@ -395,7 +397,7 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                     onChange={e => setDialRetireOffset(Number(e.target.value) - retirementAge)}
                     style={sliderInput}
                   />
-                  <VerdictTickRail t={t} rail={dialRetireRail} />
+                  <VerdictTickRail t={t} rail={dialRetireRail} legend={verdictLegend} />
                 </div>
 
                 {/* Monthly-spend slider */}

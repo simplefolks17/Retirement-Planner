@@ -57,16 +57,37 @@ export function seg(t, on) {
 // straight from the model (what-if.js).
 export const VERDICT_TINT = { comfortable: "good", tight: "warm", unaffordable: "accent" };
 
-export function VerdictTickRail({ t, rail }) {
+// `legend` (optional, BUG-73 fix): [{ verdict, label }] from
+// buildVerdictLegend/verdictInfoForScenario (what-if.js) — renders a small
+// caption row under the ticks so users can SEE the value range behind each
+// verdict color, not just infer it from the tint (owner requirement). Rule
+// 10: the label text is verbatim from the model; this component only maps
+// the verdict string to the SAME tint the ticks already use. Absent → no
+// caption row, pixel-identical to before this prop existed.
+export function VerdictTickRail({ t, rail, legend }) {
   if (!rail?.length) return null;
   return (
-    <div style={{ display: "flex", gap: 2, marginTop: 6 }} aria-hidden="true">
-      {rail.map(entry => (
-        <div key={entry.value ?? entry.months} style={{
-          flex: 1, height: 4, borderRadius: 2,
-          background: t[VERDICT_TINT[entry.verdict]] ?? t.line,
-        }} />
-      ))}
+    <div>
+      <div style={{ display: "flex", gap: 2, marginTop: 6 }} aria-hidden="true">
+        {rail.map(entry => (
+          <div key={entry.value ?? entry.months} style={{
+            flex: 1, height: 4, borderRadius: 2,
+            background: t[VERDICT_TINT[entry.verdict]] ?? t.line,
+          }} />
+        ))}
+      </div>
+      {legend?.length > 0 && (
+        <div style={{ display: "flex", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
+          {legend.map(item => (
+            <span key={item.verdict} style={{ font: `400 10px ${HF}` }}>
+              <span style={{ color: t[VERDICT_TINT[item.verdict]] ?? t.mut, fontWeight: 600 }}>
+                {item.verdict}
+              </span>
+              <span style={{ color: t.faint }}> {item.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

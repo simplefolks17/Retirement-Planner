@@ -48,7 +48,7 @@ import { FlowConn }          from "./components/FlowConn.jsx";
 import { WhatIfPanel }       from "./components/WhatIfPanel.jsx";
 import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
 import { ConversionEventsPanel } from "./components/ConversionEventsPanel.jsx";
-import { calcWhatIfDelta }   from "./model/what-if.js";
+import { calcWhatIfDelta, buildVerdictLegend }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
@@ -1805,6 +1805,12 @@ export default function App() {
     }),
   }), [currentAge, safeLifeExp, safeRetAge, currentIncome, incomeGrowth, incomeGrowthEndAge]);
 
+  // BUG-73: the labeled comfortable/tight/unaffordable ranges (rule 10 — the
+  // rail legend caption comes from here, never a hardcoded "5" or "90" in a
+  // screen). Memoized separately (V9) since it's a small, independently-stable
+  // slice of horizonProps.
+  const verdictLegend = useMemo(() => buildVerdictLegend(safeLifeExp), [safeLifeExp]);
+
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
   // so the bundle reference only changes when an input actually changes.
@@ -1895,6 +1901,9 @@ export default function App() {
     // writes now go through the single applyPlanLevers path above.
     monthlySpend,
     sliderBounds,
+    // BUG-73: labeled comfortable/tight/unaffordable ranges for the Plan/Ideas/
+    // LifeEventSheet verdict rail legends — memoized separately above (V9).
+    verdictLegend,
     // Conditional slider flags.
     isMarried,
     // Committed plan snapshot — null until the user has saved a plan at least once
@@ -1939,6 +1948,8 @@ export default function App() {
        isMarried, committedPlan,
        planHighlights,
        monthlySpend, sliderBounds,
+       // BUG-73: verdict legend (memoized separately above):
+       verdictLegend,
        // WI-3.1 setter bundles (each memoized separately above):
        profileBundle, spendingBundle, accountsBundle, ssBundle, pensionBundle,
        conversionBundle, healthBundle, assumptionsBundle]);

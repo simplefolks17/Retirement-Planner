@@ -146,6 +146,22 @@ describe("LifeEventSheet", () => {
     expect(text).toContain("Portfolio at 65");
   });
 
+  // BUG-73: the margin label (e.g. "3 yrs to spare past 90" / "≈12 yrs of
+  // spending still in reserve at 90") sits under the verdict word — sourced
+  // straight from evaluateLifeEvent's verdictInfo.marginLabel (rule 10).
+  it("shows the model's margin label under the verdict word (BUG-73)", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds, initial: oneTimeSeed, onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const expected = evaluateLifeEvent(whatIfBundle, {
+      ...oneTimeSeed, isTaxable: false, id: undefined,
+    }).verdictInfo.marginLabel;
+    expect(allText(tree)).toContain(expected);
+  });
+
   it("save composes a one-time event with an id and the edited values", () => {
     const onSave = vi.fn();
     let tree;
@@ -346,6 +362,11 @@ describe("LifeEventSheet", () => {
     for (const tick of ticks) {
       expect(validColors.has(tick.props.style.background)).toBe(true);
     }
+    // BUG-73: the duration rail carries a legend caption (from
+    // result.verdictInfo.rangeLegend) so users see the value range behind
+    // each tick color, not just the color.
+    expect(allText(tree)).toContain("5+ yrs of runway");
+    expect(allText(tree)).toContain("runs out before 90");
 
     let treeNoBundle;
     act(() => {
