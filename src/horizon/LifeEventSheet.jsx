@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
 import { fmt } from "./shared.jsx";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
@@ -31,6 +31,18 @@ const VERDICT_COPY = {
   unaffordable: { word: "doesn't fit your plan", tone: "accent" },
 };
 
+// "Usual pay" seed for a given age — 0 once retired, else the model-projected
+// salary at that age (bounds.projectedIncomeByAge, built in App.jsx — rule 10:
+// the growth projection lives there, this just looks it up). Module-level
+// (not a component closure) so the age-follow effect below can depend on it
+// via its own inputs (bounds, age) without an eslint-disable escape hatch.
+function seedIncomeForAge(bounds, age) {
+  // Pure lookup — the model table already zeroes post-retirement ages
+  // (buildProjectedIncomeByAge), so no age comparison is repeated here.
+  const lookup = bounds.projectedIncomeByAge?.[age];
+  return Number.isFinite(lookup) ? lookup : 0;
+}
+
 export default function LifeEventSheet({
   t, whatIfBundle, bounds, initial, onSave, onRemove, onCancel,
 }) {
@@ -43,8 +55,32 @@ export default function LifeEventSheet({
   const [amount, setAmount]                 = useState(initial?.amount ?? 25_000);
   const [monthlyAmount, setMonthlyAmount]   = useState(initial?.monthlyAmount ?? 5_000);
   const [durationMonths, setDurationMonths] = useState(initial?.durationMonths ?? 6);
-  const [incomeAnnual, setIncomeAnnual]     = useState(initial?.incomeAnnual ?? 0);
   const [age, setAge]                       = useState(initial?.age ?? bounds.retirementAge);
+
+  // "Your income during this time" seeding (owner decision: incomeAnnual means
+  // "my total income during this period," not a bolt-on offset — money-events.js).
+  //   (a) editing a committed event, or opening a preset that already states an
+  //       explicit incomeAnnual (LIFE_EVENTS' duration seeds all do) → keep it,
+  //       never auto-follow the age slider.
+  //   (b) a NEW duration event with no explicit incomeAnnual, at a pre-retirement
+  //       age → seed from bounds.projectedIncomeByAge[age] — "life as normal";
+  //       the user types 0 for a sabbatical.
+  //   (c) post-retirement → seed 0 (no salary to state).
+  const hasExplicitIncome = Number.isFinite(initial?.incomeAnnual);
+  const [incomeAnnual, setIncomeAnnual] = useState(() =>
+    hasExplicitIncome ? initial.incomeAnnual : seedIncomeForAge(bounds, initial?.age ?? bounds.retirementAge));
+  // Once the user edits the income field directly (typing or a quick-set chip),
+  // it stops following the age slider — "sticks" at whatever they set.
+  const [userTouchedIncome, setUserTouchedIncome] = useState(hasExplicitIncome);
+
+  // Keep the income field following the age slider for a genuinely new,
+  // not-yet-touched duration outflow (rule (b)/(c) above). No-op once touched,
+  // once editing a committed/preset event with an explicit seed, or when the
+  // field isn't even shown (inflow / one-time mode).
+  useEffect(() => {
+    if (userTouchedIncome || isInflow || mode !== "monthly") return;
+    setIncomeAnnual(seedIncomeForAge(bounds, age));
+  }, [age, mode, isInflow, userTouchedIncome, bounds]);
 
   const icon = initial?.icon ?? (isInflow ? "✳" : "◆");
 
@@ -104,6 +140,11 @@ export default function LifeEventSheet({
   const verdict = result ? VERDICT_COPY[result.verdict] : null;
   const vColor  = verdict ? t[verdict.tone] : t.mut;
 
+  // "Usual pay at {age}" — the same lookup the seeding effect above uses, read
+  // once here for the hint line + the "My usual pay" quick-set chip so all
+  // three (seed, hint, chip) can never show a different number for the same age.
+  const usualPayAtAge = seedIncomeForAge(bounds, age);
+
   const handleSave = () => {
     onSave({
       ...candidate,
@@ -124,6 +165,11 @@ export default function LifeEventSheet({
     width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8,
     border: `1px solid ${t.line2}`, background: t.bg, color: t.ink,
     font: `600 14px ${HM}`, outline: "none",
+  };
+  const quickSetChip = {
+    padding: "4px 9px", borderRadius: 999, cursor: "pointer",
+    border: `1px solid ${t.line2}`, background: "transparent",
+    font: `400 10.5px ${HF}`, color: t.mut, whiteSpace: "nowrap",
   };
 
   return (
@@ -200,10 +246,35 @@ export default function LifeEventSheet({
               </div>
               {!isInflow && (
                 <div style={{ flex: 1 }}>
-                  <div style={fieldLabel}>Income while it runs ($/yr)</div>
+                  <div style={fieldLabel}>Your income during this time ($/yr)</div>
                   <input type="number" min="0" step="1000" value={incomeAnnual}
-                    onChange={e => setIncomeAnnual(Math.max(0, Number(e.target.value) || 0))}
-                    aria-label="Income while the event runs" style={numInput} />
+                    onChange={e => {
+                      setUserTouchedIncome(true);
+                      setIncomeAnnual(Math.max(0, Number(e.target.value) || 0));
+                    }}
+                    aria-label="Your income during this time" style={numInput} />
+                  <div style={{ font: `400 10.5px ${HF}`, color: t.mut, marginTop: 4 }}>
+                    {/* Raw-input gate (event age vs the retirement bound) so a
+                        pre-retirement user whose income is genuinely $0 sees an
+                        honest $0 instead of a false "you'd be retired". */}
+                    Usual pay at {age}: {age > bounds.retirementAge
+                      ? "(you'd be retired — no salary)"
+                      : fmt(usualPayAtAge)}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                    <button type="button" onClick={() => {
+                      setUserTouchedIncome(true);
+                      setIncomeAnnual(usualPayAtAge);
+                    }} style={quickSetChip}>
+                      My usual pay
+                    </button>
+                    <button type="button" onClick={() => {
+                      setUserTouchedIncome(true);
+                      setIncomeAnnual(0);
+                    }} style={quickSetChip}>
+                      No income
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -217,7 +288,7 @@ export default function LifeEventSheet({
               <input type="range" min="1" max={DURATION_MAX_MONTHS} step="1" value={durationMonths}
                 onChange={e => setDurationMonths(Number(e.target.value))}
                 aria-label="Duration in months" style={{ width: "100%", accentColor: t.accent }} />
-              <VerdictTickRail t={t} rail={durationRail} />
+              <VerdictTickRail t={t} rail={durationRail} legend={result?.verdictInfo?.rangeLegend} />
             </div>
           </>
         )}
@@ -240,19 +311,32 @@ export default function LifeEventSheet({
             borderRadius: 13, padding: "13px 15px", marginBottom: 16,
           }}>
             <div style={{ font: `400 12px ${HF}`, color: t.mut }}>This plan…</div>
-            <div style={{ font: `700 17px ${HF}`, color: vColor, margin: "2px 0 9px" }}>
+            <div style={{ font: `700 17px ${HF}`, color: vColor, margin: "2px 0 2px" }}>
               {verdict.word}
             </div>
+            {result.verdictInfo?.marginLabel && (
+              <div style={{ font: `400 11.5px ${HF}`, color: t.mut, marginBottom: 7 }}>
+                {result.verdictInfo.marginLabel}
+              </div>
+            )}
             <ul style={{ margin: 0, padding: "0 0 0 16px", display: "grid", gap: 5 }}>
               <li style={{ font: `500 12.5px ${HF}`, color: t.ink }}>
                 Total: {fmt(result.grossCost)}
                 {mode === "monthly" && (
                   <span style={{ color: t.mut }}>
-                    {" "}({fmt(monthlyAmount)}/mo for {durationMonths} mos
-                    {incomeAnnual > 0 && !isInflow ? `, less ${fmt(incomeAnnual)}/yr income` : ""})
+                    {" "}({fmt(monthlyAmount)}/mo for {durationMonths} mos)
                   </span>
                 )}
               </li>
+              {result.incomeImpact && result.incomeImpact.dir && (
+                <li style={{ font: `500 12.5px ${HF}`, color: t.ink }}>
+                  Income while it runs: {fmt(result.incomeImpact.eventPay)} instead of{" "}
+                  {fmt(result.incomeImpact.usualPay)}{" "}
+                  <span style={{ color: result.incomeImpact.dir === "down" ? t.warm : t.good }}>
+                    ({result.incomeImpact.dir === "down" ? "−" : "+"}{fmt(result.incomeImpact.netLostIncomeAbs)})
+                  </span>
+                </li>
+              )}
               {result.atRetirement.dir && (
                 <li style={{ font: `500 12.5px ${HF}`, color: t.ink }}>
                   Portfolio at {result.atRetirement.age}:{" "}

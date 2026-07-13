@@ -18,12 +18,12 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 | `src/horizon/ConfirmModal.jsx` | Shared confirm dialog + toast pattern (used by PlanScreen and IdeasScreen) |
 | `src/horizon/ApplyPreviewModal.jsx` | Apply-with-preview shell (WI-3.9): pure renderer of a model-computed before/after payload, wraps `ConfirmModal`; exports `PreviewMetricRow` + `VerdictBadge`. Contract in `ARCHITECTURE.md` |
 | `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape |
-| `src/horizon/AffordabilityPanel.jsx` | "Biggest affordable expense" solver (WI-3.8, Ideas' "Solvers" mode) — calls `calcAffordabilityMax` directly (sanctioned in-screen pattern), fed by `affordView` + `whatIfSimInputs` |
+| `src/horizon/AffordabilityPanel.jsx` | [DELETED 2026-07-13] "Biggest affordable expense" solver (WI-3.8, Ideas' "Solvers" mode) — called `calcAffordabilityMax` directly (sanctioned in-screen pattern), fed by `affordView` + `whatIfSimInputs`. Solvers tab and the panel were removed by owner decision (Dials + Events cover the job; `calcAffordabilityMax` retained for Classic's WhatIfPanel). |
 | `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views, scenario overlay, event markers, tap-to-scrub |
 | `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard + mobile bar/MoreSheet; exports `SCREENS`; imports per-screen files |
 | `src/horizon/screens/PlanScreen.jsx` | arc (full-width), hero, income meter, Try-a-change preview levers (Apply/Discard), stat cards, signals strip |
 | `src/horizon/screens/JourneyScreen.jsx` | Journey screen — the Flow-Down port (3-chapter narrative) |
-| `src/horizon/screens/IdeasScreen.jsx` | segmented Dials · Events · Solvers workshop; live dial sliders + quick-jump chips; sheet-first Events; Solvers = `AffordabilityPanel` (WI-3.8, unrelated addition — see the "Retired" note below) |
+| `src/horizon/screens/IdeasScreen.jsx` | segmented Dials · Events workshop (was Dials · Events · Solvers before 2026-07-13); live dial sliders + quick-jump chips; sheet-first Events; Solvers tab + `AffordabilityPanel` removed per owner decision |
 | `src/horizon/screens/NumbersScreen.jsx` | The Numbers screen — 5 tabs (Statement, Budget, Accounts, Taxes, Year by year); Statement carries a "Retirement income companion strip" (the consolidated former Money-flow retirement view — see below) |
 | `src/horizon/screens/StrategiesScreen.jsx` | Strategies catalogue (WI-3.3) — `STRATEGIES` registry of cards; each opens a `Flow` in the detail slot. All 6 cards now have a live `Flow` (WI-3.4–3.7) |
 | `src/horizon/screens/strategies/` | The interactive strategy flows: `SSTimingFlow.jsx` (WI-3.4), `RMDOutlookFlow.jsx` (WI-3.5), `ConversionPlannerFlow.jsx` (WI-3.6), `WithdrawalOrderFlow.jsx` / `SurplusDeploymentFlow.jsx` / `MegaBackdoorFlow.jsx` (WI-3.7); `flow-ui.jsx` = shared `SectionLabel`/`NoteBox`/`StatTile`/`ListRow`/`ListCard` |
@@ -195,6 +195,12 @@ The deep workshop — the arc is always the hero, and every number shown comes f
   and re-opens the sheet in edit mode (`committedByLabel`) instead of re-adding — this is the
   mechanism BUG-44 hardened. `LIFE_EVENTS` includes "Big trip" (🧳, $40k/age 70) — folded in from
   the retired Scenarios card, same seed values, now a normal editable pill.
+  **Income field semantics (BUG-72, 2026-07-13):** for duration events, the "Your income during
+  this time ($/yr)" field is the **user's total income during the event period**, not an additive
+  side-income offset. Seeded from the model's projected income at the event age; a user can override
+  it (e.g., "I'll freelance $20k/yr during my sabbatical"). Working-year model uses this to suppress
+  contributions, MAGI, SS AIME; retirement-phase uses it as a portfolio-draw offset only (untaxed
+  per BUG-36 scope). One-time events have no income field.
 
 **Apply-with-preview (one commit verb):** when either dial has moved, "Apply to my plan" opens
 `ApplyPreviewModal` (via `buildLeverPreview`, the same model call the preview overlay used) →
@@ -202,14 +208,16 @@ confirm fires `applyPlanLevers({ retirementAge, monthlySpend })` (only the dial(
 moved) → 2-second "✓ Applied" toast → dials reset to 0 offset.
 
 **Solvers mode (2026-07-12, WI-3.8 — an independent addition merged in alongside the Scenarios
-removal, no overlap with it):** `AffordabilityPanel.jsx` — "what's the biggest one-time expense
-your plan can absorb?" Purchase-age + target-sustain-age controls, fed by the `affordView` bundle
-(defaults/bounds only); calls `calcAffordabilityMax(whatIfBundle, {...})` directly (the sanctioned
-in-screen pure-function-call pattern). This is the ONLY new segment retained from WI-3.8's original
-Ideas work — its sibling "Events" mode (`EventsEditorPanel.jsx`, a raw `moneyEvents` CRUD list) was
-retired the same day: the owner had separately rejected the raw-editor/preset-card pattern in
-favor of the sheet-first `LifeEventSheet` flow, which already does that job. `EventsEditorPanel.jsx`
-was deleted (unused after the retirement); the file table above no longer lists it.
+removal, no overlap with it; RETIRED 2026-07-13 by owner decision):** was `AffordabilityPanel.jsx`
+— "what's the biggest one-time expense your plan can absorb?" Purchase-age + target-sustain-age
+controls, fed by the `affordView` bundle (defaults/bounds only); called `calcAffordabilityMax(whatIfBundle, {...})` directly (the sanctioned in-screen pure-function-call pattern). **REMOVED 2026-07-13:**
+the owner decided Dials + Events cover the affordability job; the Solvers tab and its panel
+(`AffordabilityPanel.jsx`) were deleted. `calcAffordabilityMax` is retained for Classic's
+`WhatIfPanel` Max Affordable mode (unchanged). The sibling "Events" mode (`EventsEditorPanel.jsx`,
+a raw `moneyEvents` CRUD list) was already retired the same day it shipped (2026-07-12): the owner
+had separately rejected the raw-editor/preset-card pattern in favor of the sheet-first
+`LifeEventSheet` flow, which already does that job. `EventsEditorPanel.jsx` was deleted (unused
+after the retirement); the file table above no longer lists it.
 
 **Retired (2026-07-12):** the locked "Scenarios" mode (4 non-editable preset cards: `retire63`,
 `retire60`, `saveMore`, `bigTrip`) and its "What if…" prompt row. The 2 age-only cards became the

@@ -24,6 +24,7 @@ import { buildRetirementDrawdown } from "../../model/retirement-drawdown.js";
 import { buildRetirementPhase } from "../../model/retirement-phase.js";
 import { buildAccumChart } from "../../model/accumulation.js";
 import { calcEmployerMatch } from "../../model/employer-match.js";
+import { buildVerdictLegend } from "../../model/what-if.js";
 
 beforeAll(() => {
   if (typeof globalThis.window === "undefined") {
@@ -147,6 +148,7 @@ const makeMockProps = (overrides = {}) => ({
   saveEvent:         vi.fn(),
   removeEvent:       vi.fn(),
   lifeEventBounds:   { minAge: currentAge + 1, maxAge: safeLifeExp, retirementAge: safeRetAge },
+  verdictLegend:     buildVerdictLegend(safeLifeExp),
   ...overrides,
 });
 
@@ -221,6 +223,19 @@ describe("PlanScreen — Try a change panel", () => {
     expect(dashedPaths(renderer.root).length).toBe(0);
     expect(allText(renderer.root)).toContain("More in Ideas");
     expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
+    act(() => renderer.unmount());
+  });
+
+  // BUG-73: the labeled comfortable/tight/unaffordable ranges must be visible
+  // (owner requirement), but shown ONCE per panel — not repeated under both
+  // the retire-at and monthly-spend rails.
+  it("shows the verdict legend once under the rail group, not once per rail", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    expect(text).toContain("5+ yrs of runway");
+    expect(text).toContain("runs out before 90");
+    const occurrences = text.split("5+ yrs of runway").length - 1;
+    expect(occurrences).toBe(1);
     act(() => renderer.unmount());
   });
 

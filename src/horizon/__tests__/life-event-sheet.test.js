@@ -15,11 +15,13 @@ import React from "react";
 import { act, create } from "react-test-renderer";
 import LifeEventSheet from "../LifeEventSheet.jsx";
 import ArcGraph from "../../components/ArcGraph.jsx";
-import { runSimulation } from "../../model/simulation.js";
+import { runSimulation, buildProjectedIncomeByAge } from "../../model/simulation.js";
 import { buildRetirementDrawdown } from "../../model/retirement-drawdown.js";
 import { buildRetirementPhase } from "../../model/retirement-phase.js";
 import { buildAccumChart } from "../../model/accumulation.js";
 import { calcEmployerMatch } from "../../model/employer-match.js";
+import { evaluateLifeEvent } from "../../model/what-if.js";
+import { fmt } from "../shared.jsx";
 
 beforeAll(() => {
   if (typeof globalThis.window === "undefined") {
@@ -102,7 +104,16 @@ const whatIfBundle = {
   safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained,
   retPhaseBase, conversionByAge: {}, baseChart, addlPreTaxBal: 0,
 };
-const bounds = { minAge: currentAge + 1, maxAge: safeLifeExp, retirementAge: safeRetAge };
+// Projected salary by age — mirrors what App.jsx's lifeEventBounds memo builds
+// (buildProjectedIncomeByAge, simulation.js) from the SAME simInputs above, so
+// the seeding/hint tests below exercise the real production wiring, not a
+// hand-picked stand-in map.
+const projectedIncomeByAge = buildProjectedIncomeByAge({
+  currentIncome: simInputs.currentIncome, incomeGrowth: simInputs.incomeGrowth,
+  incomeGrowthEndAge: null, currentAge,
+  retirementAge: safeRetAge, minAge: currentAge + 1, maxAge: safeLifeExp,
+});
+const bounds = { minAge: currentAge + 1, maxAge: safeLifeExp, retirementAge: safeRetAge, projectedIncomeByAge };
 
 function textOf(node) {
   if (typeof node === "string") return node;
@@ -133,6 +144,22 @@ describe("LifeEventSheet", () => {
     expect(/is comfortable|is tight — watch it|doesn't fit your plan/.test(text)).toBe(true);
     // Pre-retirement outflow must surface the at-retirement impact bullet
     expect(text).toContain("Portfolio at 65");
+  });
+
+  // BUG-73: the margin label (e.g. "3 yrs to spare past 90" / "≈12 yrs of
+  // spending still in reserve at 90") sits under the verdict word — sourced
+  // straight from evaluateLifeEvent's verdictInfo.marginLabel (rule 10).
+  it("shows the model's margin label under the verdict word (BUG-73)", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds, initial: oneTimeSeed, onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const expected = evaluateLifeEvent(whatIfBundle, {
+      ...oneTimeSeed, isTaxable: false, id: undefined,
+    }).verdictInfo.marginLabel;
+    expect(allText(tree)).toContain(expected);
   });
 
   it("save composes a one-time event with an id and the edited values", () => {
@@ -187,21 +214,134 @@ describe("LifeEventSheet", () => {
         onSave, onCancel: vi.fn(),
       }));
     });
-    // The "Income while it runs" field is only rendered for money-out events —
-    // confirm it's present (and carrying the seeded value) before the toggle.
-    expect(allText(tree)).toContain("Income while it runs");
+    // The "Your income during this time" field is only rendered for money-out
+    // events — confirm it's present (and carrying the seeded value) before the toggle.
+    expect(allText(tree)).toContain("Your income during this time");
     const moneyIn = tree.root.findAll(
       n => typeof n.props?.onClick === "function" && textOf({ children: n.children }) === "Money in"
     )[0];
     expect(moneyIn).toBeTruthy();
     act(() => { moneyIn.props.onClick(); });
     // Field hides once isInflow is true, but the stale value must not survive to save.
-    expect(allText(tree)).not.toContain("Income while it runs");
+    expect(allText(tree)).not.toContain("Your income during this time");
     act(() => { findButton(tree.root, "Add to plan").props.onClick(); });
     expect(onSave).toHaveBeenCalledTimes(1);
     const saved = onSave.mock.calls[0][0];
     expect(saved.isInflow).toBe(true);
     expect(saved.incomeAnnual).toBe(0);
+  });
+
+  // ── "Your income during this time" seeding (income-replacement slice) ───────
+  // Quick-set chips ("My usual pay" / "No income") are plain <button> elements,
+  // so the existing findButton(root, label) helper (top of file) locates them too.
+
+  it("a new pre-retirement duration event with no explicit incomeAnnual seeds from the projected-income map", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Sabbatical", icon: "🌴", age: 40,
+          monthlyAmount: 5_000, durationMonths: 6, isInflow: false },
+        onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const incomeInput = tree.root.findAll(n => n.props?.["aria-label"] === "Your income during this time")[0];
+    expect(incomeInput.props.value).toBe(projectedIncomeByAge[40]);
+    expect(allText(tree)).toContain("Usual pay at 40");
+  });
+
+  it("a new post-retirement duration event seeds income to 0 with a retired hint", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Trip", icon: "✈️", age: 75,
+          monthlyAmount: 3_000, durationMonths: 6, isInflow: false },
+        onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const incomeInput = tree.root.findAll(n => n.props?.["aria-label"] === "Your income during this time")[0];
+    expect(incomeInput.props.value).toBe(0);
+    expect(allText(tree)).toContain("you'd be retired");
+  });
+
+  it("editing a committed event / a preset with an explicit incomeAnnual keeps it (does not auto-seed)", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { id: "ev-9", label: "Part-time", icon: "💼", age: 40,
+          monthlyAmount: 2_000, durationMonths: 6, incomeAnnual: 15_000, isInflow: false },
+        onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const incomeInput = tree.root.findAll(n => n.props?.["aria-label"] === "Your income during this time")[0];
+    // 15_000 is deliberately far from projectedIncomeByAge[40] — proves the
+    // explicit seed wasn't overwritten by the auto-follow lookup.
+    expect(incomeInput.props.value).toBe(15_000);
+    expect(incomeInput.props.value).not.toBe(projectedIncomeByAge[40]);
+  });
+
+  it("shows a model-fed 'Income while it runs' bullet when the event replaces working-year salary", () => {
+    const candidateEvent = { label: "Sabbatical", icon: "🌴", age: 40,
+      monthlyAmount: 4_000, durationMonths: 6, incomeAnnual: 50_000, isInflow: false };
+    const expected = evaluateLifeEvent(whatIfBundle, candidateEvent).incomeImpact;
+    expect(expected).not.toBeNull();
+    expect(expected.dir).toBe("down");
+
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds, initial: candidateEvent,
+        onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    const text = allText(tree);
+    expect(text).toContain("Income while it runs");
+    expect(text).toContain(fmt(expected.eventPay));
+    expect(text).toContain(fmt(expected.usualPay));
+    expect(text).toContain(`−${fmt(expected.netLostIncomeAbs)}`);
+  });
+
+  it("no 'Income while it runs' bullet for a one-time or post-retirement event", () => {
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds, initial: oneTimeSeed,
+        onSave: vi.fn(), onCancel: vi.fn(),
+      }));
+    });
+    expect(allText(tree)).not.toContain("Income while it runs");
+  });
+
+  it("quick-set chips write the expected income values", () => {
+    const onSaveNoIncome = vi.fn();
+    let treeA;
+    act(() => {
+      treeA = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Sabbatical", icon: "🌴", age: 40,
+          monthlyAmount: 5_000, durationMonths: 6, isInflow: false },
+        onSave: onSaveNoIncome, onCancel: vi.fn(),
+      }));
+    });
+    act(() => { findButton(treeA.root, "No income").props.onClick(); });
+    act(() => { findButton(treeA.root, "Add to plan").props.onClick(); });
+    expect(onSaveNoIncome.mock.calls[0][0].incomeAnnual).toBe(0);
+
+    const onSaveUsualPay = vi.fn();
+    let treeB;
+    act(() => {
+      treeB = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Sabbatical", icon: "🌴", age: 40,
+          monthlyAmount: 5_000, durationMonths: 6, incomeAnnual: 0, isInflow: false },
+        onSave: onSaveUsualPay, onCancel: vi.fn(),
+      }));
+    });
+    act(() => { findButton(treeB.root, "My usual pay").props.onClick(); });
+    act(() => { findButton(treeB.root, "Add to plan").props.onClick(); });
+    expect(onSaveUsualPay.mock.calls[0][0].incomeAnnual).toBe(projectedIncomeByAge[40]);
   });
 
   it("renders a 36-tick verdict rail for a duration event, and none when the bundle is missing", () => {
@@ -222,6 +362,11 @@ describe("LifeEventSheet", () => {
     for (const tick of ticks) {
       expect(validColors.has(tick.props.style.background)).toBe(true);
     }
+    // BUG-73: the duration rail carries a legend caption (from
+    // result.verdictInfo.rangeLegend) so users see the value range behind
+    // each tick color, not just the color.
+    expect(allText(tree)).toContain("5+ yrs of runway");
+    expect(allText(tree)).toContain("runs out before 90");
 
     let treeNoBundle;
     act(() => {

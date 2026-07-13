@@ -16,51 +16,146 @@ import { ASSUMPTIONS } from "../config/irs-2026.js";
 //                      12 months land in the `age` year, the next 12 in `age`+1, …)
 //     isInflow       — direction of the monthly amount (travel spend = false,
 //                      part-time income = false→true)
-//     incomeAnnual   — optional $/year of offsetting income while the event runs
-//                      (e.g. "income while traveling"); always an INFLOW component,
-//                      prorated by the months active that year. Duration events are
-//                      never taxed (known simplification, same scope as BUG-36 —
-//                      the isTaxable flag applies to one-time inflows only).
+//     incomeAnnual   — optional $/year of TOTAL income during the event (OWNER
+//                      DECISION, this slice): "my total income during this period",
+//                      not a bolt-on add-on. Only meaningful for outflow duration
+//                      events in a WORKING year — it REPLACES salary for the
+//                      months the event runs (0 = sabbatical: no salary, no
+//                      401k/match/HSA/Roth/taxable payroll contributions, lower
+//                      MAGI; equal to salary = no change, the old inert default).
+//                      In RETIREMENT-walk years there is no salary to replace, so
+//                      incomeAnnual is additive side income there, prorated by the
+//                      months active — the pre-existing, unchanged behavior.
+//                      Undefined/non-finite incomeAnnual = "no statement about
+//                      income" = no salary replacement, no offset (legacy events).
 //
 // An event is a duration event when durationMonths > 0 AND monthlyAmount is a
 // finite number — see isDurationEvent. Everything else is one-time.
 //
-// applyMoneyEvents is the ONE source for an event's per-year effect. It returns the
-// net portfolio adjustment AND any additional taxable income for that age, so the
-// caller can incorporate both without this module knowing the caller's data model.
-// Used by the retirement engine (buildRetirementWalkByAccount), runSimulation, and
-// the blended what-if walk (buildRetirementDrawdown) — all three consume
-// eventNetForYear through this module, so year-splitting can never diverge.
-// NOTE: runSimulation (accumulation) and the blended what-if walk still use only
-// the portfolio sign and do NOT charge event income tax — tracked as BUG-36.
+// ── NO-DOUBLE-COUNT RULE ──────────────────────────────────────────────────────
+// Each event month's incomeAnnual counts exactly once, in exactly one channel:
+//   - Months landing in a runSimulation (accumulation) year flow through the
+//     SALARY channel: eventsIncomeAdjustment() replaces/adjusts that year's
+//     wages (taxed, MAGI'd, contribution-scaled) — runSimulation excludes the
+//     income term from its portfolio adjustment by using eventAmountForYear
+//     (not eventNetForYear) for the taxable-account event line.
+//   - Months landing in a retirement-walk year flow through the PORTFOLIO
+//     channel: eventNetForYear's income term (there's no salary to replace).
+// A duration event spanning the retirement boundary splits by month exactly as
+// spend already does (eventFirstAge/eventLastAge): the sim owns months through
+// the retirement-age row, the retirement walks own retAge+1 onward — so a
+// boundary-spanning event's income is never double-counted or dropped.
+//
+// applyMoneyEvents is the ONE source for a RETIREMENT-WALK year's per-event effect
+// (it still uses eventNetForYear — the additive/portfolio-channel basis). It
+// returns the net portfolio adjustment AND any additional taxable income for that
+// age, so the caller can incorporate both without this module knowing the
+// caller's data model. Used by the retirement engine (buildRetirementWalkByAccount)
+// and the blended what-if walk (buildRetirementDrawdown). runSimulation does NOT
+// use applyMoneyEvents/eventNetForYear for its portfolio line — it uses
+// eventAmountForYear (income excluded, see the salary channel above) plus
+// eventsIncomeAdjustment() for the income/contribution-scaling side.
+// NOTE: the blended what-if walk still does NOT charge event income tax on
+// one-time taxable inflows outside applyMoneyEvents's own path — tracked as BUG-36.
 
 export function isDurationEvent(ev) {
   return (ev?.durationMonths ?? 0) > 0 && Number.isFinite(ev?.monthlyAmount);
 }
 
+// THE one predicate for "this event replaces salary during working years":
+// a duration OUTFLOW (isInflow falsy — undefined signs as an outflow in
+// eventAmountForYear, so it must gate as an outflow here too) with a finite
+// incomeAnnual. Shared by eventsIncomeAdjustment (the sim's salary channel),
+// eventSimAdjustmentForYear (the sim's portfolio line), and what-if.js's
+// eventIncomeImpact (the sheet's lost-income bullet) so the three can never
+// disagree about which events suppress income (Fable review, PR #53).
+export function isIncomeReplacingEvent(ev) {
+  return isDurationEvent(ev) && !ev.isInflow && Number.isFinite(ev.incomeAnnual);
+}
+
 // Months of a duration event that fall inside the year the person is `age`.
 // Year k (k = age − ev.age, 0-based) covers months [12k, 12k+12).
-function monthsActiveInYear(ev, age) {
+// Exported (layout-internal): used by eventIncomeImpact (what-if.js) to walk
+// the same per-year month split as eventIncomeForYear, but needs the raw
+// months count (not the incomeAnnual-scaled dollar figure) to compute the
+// "usual pay" side of the comparison.
+export function monthsActiveInYear(ev, age) {
   const k = age - ev.age;
   if (k < 0) return 0;
   return Math.max(0, Math.min(12, ev.durationMonths - 12 * k));
 }
 
-// Signed net portfolio impact of ONE event in the given age-year.
-// One-time: ±amount when ev.age === age. Duration: ±(months × monthly)
-// plus the prorated income offset (always an inflow).
-export function eventNetForYear(ev, age) {
+// The event's OWN signed cash for the year, EXCLUDING the incomeAnnual term.
+// One-time: ±amount when ev.age === age. Duration: ±(months × monthly).
+// This is the portfolio-channel amount runSimulation charges directly — the
+// income term is handled separately by the salary channel (see module header).
+export function eventAmountForYear(ev, age) {
   if (!ev) return 0;
   if (isDurationEvent(ev)) {
     const months = monthsActiveInYear(ev, age);
     if (months <= 0) return 0;
     const monthly = Math.abs(ev.monthlyAmount);
-    const income  = Number.isFinite(ev.incomeAnnual) ? Math.abs(ev.incomeAnnual) : 0;
-    const signed  = (ev.isInflow ? 1 : -1) * months * monthly;
-    return signed + (months / 12) * income;
+    return (ev.isInflow ? 1 : -1) * months * monthly;
   }
   if (ev.age !== age || !Number.isFinite(ev.amount)) return 0;
   return ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount);
+}
+
+// The prorated event-period income (always ≥ 0): (months/12) × |incomeAnnual|
+// for duration events with a finite incomeAnnual, else 0. One-time events never
+// carry an income term.
+export function eventIncomeForYear(ev, age) {
+  if (!ev || !isDurationEvent(ev) || !Number.isFinite(ev.incomeAnnual)) return 0;
+  const months = monthsActiveInYear(ev, age);
+  if (months <= 0) return 0;
+  return (months / 12) * Math.abs(ev.incomeAnnual);
+}
+
+// Signed net portfolio impact of ONE event in the given age-year — the
+// RETIREMENT-WALK basis (portfolio channel + income channel combined, since
+// there's no salary there to replace). Literally the sum of the two channels
+// above; kept as one function so existing retirement-walk callers (applyMoneyEvents,
+// the per-account engine) don't need to change.
+export function eventNetForYear(ev, age) {
+  return eventAmountForYear(ev, age) + eventIncomeForYear(ev, age);
+}
+
+// The runSimulation (accumulation-year) portfolio line for ONE event: the
+// event's own cash, PLUS the income term for events that do NOT replace salary
+// (duration INFLOW income, e.g. "Part-time at 60" side pay — additive cash that
+// has no salary channel to travel through). Income-replacing events exclude the
+// income term here because eventsIncomeAdjustment routes it through the salary
+// channel instead — this pair of functions IS the no-double-count rule for sim
+// years. (Fable review, PR #53: using bare eventAmountForYear dropped a duration
+// inflow's incomeAnnual in sim years while retirement walks still credited it.)
+export function eventSimAdjustmentForYear(ev, age) {
+  return eventAmountForYear(ev, age)
+    + (isIncomeReplacingEvent(ev) ? 0 : eventIncomeForYear(ev, age));
+}
+
+// Working-year (runSimulation) income-replacement adjustment for one age-year.
+// Qualifying events: duration events with isInflow === false AND a finite
+// incomeAnnual (duration INFLOW events — e.g. "Part-time at 60" income — stay
+// additive side cash via the portfolio channel; one-time events never touch
+// income; undefined incomeAnnual = legacy event = no statement about income =
+// doesn't qualify, same net math as before this feature).
+//   pausedMonths — Σ months active across qualifying events, capped at 12 (you
+//                  can't pause more than a year of salary in one year — the
+//                  simplest honest overlap rule for multiple concurrent events).
+//   workedFrac   — 1 − pausedMonths/12.
+//   eventIncome  — Σ prorated incomeAnnual across the SAME qualifying events,
+//                  UNCAPPED (incomes add — they're real dollars, unlike the
+//                  paused-months clock).
+export function eventsIncomeAdjustment(events = [], age) {
+  let pausedMonths = 0;
+  let eventIncome = 0;
+  for (const ev of events) {
+    if (!isIncomeReplacingEvent(ev)) continue;
+    pausedMonths += monthsActiveInYear(ev, age);
+    eventIncome += eventIncomeForYear(ev, age);
+  }
+  pausedMonths = Math.min(12, pausedMonths);
+  return { pausedMonths, workedFrac: 1 - pausedMonths / 12, eventIncome };
 }
 
 // First / last age-year in which an event has any effect. Used by the phase
@@ -81,7 +176,12 @@ export function eventGrossCost(ev) {
   return Number.isFinite(ev?.amount) ? Math.abs(ev.amount) : 0;
 }
 
-// Signed net portfolio impact across ALL years of the event.
+// Signed net portfolio impact across ALL years of the event — the CASH-FLOW
+// net on the retirement-walk basis (eventNetForYear, portfolio + income
+// channels combined). For a working-year event this is NOT the same as its
+// portfolio delta in runSimulation: the sim charges lost salary through the
+// separate salary channel (eventsIncomeAdjustment), not through this total.
+// Formula unchanged by the income-replacement feature — still the plain sum.
 export function eventNetTotal(ev) {
   if (!ev) return 0;
   if (!isDurationEvent(ev)) return eventNetForYear(ev, ev.age);

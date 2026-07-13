@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (763 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (812 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1177,11 +1177,54 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   the diff both rounds and reported no further findings. 763 tests throughout (no new tests — all
   fixes were argument-wiring/dedup/a11y with existing coverage), lint clean, build OK, golden
   master untouched.
+- **Duration-event lost-income modeling + cushion-based verdict (2026-07-13, branch
+  `claude/ideas-solvers-events-review-3npdhg`, 4 commits).** Three concurrent fixes across the
+  model and UI: (1) **BUG-72 fixed** — duration events ("Big trip," sabbaticals) now suppress the
+  user's income during the event period via a new working-year income channel
+  (`eventsIncomeAdjustment`); salary, 401k deferral, employer match, HSA/Roth/taxable
+  contributions, and MAGI (Roth phase-out + LTCG bracket) all see the suppressed income —
+  `incomeAnnual` now means "your total income during this time" (0 = sabbatical), seeded in the
+  LifeEventSheet from the model-projected salary at the event age
+  (`lifeEventBounds.projectedIncomeByAge`). No double-count rule: each month's income is handled exactly once (accumulation
+  via `eventsIncomeAdjustment`, retirement via portfolio channel). Known simplifications: SS AIME
+  not suppressed (< 1% 3-yr effect), spouse never suppressed (#30 scope), retirement event income
+  untaxed (BUG-36 scope). (2) **BUG-73 fixed** — verdict displays now show margin context (cushion
+  basis = years of spending in reserve at plan age) instead of saturating to "comfortable" for any
+  non-depleting plan; labeled ranges ("5+ yrs = comfortable," etc.) from `EVENT_COMFORT_BUFFER_YEARS`
+  constant. (3) **BUG-74 filed** — accumulation taxable-account purchase events can silently
+  overflow the balance with no warning; deferred (needs cross-account draws + penalties). Horizon
+  **Solvers tab removed** by owner decision (Dials + Events cover the job; calcAffordabilityMax
+  retained for Classic WhatIfPanel Max Affordable mode; stale "solvers" deep-links degrade to
+  Dials). 763 → **807 tests** (net: −2 Solvers removal, +~32 income channel incl. a big-trip
+  regression reproducing the user-reported scenario, +11 verdict margin/ranges); golden master
+  untouched throughout (defaults have no events). Docs: BUG-72/73/74 logged, feature-tracker #105
+  updated (Solvers retired), FINANCIAL-MODEL.md + ARCHITECTURE.md + HORIZON.md + ROADMAP.md
+  reconciled with dated notes.
+- **PR #53 review-fix pass (2026-07-13, same branch).** A Fable adversarial review plus CodeRabbit
+  + Gemini found real bugs in the BUG-72/73 work above, all fixed same-day, golden master untouched:
+  (1) flat-mode employer match capped at `baseSalary` — a duration event's `incomeAnnual` above the
+  user's actual salary was tripling employer match dollars on income the employer never paid;
+  (2) a duration *inflow* event's income was silently dropped from `runSimulation`'s portfolio line
+  (only replacing/outflow events should route through the salary channel) — new
+  `eventSimAdjustmentForYear` + a single shared `isIncomeReplacingEvent` predicate now used by the
+  sim's salary channel, the sim's portfolio line, and `eventIncomeImpact` so the three can never
+  disagree about which events suppress income; (3) the cushion-basis verdict margin was
+  non-monotonic across the depletion/never-depletes crossover for SS-heavy plans (pricing the
+  reserve at full expenses instead of the plan-age NET draw meant spending MORE could flip a rail
+  tight → comfortable) — `marginForScenario` now prices the cushion at the walk's own
+  `scenarioDrawAtPlanAge`, continuous with the depletion basis at the crossover; (4)
+  `projectedIncomeAtAge` clamped at zero growth years (Gemini: a committed event's age at/below
+  `currentAge` was discounting income backward); (5) Classic's "Projected at retirement" line moved
+  onto the shared `projectedIncomeAtAge` helper (CodeRabbit: was compounding one extra year vs the
+  sim's own convention); (6) LifeEventSheet's redundant raw age-comparison in `seedIncomeForAge`
+  removed (CodeRabbit rule-10 nitpick — the model table already zeroes post-retirement ages) while
+  the "you'd be retired" hint copy kept its own explicit age gate (so a working user with genuinely
+  $0 projected income isn't told they're retired). 807 → **812 tests**.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (763 tests)
+- `npm test` — run model + formatter + render-smoke tests (812 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

@@ -351,15 +351,12 @@ export const ASSUMPTIONS = {
   EVENT_COMFORT_BUFFER_YEARS: 5,
 
   // calcAffordabilityMax's binary search: dollar granularity of the search
-  // and the upper bound it searches up to. Product-level defaults, not IRS
-  // rules — named here so Classic (WhatIfPanel) and Horizon's Solvers panel
-  // are step-identical by construction.
+  // and the upper bound it searches up to. Product-level default, not an IRS
+  // rule — named here for Classic's WhatIfPanel "Max Affordable" mode, the
+  // only surface left calling calcAffordabilityMax (Horizon's Solvers panel,
+  // which used to share this step, was removed 2026-07-13).
   AFFORDABILITY_STEP:      1_000,
   AFFORDABILITY_MAX_SEARCH: 5_000_000,
-
-  // Default "years from today" offset used to seed a one-time purchase's age
-  // in the affordability flow (e.g. "5 years from now").
-  AFFORD_DEFAULT_PURCHASE_OFFSET_YRS: 5,
 
   // Max number of one-time/duration events a user can add in the Money Events
   // panel (Classic) / LifeEventSheet (Horizon) — a product-level UI cap, not

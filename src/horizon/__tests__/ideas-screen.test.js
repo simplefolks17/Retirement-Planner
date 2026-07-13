@@ -1,12 +1,10 @@
-// ── IdeasScreen — SP-5 tidy + Scenarios retirement + Solvers: segmented
-//    control + live dials + Apply-with-preview
+// ── IdeasScreen — SP-5 tidy + Scenarios retirement: segmented control + live
+//    dials + Apply-with-preview
 //
-// Tests the Ideas screen "deep workshop" redesign (2026-07-11), the
+// Tests the Ideas screen "deep workshop" redesign (2026-07-11) and the
 // follow-up removal of the locked "Scenarios" segment (2026-07-12, owner
-// decision — preset cards felt restrictive; see docs/BUGS.md BUG-44 addendum),
-// and the merged-in "Solvers" mode (WI-3.8, unrelated to the Scenarios removal
-// — an independent affordability-solver addition):
-//   1. Segmented control renders 3 segments: Dials / Events / Solvers.
+// decision — preset cards felt restrictive; see docs/BUGS.md BUG-44 addendum):
+//   1. Segmented control renders 2 segments: Dials / Events.
 //   2. Dials mode: two live range sliders + verdict tick rails; dragging updates
 //      the dashed arc overlay AND the strikethrough stats from ONE model run.
 //      Dials also gains two quick-jump chips (RETIRE_JUMPS) that nudge the
@@ -17,10 +15,14 @@
 //   4. Events pills include the folded-in "Big trip" preset, and the
 //      committedByLabel placed-pill guarantee (BUG-44's fix surface) still
 //      holds now that it's the only place an event can be pre-seeded.
-//   5. Solvers mode renders AffordabilityPanel, fed by the affordView bundle.
-//   6. RETIRE_JUMPS / LIFE_EVENTS preset tables are untouched here (see
+//   5. RETIRE_JUMPS / LIFE_EVENTS preset tables are untouched here (see
 //      presets.test.js for the value-lock; this file just checks they render
 //      and wire correctly).
+//
+// 2026-07-13: the "Solvers" mode (AffordabilityPanel/affordView, WI-3.8) was
+// removed from Horizon by owner decision — Dials + Events cover the job.
+// `calcAffordabilityMax` and Classic's WhatIfPanel remain untouched. A
+// "solvers" initialMode/deep-link degrades gracefully to Dials (tested below).
 //
 // whatIfSimInputs is a REAL what-if bundle (mirrors plan-screen.test.js /
 // life-event-sheet.test.js) so calcWhatIfScenario/buildLeverPreview/buildLeverRail
@@ -35,8 +37,7 @@ import { buildRetirementDrawdown } from "../../model/retirement-drawdown.js";
 import { buildRetirementPhase } from "../../model/retirement-phase.js";
 import { buildAccumChart } from "../../model/accumulation.js";
 import { calcEmployerMatch } from "../../model/employer-match.js";
-import { calcAffordabilityMax } from "../../model/what-if.js";
-import { fmt } from "../shared.jsx";
+import { buildVerdictLegend } from "../../model/what-if.js";
 
 beforeAll(() => {
   if (typeof globalThis.window === "undefined") {
@@ -141,15 +142,7 @@ const makeMockProps = (overrides = {}) => ({
     spendMin: 2_000, spendMax: 10_000,
   },
   applyPlanLevers:   vi.fn(),
-  // WI-3.8: Solvers mode defaults/bounds (AffordabilityPanel) — mirrors App.jsx's
-  // affordView shape (currentAge + offset / safeLifeExp / safeRetAge derived).
-  affordView: {
-    defaultPurchaseAge: currentAge + 5,
-    purchaseAgeField: { min: currentAge, max: safeLifeExp - 1, step: 1 },
-    defaultTargetAge: safeLifeExp,
-    targetAgeField: { min: safeRetAge + 1, max: 115, step: 1 },
-    step: 1_000,
-  },
+  verdictLegend:     buildVerdictLegend(safeLifeExp),
   ...overrides,
 });
 
@@ -185,14 +178,16 @@ function mount(overrides = {}) {
 }
 
 describe("IdeasScreen — segmented control", () => {
-  it("renders 3 segments: Dials, Events, Solvers — no Scenarios segment", () => {
+  it("renders 2 segments: Dials, Events — no Scenarios, no Solvers segment", () => {
     const { renderer } = mount();
-    for (const label of ["Dials", "Events", "Solvers"]) {
+    for (const label of ["Dials", "Events"]) {
       expect(buttonsByText(renderer.root, label).length, `${label} segment missing`).toBe(1);
     }
     // the locked Scenarios segment (and its old suggestion-panel affordances)
-    // is retired (2026-07-12) — no dead affordance anywhere.
+    // is retired (2026-07-12) — no dead affordance anywhere. Solvers (WI-3.8's
+    // AffordabilityPanel) is retired (2026-07-13) — see the module comment.
     expect(buttonsByText(renderer.root, "Scenarios").length).toBe(0);
+    expect(buttonsByText(renderer.root, "Solvers").length).toBe(0);
     expect(buttonsByText(renderer.root, "Horizon suggestions").length).toBe(0);
     expect(buttonsByText(renderer.root, "What if…").length).toBe(0);
     act(() => renderer.unmount());
@@ -210,6 +205,23 @@ describe("IdeasScreen — segmented control", () => {
     expect(allText(renderer.root)).toContain("Monthly spend");
     act(() => renderer.unmount());
   });
+
+  // Degrade-gracefully guarantee (2026-07-13): a stale "solvers" deep-link or
+  // subView (e.g. a bookmarked URL, or a signal that used to target Solvers)
+  // must not blank the screen — it lands on Dials, same as "askit".
+  it("initialMode 'solvers' degrades gracefully to the Dials segment", () => {
+    const props = makeMockProps();
+    let renderer;
+    act(() => {
+      renderer = create(
+        React.createElement(IdeasScreen, { t, props, isMobile: false, initialMode: "solvers" }),
+      );
+    });
+    expect(allText(renderer.root)).toContain("Retire at");
+    expect(allText(renderer.root)).toContain("Monthly spend");
+    expect(buttonsByText(renderer.root, "Solvers").length).toBe(0);
+    act(() => renderer.unmount());
+  });
 });
 
 describe("IdeasScreen — Dials mode", () => {
@@ -221,6 +233,20 @@ describe("IdeasScreen — Dials mode", () => {
     expect(labels).toContain("Retire at");
     expect(labels).toContain("Monthly spend");
     expect(tickDivs(renderer.root).length).toBeGreaterThan(0);
+    act(() => renderer.unmount());
+  });
+
+  // BUG-73: the labeled comfortable/tight/unaffordable ranges must be visible
+  // (owner requirement), sourced from props.verdictLegend, shown once — not
+  // once per rail (retire-at AND monthly-spend both render a rail here).
+  it("shows the verdict legend once from props.verdictLegend, not once per rail", () => {
+    const { renderer } = mount();
+    act(() => { buttonsByText(renderer.root, "Dials")[0].props.onClick(); });
+    const text = allText(renderer.root);
+    expect(text).toContain("5+ yrs of runway");
+    expect(text).toContain("runs out before 90");
+    const occurrences = text.split("5+ yrs of runway").length - 1;
+    expect(occurrences).toBe(1);
     act(() => renderer.unmount());
   });
 
@@ -358,62 +384,6 @@ describe("IdeasScreen — Events mode", () => {
     // was passed through, not a fresh preset seed).
     expect(buttonsByText(renderer.root, "Remove from plan").length).toBe(1);
     expect(props.saveEvent).not.toHaveBeenCalled();
-    act(() => renderer.unmount());
-  });
-});
-
-// WI-3.8, merged in unrelated to the Scenarios removal — an independent
-// affordability-solver addition (AffordabilityPanel, fed by affordView). Ported
-// from the retired ideas-modes.test.js (that file's Events-mode/eventsView
-// coverage is superseded by the sheet-first tests above; its dial-bounds tests
-// targeted the old ± stepper UI, retired with the range-input Dials redesign —
-// native input min/max already bounds those, no equivalent regression possible).
-describe("IdeasScreen — Solvers mode", () => {
-  it("renders AffordabilityPanel's explainer copy and age controls", () => {
-    const { renderer } = mount();
-    act(() => { buttonsByText(renderer.root, "Solvers")[0].props.onClick(); });
-    expect(allText(renderer.root)).toContain("biggest one-time expense");
-    expect(allText(renderer.root)).toContain("One-time purchase at age");
-    expect(allText(renderer.root)).toContain("Still sustaining to age");
-    act(() => renderer.unmount());
-  });
-
-  it("displayed max-affordable amount equals a direct calcAffordabilityMax call (anti-divergence)", () => {
-    const purchaseAge = 35, targetLifeExpectancy = 90; // affordView's own defaults
-    const expected = calcAffordabilityMax(whatIfBundle, {
-      purchaseAge, targetLifeExpectancy, step: 1_000,
-    });
-    expect(expected.canAfford).toBe(true);
-
-    const { renderer } = mount();
-    act(() => { buttonsByText(renderer.root, "Solvers")[0].props.onClick(); });
-    const txt = allText(renderer.root);
-    expect(txt).toContain(fmt(expected.maxAmount));
-    expect(txt).toContain("You could spend up to");
-    act(() => renderer.unmount());
-  });
-
-  it("desktop age input allows free typing then clamps an out-of-range value on blur (review-fix regression)", () => {
-    // Before the fix, the desktop <input type=number> passed Number(e.target.value)
-    // straight through with no clamp (only the mobile stepper clamped); a second
-    // review pass found that clamping on every onChange keystroke locks the input
-    // mid-typing — clamping moved to onBlur, onChange left free for the draft.
-    const { renderer } = mount();
-    act(() => { buttonsByText(renderer.root, "Solvers")[0].props.onClick(); });
-
-    const findInput = () => renderer.root.findAll(
-      n => n.type === "input" && n.props["aria-label"] === "One-time purchase at age"
-    )[0];
-
-    // Mid-typing: onChange must NOT clamp — the draft holds the raw typed text.
-    act(() => { findInput().props.onChange({ target: { value: "6" } }); });
-    expect(findInput().props.value).toBe("6");
-
-    // Finishing an absurd value and blurring clamps to the field's bounds
-    // (purchaseAgeField.max = safeLifeExp - 1 = 89 in this fixture).
-    act(() => { findInput().props.onChange({ target: { value: "500" } }); });
-    act(() => { findInput().props.onBlur({ target: { value: "500" } }); });
-    expect(findInput().props.value).toBe("89");
     act(() => renderer.unmount());
   });
 });

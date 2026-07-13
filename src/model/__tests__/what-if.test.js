@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
-  buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS,
+  buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS, eventIncomeImpact,
+  marginForScenario, verdictInfoForScenario, buildVerdictLegend, verdictForMargin,
 } from "../what-if.js";
+import { ASSUMPTIONS } from "../../config/irs-2026.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
@@ -656,6 +658,71 @@ describe("calcWhatIfScenario — engine migration", () => {
 });
 
 // ── evaluateLifeEvent (life-event sheet: verdict + impact deltas) ─────────────
+// ── eventIncomeImpact ────────────────────────────────────────────────────────
+// Flat (0% growth) simInputs so projectedIncomeAtAge is a constant — makes the
+// expected usualPay/eventPay/netLostIncome arithmetic exact, not approximate.
+describe("eventIncomeImpact", () => {
+  const flatSimInputs = { currentIncome: 120_000, incomeGrowth: 0, incomeGrowthEndAge: null, currentAge: 50 };
+  const impactSafeRetAge = 65;
+
+  it("returns null for a one-time event", () => {
+    const event = { amount: 10_000, age: 55, isInflow: false };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("returns null for an inflow duration event (additive side income, not a salary replacement)", () => {
+    const event = { monthlyAmount: 2_000, durationMonths: 6, age: 55, isInflow: true, incomeAnnual: 40_000 };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("returns null when incomeAnnual is not finite (legacy event = no statement about income)", () => {
+    const event = { monthlyAmount: 2_000, durationMonths: 6, age: 55, isInflow: false };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("returns null when the event is entirely past retirement", () => {
+    const event = { monthlyAmount: 2_000, durationMonths: 6, age: 70, isInflow: false, incomeAnnual: 0 };
+    expect(eventIncomeImpact(event, flatSimInputs, impactSafeRetAge)).toBeNull();
+  });
+
+  it("computes exact usualPay/eventPay/netLostIncome for a working-year event", () => {
+    // 6 months at age 55: usualPay = 0.5 × $120k = $60k; eventPay = 0.5 × $60k = $30k.
+    const event = { monthlyAmount: 5_000, durationMonths: 6, age: 55, isInflow: false, incomeAnnual: 60_000 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    expect(result).toEqual({
+      monthsWorking: 6, usualPay: 60_000, eventPay: 30_000,
+      netLostIncome: 30_000, netLostIncomeAbs: 30_000, dir: "down",
+    });
+  });
+
+  it("a boundary-spanning event counts only the working months (not the post-retirement ones)", () => {
+    // 36 months starting at 64 spans ages 64, 65, 66 — only 64 and 65 are <= safeRetAge (65),
+    // so monthsWorking is 24, not 36.
+    const event = { monthlyAmount: 1_000, durationMonths: 36, age: 64, isInflow: false, incomeAnnual: 0 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    expect(result.monthsWorking).toBe(24);
+    expect(result.usualPay).toBe(240_000); // 2 full years × $120k
+    expect(result.eventPay).toBe(0);
+    expect(result.dir).toBe("down");
+  });
+
+  it("an income GAIN (incomeAnnual above usual pay) reports dir 'up'", () => {
+    const event = { monthlyAmount: 8_000, durationMonths: 6, age: 55, isInflow: false, incomeAnnual: 200_000 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    // usualPay = $60k, eventPay = 0.5 × $200k = $100k → netLostIncome = −$40k (a gain).
+    expect(result.netLostIncome).toBe(-40_000);
+    expect(result.netLostIncomeAbs).toBe(40_000);
+    expect(result.dir).toBe("up");
+  });
+
+  it("no change (incomeAnnual exactly equals usual pay) reports dir null", () => {
+    const event = { monthlyAmount: 8_000, durationMonths: 6, age: 55, isInflow: false, incomeAnnual: 120_000 };
+    const result = eventIncomeImpact(event, flatSimInputs, impactSafeRetAge);
+    expect(result.netLostIncome).toBe(0);
+    expect(result.dir).toBeNull();
+  });
+});
+
 describe("evaluateLifeEvent", () => {
   it("returns null for a missing event or invalid bundle", () => {
     expect(evaluateLifeEvent(baseArgs, null)).toBeNull();
@@ -699,6 +766,21 @@ describe("evaluateLifeEvent", () => {
     expect(result.grossCost).toBe(36_000);
     expect(result.netTotal).toBe(-24_000);
     expect(result.atRetirement.dir).toBe("down");
+  });
+
+  it("wires eventIncomeImpact into the result — non-null for a working-year salary-replacing event, null for a one-time event", () => {
+    const durationResult = evaluateLifeEvent(baseArgs, {
+      label: "Sabbatical", monthlyAmount: 4_000, durationMonths: 6, age: 40,
+      isInflow: false, incomeAnnual: 0,
+    });
+    expect(durationResult.incomeImpact).not.toBeNull();
+    expect(durationResult.incomeImpact.dir).toBe("down");
+    expect(durationResult.incomeImpact.eventPay).toBe(0);
+
+    const oneTimeResult = evaluateLifeEvent(baseArgs, {
+      label: "Home", amount: 100_000, age: 40, isInflow: false, isTaxable: false,
+    });
+    expect(oneTimeResult.incomeImpact).toBeNull();
   });
 
   it("a duration event spanning the retirement boundary hits both phases exactly once", () => {
@@ -757,10 +839,16 @@ describe("evaluateLifeEvent", () => {
     expect(r.sustainability.scenarioDepletionAge).toBeLessThan(safeLifeExp);
   });
 
-  it("verdict = comfortable with infinite margin when the portfolio never depletes", () => {
+  it("verdict = comfortable with a large finite cushion margin when the portfolio never depletes (BUG-73)", () => {
     // retPhaseBase deliberately unset — same reason as the flatSim bundle above:
     // this test overrides baseTotalAtRet to $10M directly, which the fixed
     // depletingArgs.retPhaseBase (seeded at $800k) doesn't reflect.
+    //
+    // BUG-73: this used to assert marginYears === Infinity — the saturation bug.
+    // A never-depleting scenario now reports a finite CUSHION-basis margin
+    // (years of spending still in reserve at the plan age), which for a $10M
+    // portfolio against $30k/yr spend is comfortably north of the 5-year
+    // buffer, but is no longer a fabricated Infinity.
     const r = evaluateLifeEvent({
       ...depletingArgs,
       baseTotalAtRet: 10_000_000,
@@ -768,8 +856,141 @@ describe("evaluateLifeEvent", () => {
       retPhaseBase: undefined,
     }, probeEvent);
     expect(r.verdict).toBe("comfortable");
-    expect(r.sustainability.marginYears).toBe(Infinity);
+    expect(r.sustainability.marginBasis).toBe("cushion");
+    expect(r.sustainability.marginYears).toBeGreaterThan(5);
+    expect(r.sustainability.marginYears).not.toBe(Infinity);
     expect(r.sustainability.scenarioDepletionAge).toBeNull();
+  });
+});
+
+// ── marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-73) ──
+// Unit-level tests against synthetic scenario objects (marginForScenario only
+// reads scenario.scenarioYears/scenarioRetAge/scenarioBalAt90/scenarioExpenses
+// — it doesn't need a full model run) plus value-locks on the render-ready
+// label/legend strings.
+describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-73)", () => {
+  const safeLifeExp = 90;
+
+  it("cushion-saturation regression: a never-depleting scenario with a thin cushion at the plan age is 'tight', not 'comfortable' (the bug this fixes)", () => {
+    // $90k left at 90 against $30k/yr spend = 3 yrs of reserve — under the
+    // 5-yr comfortable buffer. Before the fix, scenarioYears === Infinity
+    // alone forced marginYears to a flat Infinity, so this ALWAYS read
+    // "comfortable" regardless of how thin the actual cushion was.
+    const scenario = {
+      scenarioYears: Infinity, scenarioRetAge: 65,
+      scenarioBalAt90: 90_000, scenarioExpenses: 30_000,
+    };
+    const { marginYears, marginBasis } = marginForScenario(scenario, safeLifeExp);
+    expect(marginBasis).toBe("cushion");
+    expect(marginYears).toBe(3);
+    expect(verdictForMargin(marginYears)).toBe("tight");
+  });
+
+  it("cushion basis never yields 'unaffordable' (a balance/expense ratio can't go negative)", () => {
+    const thin = marginForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 1, scenarioExpenses: 1_000_000 },
+      safeLifeExp);
+    expect(thin.marginBasis).toBe("cushion");
+    expect(thin.marginYears).toBeGreaterThanOrEqual(0);
+    expect(verdictForMargin(thin.marginYears)).not.toBe("unaffordable");
+  });
+
+  it("cushion basis edge cases (null balance / non-positive expenses) fall back to Infinity, not a fabricated finite number", () => {
+    expect(marginForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: null, scenarioExpenses: 30_000 },
+      safeLifeExp)).toEqual({ marginYears: Infinity, marginBasis: "cushion" });
+    expect(marginForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 100_000, scenarioExpenses: 0 },
+      safeLifeExp)).toEqual({ marginYears: Infinity, marginBasis: "cushion" });
+  });
+
+  it("cushion prices the reserve at the plan-age NET draw, not full expenses (Fable PR #53 — crossover monotonicity)", () => {
+    // SS-heavy plan: $200k reserve, $62k spend but only $7k/yr actually drawn
+    // from the portfolio (SS covers the rest). Full-expense pricing called this
+    // 3.2 yrs → "tight" while spending $2k MORE crossed into a finite walk with
+    // a 31-yr depletion margin → "comfortable" — spending more read BETTER on
+    // the same rail. Net-draw pricing measures in the depletion basis's own
+    // currency: 200k / 7k ≈ 29 yrs → comfortable, continuous across the crossover.
+    const scenario = {
+      scenarioYears: Infinity, scenarioRetAge: 65,
+      scenarioBalAt90: 200_000, scenarioExpenses: 62_000, scenarioDrawAtPlanAge: 7_000,
+    };
+    const { marginYears, marginBasis } = marginForScenario(scenario, safeLifeExp);
+    expect(marginBasis).toBe("cushion");
+    expect(marginYears).toBeCloseTo(200_000 / 7_000, 10);
+    expect(verdictForMargin(marginYears)).toBe("comfortable");
+
+    // Zero net draw (SS/pension cover everything): the reserve is never touched —
+    // genuinely uncapped runway, not a division blow-up.
+    const covered = marginForScenario({ ...scenario, scenarioDrawAtPlanAge: 0 }, safeLifeExp);
+    expect(covered).toEqual({ marginYears: Infinity, marginBasis: "cushion" });
+
+    // Scenarios without the field (older callers / synthetic fixtures) keep the
+    // documented full-expenses fallback.
+    const legacy = marginForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 90_000, scenarioExpenses: 30_000 },
+      safeLifeExp);
+    expect(legacy.marginYears).toBe(3);
+  });
+
+  it("calcWhatIfScenario exposes scenarioDrawAtPlanAge from the SAME walk row as scenarioBalAt90", () => {
+    const s = calcWhatIfScenario(baseArgs, {});
+    const rowAtLifeExp = s.chart.find(r => r.age === 90);
+    expect(rowAtLifeExp).toBeTruthy();
+    expect(s.scenarioDrawAtPlanAge).not.toBeUndefined();
+    if (s.scenarioYears === Infinity) {
+      expect(Number.isFinite(s.scenarioDrawAtPlanAge)).toBe(true);
+      expect(s.scenarioDrawAtPlanAge).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("depletion basis equals the old inline expression for finite scenarioYears (value-preserving)", () => {
+    const scenario = { scenarioYears: 22.3, scenarioRetAge: 65 };
+    const oldInline = scenario.scenarioYears - (safeLifeExp - scenario.scenarioRetAge);
+    const { marginYears, marginBasis } = marginForScenario(scenario, safeLifeExp);
+    expect(marginBasis).toBe("depletion");
+    expect(marginYears).toBeCloseTo(oldInline, 10);
+  });
+
+  it("verdictInfoForScenario label value-locks (exact strings)", () => {
+    const cushionFinite = verdictInfoForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 360_000, scenarioExpenses: 30_000 },
+      safeLifeExp);
+    expect(cushionFinite.marginBasis).toBe("cushion");
+    expect(cushionFinite.marginLabel).toBe("≈12 yrs of runway left at 90");
+    expect(cushionFinite.verdict).toBe("comfortable");
+
+    const cushionInfinite = verdictInfoForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: null, scenarioExpenses: 30_000 },
+      safeLifeExp);
+    expect(cushionInfinite.marginLabel).toBe("still growing at your plan age");
+
+    const depletionPositive = verdictInfoForScenario({ scenarioYears: 28, scenarioRetAge: 65 }, safeLifeExp);
+    expect(depletionPositive.marginBasis).toBe("depletion");
+    expect(depletionPositive.marginLabel).toBe("3 yrs to spare past 90");
+
+    const depletionNegative = verdictInfoForScenario({ scenarioYears: 21, scenarioRetAge: 65 }, safeLifeExp);
+    expect(depletionNegative.marginLabel).toBe("runs out 4 yrs early");
+  });
+
+  it("verdictInfoForScenario's rangeLegend and thresholds use the real ASSUMPTIONS constant (never a hardcoded 5)", () => {
+    const buffer = ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS;
+    const info = verdictInfoForScenario({ scenarioYears: 28, scenarioRetAge: 65 }, safeLifeExp);
+    expect(info.rangeLegend).toEqual([
+      { verdict: "comfortable",  label: `${buffer}+ yrs of runway` },
+      { verdict: "tight",        label: `0–${buffer} yrs of runway` },
+      { verdict: "unaffordable", label: `runs out before ${safeLifeExp}` },
+    ]);
+    expect(info.thresholds).toEqual({ comfortableMin: buffer, tightMin: 0 });
+  });
+
+  it("buildVerdictLegend shape — the same legend verdictInfoForScenario embeds", () => {
+    const buffer = ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS;
+    expect(buildVerdictLegend(safeLifeExp)).toEqual([
+      { verdict: "comfortable",  label: `${buffer}+ yrs of runway` },
+      { verdict: "tight",        label: `0–${buffer} yrs of runway` },
+      { verdict: "unaffordable", label: `runs out before ${safeLifeExp}` },
+    ]);
   });
 });
 
@@ -1063,6 +1284,16 @@ describe("buildLeverRail", () => {
     expect(rail.length).toBeLessThanOrEqual(80);
     expect(rail[0].value).toBe(55);
     expect(rail[rail.length - 1].value).toBe(75);
+  });
+
+  it("every tick's verdict agrees with verdictInfoForScenario run on the SAME override (anti-divergence, BUG-73)", () => {
+    const rail = buildLeverRail(baseArgs, { lever: "retirementAge", min: 60, max: 70, step: 2 });
+    expect(rail.length).toBeGreaterThan(0);
+    for (const tick of rail) {
+      const scenario = calcWhatIfScenario(baseArgs, { retirementAge: tick.value });
+      const info = verdictInfoForScenario(scenario, baseArgs.safeLifeExp);
+      expect(tick.verdict).toBe(info.verdict);
+    }
   });
 });
 

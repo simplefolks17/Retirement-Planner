@@ -8,7 +8,7 @@ import {
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
-import { runSimulation } from "./model/simulation.js";
+import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -48,7 +48,7 @@ import { FlowConn }          from "./components/FlowConn.jsx";
 import { WhatIfPanel }       from "./components/WhatIfPanel.jsx";
 import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
 import { ConversionEventsPanel } from "./components/ConversionEventsPanel.jsx";
-import { calcWhatIfDelta }   from "./model/what-if.js";
+import { calcWhatIfDelta, buildVerdictLegend }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
@@ -190,23 +190,6 @@ export default function App() {
   const phase2End  = safeRetAge - currentAge;
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
-
-  // WI-3.8: affordView — defaults/bounds for the Ideas "affordability" mode
-  // (calcAffordabilityMax itself is called by the screen slice that builds the
-  // panel; this slice only exposes the model-derived defaults/bounds, rule 10).
-  const affordView = useMemo(() => ({
-    // Clamped to purchaseAgeField's own bounds (not the other way around — expanding
-    // max to fit an oversized default would let purchases land past the plan horizon).
-    // Reachable: currentAge's slider goes to 80, so currentAge + offset can exceed
-    // safeLifeExp - 1 for anyone close to their planning horizon (review fix).
-    defaultPurchaseAge: Math.min(
-      currentAge + ASSUMPTIONS.AFFORD_DEFAULT_PURCHASE_OFFSET_YRS, safeLifeExp - 1
-    ),
-    purchaseAgeField: { min: currentAge, max: safeLifeExp - 1, step: 1 },
-    defaultTargetAge: safeLifeExp,
-    targetAgeField: { min: safeRetAge + 1, max: 115, step: 1 },
-    step: ASSUMPTIONS.AFFORDABILITY_STEP,
-  }), [currentAge, safeLifeExp, safeRetAge]);
 
   // useCallback so memos that depend on it (simData, whatIfSimInputs) can list it
   // honestly in their deps without re-running every render (V9 / principle 13).
@@ -1812,7 +1795,21 @@ export default function App() {
     minAge: currentAge + 1,
     maxAge: safeLifeExp,
     retirementAge: safeRetAge,
-  }), [currentAge, safeLifeExp, safeRetAge]);
+    // Projected salary by age (0 past retirement) — the LifeEventSheet's "usual
+    // pay" seed/hint for a new working-year duration event (rule 10: the growth
+    // projection lives here, not in the sheet).
+    projectedIncomeByAge: buildProjectedIncomeByAge({
+      currentIncome, incomeGrowth, incomeGrowthEndAge,
+      currentAge, retirementAge: safeRetAge,
+      minAge: currentAge + 1, maxAge: safeLifeExp,
+    }),
+  }), [currentAge, safeLifeExp, safeRetAge, currentIncome, incomeGrowth, incomeGrowthEndAge]);
+
+  // BUG-73: the labeled comfortable/tight/unaffordable ranges (rule 10 — the
+  // rail legend caption comes from here, never a hardcoded "5" or "90" in a
+  // screen). Memoized separately (V9) since it's a small, independently-stable
+  // slice of horizonProps.
+  const verdictLegend = useMemo(() => buildVerdictLegend(safeLifeExp), [safeLifeExp]);
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
@@ -1852,10 +1849,6 @@ export default function App() {
     // sliders — memoized separately above (V9). The sheet's verdict/impact come
     // from evaluateLifeEvent (what-if.js) called with whatIfSimInputs.
     lifeEventBounds,
-    // WI-3.8: Solvers mode defaults/bounds (Ideas' "Solvers" segment,
-    // AffordabilityPanel — calcAffordabilityMax's purchaseAge/targetLifeExpectancy
-    // seeds, unrelated to the retired eventsView/Scenarios machinery).
-    affordView,
     // WI-0.1 display bundles (shapes documented at their model functions):
     statementView,    // calcStatementView — pcts null when no income
     chartMilestones,  // calcChartMilestones — { rows, peakTotal }
@@ -1908,6 +1901,9 @@ export default function App() {
     // writes now go through the single applyPlanLevers path above.
     monthlySpend,
     sliderBounds,
+    // BUG-73: labeled comfortable/tight/unaffordable ranges for the Plan/Ideas/
+    // LifeEventSheet verdict rail legends — memoized separately above (V9).
+    verdictLegend,
     // Conditional slider flags.
     isMarried,
     // Committed plan snapshot — null until the user has saved a plan at least once
@@ -1934,7 +1930,7 @@ export default function App() {
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
        moneyEvents, saveEvent, removeEvent, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
-       lifeEventBounds, affordView,
+       lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
@@ -1952,6 +1948,8 @@ export default function App() {
        isMarried, committedPlan,
        planHighlights,
        monthlySpend, sliderBounds,
+       // BUG-73: verdict legend (memoized separately above):
+       verdictLegend,
        // WI-3.1 setter bundles (each memoized separately above):
        profileBundle, spendingBundle, accountsBundle, ssBundle, pensionBundle,
        conversionBundle, healthBundle, assumptionsBundle]);
@@ -2093,11 +2091,13 @@ export default function App() {
                 <div style={{ fontSize: 10, color: C.muted, paddingLeft: 2, marginTop: -4 }}>
                   {"Projected at retirement: "}
                   <span style={{ color: incomeGrowthEndAge != null ? C.orange : C.green, ...mono, fontWeight: 600 }}>
-                    {fmt(currentIncome * Math.pow(
-                      1 + incomeGrowth / 100,
-                      incomeGrowthEndAge != null
-                        ? Math.min(safeRetAge - currentAge, incomeGrowthEndAge - currentAge)
-                        : safeRetAge - currentAge
+                    {/* Shared helper = the sim's own retirement-year salary
+                        convention (growthYears = retAge − currentAge − 1). The
+                        old inline Math.pow compounded one extra year, showing a
+                        figure the sim never pays (CodeRabbit PR #53). */}
+                    {fmt(projectedIncomeAtAge(
+                      { currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge },
+                      safeRetAge
                     ))}{"/yr"}
                   </span>
                   {incomeGrowthEndAge != null && (

@@ -190,6 +190,10 @@ function TryAChangePanel({
   // ABOVE this panel — reads the exact same offsets/preview and can never
   // show a different scenario than this panel's own delta chip (V1/principle 7).
   retireOffset, spendOffset, setRetireOffset, setSpendOffset, preview,
+  // BUG-73: the labeled comfortable/tight/unaffordable ranges (model-provided,
+  // horizonProps.verdictLegend) — shown ONCE per panel, under the first rail,
+  // rather than repeated under both sliders.
+  verdictLegend,
 }) {
   const [showApply, setShowApply] = useState(false);
 
@@ -258,7 +262,7 @@ function TryAChangePanel({
           onChange={e => setRetireOffset(Number(e.target.value) - retirementAge)}
           style={sliderInput}
         />
-        <VerdictTickRail t={t} rail={retireRail} />
+        <VerdictTickRail t={t} rail={retireRail} legend={verdictLegend} />
       </div>
 
       {/* Monthly-spend slider */}
@@ -383,6 +387,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     // Try-a-change panel + life-event edit-in-place.
     whatIfSimInputs, monthlySpend, sliderBounds, applyPlanLevers,
     saveEvent, removeEvent, lifeEventBounds,
+    // BUG-73: labeled comfortable/tight/unaffordable ranges for the rail legend.
+    verdictLegend,
   } = props;
 
   const [arcView, setArcView] = useState("arc");
@@ -525,6 +531,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
             retireOffset={retireOffset} spendOffset={spendOffset}
             setRetireOffset={setRetireOffset} setSpendOffset={setSpendOffset}
             preview={arcPreview}
+            verdictLegend={verdictLegend}
           />
         </div>
       ) : (
@@ -541,6 +548,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
             retireOffset={retireOffset} spendOffset={spendOffset}
             setRetireOffset={setRetireOffset} setSpendOffset={setSpendOffset}
             preview={arcPreview}
+            verdictLegend={verdictLegend}
           />
         </div>
       )}

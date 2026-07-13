@@ -7,6 +7,40 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-75 — `surplusApplySite` double-applies committed retirement-phase events in both its previews (found 2026-07-13, Fable adversarial review of PR #53)
+
+**Owner:** me_theguy. **Found by:** a Fable adversarial review requested to hunt for correctness
+bugs in PR #53's BUG-72/73 work; this finding is **pre-existing** — present since `surplusApplySite`
+shipped (WI-3.7) and unrelated to the income-channel/verdict changes, but surfaced while tracing
+how `moneyEvents` reach `calcWhatIfDelta`.
+**What:** `src/App.jsx:1379-1389` (`surplusApplySite`'s "current" and "candidate" previews) passes
+the full committed `moneyEvents` array straight into `calcWhatIfDelta({ ...whatIfBundle,
+moneyEvents })`. Inside, `calcWhatIfScenario`'s retirement-phase merge
+(`src/model/what-if.js:215, 253`) builds `mergedRetEvents = [...(retDrawShared.moneyEvents ?? []),
+...retEvents]`, where `retEvents` is `moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge)`
+— but `retDrawShared.moneyEvents` **is already** the committed retirement-phase event list (set once
+in App.jsx). Passing `moneyEvents` again re-derives `retEvents` from the SAME committed list and
+concatenates it onto `retDrawShared.moneyEvents`, so every committed retirement-phase event is
+counted twice in the walk.
+**Impact:** symmetric between the "current" and "candidate" runs in the surplus modal, so the
+*delta* (and therefore the surplus-deployment recommendation) mostly survives — but the absolute
+`yearsSustained`/depletion figures the modal displays are wrong whenever the user has any committed
+retirement-phase money events. The BUG-72 income channel makes this worse for income-bearing
+duration events: the doubled event now also doubles the (portfolio-channel) income term.
+**Fix shape (not yet applied — needs an owner nod since it touches a shipped Apply-site's inputs):**
+`surplusApplySite`'s two `calcWhatIfDelta` calls should NOT pass `moneyEvents` at all — `whatIfBundle`
+already carries `retDrawShared.moneyEvents` internally, so the merge only needs the deliberate
+*scenario* additions (none, for this Apply-site) — or `calcWhatIfDelta` needs a documented contract
+for "committed events are already in the bundle, don't pass them again" so future Apply-sites don't
+repeat the mistake.
+**Where:** `src/App.jsx:1379, 1382` (the two `moneyEvents` call-sites); `src/model/what-if.js:215,
+253` (the merge that double-counts them).
+**Tests:** none yet — a regression test would run `surplusApplySite`'s preview against a bundle with
+a committed retirement-phase event and assert the walk sees it exactly once (e.g. compare against a
+direct `buildRetirementPhase` call with the event list passed once).
+
+---
+
 ### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
 
 **Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell,
@@ -309,6 +343,63 @@ scenario total.
 path's `seeds.tradGross = (resimAt.tradGross ?? 0) + (addlPreTaxBal ?? 0)`. **Files:**
 `src/model/what-if.js`. Golden master untouched (dead path at default state; `addlPreTaxBal`
 defaults to 0 everywhere).
+
+---
+
+### BUG-72 — Duration events ignored lost income during the event (found + fixed 2026-07-13)
+
+**Owner:** me_theguy. **Found during:** life-event placement feature build; user-reported symptom.
+**What it was:** a duration event (e.g. "$6,000/month for 36 months") modeled only its own cash outflow and never suppressed the user's salary during the event period. A 3-year sabbatical charged only the trip spend while contributions, employer match, MAGI, and SS AIME compounding continued untouched — income-dependent calculations saw no income change. Symptom: a user-reported "Big trip" 36mo × $6k/mo with $0 income showed almost no impact and read "comfortable," contradicting the ~$216k total spend.
+
+**Root cause:** `money-events.js` had a single portfolio channel (`eventNetForYear`, with `incomeAnnual` folded in as a bolt-on additive inflow), and `runSimulation` computed salary, contributions, and employer match with zero reference to `moneyEvents` — there was no income channel at all, so "no income during the event" was inexpressible: setting the field to $0 meant "no *extra* side income," not "my paycheck stops."
+
+**Fixed (2026-07-13, commits `1e8d2fd` + `7d60cdd` + `c3ec960`):** 
+- **Two-channel semantics:** `money-events.js` now splits the per-year effect into (i) `eventAmountForYear` (the event's own signed cash, excluding income) and (ii) `eventIncomeForYear` (the prorated `(months/12) × incomeAnnual`, 0 for one-time events). `eventNetForYear = eventAmountForYear + eventIncomeForYear` is unchanged in value and stays the retirement-walk basis.
+- **Working-year suppression:** new `eventsIncomeAdjustment(events, age)` → `{ pausedMonths, workedFrac, eventIncome }` computes prorated income (duration-outflow events with `incomeAnnual` field replace salary; inflows stay additive). `simulation.js` now projects income via `projectedIncomeAtAge` (includes `incomeGrowthEndAge` plateau), scales working-year contributions by `incomeFrac = min(1, projectedIncome / baseSalary)`, feeds MAGI/Roth-phase-out at the suppressed level.
+- **Field semantics:** duration event `incomeAnnual` is now **the user's total income during the event** (e.g. freelance, part-time, or 0 for a sabbatical), not an additive side-income offset. Seeded from `projectedIncomeByAge` (App.jsx) in the UI; LifeEventSheet relabels the field "Your income during this time ($/yr)."
+- **No double-counting rule:** each event month's income counts exactly once — accumulation years route a replacing event's income through the salary channel (`eventsIncomeAdjustment`), while the sim's portfolio line uses `eventSimAdjustmentForYear` (excludes replaced income, still credits a duration *inflow's* income); retirement-walk years use `eventNetForYear` (amount + income — no salary to replace there). Boundary-spanning duration events split by `eventFirstAge`/`eventLastAge` helpers so each walk counts only its own years. *(Corrected 2026-07-13 post-review: an earlier draft named `eventAmountForYear` as the retirement-walk basis — wrong; that would drop retirement-phase event income.)*
+- **Known simplifications (documented in `money-events.js`):** SS AIME not suppressed (calcAIME is closed-form, ≤36mo pause < 1% shift); spouse income never suppressed (primary-only, #30 scope); duration-event income still untaxed in retirement walks (BUG-36 scope note); the UI's "usual pay" seed stores the salary at the event's START age as a constant `incomeAnnual`, so a multi-year "income unchanged" event under `incomeGrowth > 0` trims later years' contributions by up to one year's growth factor (single-scalar field by design).
+- **Post-review hardening (2026-07-13, Fable + bot review of PR #53):** employer-match income basis capped at `baseSalary` (a $300k event income no longer triples a flat-mode match); duration *inflow* income restored to the sim's portfolio line via `eventSimAdjustmentForYear` (was silently dropped in accumulation years while retirement walks credited it); ONE shared `isIncomeReplacingEvent` predicate across the sim's salary channel, the sim's portfolio line, and `eventIncomeImpact` (an undefined `isInflow` previously displayed an income impact the sim never applied); `projectedIncomeAtAge` clamped at zero growth years (no backward discounting); Classic's "Projected at retirement" line moved onto the shared helper (was compounding one extra year vs the sim's own convention).
+
+**Golden master impact:** none (default state has no money events).
+
+**Where:** `src/model/money-events.js` (two-channel helpers), `src/model/simulation.js` (working-year income projection + suppression), `src/App.jsx` (lifeEventBounds.projectedIncomeByAge), `src/horizon/LifeEventSheet.jsx` (field label/seed).
+
+**Tests:** ~32 added across the two commits (big-trip regression reproducing the user scenario exactly — paused years zero out 401k/match/HSA/Roth/taxable contributions; income = usual salary keeps contributions identical to a no-event run; `eventsIncomeAdjustment` proration/overlap-cap/inflow-no-op; `projectedIncomeAtAge` plateau parity with the sim row; MAGI suppression re-opens a phased-out Roth; `eventIncomeImpact` + sheet seeding/bullet tests).
+
+---
+
+### BUG-73 — Verdict saturated to "comfortable" for non-depleting plans; no margin context (found + fixed 2026-07-13)
+
+**Owner:** me_theguy. **Found during:** cushion-based verdict design.
+**What it was:** every verdict surface (life-event verdict card, plan/dial preview, LifeEventSheet duration-month tick rail) returned "comfortable" for **any** plan that never depleted within the 130-year walk, even a plan with only $10k in reserve at age 90 vs. $100k/yr expenses — no distinction between "yes, you have a 20-year runway" and "yes, you never ran out at the walk horizon." Same lack of margin context made it impossible to compare scenarios: a $50k/yr plan and a $100k/yr plan that both sustained to 130 both showed "comfortable," but the second had 2× the cushion.
+
+**Root cause:** verdict logic was depletion-binary (depletes or doesn't) with no margin-of-safety computation, and no labeled ranges ("5+ yrs of runway = comfortable") so even a margined verdict couldn't inform the user of the threshold.
+
+**Fixed (2026-07-13, commit `c3ec960`):**
+- **Cushion basis:** `marginForScenario(scenario, safeLifeExp)` is THE one margin computation. Depletion basis unchanged; **cushion basis = scenarioBalAt90 / scenarioExpenses** (years of spending in reserve at plan age, conservative — SS/pension keep flowing). Handles Infinity/0 edge cases (non-depleting plans produce Infinity years cushion; zero-balance plans produce 0).
+- **Verdict mapping:** `verdictInfoForScenario(scenario, safeLifeExp)` returns `{ verdict, marginYears, marginBasis, marginLabel, rangeLegend, thresholds }` — the 3-state verdict plus a human margin sentence ("≈12 yrs of spending still in reserve at 90" / "runs out 4 yrs early") and the labeled ranges, all built from `EVENT_COMFORT_BUFFER_YEARS` and the real plan age (never hardcoded).
+- **Labeled ranges:** new `buildVerdictLegend` exports the 3-entry range table ("comfortable," "tight," "unaffordable") with thresholds, rendered as an optional legend on LifeEventSheet and Plan/Ideas preview screens.
+- **Thresholds unified:** both cushion and depletion use `EVENT_COMFORT_BUFFER_YEARS = 5` (documented as the shared constant if they ever diverge, pending future sophistication).
+
+**Golden master impact:** none (verdict is display-only; no scenario values changed).
+
+**Where:** `src/model/what-if.js` (margin/verdict/legend builders, pre-computed in `evaluateLifeEvent`, `buildLeverPreview`, `buildDurationRail`), `src/horizon/fields.jsx` (optional legend prop on VerdictTickRail), `src/App.jsx` (verdictLegend added to horizonProps), `src/horizon/LifeEventSheet.jsx` (legend render).
+
+**Tests:** +11 (cushion-saturation regression — a never-depleting plan with a thin cushion now reads "tight"; cushion never yields "unaffordable"; depletion-basis value-preservation vs the old inline expression; rail-vs-direct anti-divergence; label/legend value-locks; sheet marginLabel + legend render; Plan/Ideas legend-shown-once).
+
+---
+
+### BUG-74 — Accumulation taxable-account event spend can be silently "free" if it exceeds the balance (filed 2026-07-13, Open)
+
+**Owner:** me_theguy. **Found during:** duration-event income model pass code review.
+**What:** `src/model/simulation.js:175` clamps `taxable + cTaxable + eventAdj` to `Math.max(0, ...)` before computing growth. An accumulation-phase purchase event (`eventAdj` < 0) that exceeds the available `taxable` balance silently "spends" only what exists, stubs the amount as paid (no error, no underflow), and moves on — a $50k purchase with $30k in the account just silently becomes a $30k purchase with $0 in the account, no remaining amount to fail or warn. The retirement engine (rule 2b) handles depletion honestly: `buildRetirementWalkByAccount` computes a `spendShort` (the shortfall amount), which the user sees as "depletes at age X." Accumulation silently swallows the shortfall instead.
+
+**Why filed but not fixed:** this is a correctness gap (silently discarding a purchase intent) that needs cross-account draws or early-withdrawal penalties to model honestly; the fix is out of scope for the current work. The retirement engine's honest depletion model already shows the net result to the user once any accumulation shortfall is deferred to the retirement phase.
+
+**Known scope note:** one-time events with `isTaxable: true` (e.g., inherited pre-tax IRA inflow) are taxed as ordinary income on the floor via `inflowTax` component (the retire engine already charges this); the silent-clamp gap applies only to event **outflows** (purchases, sabbatical cash) where the amount might exceed the available taxable balance.
+
+**Where:** `src/model/simulation.js:175` — the `Math.max(0, taxable + cTaxable + eventAdj)` line in the per-year loop. A proper fix would thread a `shortfallByType` return field (or similar) back to App.jsx so the UI can either warn the user ("this purchase would require early-withdrawal penalties") or auto-promote it to a deferred-to-retirement purchase (needs cross-account draw logic in the engine).
 
 ---
 

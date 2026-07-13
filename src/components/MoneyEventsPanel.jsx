@@ -66,6 +66,8 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
             >
               <span style={{ fontSize: 11, color: C.text, whiteSpace: "nowrap" }}>
                 {fmt(ev.monthlyAmount)}/mo × {ev.durationMonths} mo
+                {Number.isFinite(ev.incomeAnnual) && ev.incomeAnnual > 0
+                  ? ` · income ${fmt(ev.incomeAnnual)}/yr` : ""}
               </span>
               <span style={{ fontSize: 9, color: C.muted, whiteSpace: "nowrap" }}>
                 edit in Horizon view
@@ -133,7 +135,7 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
 
       {events.length > 0 && (
         <p style={{ fontSize: 11, color: C.muted, margin: "8px 0 0" }}>
-          Net impact on portfolio:{" "}
+          Net cash flow of events:{" "}
           <span style={{ color: C.text }}>
             {fmt(totalEventImpact(events))}
           </span>

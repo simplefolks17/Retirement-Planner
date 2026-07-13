@@ -9,13 +9,14 @@
 // accumulation-phase events) — never reimplements the walk (BUG-31 rule).
 // Baseline values are passed in from App.jsx to avoid re-computing them.
 
-import { runSimulation } from "./simulation.js";
+import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
+  isIncomeReplacingEvent, monthsActiveInYear,
 } from "./money-events.js";
 import { buildPreviewMetric } from "./apply-preview.js";
 
@@ -49,6 +50,115 @@ export function verdictForMargin(marginYears) {
     : marginYears < ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS
       ? "tight"
       : "comfortable";
+}
+
+// ── marginForScenario (BUG-73 fix) ──────────────────────────────────────────
+// THE one sustainability-margin computation — replaces four inlined copies of
+// `scenarioYears === Infinity ? Infinity : scenarioYears - planHorizon`
+// (evaluateLifeEvent, buildLeverPreview, buildLeverRail, buildDurationRail).
+//
+// BUG-73: a scenario that never depletes within the 130-year walk always
+// reported `marginYears = Infinity`, which saturates verdictForMargin at
+// "comfortable" — a plan that spends down to a razor-thin balance at the plan
+// age (but doesn't quite hit $0 within the walk horizon) showed the exact
+// same "comfortable" verdict as a plan sitting on a 10x cushion. Fixed by
+// giving the never-depletes case its own margin basis instead of a flat
+// Infinity:
+//
+//   depletion basis (scenario.scenarioYears finite) — unchanged semantics:
+//     marginYears = scenarioYears − (safeLifeExp − scenario.scenarioRetAge)
+//     (buildDurationRail used to anchor this at bundle.safeRetAge rather than
+//     scenario.scenarioRetAge; identical in practice — a duration event never
+//     overrides the retirement age — but this helper always anchors on the
+//     scenario's own retirement age, the more general-purpose choice.)
+//
+//   cushion basis (scenario.scenarioYears === Infinity) — the fix: years of
+//     runway still held in reserve AT the plan age:
+//       marginYears = scenarioBalAt90 / scenarioDrawAtPlanAge
+//     The denominator is the walk's own NET draw in the plan-age year
+//     (spending minus SS/pension), NOT the full retirement spend. Pricing at
+//     full expenses (the first cut of this fix) made the margin non-monotonic
+//     at the depletion-horizon crossover for SS-heavy plans: the depletion
+//     basis measures runway net of the income floor, so a $200k reserve at a
+//     $7k/yr net draw is ~30 yrs of runway (continuous with the depletion
+//     figure just across the crossover), not the 3 yrs that a full-$62k-spend
+//     pricing claimed — which read "tight" while spending $2k MORE flipped the
+//     same rail to a "comfortable" 31-yr depletion margin (Fable review,
+//     PR #53). Net-draw pricing is still conservative (ignores growth on the
+//     reserve); it just measures in the same currency as the depletion basis.
+//     Edges: scenarioDrawAtPlanAge == 0 (SS/pension cover everything — the
+//     reserve is never drawn) → Infinity; scenarioDrawAtPlanAge null/undefined
+//     (older callers / synthetic test scenarios without the field) → fall back
+//     to the full-expenses pricing; scenarioBalAt90 null → Infinity.
+//
+// Threshold note (owner-reviewed): both bases reuse
+// ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS (5) — "years of runway beyond plan
+// age" is the same unit either way. A dedicated cushion-specific buffer
+// constant would be a constants-only change later if the two bases ever need
+// to diverge.
+export function marginForScenario(scenario, safeLifeExp) {
+  if (scenario.scenarioYears !== Infinity) {
+    return {
+      marginYears: scenario.scenarioYears - (safeLifeExp - scenario.scenarioRetAge),
+      marginBasis: "depletion",
+    };
+  }
+  const { scenarioBalAt90, scenarioExpenses, scenarioDrawAtPlanAge } = scenario;
+  // Denominator: the plan-age net draw when the scenario provides it (both
+  // calcWhatIfScenario paths do); full expenses as the legacy fallback.
+  const drainRate = scenarioDrawAtPlanAge != null ? scenarioDrawAtPlanAge : scenarioExpenses;
+  const marginYears = (scenarioBalAt90 != null && drainRate > 0)
+    ? scenarioBalAt90 / drainRate
+    : Infinity;
+  return { marginYears, marginBasis: "cushion" };
+}
+
+// Human sentence for a margin (whole-year rounding — rule 10: the sheet/rail
+// callers render this verbatim, never re-deriving the wording).
+function buildMarginLabel({ marginYears, marginBasis }, safeLifeExp) {
+  if (marginBasis === "cushion") {
+    return marginYears === Infinity
+      ? "still growing at your plan age"
+      : `≈${Math.round(marginYears)} yrs of runway left at ${safeLifeExp}`;
+  }
+  return marginYears >= 0
+    ? `${Math.round(marginYears)} yrs to spare past ${safeLifeExp}`
+    : `runs out ${Math.round(Math.abs(marginYears))} yrs early`;
+}
+
+// ── buildVerdictLegend ───────────────────────────────────────────────────────
+// The labeled comfortable/tight/unaffordable ranges, in the user's own units
+// (years of runway / the plan age) — owner requirement: users must SEE the
+// value range behind each verdict color, not just the color. Uses the real
+// ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS and the real plan age — never
+// hardcodes 5 or 90 (rule 1 / rule 10).
+export function buildVerdictLegend(planAge) {
+  const buffer = ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS;
+  return [
+    { verdict: "comfortable",  label: `${buffer}+ yrs of runway` },
+    { verdict: "tight",        label: `0–${buffer} yrs of runway` },
+    { verdict: "unaffordable", label: `runs out before ${planAge}` },
+  ];
+}
+
+// ── verdictInfoForScenario ───────────────────────────────────────────────────
+// Render-ready verdict package for a calcWhatIfScenario result — rule 10: every
+// copy string and number here is model-provided, so a screen never re-derives
+// wording or thresholds. Wraps marginForScenario + verdictForMargin +
+// buildMarginLabel + buildVerdictLegend into ONE call.
+export function verdictInfoForScenario(scenario, safeLifeExp) {
+  const { marginYears, marginBasis } = marginForScenario(scenario, safeLifeExp);
+  return {
+    verdict: verdictForMargin(marginYears),
+    marginYears,
+    marginBasis,
+    marginLabel: buildMarginLabel({ marginYears, marginBasis }, safeLifeExp),
+    rangeLegend: buildVerdictLegend(safeLifeExp),
+    thresholds: {
+      comfortableMin: ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS,
+      tightMin: 0,
+    },
+  };
 }
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
@@ -387,11 +497,16 @@ export function calcWhatIfScenario({
     // safeLifeExp" (not applicable, NOT zero); a genuine depletion at/before
     // safeLifeExp is a real 0.
     let scenarioBalAt90;
+    let scenarioDrawAtPlanAge = null;
     if (rp.depletionAge != null && rp.depletionAge <= safeLifeExp) {
       scenarioBalAt90 = 0;
     } else {
       const row90 = walkRows.find(r => r.age === safeLifeExp);
       scenarioBalAt90 = row90 ? row90.total : null;
+      // Net portfolio draw in the plan-age year (engine rows: draw = spending
+      // net of SS/pension + any event cash folded into `needed`). Feeds the
+      // cushion-basis margin's denominator — see marginForScenario.
+      scenarioDrawAtPlanAge = row90 ? row90.draw : null;
     }
 
     const scenarioYears = rp.yearsSustained;
@@ -405,6 +520,7 @@ export function calcWhatIfScenario({
       scenarioYears,
       deltaYears,
       scenarioBalAt90,
+      scenarioDrawAtPlanAge,
       // M2: the engine's own depletion age (rp.depletionAge) — exact, not a
       // round(retAge + yearsSustained) derivation, which lands one year early
       // whenever the failure year is < 50% funded (yearsSustained's fractional
@@ -463,11 +579,16 @@ export function calcWhatIfScenario({
   // zero — can't happen in practice since lifeWalk's endAge is >= safeLifeExp,
   // but kept as a guard); a genuine depletion at/before safeLifeExp is a real 0.
   let scenarioBalAt90;
+  let scenarioDrawAtPlanAge = null;
   if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= safeLifeExp) {
     scenarioBalAt90 = 0;
   } else {
     const refRow = (lifeWalk.rows ?? []).find(r => r.age === safeLifeExp);
     scenarioBalAt90 = refRow ? refRow.total : null;
+    // Net portfolio draw in the plan-age year (blended-walk rows: draw =
+    // max(0, expenses − SS − pension)). Feeds the cushion-basis margin's
+    // denominator — see marginForScenario.
+    scenarioDrawAtPlanAge = refRow ? refRow.draw : null;
   }
 
   const scenarioYears = farWalk.yearsSustained;
@@ -481,6 +602,7 @@ export function calcWhatIfScenario({
     scenarioYears,
     deltaYears,
     scenarioBalAt90,
+    scenarioDrawAtPlanAge,
     // Fallback path only (dead in production — App.jsx always supplies
     // retPhaseBase, see the M1 engine branch above): use the walk's own exact
     // depletion age rather than the local round(retAge + yearsSustained)
@@ -502,6 +624,71 @@ export function calcWhatIfChart(bundle, overrides = {}) {
   return scenario ? scenario.chart : [];
 }
 
+// ── eventIncomeImpact ────────────────────────────────────────────────────────
+// Income impact of ONE candidate duration event over its WORKING-phase months
+// (owner decision: a duration outflow's incomeAnnual now means "my total
+// income during this period," replacing salary — see money-events.js's
+// module header). This is the "what did I actually give up in pay" figure,
+// separate from the portfolio-cost bullets evaluateLifeEvent already builds:
+// a sabbatical that pauses salary shows up on the walk via
+// eventsIncomeAdjustment (lower contributions, lower MAGI), but nothing in
+// evaluateLifeEvent's existing fields names the lost PAYCHECK itself — this
+// does, so LifeEventSheet can show it as its own bullet (rule 10 — the sheet
+// renders this verbatim, never re-derives it).
+//
+// Returns null for: one-time events (no incomeAnnual concept), inflow
+// duration events (additive side income, not a salary replacement — see
+// eventsIncomeAdjustment's own isInflow gate), events with a non-finite
+// incomeAnnual (legacy/undefined = "no statement about income"), or events
+// entirely past safeRetAge (no salary to lose once retired — post-retirement
+// incomeAnnual is additive side income, handled elsewhere). Otherwise:
+//   {
+//     monthsWorking,     // Σ months of the event that land at ages <= safeRetAge
+//     usualPay,          // Σ (monthsInYear/12) × projectedIncomeAtAge(simInputs, age)
+//                        //   over those working years — what the person would have
+//                        //   earned WITHOUT the event
+//     eventPay,          // Σ (monthsInYear/12) × |incomeAnnual| over the same years —
+//                        //   what the event says they'll actually earn
+//     netLostIncome,     // usualPay − eventPay (negative = a net income GAIN,
+//                        //   e.g. incomeAnnual set above usual pay)
+//     netLostIncomeAbs,  // Math.abs(netLostIncome), pre-computed so the sheet never
+//                        //   does Math.abs in JSX (matches deltaAbs's convention below)
+//     dir,               // "down" when netLostIncome > 0 (a real pay cut),
+//                        // "up" when netLostIncome < 0 (a net gain),
+//                        // null when exactly 0 (no change) — rule 10, no sign math in JSX
+//   }
+export function eventIncomeImpact(event, simInputs, safeRetAge) {
+  // isIncomeReplacingEvent is the SAME predicate the sim's salary channel uses
+  // (eventsIncomeAdjustment) — shared so this bullet can never claim an income
+  // impact the sim doesn't apply (Fable review, PR #53: the old inline
+  // `event.isInflow` truthy-check disagreed with the sim's gate for an event
+  // whose isInflow was left undefined).
+  if (!event || !isIncomeReplacingEvent(event)) return null;
+  if (eventFirstAge(event) > safeRetAge) return null;
+
+  let monthsWorking = 0;
+  let usualPay = 0;
+  let eventPay = 0;
+  const lastWorkingAge = Math.min(eventLastAge(event), safeRetAge);
+  for (let age = eventFirstAge(event); age <= lastWorkingAge; age++) {
+    const months = monthsActiveInYear(event, age);
+    if (months <= 0) continue;
+    monthsWorking += months;
+    usualPay += (months / 12) * projectedIncomeAtAge(simInputs, age);
+    eventPay += (months / 12) * Math.abs(event.incomeAnnual);
+  }
+  if (monthsWorking <= 0) return null;
+
+  const netLostIncome = usualPay - eventPay;
+  const dir = netLostIncome > 0 ? "down" : netLostIncome < 0 ? "up" : null;
+
+  return {
+    monthsWorking, usualPay, eventPay, netLostIncome,
+    netLostIncomeAbs: Math.abs(netLostIncome),
+    dir,
+  };
+}
+
 // ── evaluateLifeEvent ────────────────────────────────────────────────────────
 // The model behind the Horizon life-event sheet (sheet-first placement flow):
 // ONE candidate event → a plain-language verdict plus concrete impact deltas,
@@ -518,7 +705,11 @@ export function calcWhatIfChart(bundle, overrides = {}) {
 //
 // Returns null when inputs are invalid; otherwise:
 //   {
-//     verdict,               // "comfortable" | "tight" | "unaffordable"
+//     verdict,               // "comfortable" | "tight" | "unaffordable" — same string as
+//                            //   verdictInfo.verdict below (kept for back-compat callers)
+//     verdictInfo,           // verdictInfoForScenario(scen, safeLifeExp) — the full
+//                            //   render-ready package: { verdict, marginYears, marginBasis,
+//                            //   marginLabel, rangeLegend, thresholds } (BUG-73)
 //     grossCost,             // total $ of the event itself (duration: monthly × months)
 //     netTotal,              // signed net portfolio impact across all event years
 //     chart,                 // scenario arc series (same run as the verdict)
@@ -532,10 +723,17 @@ export function calcWhatIfChart(bundle, overrides = {}) {
 //     sustainability: {
 //       baseYears, scenarioYears,          // years sustained; Infinity = never depletes
 //       baseDepletionAge, scenarioDepletionAge,  // null = never depletes
-//       marginYears,                       // scenarioYears − plan horizon (Infinity ok)
+//       marginYears,                       // marginForScenario's margin (BUG-73: a
+//                                           //   finite cushion-basis figure when
+//                                           //   scenarioYears is Infinity, not a flat Infinity)
+//       marginBasis,                       // "depletion" | "cushion" — which basis produced
+//                                           //   marginYears (see marginForScenario)
 //       stillSustainable,                  // scenario sustains to the plan age
 //       newlyDepletes, depletionMoved,     // display flags (rule 10 — no comparisons in JSX)
 //     },
+//     incomeImpact,           // eventIncomeImpact(event, bundle.simInputs, safeRetAge) — null
+//                             //   unless the event is a working-phase, income-replacing outflow
+//                             //   duration event (see eventIncomeImpact's own doc above)
 //   }
 export function evaluateLifeEvent(bundle, event) {
   if (!event) return null;
@@ -571,11 +769,10 @@ export function evaluateLifeEvent(bundle, event) {
   const planBase = balAt(base, safeLifeExp);
   const planScen = balAt(scen, safeLifeExp);
 
-  const planHorizon = safeLifeExp - safeRetAge;
-  const marginYears = scen.scenarioYears === Infinity
-    ? Infinity
-    : scen.scenarioYears - planHorizon;
-  const verdict = verdictForMargin(marginYears);
+  // BUG-73: the verdict info package (verdictInfoForScenario) is THE margin
+  // computation — never a locally-inlined Infinity/depletion branch.
+  const verdictInfo = verdictInfoForScenario(scen, safeLifeExp);
+  const { verdict, marginYears, marginBasis } = verdictInfo;
 
   const walkDepletion = (run) => {
     if (run.scenarioYears === Infinity) return null;
@@ -586,9 +783,11 @@ export function evaluateLifeEvent(bundle, event) {
 
   return {
     verdict,
+    verdictInfo,
     grossCost: Math.round(eventGrossCost(event)),
     netTotal:  Math.round(eventNetTotal(event)),
     chart: scen.chart,
+    incomeImpact: eventIncomeImpact(event, bundle.simInputs, safeRetAge),
     atRetirement: {
       age: safeRetAge,
       base: retBase,
@@ -614,6 +813,7 @@ export function evaluateLifeEvent(bundle, event) {
         baseDepletionAge,
         scenarioDepletionAge,
         marginYears,
+        marginBasis,
         stillSustainable: marginYears >= 0,
         // Pre-computed display flags so screens never compare model values (rule 10):
         // the event newly introduced a depletion / moved an existing depletion age.
@@ -779,6 +979,8 @@ export const LEVERS = {
 //     verdict,        // "comfortable" | "tight" | "unaffordable" — from the
 //                     // scenario's own retirement age (a retire-later override
 //                     // shifts the plan horizon, not just the balance)
+//     verdictInfo,    // verdictInfoForScenario(scenario, safeLifeExp) — the full
+//                     // render-ready package (BUG-73's cushion-basis fix included)
 //     scenarioStats,  // { scenarioRetAge, scenarioExpenses, scenarioTotalAtRet,
 //                     //   scenarioYears, scenarioBalAt90 } — passthrough scalars
 //   }
@@ -827,17 +1029,16 @@ export function buildLeverPreview(bundle, { retirementAge, monthlyExpenses, scen
     }),
   ];
 
-  const planHorizon = safeLifeExp - scenario.scenarioRetAge;
-  const marginYears = scenario.scenarioYears === Infinity
-    ? Infinity
-    : scenario.scenarioYears - planHorizon;
-  const verdict = verdictForMargin(marginYears);
+  // BUG-73: verdictInfoForScenario is THE margin computation — never a
+  // locally-inlined Infinity/depletion branch.
+  const verdictInfo = verdictInfoForScenario(scenario, safeLifeExp);
 
   return {
     changed,
     chart: scenario.chart,
     metrics,
-    verdict,
+    verdict: verdictInfo.verdict,
+    verdictInfo,
     scenarioStats: {
       scenarioRetAge: scenario.scenarioRetAge,
       scenarioExpenses: scenario.scenarioExpenses,
@@ -886,10 +1087,10 @@ export function buildLeverRail(bundle, { lever, min, max, step } = {}) {
     const overrides = { [leverDef.overrideKey]: value };
     const scenario = calcWhatIfScenario(bundle, overrides);
     if (!scenario) continue;
-    const planHorizon = safeLifeExp - scenario.scenarioRetAge;
-    const marginYears = scenario.scenarioYears === Infinity
-      ? Infinity
-      : scenario.scenarioYears - planHorizon;
+    // BUG-73: marginForScenario is THE margin computation (same one
+    // evaluateLifeEvent/buildLeverPreview use) — never a locally-inlined
+    // Infinity/depletion branch.
+    const { marginYears } = marginForScenario(scenario, safeLifeExp);
     rail.push({ value, verdict: verdictForMargin(marginYears) });
   }
   return rail;
@@ -926,8 +1127,7 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
   // Coarsen the step to fit the cap while still spanning up to maxMonths.
   const effStep = count === rawCount ? step : maxMonths / count;
 
-  const { safeRetAge, safeLifeExp } = bundle;
-  const planHorizon = safeLifeExp - safeRetAge;
+  const { safeLifeExp } = bundle;
 
   const rail = [];
   for (let i = 1; i <= count; i++) {
@@ -938,9 +1138,11 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
       ...(eventBase.id != null ? { excludeEventId: eventBase.id } : {}),
     });
     if (!scenario) continue;
-    const marginYears = scenario.scenarioYears === Infinity
-      ? Infinity
-      : scenario.scenarioYears - planHorizon;
+    // BUG-73: marginForScenario anchors on scenario.scenarioRetAge, which
+    // equals bundle.safeRetAge here (a duration event never overrides the
+    // retirement age) — identical to the old local planHorizon, so this is
+    // the same margin evaluateLifeEvent computes for the same candidate.
+    const { marginYears } = marginForScenario(scenario, safeLifeExp);
     rail.push({ months, verdict: verdictForMargin(marginYears) });
   }
   return rail;
