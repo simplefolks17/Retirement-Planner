@@ -433,6 +433,17 @@ describe("projectedIncomeAtAge / buildProjectedIncomeByAge", () => {
     expect(projectedIncomeAtAge(args, 45)).toBeCloseTo(100_000 * 1.05 ** 10, 6);  // past plateau: capped at 10
   });
 
+  it("never discounts income backward (age ≤ currentAge, or plateau in the past)", () => {
+    // Gemini PR #53: a committed event's age can sit at/below currentAge after
+    // the user raises their age — the projection must clamp at "current salary",
+    // never shrink it with a negative growth exponent.
+    const args = { currentIncome: 100_000, incomeGrowth: 5, incomeGrowthEndAge: null, currentAge: 30 };
+    expect(projectedIncomeAtAge(args, 30)).toBeCloseTo(100_000, 6); // growthYears would be −1
+    expect(projectedIncomeAtAge(args, 25)).toBeCloseTo(100_000, 6); // would be −6
+    const pastPlateau = { currentIncome: 100_000, incomeGrowth: 5, incomeGrowthEndAge: 28, currentAge: 30 };
+    expect(projectedIncomeAtAge(pastPlateau, 40)).toBeCloseTo(100_000, 6); // plateau cap would be −2
+  });
+
   it("buildProjectedIncomeByAge returns 0 for ages past retirementAge", () => {
     const table = buildProjectedIncomeByAge({
       currentIncome: 100_000, incomeGrowth: 5, incomeGrowthEndAge: null,

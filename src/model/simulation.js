@@ -22,7 +22,13 @@ export function projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowth
   const growthYears = incomeGrowthEndAge != null
     ? Math.min(age - currentAge - 1, incomeGrowthEndAge - currentAge)
     : age - currentAge - 1;
-  return currentIncome * Math.pow(1 + incomeGrowth / 100, growthYears);
+  // Clamped at 0: never discount income BACKWARD. Negative growthYears can
+  // reach here via eventIncomeImpact when a committed event's age sits at or
+  // below currentAge (the user raised their age after committing it), or via
+  // an incomeGrowthEndAge in the past — in both cases "no growth yet" (the
+  // current salary) is the honest projection, not a shrunken one. Inert for
+  // the sim loop, which only asks about ages ≥ currentAge + 1. (Gemini PR #53.)
+  return currentIncome * Math.pow(1 + incomeGrowth / 100, Math.max(0, growthYears));
 }
 
 // Projected salary by age over a range, 0 past retirementAge (no salary in
