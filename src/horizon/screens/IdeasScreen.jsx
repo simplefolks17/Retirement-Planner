@@ -4,7 +4,6 @@ import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
 import ApplyPreviewModal from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
-import AffordabilityPanel from "../AffordabilityPanel.jsx";
 import { VerdictTickRail } from "../fields.jsx";
 import { calcWhatIfScenario, buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
 
@@ -43,23 +42,26 @@ export const LIFE_EVENTS = [
   { l: "Big trip",        icon: "🧳", age: 70, amount: 40_000, isInflow: false },
 ];
 
-// Segmented-control modes. Ids stay "dials"/"life"/"solvers" for deep-link
-// compat (Plan navigates with subView "dials") — the old locked "Scenarios"
-// segment is retired (2026-07-12): its 3 age-only cards became the Dials
-// quick-jump chips above, and its "Big trip" card folded into the Events
-// pills. "askit" is not a mode anymore; it's aliased to "dials" below so any
-// stale deep-link still lands somewhere useful — its old job ("what if I
-// retire earlier") is now literally the retire2Early chip inside Dials. The
-// "Solvers" mode (AffordabilityPanel — "what's the biggest one-time expense
-// my plan can absorb") is a WI-3.8 addition, unrelated to the Scenarios
-// removal — it doesn't touch moneyEvents at all. The only live Ideas
+// Segmented-control modes. Ids stay "dials"/"life" for deep-link compat (Plan
+// navigates with subView "dials") — the old locked "Scenarios" segment is
+// retired (2026-07-12): its 3 age-only cards became the Dials quick-jump
+// chips above, and its "Big trip" card folded into the Events pills. "askit"
+// is not a mode anymore; it's aliased to "dials" below so any stale deep-link
+// still lands somewhere useful — its old job ("what if I retire earlier") is
+// now literally the retire2Early chip inside Dials. The only live Ideas
 // deep-link today is Plan's navigate("ideas", "dials").
+//
+// 2026-07-13: the "Solvers" mode (AffordabilityPanel — WI-3.8's "what's the
+// biggest one-time expense my plan can absorb") was removed from Horizon by
+// owner decision — Dials + Events already cover the job Ideas needs to do.
+// `calcAffordabilityMax` (model/what-if.js) and Classic's WhatIfPanel "Max
+// Affordable" mode are untouched and remain the live home for that solver.
+// A stale "solvers" deep-link/subView degrades to Dials, same as "askit".
 const MODES = [
-  { k: "dials",   l: "Dials" },
-  { k: "life",    l: "Events" },
-  { k: "solvers", l: "Solvers" },
+  { k: "dials", l: "Dials" },
+  { k: "life",  l: "Events" },
 ];
-const resolveMode = (m) => (m === "askit" ? "dials" : m);
+const resolveMode = (m) => (m === "askit" || m === "solvers" ? "dials" : m);
 
 function ScenStatCard({ t, label, baseVal, scenVal, warm }) {
   const changed = scenVal != null && scenVal !== baseVal;
@@ -110,8 +112,6 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
     // Preview-first apply (2026-07-11 redesign, SP-5 tidy): the ONE write path
     // for dial commits — never a bare setter (mirrors Plan's TryAChangePanel).
     sliderBounds, applyPlanLevers,
-    // WI-3.8: Solvers mode defaults/bounds (Ideas' "Solvers" segment).
-    affordView,
   } = props;
 
   const [mode, setMode] = useState(() => resolveMode(initialMode) ?? null);
@@ -417,11 +417,6 @@ export default function IdeasScreen({ t, props, glow = false, strokeWidth = 3, i
                   <VerdictTickRail t={t} rail={dialSpendRail} />
                 </div>
               </div>
-            )}
-
-            {/* ── Solvers ── */}
-            {mode === "solvers" && (
-              <AffordabilityPanel t={t} whatIfBundle={whatIfBundle} affordView={affordView} isMobile={isMobile} />
             )}
           </div>
         </div>

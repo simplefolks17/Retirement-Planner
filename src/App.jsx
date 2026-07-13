@@ -191,23 +191,6 @@ export default function App() {
   const safeLifeExp = Math.max(lifeExpect, safeRetAge + 1);
   const totalYears  = safeLifeExp - currentAge;
 
-  // WI-3.8: affordView — defaults/bounds for the Ideas "affordability" mode
-  // (calcAffordabilityMax itself is called by the screen slice that builds the
-  // panel; this slice only exposes the model-derived defaults/bounds, rule 10).
-  const affordView = useMemo(() => ({
-    // Clamped to purchaseAgeField's own bounds (not the other way around — expanding
-    // max to fit an oversized default would let purchases land past the plan horizon).
-    // Reachable: currentAge's slider goes to 80, so currentAge + offset can exceed
-    // safeLifeExp - 1 for anyone close to their planning horizon (review fix).
-    defaultPurchaseAge: Math.min(
-      currentAge + ASSUMPTIONS.AFFORD_DEFAULT_PURCHASE_OFFSET_YRS, safeLifeExp - 1
-    ),
-    purchaseAgeField: { min: currentAge, max: safeLifeExp - 1, step: 1 },
-    defaultTargetAge: safeLifeExp,
-    targetAgeField: { min: safeRetAge + 1, max: 115, step: 1 },
-    step: ASSUMPTIONS.AFFORDABILITY_STEP,
-  }), [currentAge, safeLifeExp, safeRetAge]);
-
   // useCallback so memos that depend on it (simData, whatIfSimInputs) can list it
   // honestly in their deps without re-running every render (V9 / principle 13).
   const employerMatch = useCallback((salary, employeeContrib) =>
@@ -1852,10 +1835,6 @@ export default function App() {
     // sliders — memoized separately above (V9). The sheet's verdict/impact come
     // from evaluateLifeEvent (what-if.js) called with whatIfSimInputs.
     lifeEventBounds,
-    // WI-3.8: Solvers mode defaults/bounds (Ideas' "Solvers" segment,
-    // AffordabilityPanel — calcAffordabilityMax's purchaseAge/targetLifeExpectancy
-    // seeds, unrelated to the retired eventsView/Scenarios machinery).
-    affordView,
     // WI-0.1 display bundles (shapes documented at their model functions):
     statementView,    // calcStatementView — pcts null when no income
     chartMilestones,  // calcChartMilestones — { rows, peakTotal }
@@ -1934,7 +1913,7 @@ export default function App() {
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
        moneyEvents, saveEvent, removeEvent, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
-       lifeEventBounds, affordView,
+       lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
