@@ -344,23 +344,23 @@ Tests: `src/horizon/__tests__/strategies-screen.test.js` (per-flow render + the 
 Apply/Revert smoke — modal open/cancel/confirm-once, Revert visibility gated on `applied`);
 `horizon-props-stability.test.js` auto-covers stability.
 
-### `horizonProps.affordView` (WI-3.8 / #105) — Ideas' "Solvers" affordability mode
+### `horizonProps.affordView` (WI-3.8 / #105) — Ideas' "Solvers" affordability mode [RETIRED 2026-07-13]
 
 **Added 2026-07-09; merged into the Scenarios-retirement change (2026-07-12) as an
 independent, non-overlapping addition** — see the dated note in `docs/BUGS.md` BUG-44
-addendum and `CLAUDE.md`'s status entry for that day.
+addendum and `CLAUDE.md`'s status entry for that day. **RETIRED 2026-07-13 by owner decision** — Dials + Events cover the affordability job; the Solvers tab and its corresponding `AffordabilityPanel.jsx` UI were removed from Horizon. `calcAffordabilityMax` is retained for use by Classic's `WhatIfPanel` Max Affordable mode.
 
-- **`affordView`** — defaults/bounds only for the affordability solver:
-  `{ defaultPurchaseAge, purchaseAgeField, defaultTargetAge, targetAgeField, step }`. The
-  actual `calcAffordabilityMax` call happens **in the screen** (`AffordabilityPanel.jsx`),
-  fed by this bundle's bounds plus the existing `whatIfSimInputs` bundle — the same
-  sanctioned in-screen-pure-function-call pattern `IdeasScreen` already used for
-  `calcWhatIfScenario` (rule 10 exempts calling a pure model function with model-provided
-  inputs; it does not exempt arithmetic/comparisons on the result beyond branching on the
-  model's own output, e.g. `result.canAfford`). `calcAffordabilityMax` takes the SAME
-  `(bundle, options)` shape as `calcWhatIfScenario` (the "must precede any solver UI" fix,
-  2026-07-11) — it is called as `calcAffordabilityMax(whatIfBundle, { purchaseAge,
-  targetLifeExpectancy, step })`, never the older single-object-spread shape.
+- **`affordView`** — defaults/bounds only for the affordability solver (RETAINED IN MODEL):
+  `{ defaultPurchaseAge, purchaseAgeField, defaultTargetAge, targetAgeField, step }`. Was
+  used by **Horizon `AffordabilityPanel.jsx`** (deleted 2026-07-13), not by the model itself —
+  the actual `calcAffordabilityMax` call was in the screen, fed by this bundle's bounds plus
+  the existing `whatIfSimInputs` bundle — the same sanctioned in-screen-pure-function-call
+  pattern `IdeasScreen` already used for `calcWhatIfScenario` (rule 10 exempts calling a
+  pure model function with model-provided inputs). `calcAffordabilityMax` takes the
+  `(bundle, options)` shape — it is called as `calcAffordabilityMax(whatIfBundle, { purchaseAge,
+  targetLifeExpectancy, step })`, never the older single-object-spread shape. Classic
+  `WhatIfPanel.jsx` still calls it directly with this signature for the Max Affordable mode
+  (unchanged).
 
 **WI-3.8 originally shipped `eventsView` alongside `affordView`** — a wrapped raw CRUD
 editor for `moneyEvents` (add/remove rows, edit fields directly), Ideas' "Events" mode at
@@ -371,11 +371,8 @@ had separately rejected the raw-editor / preset-card pattern in favor of the she
 through `saveEvent`/`removeEvent` (see "Other wrapped write surfaces" below), not a
 `eventsView`-shaped bundle.
 
-Tests: `src/horizon/__tests__/ideas-screen.test.js` "Solvers mode" (explainer copy render,
-the affordability anti-divergence lock — the panel's displayed max equals a direct
-`calcAffordabilityMax` call with the same args, so it can't diverge from Classic's
-`WhatIfPanel` — and the desktop age-input blur-clamp regression);
-`horizon-props-stability.test.js` auto-covers stability.
+Tests: The Horizon Solvers-mode tests (`src/horizon/__tests__/ideas-screen.test.js` "Solvers
+mode" describe block) were deleted 2026-07-13 when the Solvers tab was removed.
 
 ---
 
@@ -391,18 +388,30 @@ badge tap re-opens the sheet in edit mode with a Remove action).
   candidate through `calcWhatIfScenario` (ONE walk each — the verdict and any overlay can
   never disagree, V1) and returns `verdict` ("comfortable"/"tight"/"unaffordable",
   threshold `ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS`), cost scalars, `atRetirement` /
-  `atPlanAge` deltas with model-computed `dir` strings, and a `sustainability` block with
-  pre-computed display flags (`newlyDepletes`, `depletionMoved`) — the sheet renders and
-  formats only (rule 10).
+  `atPlanAge` deltas with model-computed `dir` strings, a `sustainability` block with
+  pre-computed display flags (`newlyDepletes`, `depletionMoved`), `verdictInfo`
+  (`marginLabel`, `verdictContext`, labeled ranges), and `incomeImpact` (for duration
+  outflows only — `monthsWorking`, `usualPay`, `eventPay`, `netLostIncome`, `netLostIncomeAbs`,
+  `dir`) — the sheet renders and formats only (rule 10).
 - **Event kinds:** one-time (`amount`) and **duration** (`monthlyAmount` × `durationMonths`
-  from `age`, optional `incomeAnnual` inflow offset) — see `src/model/money-events.js`.
+  from `age`, **`incomeAnnual` = user's total income during the event**, not an additive
+  inflow) — see `src/model/money-events.js` (BUG-72: lost-income semantics, 2026-07-13).
   `eventNetForYear` is the ONE per-year source consumed by `runSimulation`,
   `buildRetirementDrawdown`, and the per-account engine; `eventFirstAge`/`eventLastAge`
   drive every phase filter so boundary-spanning duration events hit each walk's years
-  exactly once (BUG-42).
-- **`horizonProps.lifeEventBounds`** — `{ minAge, maxAge, retirementAge }`, separately
-  memoized (V9): the sheet's age-slider bounds, computed in App.jsx (rule 10 — no age math
-  in the screen). The sheet's model runs use the existing `whatIfSimInputs` bundle.
+  exactly once (BUG-42). **Working-year impact:** working years use `eventsIncomeAdjustment`
+  to suppress `primaryIncomeYr` and scale contributions / MAGI / Roth basis; **retirement
+  impact:** untaxed per BUG-36 scope, but `eventIncomeForYear` offset applied to portfolio
+  draws.
+- **`horizonProps.lifeEventBounds`** — `{ minAge, maxAge, retirementAge, projectedIncomeByAge }`,
+  separately memoized (V9): the sheet's age-slider bounds and a live-income projection table
+  (seeding the event's `incomeAnnual` field), computed in App.jsx (rule 10 — no projection
+  math in the screen). The sheet's model runs use the existing `whatIfSimInputs` bundle.
+- **`horizonProps.verdictLegend`** (added 2026-07-13, BUG-73) — `[{ verdict, years, label }]`
+  labeled ranges (e.g., "comfortable: 5+ yrs of runway") from `EVENT_COMFORT_BUFFER_YEARS`
+  constant, separately memoized (V9). Optional render on LifeEventSheet, Plan levers, and
+  Ideas dials (screens decide whether to show it; shared `VerdictTickRail` component manages
+  the layout).
 
 Tests: `src/horizon/__tests__/life-event-sheet.test.js` (sheet + badges),
 duration/`evaluateLifeEvent` coverage in `money-events.test.js` / `what-if.test.js`.
@@ -411,19 +420,22 @@ duration/`evaluateLifeEvent` coverage in `money-events.test.js` / `what-if.test.
 
 Plan's `TryAChangePanel` and Ideas' Dials are **preview-first**: screen-local offsets feed ONE
 `buildLeverPreview(whatIfBundle, { retirementAge, monthlyExpenses })` run (what-if.js) whose
-`chart` is the arc's dashed overlay and whose `metrics` (buildPreviewMetric rows) are the delta
-chip AND the ApplyPreviewModal payload — one run, three surfaces, no divergence. Apply goes
-through the single App write path `applyPlanLevers({ retirementAge, monthlySpend })`
-(coupled setters + `commitPlan`, which now accepts `monthlySpend`; month→year conversion stays
-App-side). `buildLeverRail` / `buildDurationRail` produce `[{ value|months, verdict }]` per
-slider step (verdictForMargin — the same formula as `evaluateLifeEvent`); screens render them
-with the shared `VerdictTickRail` (fields.jsx) mapping verdict strings to tokens only.
-`calcWhatIfScenario` itself walks retirement with `buildRetirementPhase` on the bundle's
-`retPhaseBase`/`conversionByAge` (whatIfBundle also carries `baseChart` + `addlPreTaxBal`),
-locked by the no-op invariant (scenario chart === totalChartData); `ArcGraph.trimScenarioOverlay`
-starts the dashed line at the divergence age. `calcWhatIfDelta`/the optimizer remain on the
-blended walk (BUG-36's narrowed scope); `calcAffordabilityMax` moved onto the engine
-(`calcWhatIfScenario`) in the 2026-07-11 fix pass — see BUG-36's scope note.
+`chart` is the arc's dashed overlay and whose `metrics` (buildPreviewMetric rows — with
+`verdictInfo` field, per BUG-73) are the delta chip AND the ApplyPreviewModal payload — one
+run, three surfaces, no divergence. Apply goes through the single App write path
+`applyPlanLevers({ retirementAge, monthlySpend })` (coupled setters + `commitPlan`, which now
+accepts `monthlySpend`; month→year conversion stays App-side). `buildLeverRail` /
+`buildDurationRail` produce `[{ value|months, verdict, verdictInfo }]` per slider step
+(computed via `marginForScenario` — the same formula as `evaluateLifeEvent`; BUG-73 unified
+margin context); screens render them with the shared `VerdictTickRail` (fields.jsx) and
+optional `verdictLegend` (from `horizonProps`) — mapping verdict strings to tokens + labeled
+ranges only (rule 10). `calcWhatIfScenario` itself walks retirement with `buildRetirementPhase`
+on the bundle's `retPhaseBase`/`conversionByAge` (whatIfBundle also carries `baseChart` +
+`addlPreTaxBal`), locked by the no-op invariant (scenario chart === totalChartData);
+`ArcGraph.trimScenarioOverlay` starts the dashed line at the divergence age. `calcWhatIfDelta`
+/the optimizer remain on the blended walk (BUG-36's narrowed scope); `calcAffordabilityMax`
+moved onto the engine (`calcWhatIfScenario`) in the 2026-07-11 fix pass — see BUG-36's scope
+note.
 
 ---
 
