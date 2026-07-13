@@ -7,6 +7,40 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-75 — `surplusApplySite` double-applies committed retirement-phase events in both its previews (found 2026-07-13, Fable adversarial review of PR #53)
+
+**Owner:** me_theguy. **Found by:** a Fable adversarial review requested to hunt for correctness
+bugs in PR #53's BUG-72/73 work; this finding is **pre-existing** — present since `surplusApplySite`
+shipped (WI-3.7) and unrelated to the income-channel/verdict changes, but surfaced while tracing
+how `moneyEvents` reach `calcWhatIfDelta`.
+**What:** `src/App.jsx:1379-1389` (`surplusApplySite`'s "current" and "candidate" previews) passes
+the full committed `moneyEvents` array straight into `calcWhatIfDelta({ ...whatIfBundle,
+moneyEvents })`. Inside, `calcWhatIfScenario`'s retirement-phase merge
+(`src/model/what-if.js:215, 253`) builds `mergedRetEvents = [...(retDrawShared.moneyEvents ?? []),
+...retEvents]`, where `retEvents` is `moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge)`
+— but `retDrawShared.moneyEvents` **is already** the committed retirement-phase event list (set once
+in App.jsx). Passing `moneyEvents` again re-derives `retEvents` from the SAME committed list and
+concatenates it onto `retDrawShared.moneyEvents`, so every committed retirement-phase event is
+counted twice in the walk.
+**Impact:** symmetric between the "current" and "candidate" runs in the surplus modal, so the
+*delta* (and therefore the surplus-deployment recommendation) mostly survives — but the absolute
+`yearsSustained`/depletion figures the modal displays are wrong whenever the user has any committed
+retirement-phase money events. The BUG-72 income channel makes this worse for income-bearing
+duration events: the doubled event now also doubles the (portfolio-channel) income term.
+**Fix shape (not yet applied — needs an owner nod since it touches a shipped Apply-site's inputs):**
+`surplusApplySite`'s two `calcWhatIfDelta` calls should NOT pass `moneyEvents` at all — `whatIfBundle`
+already carries `retDrawShared.moneyEvents` internally, so the merge only needs the deliberate
+*scenario* additions (none, for this Apply-site) — or `calcWhatIfDelta` needs a documented contract
+for "committed events are already in the bundle, don't pass them again" so future Apply-sites don't
+repeat the mistake.
+**Where:** `src/App.jsx:1379, 1382` (the two `moneyEvents` call-sites); `src/model/what-if.js:215,
+253` (the merge that double-counts them).
+**Tests:** none yet — a regression test would run `surplusApplySite`'s preview against a bundle with
+a committed retirement-phase event and assert the walk sees it exactly once (e.g. compare against a
+direct `buildRetirementPhase` call with the event list passed once).
+
+---
+
 ### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
 
 **Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell,
