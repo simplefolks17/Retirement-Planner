@@ -13,7 +13,7 @@ import {
 } from "../config/irs-2026.js";
 import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
-import { eventAmountForYear, eventsIncomeAdjustment } from "./money-events.js";
+import { eventSimAdjustmentForYear, eventsIncomeAdjustment } from "./money-events.js";
 
 // The salary in the year the person turns `age`, using the SAME growthYears
 // clamp the sim row uses (incomeGrowthEndAge plateau). The sim loop calls this
@@ -36,7 +36,10 @@ export function projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowth
 export function buildProjectedIncomeByAge({ currentIncome, incomeGrowth, incomeGrowthEndAge = null, currentAge, retirementAge, minAge, maxAge }) {
   const out = {};
   for (let age = minAge; age <= maxAge; age++) {
-    out[age] = age > retirementAge ? 0 : projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge }, age);
+    // Rounded to whole dollars: this table seeds a UI input (the LifeEventSheet's
+    // "usual pay") — an unrounded 121550.625 in a number field is display noise.
+    out[age] = age > retirementAge ? 0 : Math.round(
+      projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge }, age));
   }
   return out;
 }
@@ -104,8 +107,15 @@ export function runSimulation({
     const employeeDeferral = age <= contribEnd401k
       ? Math.min(contrib401k * growFactor * incomeFrac, electiveLimit)
       : 0;
+    // Match income basis capped at baseSalary: the employer matches employer
+    // COMPENSATION — event income (consulting during a leave) is not employer
+    // pay and must never conjure extra flat-mode match dollars. The cap keeps
+    // the behavior-preserving default (incomeAnnual === salary ⇒ full match)
+    // while a suppressed year (income < salary) matches on the lower figure.
+    // (Fable review, PR #53: uncapped, a $300k event income tripled a 4% flat
+    // match in a year the user wasn't even working for that employer.)
     const matchAmt = age <= contribEnd401k
-      ? calcEmployerMatchFn(primaryIncomeYr, employeeDeferral)
+      ? calcEmployerMatchFn(Math.min(primaryIncomeYr, baseSalary), employeeDeferral)
       : 0;
     const c401k = Math.min(employeeDeferral + matchAmt, limit415cYr);
     const cHSA  = age <= contribEndHSA ? Math.min(contribHSA * incomeFrac, HSA_LIMIT_2026) : 0;
@@ -163,12 +173,13 @@ export function runSimulation({
     // Money events applied to the taxable account before growth compounds.
     // Outflows (purchases) reduce the base; inflows (windfalls) increase it.
     // Clamped at 0 so a large purchase can't produce a negative balance.
-    // eventAmountForYear is the event's OWN cash, EXCLUDING incomeAnnual — that
-    // term already flowed through the salary channel above (eventsIncomeAdjustment)
-    // and must not be double-counted here (see money-events.js's NO-DOUBLE-COUNT
-    // RULE). It also splits duration events — $X/mo for N months — across their
-    // active years.
-    const eventAdj = moneyEvents.reduce((s, ev) => s + eventAmountForYear(ev, age), 0);
+    // eventSimAdjustmentForYear is the sim-year portfolio line: the event's OWN
+    // cash, excluding income for salary-REPLACING events (that income already
+    // flowed through the salary channel above — money-events.js's NO-DOUBLE-
+    // COUNT RULE) but still crediting a duration INFLOW's income, which has no
+    // salary channel and would otherwise be dropped (Fable review, PR #53). It
+    // also splits duration events — $X/mo for N months — across their active years.
+    const eventAdj = moneyEvents.reduce((s, ev) => s + eventSimAdjustmentForYear(ev, age), 0);
 
     // Capped working-year conversion for THIS age (0 when none). Computed before the
     // LTCG-rate selection because the conversion is ordinary income that can push this

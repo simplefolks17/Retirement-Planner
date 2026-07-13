@@ -37,7 +37,8 @@ const VERDICT_COPY = {
 // (not a component closure) so the age-follow effect below can depend on it
 // via its own inputs (bounds, age) without an eslint-disable escape hatch.
 function seedIncomeForAge(bounds, age) {
-  if (age > bounds.retirementAge) return 0;
+  // Pure lookup — the model table already zeroes post-retirement ages
+  // (buildProjectedIncomeByAge), so no age comparison is repeated here.
   const lookup = bounds.projectedIncomeByAge?.[age];
   return Number.isFinite(lookup) ? lookup : 0;
 }
@@ -253,7 +254,10 @@ export default function LifeEventSheet({
                     }}
                     aria-label="Your income during this time" style={numInput} />
                   <div style={{ font: `400 10.5px ${HF}`, color: t.mut, marginTop: 4 }}>
-                    Usual pay at {age}: {usualPayAtAge === 0
+                    {/* Raw-input gate (event age vs the retirement bound) so a
+                        pre-retirement user whose income is genuinely $0 sees an
+                        honest $0 instead of a false "you'd be retired". */}
+                    Usual pay at {age}: {age > bounds.retirementAge
                       ? "(you'd be retired — no salary)"
                       : fmt(usualPayAtAge)}
                   </div>

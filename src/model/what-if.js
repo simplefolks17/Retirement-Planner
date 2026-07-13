@@ -16,7 +16,7 @@ import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
-  isDurationEvent, monthsActiveInYear,
+  isIncomeReplacingEvent, monthsActiveInYear,
 } from "./money-events.js";
 import { buildPreviewMetric } from "./apply-preview.js";
 
@@ -73,18 +73,23 @@ export function verdictForMargin(marginYears) {
 //     scenario's own retirement age, the more general-purpose choice.)
 //
 //   cushion basis (scenario.scenarioYears === Infinity) — the fix: years of
-//     spending still held in reserve AT the plan age:
-//       marginYears = scenarioBalAt90 / scenarioExpenses
-//     This is CONSERVATIVE, not exact — it prices the cushion at the full
-//     retirement spend, ignoring that SS/pension keep flowing past the plan
-//     age and would stretch the real runway further. A plan reading "tight"
-//     here may have more true runway than the number implies; it should never
-//     read MORE comfortable than reality.
-//     Edge: scenarioBalAt90 null/undefined (the walk never reaches
-//     safeLifeExp — shouldn't happen when scenarioYears is Infinity, but
-//     guarded) or scenarioExpenses <= 0 (no spend to divide by — "$0/yr
-//     forever" is genuinely uncapped) → marginYears = Infinity, marginBasis
-//     stays "cushion".
+//     runway still held in reserve AT the plan age:
+//       marginYears = scenarioBalAt90 / scenarioDrawAtPlanAge
+//     The denominator is the walk's own NET draw in the plan-age year
+//     (spending minus SS/pension), NOT the full retirement spend. Pricing at
+//     full expenses (the first cut of this fix) made the margin non-monotonic
+//     at the depletion-horizon crossover for SS-heavy plans: the depletion
+//     basis measures runway net of the income floor, so a $200k reserve at a
+//     $7k/yr net draw is ~30 yrs of runway (continuous with the depletion
+//     figure just across the crossover), not the 3 yrs that a full-$62k-spend
+//     pricing claimed — which read "tight" while spending $2k MORE flipped the
+//     same rail to a "comfortable" 31-yr depletion margin (Fable review,
+//     PR #53). Net-draw pricing is still conservative (ignores growth on the
+//     reserve); it just measures in the same currency as the depletion basis.
+//     Edges: scenarioDrawAtPlanAge == 0 (SS/pension cover everything — the
+//     reserve is never drawn) → Infinity; scenarioDrawAtPlanAge null/undefined
+//     (older callers / synthetic test scenarios without the field) → fall back
+//     to the full-expenses pricing; scenarioBalAt90 null → Infinity.
 //
 // Threshold note (owner-reviewed): both bases reuse
 // ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS (5) — "years of runway beyond plan
@@ -98,9 +103,12 @@ export function marginForScenario(scenario, safeLifeExp) {
       marginBasis: "depletion",
     };
   }
-  const { scenarioBalAt90, scenarioExpenses } = scenario;
-  const marginYears = (scenarioBalAt90 != null && scenarioExpenses > 0)
-    ? scenarioBalAt90 / scenarioExpenses
+  const { scenarioBalAt90, scenarioExpenses, scenarioDrawAtPlanAge } = scenario;
+  // Denominator: the plan-age net draw when the scenario provides it (both
+  // calcWhatIfScenario paths do); full expenses as the legacy fallback.
+  const drainRate = scenarioDrawAtPlanAge != null ? scenarioDrawAtPlanAge : scenarioExpenses;
+  const marginYears = (scenarioBalAt90 != null && drainRate > 0)
+    ? scenarioBalAt90 / drainRate
     : Infinity;
   return { marginYears, marginBasis: "cushion" };
 }
@@ -111,7 +119,7 @@ function buildMarginLabel({ marginYears, marginBasis }, safeLifeExp) {
   if (marginBasis === "cushion") {
     return marginYears === Infinity
       ? "still growing at your plan age"
-      : `≈${Math.round(marginYears)} yrs of spending still in reserve at ${safeLifeExp}`;
+      : `≈${Math.round(marginYears)} yrs of runway left at ${safeLifeExp}`;
   }
   return marginYears >= 0
     ? `${Math.round(marginYears)} yrs to spare past ${safeLifeExp}`
@@ -489,11 +497,16 @@ export function calcWhatIfScenario({
     // safeLifeExp" (not applicable, NOT zero); a genuine depletion at/before
     // safeLifeExp is a real 0.
     let scenarioBalAt90;
+    let scenarioDrawAtPlanAge = null;
     if (rp.depletionAge != null && rp.depletionAge <= safeLifeExp) {
       scenarioBalAt90 = 0;
     } else {
       const row90 = walkRows.find(r => r.age === safeLifeExp);
       scenarioBalAt90 = row90 ? row90.total : null;
+      // Net portfolio draw in the plan-age year (engine rows: draw = spending
+      // net of SS/pension + any event cash folded into `needed`). Feeds the
+      // cushion-basis margin's denominator — see marginForScenario.
+      scenarioDrawAtPlanAge = row90 ? row90.draw : null;
     }
 
     const scenarioYears = rp.yearsSustained;
@@ -507,6 +520,7 @@ export function calcWhatIfScenario({
       scenarioYears,
       deltaYears,
       scenarioBalAt90,
+      scenarioDrawAtPlanAge,
       // M2: the engine's own depletion age (rp.depletionAge) — exact, not a
       // round(retAge + yearsSustained) derivation, which lands one year early
       // whenever the failure year is < 50% funded (yearsSustained's fractional
@@ -565,11 +579,16 @@ export function calcWhatIfScenario({
   // zero — can't happen in practice since lifeWalk's endAge is >= safeLifeExp,
   // but kept as a guard); a genuine depletion at/before safeLifeExp is a real 0.
   let scenarioBalAt90;
+  let scenarioDrawAtPlanAge = null;
   if (lifeWalk.depletionAge != null && lifeWalk.depletionAge <= safeLifeExp) {
     scenarioBalAt90 = 0;
   } else {
     const refRow = (lifeWalk.rows ?? []).find(r => r.age === safeLifeExp);
     scenarioBalAt90 = refRow ? refRow.total : null;
+    // Net portfolio draw in the plan-age year (blended-walk rows: draw =
+    // max(0, expenses − SS − pension)). Feeds the cushion-basis margin's
+    // denominator — see marginForScenario.
+    scenarioDrawAtPlanAge = refRow ? refRow.draw : null;
   }
 
   const scenarioYears = farWalk.yearsSustained;
@@ -583,6 +602,7 @@ export function calcWhatIfScenario({
     scenarioYears,
     deltaYears,
     scenarioBalAt90,
+    scenarioDrawAtPlanAge,
     // Fallback path only (dead in production — App.jsx always supplies
     // retPhaseBase, see the M1 engine branch above): use the walk's own exact
     // depletion age rather than the local round(retAge + yearsSustained)
@@ -638,8 +658,12 @@ export function calcWhatIfChart(bundle, overrides = {}) {
 //                        // null when exactly 0 (no change) — rule 10, no sign math in JSX
 //   }
 export function eventIncomeImpact(event, simInputs, safeRetAge) {
-  if (!event || !isDurationEvent(event) || event.isInflow) return null;
-  if (!Number.isFinite(event.incomeAnnual)) return null;
+  // isIncomeReplacingEvent is the SAME predicate the sim's salary channel uses
+  // (eventsIncomeAdjustment) — shared so this bullet can never claim an income
+  // impact the sim doesn't apply (Fable review, PR #53: the old inline
+  // `event.isInflow` truthy-check disagreed with the sim's gate for an event
+  // whose isInflow was left undefined).
+  if (!event || !isIncomeReplacingEvent(event)) return null;
   if (eventFirstAge(event) > safeRetAge) return null;
 
   let monthsWorking = 0;

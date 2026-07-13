@@ -555,6 +555,51 @@ describe("runSimulation — income-replacement channel (duration outflow incomeA
     expect(withEvent.cRoth).toBeGreaterThan(noEvent.cRoth);
   });
 
+  it("event income above salary never conjures extra employer match (flat-mode cap — Fable PR #53)", () => {
+    // The flat 3% match fn prices match off its income argument directly; a
+    // $300k consulting-income event must NOT triple the match in a year the
+    // user isn't working for the employer — the match basis caps at baseSalary.
+    const richLeave = { label: "Consulting leave", monthlyAmount: 100, durationMonths: 12, age: 40, isInflow: false, incomeAnnual: 300_000 };
+    const withEvent = at(runSimulation({ ...bigTripBase, moneyEvents: [richLeave] }), 40);
+    const noEvent   = at(runSimulation(bigTripBase), 40);
+    expect(withEvent.c401k).toBe(noEvent.c401k); // deferral (incomeFrac capped at 1) + match (basis capped at salary)
+  });
+
+  it("event income above salary DOES raise MAGI (Roth phase-out closes)", () => {
+    const base = {
+      totalYears: 20, currentAge: 30, currentIncome: 100_000, incomeGrowth: 0,
+      filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 0,
+      bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0,
+      contrib401k: 0, contribRoth: 6_000, contribTaxable: 0, contribHSA: 0,
+      contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+      calcEmployerMatchFn: () => 0,
+    };
+    const noEvent = at(runSimulation(base), 45);
+    expect(noEvent.cRoth).toBe(6_000); // $100k MAGI is under the single phase-out
+
+    // $300k event income: incomeFrac caps at 1 (no extra savings capacity) but
+    // MAGI = primaryIncomeYr = 300k — far above the phase-out end → cRoth 0.
+    const richLeave = { monthlyAmount: 100, durationMonths: 12, age: 45, isInflow: false, incomeAnnual: 300_000 };
+    const withEvent = at(runSimulation({ ...base, moneyEvents: [richLeave] }), 45);
+    expect(withEvent.cRoth).toBe(0);
+  });
+
+  it("a duration INFLOW's incomeAnnual still reaches the taxable account in sim years (Fable PR #53 regression)", () => {
+    // Inflow events don't replace salary — their income has no salary channel
+    // and must stay additive cash on the portfolio line (it used to be dropped
+    // when the sim switched to bare eventAmountForYear).
+    const partTime = { label: "Part-time gig", monthlyAmount: 2_000, durationMonths: 12, age: 45, isInflow: true, incomeAnnual: 10_000 };
+    const withEvent = runSimulation({ ...bigTripBase, moneyEvents: [partTime] });
+    const noEvent   = runSimulation(bigTripBase);
+
+    // Contributions untouched (no salary suppression for inflows)…
+    expect(at(withEvent, 45).c401k).toBe(at(noEvent, 45).c401k);
+    expect(at(withEvent, 45).cRoth).toBe(at(noEvent, 45).cRoth);
+    // …and the taxable account gains the monthly cash AND the income term.
+    const delta = at(withEvent, 45)["Taxable"] - at(noEvent, 45)["Taxable"];
+    expect(delta).toBe(24_000 + 10_000);
+  });
+
   it("empty moneyEvents leaves the channel fully inert (no golden-master impact)", () => {
     const withEmpty = runSimulation({ ...bigTripBase, moneyEvents: [] });
     const noParam   = runSimulation(bigTripBase);

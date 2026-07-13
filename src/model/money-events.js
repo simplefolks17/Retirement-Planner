@@ -62,6 +62,17 @@ export function isDurationEvent(ev) {
   return (ev?.durationMonths ?? 0) > 0 && Number.isFinite(ev?.monthlyAmount);
 }
 
+// THE one predicate for "this event replaces salary during working years":
+// a duration OUTFLOW (isInflow falsy — undefined signs as an outflow in
+// eventAmountForYear, so it must gate as an outflow here too) with a finite
+// incomeAnnual. Shared by eventsIncomeAdjustment (the sim's salary channel),
+// eventSimAdjustmentForYear (the sim's portfolio line), and what-if.js's
+// eventIncomeImpact (the sheet's lost-income bullet) so the three can never
+// disagree about which events suppress income (Fable review, PR #53).
+export function isIncomeReplacingEvent(ev) {
+  return isDurationEvent(ev) && !ev.isInflow && Number.isFinite(ev.incomeAnnual);
+}
+
 // Months of a duration event that fall inside the year the person is `age`.
 // Year k (k = age − ev.age, 0-based) covers months [12k, 12k+12).
 // Exported (layout-internal): used by eventIncomeImpact (what-if.js) to walk
@@ -109,6 +120,19 @@ export function eventNetForYear(ev, age) {
   return eventAmountForYear(ev, age) + eventIncomeForYear(ev, age);
 }
 
+// The runSimulation (accumulation-year) portfolio line for ONE event: the
+// event's own cash, PLUS the income term for events that do NOT replace salary
+// (duration INFLOW income, e.g. "Part-time at 60" side pay — additive cash that
+// has no salary channel to travel through). Income-replacing events exclude the
+// income term here because eventsIncomeAdjustment routes it through the salary
+// channel instead — this pair of functions IS the no-double-count rule for sim
+// years. (Fable review, PR #53: using bare eventAmountForYear dropped a duration
+// inflow's incomeAnnual in sim years while retirement walks still credited it.)
+export function eventSimAdjustmentForYear(ev, age) {
+  return eventAmountForYear(ev, age)
+    + (isIncomeReplacingEvent(ev) ? 0 : eventIncomeForYear(ev, age));
+}
+
 // Working-year (runSimulation) income-replacement adjustment for one age-year.
 // Qualifying events: duration events with isInflow === false AND a finite
 // incomeAnnual (duration INFLOW events — e.g. "Part-time at 60" income — stay
@@ -126,7 +150,7 @@ export function eventsIncomeAdjustment(events = [], age) {
   let pausedMonths = 0;
   let eventIncome = 0;
   for (const ev of events) {
-    if (!isDurationEvent(ev) || ev.isInflow !== false || !Number.isFinite(ev.incomeAnnual)) continue;
+    if (!isIncomeReplacingEvent(ev)) continue;
     pausedMonths += monthsActiveInYear(ev, age);
     eventIncome += eventIncomeForYear(ev, age);
   }

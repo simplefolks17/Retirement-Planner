@@ -8,7 +8,7 @@ import {
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
-import { runSimulation, buildProjectedIncomeByAge } from "./model/simulation.js";
+import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -2091,11 +2091,13 @@ export default function App() {
                 <div style={{ fontSize: 10, color: C.muted, paddingLeft: 2, marginTop: -4 }}>
                   {"Projected at retirement: "}
                   <span style={{ color: incomeGrowthEndAge != null ? C.orange : C.green, ...mono, fontWeight: 600 }}>
-                    {fmt(currentIncome * Math.pow(
-                      1 + incomeGrowth / 100,
-                      incomeGrowthEndAge != null
-                        ? Math.min(safeRetAge - currentAge, incomeGrowthEndAge - currentAge)
-                        : safeRetAge - currentAge
+                    {/* Shared helper = the sim's own retirement-year salary
+                        convention (growthYears = retAge − currentAge − 1). The
+                        old inline Math.pow compounded one extra year, showing a
+                        figure the sim never pays (CodeRabbit PR #53). */}
+                    {fmt(projectedIncomeAtAge(
+                      { currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge },
+                      safeRetAge
                     ))}{"/yr"}
                   </span>
                   {incomeGrowthEndAge != null && (

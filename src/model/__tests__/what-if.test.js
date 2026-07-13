@@ -904,6 +904,46 @@ describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-7
       safeLifeExp)).toEqual({ marginYears: Infinity, marginBasis: "cushion" });
   });
 
+  it("cushion prices the reserve at the plan-age NET draw, not full expenses (Fable PR #53 — crossover monotonicity)", () => {
+    // SS-heavy plan: $200k reserve, $62k spend but only $7k/yr actually drawn
+    // from the portfolio (SS covers the rest). Full-expense pricing called this
+    // 3.2 yrs → "tight" while spending $2k MORE crossed into a finite walk with
+    // a 31-yr depletion margin → "comfortable" — spending more read BETTER on
+    // the same rail. Net-draw pricing measures in the depletion basis's own
+    // currency: 200k / 7k ≈ 29 yrs → comfortable, continuous across the crossover.
+    const scenario = {
+      scenarioYears: Infinity, scenarioRetAge: 65,
+      scenarioBalAt90: 200_000, scenarioExpenses: 62_000, scenarioDrawAtPlanAge: 7_000,
+    };
+    const { marginYears, marginBasis } = marginForScenario(scenario, safeLifeExp);
+    expect(marginBasis).toBe("cushion");
+    expect(marginYears).toBeCloseTo(200_000 / 7_000, 10);
+    expect(verdictForMargin(marginYears)).toBe("comfortable");
+
+    // Zero net draw (SS/pension cover everything): the reserve is never touched —
+    // genuinely uncapped runway, not a division blow-up.
+    const covered = marginForScenario({ ...scenario, scenarioDrawAtPlanAge: 0 }, safeLifeExp);
+    expect(covered).toEqual({ marginYears: Infinity, marginBasis: "cushion" });
+
+    // Scenarios without the field (older callers / synthetic fixtures) keep the
+    // documented full-expenses fallback.
+    const legacy = marginForScenario(
+      { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 90_000, scenarioExpenses: 30_000 },
+      safeLifeExp);
+    expect(legacy.marginYears).toBe(3);
+  });
+
+  it("calcWhatIfScenario exposes scenarioDrawAtPlanAge from the SAME walk row as scenarioBalAt90", () => {
+    const s = calcWhatIfScenario(baseArgs, {});
+    const rowAtLifeExp = s.chart.find(r => r.age === 90);
+    expect(rowAtLifeExp).toBeTruthy();
+    expect(s.scenarioDrawAtPlanAge).not.toBeUndefined();
+    if (s.scenarioYears === Infinity) {
+      expect(Number.isFinite(s.scenarioDrawAtPlanAge)).toBe(true);
+      expect(s.scenarioDrawAtPlanAge).toBeGreaterThanOrEqual(0);
+    }
+  });
+
   it("depletion basis equals the old inline expression for finite scenarioYears (value-preserving)", () => {
     const scenario = { scenarioYears: 22.3, scenarioRetAge: 65 };
     const oldInline = scenario.scenarioYears - (safeLifeExp - scenario.scenarioRetAge);
@@ -917,7 +957,7 @@ describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-7
       { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 360_000, scenarioExpenses: 30_000 },
       safeLifeExp);
     expect(cushionFinite.marginBasis).toBe("cushion");
-    expect(cushionFinite.marginLabel).toBe("≈12 yrs of spending still in reserve at 90");
+    expect(cushionFinite.marginLabel).toBe("≈12 yrs of runway left at 90");
     expect(cushionFinite.verdict).toBe("comfortable");
 
     const cushionInfinite = verdictInfoForScenario(
