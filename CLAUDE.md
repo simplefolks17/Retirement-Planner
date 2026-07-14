@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (819 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (824 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1241,11 +1241,28 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   once the swallowed spend + funding taxes actually left the portfolio. Follow-up noted in BUGS.md:
   committed-plan surfaces (arc/Plan) don't yet read a committed event's `eventShortfall` — only the
   what-if path does. Golden master untouched. 812 → **819 tests**.
+- **PR #54 owner-review refinements (2026-07-13, same branch): pause-aware salary clock,
+  Roth penalty, retirement-funding verdict cap, phrase deltas.** Three spec corrections from the
+  owner's review of the BUG-74 fix: (1) the sim's salary now uses a growth CLOCK that advances by
+  `incomeFrac` per year — a zero-income sabbatical FREEZES raises, so a $100k salary paused 3 years
+  resumes where it left off and grows from there ("age 36 = 103k, not ~120k"); the seeded full-pay
+  default keeps the clock running (behavior-preserving); spouse stays on the unpaused age clock;
+  `projectedIncomeAtAge` remains the NO-EVENT baseline (= the clock when no events; golden-master
+  safe); new `salary` sim-row field. (2) Roth funding draws pay the 10% early-withdrawal penalty
+  under 59½ (grossed up; basis untracked — conservative middle). (3) events that force ANY early
+  retirement-account withdrawal can never read "comfortable": new scenario fields
+  `eventRetirementDraw`/`eventRetirementDrawTax` cap the verdict at "tight" via the shared
+  `verdictForScenarioResult` ("needs early retirement-account withdrawals to fund"); the sheet
+  shows "Needs $X of early withdrawals ($Y in taxes & penalties)". Display: balance bullets now
+  say "decreases/increases by $X" (income: "$X less/more") instead of signed parentheticals.
+  Plus Gemini PR #54 nitpicks (dropped `?? 0` fallbacks, NaN guard in the gross-up loop).
+  Browser-verified: $15k/mo × 36 now reads "is tight — watch it" with the $360k warning.
+  Golden master untouched. 819 → **824 tests**.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (819 tests)
+- `npm test` — run model + formatter + render-smoke tests (824 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

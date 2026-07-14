@@ -703,4 +703,72 @@ describe("runSimulation — BUG-74 event-funding cascade", () => {
     expect(row.eventShortfall).toBe(0);
     expect(row["Taxable"]).toBe(400_000);
   });
+
+  it("Roth funding draws pay the 10% early-withdrawal penalty under 59½ (owner spec)", () => {
+    // Need = $90k beyond taxable; Roth has plenty. Under 59½ the draw is
+    // grossed up: gross = 90k / 0.9 = 100k, penalty = 10k.
+    const fixture = { ...base, balTaxable: 0, balRoth: 200_000, bal401k: 0, balHSA: 0 };
+    const purchase = { label: "Purchase", amount: 90_000, age: 40, isInflow: false };
+    const young = at(runSimulation({ ...fixture, moneyEvents: [purchase] }), 40);
+    expect(young.eventDrawRoth).toBe(100_000);
+    expect(young.eventDrawTax).toBe(10_000);
+    expect(young["Roth IRA"]).toBe(100_000);
+    expect(young.eventShortfall).toBe(0);
+
+    // At/after 59½: no penalty — gross = net = 90k.
+    const older = { ...fixture, currentAge: 58, totalYears: 10 };
+    const old = at(runSimulation({ ...older, moneyEvents: [{ ...purchase, age: 61 }] }), 61);
+    expect(old.eventDrawRoth).toBe(90_000);
+    expect(old.eventDrawTax).toBe(0);
+  });
+});
+
+// ── Salary growth clock (owner spec, PR #54 review): raises accrue in
+// proportion to income actually earned — a full-pause sabbatical FREEZES the
+// clock, so income resumes at the level it left off and grows from there
+// ("a 100k income that stops should NOT restart at ~120k"). ──────────────────
+describe("runSimulation — pause-aware salary growth clock", () => {
+  const base = {
+    totalYears: 15, currentAge: 30, currentIncome: 100_000, incomeGrowth: 3,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 0,
+    bal401k: 0, balRoth: 0, balTaxable: 1_000_000, balHSA: 0,
+    contrib401k: 0, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: () => 0,
+  };
+  const at = (rows, age) => rows.find(r => r.age === age);
+
+  it("a 36-month zero-income sabbatical freezes the raise clock; salary resumes where it left off", () => {
+    // Pause at ages 32-34. Age-32 base salary (the level they left at) is
+    // 100k × 1.03 = 103k (the sim's year-1 = current-salary convention).
+    const sabbatical = { label: "Trip", monthlyAmount: 100, durationMonths: 36, age: 32, isInflow: false, incomeAnnual: 0 };
+    const rows = runSimulation({ ...base, moneyEvents: [sabbatical] });
+
+    expect(at(rows, 31).salary).toBe(100_000);
+    for (const age of [32, 33, 34]) expect(at(rows, age).salary).toBe(0); // fully paused
+    // Resumes at the age-32 level, NOT at the unpaused clock's 112.6k:
+    expect(at(rows, 35).salary).toBe(103_000);
+    expect(at(rows, 36).salary).toBe(106_090);   // 103k × 1.03 — growth resumes from there
+    // Contrast: without the event the clock kept ticking.
+    const noEvent = runSimulation(base);
+    expect(at(noEvent, 35).salary).toBe(Math.round(100_000 * 1.03 ** 4)); // 112,551
+  });
+
+  it("the seeded full-pay default keeps the clock running (behavior-preserving)", () => {
+    // incomeAnnual far above salary → incomeFrac caps at 1 → clock unaffected;
+    // post-event salaries match the no-event run exactly.
+    const fullPay = { label: "Paid leave", monthlyAmount: 100, durationMonths: 36, age: 32, isInflow: false, incomeAnnual: 1_000_000 };
+    const rows = runSimulation({ ...base, moneyEvents: [fullPay] });
+    const noEvent = runSimulation(base);
+    for (const age of [35, 36, 40]) {
+      expect(at(rows, age).salary).toBe(at(noEvent, age).salary);
+    }
+  });
+
+  it("no events → clock identical to the closed form (golden-master safety)", () => {
+    const rows = runSimulation(base);
+    for (const age of [31, 35, 40, 45]) {
+      expect(at(rows, age).salary).toBe(Math.round(100_000 * 1.03 ** (age - 31)));
+    }
+  });
 });

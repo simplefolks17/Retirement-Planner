@@ -134,14 +134,23 @@ function buildMarginLabel({ marginYears, marginBasis }, safeLifeExp) {
 // ── verdictForScenarioResult ─────────────────────────────────────────────────
 // THE one scenario → verdict resolution, shared by verdictInfoForScenario and
 // both tick rails so a rail tick can never disagree with the verdict card.
-// BUG-74: a scenario whose events could not be fully funded during accumulation
-// (eventFundingShortfall > 0 — every account was drained and dollars were still
-// owed) is "unaffordable" by definition, regardless of how the walk looks
-// afterward — the walk was computed on spending the plan couldn't actually do.
+// Two overrides on top of the margin math (undefined fields — synthetic test
+// scenarios / lever previews without events — simply don't trigger them, since
+// `undefined > 0` is false; no `?? 0` fabrication needed):
+//   1. BUG-74: events that could not be fully funded during accumulation
+//      (eventFundingShortfall > 0 — every account drained, dollars still owed)
+//      are "unaffordable" by definition — the walk ran on spending the plan
+//      couldn't actually do.
+//   2. Owner spec (PR #54 review): events that forced EARLY RETIREMENT-ACCOUNT
+//      withdrawals (eventRetirementDraw > 0) can never read "comfortable" —
+//      raiding the 401k/Roth (with penalties) for a discretionary event is at
+//      best "tight", however healthy the end-state walk looks.
 export function verdictForScenarioResult(scenario, safeLifeExp) {
-  if ((scenario?.eventFundingShortfall ?? 0) > 0) return "unaffordable";
+  if (scenario.eventFundingShortfall > 0) return "unaffordable";
   const { marginYears } = marginForScenario(scenario, safeLifeExp);
-  return verdictForMargin(marginYears);
+  const verdict = verdictForMargin(marginYears);
+  if (scenario.eventRetirementDraw > 0 && verdict === "comfortable") return "tight";
+  return verdict;
 }
 
 // ── buildVerdictLegend ───────────────────────────────────────────────────────
@@ -166,32 +175,34 @@ export function buildVerdictLegend(planAge) {
 // buildMarginLabel + buildVerdictLegend into ONE call.
 export function verdictInfoForScenario(scenario, safeLifeExp) {
   const { marginYears, marginBasis } = marginForScenario(scenario, safeLifeExp);
-  // BUG-74 override: an unfundable event forces "unaffordable" and an honest
-  // label — the margin math ran on spending the plan couldn't actually do.
-  const shortfall = scenario?.eventFundingShortfall ?? 0;
-  if (shortfall > 0) {
+  const thresholds = {
+    comfortableMin: ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS,
+    tightMin: 0,
+  };
+  const common = { marginYears, marginBasis, rangeLegend: buildVerdictLegend(safeLifeExp), thresholds };
+  // Verdict from THE shared resolver (both overrides included), with an honest
+  // label for each override — the margin sentence would be misleading when the
+  // verdict wasn't decided by the margin.
+  const verdict = verdictForScenarioResult(scenario, safeLifeExp);
+  if (scenario.eventFundingShortfall > 0) {
     return {
-      verdict: "unaffordable",
-      marginYears,
-      marginBasis,
-      marginLabel: `$${Math.round(shortfall).toLocaleString()} of this can't be funded from savings`,
-      rangeLegend: buildVerdictLegend(safeLifeExp),
-      thresholds: {
-        comfortableMin: ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS,
-        tightMin: 0,
-      },
+      ...common,
+      verdict,
+      marginLabel: `$${Math.round(scenario.eventFundingShortfall).toLocaleString()} of this can't be funded from savings`,
+    };
+  }
+  if (scenario.eventRetirementDraw > 0 && verdict === "tight"
+      && verdictForMargin(marginYears) === "comfortable") {
+    return {
+      ...common,
+      verdict,
+      marginLabel: "needs early retirement-account withdrawals to fund",
     };
   }
   return {
-    verdict: verdictForMargin(marginYears),
-    marginYears,
-    marginBasis,
+    ...common,
+    verdict,
     marginLabel: buildMarginLabel({ marginYears, marginBasis }, safeLifeExp),
-    rangeLegend: buildVerdictLegend(safeLifeExp),
-    thresholds: {
-      comfortableMin: ASSUMPTIONS.EVENT_COMFORT_BUFFER_YEARS,
-      tightMin: 0,
-    },
   };
 }
 
@@ -463,6 +474,17 @@ export function calcWhatIfScenario({
   const firstShortfallAge = needsResim
     ? (resimRaw.find(d => d.age <= scenarioRetAge && (d.eventShortfall ?? 0) > 0)?.age ?? null)
     : null;
+  // Early retirement-account withdrawals the events forced (gross Roth + 401k
+  // draws) and the tax/penalty they leaked. A discretionary event funded by
+  // raiding retirement accounts can never read "comfortable" (owner spec,
+  // PR #54 review) — the verdict layer caps it at "tight".
+  const eventRetirementDraw = needsResim
+    ? resimRaw.reduce((s, d) => (d.age <= scenarioRetAge
+        ? s + (d.eventDrawRoth ?? 0) + (d.eventDraw401k ?? 0) : s), 0)
+    : 0;
+  const eventRetirementDrawTax = needsResim
+    ? resimRaw.reduce((s, d) => (d.age <= scenarioRetAge ? s + (d.eventDrawTax ?? 0) : s), 0)
+    : 0;
 
   // Permanent plan events + this scenario's own events (same merge the chart
   // always used — see the fixed Batch-A incident in docs/ROADMAP.md). When the
@@ -570,6 +592,8 @@ export function calcWhatIfScenario({
       scenarioDrawAtPlanAge,
       eventFundingShortfall,   // BUG-74: unfundable event $ (0 = fully funded)
       firstShortfallAge,       //   … and the first age it happens (null = none)
+      eventRetirementDraw,     // gross Roth+401k drawn early to fund events (0 = cash-funded)
+      eventRetirementDrawTax,  //   … and the tax + penalties those draws leaked
       // M2: the engine's own depletion age (rp.depletionAge) — exact, not a
       // round(retAge + yearsSustained) derivation, which lands one year early
       // whenever the failure year is < 50% funded (yearsSustained's fractional
@@ -654,6 +678,8 @@ export function calcWhatIfScenario({
     scenarioDrawAtPlanAge,
     eventFundingShortfall,   // BUG-74: unfundable event $ (0 = fully funded)
     firstShortfallAge,       //   … and the first age it happens (null = none)
+    eventRetirementDraw,     // gross Roth+401k drawn early to fund events (0 = cash-funded)
+    eventRetirementDrawTax,  //   … and the tax + penalties those draws leaked
     // Fallback path only (dead in production — App.jsx always supplies
     // retPhaseBase, see the M1 engine branch above): use the walk's own exact
     // depletion age rather than the local round(retAge + yearsSustained)
@@ -845,6 +871,16 @@ export function evaluateLifeEvent(bundle, event) {
     // named field lets the sheet render the honest warning line (rule 10).
     fundingShortfall: (scen.eventFundingShortfall ?? 0) > 0
       ? { amount: Math.round(scen.eventFundingShortfall), firstAge: scen.firstShortfallAge }
+      : null,
+    // Owner spec (PR #54 review): non-null when funding the event required
+    // EARLY retirement-account withdrawals (gross Roth+401k drawn, and the
+    // tax + penalties leaked). The verdict is capped at "tight" in that case;
+    // this field lets the sheet say why (rule 10).
+    retirementFunding: (scen.eventRetirementDraw ?? 0) > 0
+      ? {
+          drawTotal: Math.round(scen.eventRetirementDraw),
+          taxAndPenalty: Math.round(scen.eventRetirementDrawTax ?? 0),
+        }
       : null,
     atRetirement: {
       age: safeRetAge,

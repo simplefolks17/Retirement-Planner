@@ -339,6 +339,30 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 
 **Tests:** +7 (cascade order/conservation, gross-up identity, 59½ penalty split, all-accounts-drained shortfall, the user-reported tripling-monotonicity regression, cascade-inert-when-funded, verdict-override + label-cap locks). 812 → 819.
 
+**Owner-review refinements (2026-07-13, same day, PR #54 review — three spec corrections):**
+1. **Salary growth clock pauses during a sabbatical.** The sim's salary now uses a pause-aware
+   growth CLOCK that advances by `incomeFrac` each year (1 in normal years and for the seeded
+   full-pay default — behavior-preserving; 0 during a zero-income pause; fractional for partial
+   pay). A $100k salary paused for 3 years resumes at the level it left off and grows from there —
+   it does not rejoin a clock that kept ticking ("age 36 should be 103k, not ~120k"). Spouse income
+   stays on the unpaused age clock (income replacement is primary-only, #30 scope);
+   `projectedIncomeAtAge` remains the NO-EVENT baseline (UI "usual pay" seed +
+   `eventIncomeImpact.usualPay`), equal to the clock when no events exist (golden-master safe).
+   New `salary` row field exposes the per-year figure.
+2. **Roth funding draws pay the 10% early-withdrawal penalty under 59½ too** (grossed up; no
+   ordinary income tax on the Roth portion — conservative middle, basis untracked). "The user
+   cannot take out anything in their Roth and 401k without big penalty."
+3. **Retirement-funded events can never read "comfortable".** New scenario fields
+   `eventRetirementDraw`/`eventRetirementDrawTax` (gross Roth+401k drawn + tax/penalties leaked);
+   `verdictForScenarioResult` caps the verdict at **"tight"** whenever they're non-zero, with the
+   honest label "needs early retirement-account withdrawals to fund"; `evaluateLifeEvent` exposes
+   `retirementFunding` and the sheet renders "Needs $X of early retirement-account withdrawals
+   ($Y in taxes & penalties)". Only a fully-cash-funded event can be "comfortable".
+   Display: the sheet's balance bullets now use phrases — "decreases/increases by $X" (and
+   "$X less/more" on the income bullet) — instead of signed parentheticals, per owner spec.
+   Browser-verified: the $15k/mo × 36 scenario now reads "is tight — watch it" with the $360k
+   early-withdrawal warning; Portfolio at 65 $2.2M (decreases by $1.8M). 819 → 824 tests.
+
 ---
 
 ### BUG-70 — `LifeEventSheet`'s segmented toggles missing `aria-pressed` (found + fixed 2026-07-12)

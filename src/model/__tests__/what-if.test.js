@@ -962,6 +962,30 @@ describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-7
     expect(verdictForScenarioResult(funded, safeLifeExp)).toBe("comfortable");
   });
 
+  it("an event funded by early retirement-account withdrawals can never read 'comfortable' (owner spec)", () => {
+    // Healthy end-state walk (huge cushion), but the event forced $150k of
+    // early Roth/401k draws — verdict caps at "tight" with an honest label.
+    const scenario = {
+      scenarioYears: Infinity, scenarioRetAge: 65,
+      scenarioBalAt90: 2_000_000, scenarioExpenses: 57_000, scenarioDrawAtPlanAge: 9_000,
+      eventFundingShortfall: 0, eventRetirementDraw: 150_000, eventRetirementDrawTax: 45_000,
+    };
+    expect(verdictForScenarioResult(scenario, safeLifeExp)).toBe("tight");
+    const info = verdictInfoForScenario(scenario, safeLifeExp);
+    expect(info.verdict).toBe("tight");
+    expect(info.marginLabel).toBe("needs early retirement-account withdrawals to fund");
+    // Cash-funded → cap inert, margin verdict applies.
+    const cashFunded = { ...scenario, eventRetirementDraw: 0 };
+    expect(verdictForScenarioResult(cashFunded, safeLifeExp)).toBe("comfortable");
+    // Already tight/unaffordable on the margin → cap changes nothing (and the
+    // margin label stays, since the margin decided the verdict).
+    const alreadyTight = {
+      scenarioYears: 27, scenarioRetAge: 65, eventRetirementDraw: 150_000,
+    };
+    expect(verdictForScenarioResult(alreadyTight, safeLifeExp)).toBe("tight");
+    expect(verdictInfoForScenario(alreadyTight, safeLifeExp).marginLabel).toBe("2 yrs to spare past 90");
+  });
+
   it("cushion label caps at CUSHION_LABEL_CAP_YEARS ('366 yrs' reads as '50+')", () => {
     const covered = verdictInfoForScenario(
       { scenarioYears: Infinity, scenarioRetAge: 65, scenarioBalAt90: 3_400_000,

@@ -300,7 +300,10 @@ describe("LifeEventSheet", () => {
     expect(text).toContain("Income while it runs");
     expect(text).toContain(fmt(expected.eventPay));
     expect(text).toContain(fmt(expected.usualPay));
-    expect(text).toContain(`−${fmt(expected.netLostIncomeAbs)}`);
+    // Phrase format (owner spec): "$40k less", not "−$40k" — the bare sign was
+    // easy to misread. Balance bullets use "decreases/increases by $X".
+    expect(text).toContain(`${fmt(expected.netLostIncomeAbs)} less`);
+    expect(text).toMatch(/decreases by|increases by/);
   });
 
   it("no 'Income while it runs' bullet for a one-time or post-retirement event", () => {

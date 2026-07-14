@@ -15,9 +15,13 @@ import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
 import { eventSimAdjustmentForYear, eventsIncomeAdjustment } from "./money-events.js";
 
-// The salary in the year the person turns `age`, using the SAME growthYears
-// clamp the sim row uses (incomeGrowthEndAge plateau). The sim loop calls this
-// directly for its own salary — ONE formula, no parallel copy (anti-divergence).
+// The NO-EVENT baseline salary in the year the person turns `age`
+// (incomeGrowthEndAge plateau included). Used by the UI's "usual pay" seed
+// (buildProjectedIncomeByAge) and eventIncomeImpact's usualPay side. The sim
+// loop itself uses a pause-aware growth CLOCK (see runSimulation) that equals
+// this closed form exactly when no income-replacing events exist — a
+// sabbatical freezes the clock, so post-pause salaries resume where they left
+// off instead of rejoining a clock that kept ticking (owner spec, PR #54).
 export function projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge = null, currentAge }, age) {
   const growthYears = incomeGrowthEndAge != null
     ? Math.min(age - currentAge - 1, incomeGrowthEndAge - currentAge)
@@ -76,20 +80,38 @@ export function runSimulation({
   const g = incomeGrowth / 100;
   const arr = [];
 
+  // Salary growth CLOCK (owner spec, PR #54 review): raises accrue in
+  // proportion to income actually earned, so a full-pause sabbatical FREEZES
+  // the clock — a $100k salary paused for 3 years resumes at the level it left
+  // off and grows from there, it does not rejoin a clock that kept ticking
+  // ("age 36 should be 103k, not ~120k"). The clock advances by incomeFrac
+  // each year: 1 in normal years and for the seeded full-pay default
+  // (behavior-preserving), 0 during a zero-income pause, fractional for
+  // partial pay/partial-year events. With no income-replacing events the
+  // clock equals y − 1, so this is byte-identical to the old closed form
+  // (golden master safe) and to projectedIncomeAtAge (which stays the
+  // NO-EVENT baseline used by the UI's "usual pay" seed and
+  // eventIncomeImpact's usualPay side).
+  let growthClock = 0;
+
   for (let y = 1; y <= totalYears; y++) {
     const age        = currentAge + y;
+    // Unpaused, age-based clock — used by SPOUSE income only (income
+    // replacement is primary-only, #30 scope) and kept for reference.
     const growthYears = incomeGrowthEndAge != null
       ? Math.min(y - 1, incomeGrowthEndAge - currentAge)
       : y - 1;
-    const growFactor = Math.pow(1 + g, growthYears);
 
     // Income-replacement channel (owner decision: incomeAnnual on a duration
     // outflow event means "my TOTAL income during this period", not a bolt-on).
-    // baseSalary is exactly currentIncome * growFactor (projectedIncomeAtAge
-    // uses the identical growthYears clamp) — the sim's own salary now goes
-    // through the shared helper so there's one formula, not two (anti-divergence).
     const { workedFrac, eventIncome } = eventsIncomeAdjustment(moneyEvents, age);
-    const baseSalary      = projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge }, age);
+    // Primary salary from the pause-aware clock (plateau stays an absolute
+    // AGE cap — "income stops growing at this age" — applied on top).
+    const clockYears = incomeGrowthEndAge != null
+      ? Math.min(growthClock, incomeGrowthEndAge - currentAge)
+      : growthClock;
+    const growFactor = Math.pow(1 + g, Math.max(0, clockYears));
+    const baseSalary = currentIncome * growFactor;
     const primaryIncomeYr = baseSalary * workedFrac + eventIncome;
     // Savings scale with INCOME, not worked months: incomeAnnual === salary ⇒
     // frac 1 ⇒ contributions/match continue (behavior-preserving default);
@@ -97,6 +119,8 @@ export function runSimulation({
     // months. Capped at 1: income above salary raises MAGI but never conjures
     // extra savings capacity.
     const incomeFrac = baseSalary > 0 ? Math.min(1, primaryIncomeYr / baseSalary) : 1;
+    // Advance the raise clock by the share of a normal year's income earned.
+    growthClock += incomeFrac;
 
     const isEligibleForCatchup = age >= CATCHUP_AGE;
     const limit415cYr    = isEligibleForCatchup ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
@@ -186,12 +210,13 @@ export function runSimulation({
     // excess — a $540k trip against an $80k brokerage charged only $80k, so big
     // events barely dented the plan (user-reported). Now the shortfall cascades
     // the way a person actually funds one:
-    //   taxable (exhausted above) → Roth (withdrawn as contributions — basis
-    //   simplification, no tax/penalty modeled, documented) → Traditional 401k,
-    //   GROSSED UP so the net covers the need: the withdrawal is ordinary income
-    //   stacked on this year's income (same stackedIncomeTax the conversion path
-    //   uses) plus the 10% early-withdrawal penalty under 59½ (fixed-point solve,
-    //   engine precedent). HSA is never touched (medical-restricted).
+    //   taxable (exhausted above) → Roth (grossed up for the 10% early-
+    //   withdrawal penalty under 59½ — owner spec; no ordinary tax on the Roth
+    //   portion, basis untracked) → Traditional 401k, GROSSED UP so the net
+    //   covers the need: the withdrawal is ordinary income stacked on this
+    //   year's income (same stackedIncomeTax the conversion path uses) plus the
+    //   10% penalty under 59½ (fixed-point solve, engine precedent). HSA is
+    //   never touched (medical-restricted).
     // Anything still unfunded once every account is empty is reported as
     // eventShortfall on the row — the plan literally cannot pay for the event
     // that year, and the what-if verdict treats that as "unaffordable".
@@ -202,25 +227,38 @@ export function runSimulation({
     if (taxablePreGrowth < 0) {
       let need = -taxablePreGrowth;
       taxablePreGrowth = 0;
-      eventDrawRoth = Math.min(need, Math.max(0, roth));
-      roth -= eventDrawRoth;
-      need -= eventDrawRoth;
+      const pen = age < EARLY_WITHDRAWAL_AGE ? EARLY_WITHDRAWAL_PENALTY : 0;
+      // Roth: charged the 10% early-withdrawal penalty under 59½ too (owner
+      // spec, PR #54 review — "cannot take out anything without big penalty").
+      // Grossed up so the NET covers the need; no ordinary income tax on the
+      // Roth portion (conservative middle: real Roth contributions could come
+      // out penalty-free, earnings would owe tax too — basis untracked).
+      if (need > 0 && roth > 0) {
+        const rothGross = Math.min(Math.max(0, roth), need / (1 - pen));
+        const rothPenalty = rothGross * pen;
+        eventDrawRoth = rothGross;
+        eventDrawTax += rothPenalty;
+        roth -= rothGross;
+        need -= (rothGross - rothPenalty);
+      }
       if (need > 0 && trad > 0) {
-        const pen = age < EARLY_WITHDRAWAL_AGE ? EARLY_WITHDRAWAL_PENALTY : 0;
         // Gross-up: find gross g with g − tax(g) − pen·g = need (tax-on-tax).
         // The iteration converges from below (geometrically), so run it to
         // sub-dollar convergence — stopping early leaves a phantom shortfall.
+        // Non-finite guard (Gemini PR #54): bail before propagating NaN.
         let g = need;
         for (let i = 0; i < 50; i++) {
           const next = need + stackedIncomeTax(g, netOrdinaryIncome, filingStatus, stateRate) + pen * g;
+          if (!Number.isFinite(next)) break;
           if (Math.abs(next - g) < 0.5) { g = next; break; }
           g = next;
         }
         g = Math.min(g, trad);
-        eventDrawTax  = stackedIncomeTax(g, netOrdinaryIncome, filingStatus, stateRate) + pen * g;
+        const tradTax = stackedIncomeTax(g, netOrdinaryIncome, filingStatus, stateRate) + pen * g;
+        eventDrawTax += tradTax;
         eventDraw401k = g;
         trad -= g;
-        need -= Math.max(0, g - eventDrawTax);
+        need -= Math.max(0, g - tradTax);
       }
       eventShortfall = Math.max(0, need);
     }
@@ -287,10 +325,11 @@ export function runSimulation({
       convEvent:        Math.round(convEvent),        // pre-tax $ converted this working year (0 = none)
       convEventTax:     Math.round(convEventTax),     // ordinary tax + any early-withdrawal penalty
       convEventPenalty: Math.round(convEventPenalty), // 10% penalty component (under-59½ shortfall)
+      salary:         Math.round(primaryIncomeYr), // income this year (pause-aware clock + event income)
       eventNet:       Math.round(eventAdj),        // signed event cash this year (0 = no events)
-      eventDrawRoth:  Math.round(eventDrawRoth),   // BUG-74 cascade: Roth drawn to fund the event
+      eventDrawRoth:  Math.round(eventDrawRoth),   // BUG-74 cascade: gross Roth drawn to fund the event
       eventDraw401k:  Math.round(eventDraw401k),   // gross 401k drawn (incl. its own tax+penalty)
-      eventDrawTax:   Math.round(eventDrawTax),    // tax + penalty leaked by that 401k draw
+      eventDrawTax:   Math.round(eventDrawTax),    // tax + penalties leaked by the funding draws (Roth + 401k)
       eventShortfall: Math.round(eventShortfall),  // event $ NO account could fund (plan can't pay)
     });
   }
