@@ -186,17 +186,10 @@ export function runSimulation({
     // the Trad 401k line and Year-by-year table display the pre-tax balance, and the
     // table reconciles prevPortfolio + contributions + growth = nextPortfolio on the
     // gross basis. `tradGrowth` is exposed separately as the 401k's share of growth.
-    const tradBase = trad + c401k;
-    const rothBase = roth + cRoth;
-    const hsaBase  = hsa  + cHSA;
-    const tradGrowth = tradBase * r;
-    trad = tradBase * (1 + r);
-    roth = rothBase * (1 + r);
-    hsa  = hsaBase  * (1 + r);
-
-    // Money events applied to the taxable account before growth compounds.
-    // Outflows (purchases) reduce the base; inflows (windfalls) increase it.
-    // Clamped at 0 so a large purchase can't produce a negative balance.
+    // Money events applied BEFORE growth compounds — one timing convention for
+    // every account (CodeRabbit PR #54: the first cut drew the Roth/401k
+    // fallback AFTER those accounts had grown, giving the spilled portion a
+    // phantom year of returns). Outflows reduce the base; inflows increase it.
     // eventSimAdjustmentForYear is the sim-year portfolio line: the event's OWN
     // cash, excluding income for salary-REPLACING events (that income already
     // flowed through the salary channel above — money-events.js's NO-DOUBLE-
@@ -216,7 +209,9 @@ export function runSimulation({
     //   covers the need: the withdrawal is ordinary income stacked on this
     //   year's income (same stackedIncomeTax the conversion path uses) plus the
     //   10% penalty under 59½ (fixed-point solve, engine precedent). HSA is
-    //   never touched (medical-restricted).
+    //   never touched (medical-restricted). All draws come from the PRE-growth
+    //   balances (this year's contributions land after), so event-funded
+    //   dollars never earn returns in the year they leave.
     // Anything still unfunded once every account is empty is reported as
     // eventShortfall on the row — the plan literally cannot pay for the event
     // that year, and the what-if verdict treats that as "unaffordable".
@@ -262,6 +257,14 @@ export function runSimulation({
       }
       eventShortfall = Math.max(0, need);
     }
+
+    const tradBase = trad + c401k;
+    const rothBase = roth + cRoth;
+    const hsaBase  = hsa  + cHSA;
+    const tradGrowth = tradBase * r;
+    trad = tradBase * (1 + r);
+    roth = rothBase * (1 + r);
+    hsa  = hsaBase  * (1 + r);
 
     // Capped working-year conversion for THIS age (0 when none). Computed before the
     // LTCG-rate selection because the conversion is ordinary income that can push this

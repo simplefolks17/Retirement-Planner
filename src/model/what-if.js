@@ -182,13 +182,16 @@ export function verdictInfoForScenario(scenario, safeLifeExp) {
   const common = { marginYears, marginBasis, rangeLegend: buildVerdictLegend(safeLifeExp), thresholds };
   // Verdict from THE shared resolver (both overrides included), with an honest
   // label for each override — the margin sentence would be misleading when the
-  // verdict wasn't decided by the margin.
+  // verdict wasn't decided by the margin. Override labels carry the REASON
+  // only, no dollar figure: the sheet's dedicated fundingShortfall /
+  // retirementFunding bullets are the sole carriers of the amounts (CodeRabbit
+  // PR #54 — the first cut stated the same fact twice with two dollar formats).
   const verdict = verdictForScenarioResult(scenario, safeLifeExp);
   if (scenario.eventFundingShortfall > 0) {
     return {
       ...common,
       verdict,
-      marginLabel: `$${Math.round(scenario.eventFundingShortfall).toLocaleString()} of this can't be funded from savings`,
+      marginLabel: "part of this can't be funded from savings",
     };
   }
   if (scenario.eventRetirementDraw > 0 && verdict === "tight"
