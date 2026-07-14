@@ -237,23 +237,23 @@ export function runSimulation({
         need -= (rothGross - rothPenalty);
       }
       if (need > 0 && trad > 0) {
-        // Gross-up: find gross g with g − tax(g) − pen·g = need (tax-on-tax).
-        // The iteration converges from below (geometrically), so run it to
-        // sub-dollar convergence — stopping early leaves a phantom shortfall.
-        // Non-finite guard (Gemini PR #54): bail before propagating NaN.
-        let g = need;
+        // Gross-up: find grossDraw with grossDraw − tax − pen·grossDraw = need
+        // (tax-on-tax). The iteration converges from below (geometrically), so
+        // run it to sub-dollar convergence — stopping early leaves a phantom
+        // shortfall. Non-finite guard (Gemini PR #54): bail before propagating NaN.
+        let grossDraw = need;
         for (let i = 0; i < 50; i++) {
-          const next = need + stackedIncomeTax(g, netOrdinaryIncome, filingStatus, stateRate) + pen * g;
+          const next = need + stackedIncomeTax(grossDraw, netOrdinaryIncome, filingStatus, stateRate) + pen * grossDraw;
           if (!Number.isFinite(next)) break;
-          if (Math.abs(next - g) < 0.5) { g = next; break; }
-          g = next;
+          if (Math.abs(next - grossDraw) < 0.5) { grossDraw = next; break; }
+          grossDraw = next;
         }
-        g = Math.min(g, trad);
-        const tradTax = stackedIncomeTax(g, netOrdinaryIncome, filingStatus, stateRate) + pen * g;
+        grossDraw = Math.min(grossDraw, trad);
+        const tradTax = stackedIncomeTax(grossDraw, netOrdinaryIncome, filingStatus, stateRate) + pen * grossDraw;
         eventDrawTax += tradTax;
-        eventDraw401k = g;
-        trad -= g;
-        need -= Math.max(0, g - tradTax);
+        eventDraw401k = grossDraw;
+        trad -= grossDraw;
+        need -= Math.max(0, grossDraw - tradTax);
       }
       eventShortfall = Math.max(0, need);
     }
