@@ -314,22 +314,72 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 
 ---
 
-### BUG-74 — Accumulation taxable-account event spend can be silently "free" if it exceeds the balance (filed 2026-07-13, Open)
-
-**Owner:** me_theguy. **Found during:** duration-event income model pass code review.
-**What:** `src/model/simulation.js` clamps `taxable + cTaxable + eventAdj` to `Math.max(0, ...)` before computing growth. An accumulation-phase purchase event (`eventAdj` < 0) that exceeds the available `taxable` balance silently "spends" only what exists, stubs the amount as paid (no error, no underflow), and moves on — a $50k purchase with $30k in the account just silently becomes a $30k purchase with $0 in the account, no remaining amount to fail or warn. The retirement engine (rule 2b) handles depletion honestly: `buildRetirementWalkByAccount` computes a `spendShort` (the shortfall amount), which the user sees as "depletes at age X." Accumulation silently swallows the shortfall instead.
-
-**Why filed but not fixed:** this is a correctness gap (silently discarding a purchase intent) that needs cross-account draws or early-withdrawal penalties to model honestly; the fix is out of scope for the current work. The retirement engine's honest depletion model already shows the net result to the user once any accumulation shortfall is deferred to the retirement phase.
-
-**Known scope note:** one-time events with `isTaxable: true` (e.g., inherited pre-tax IRA inflow) are taxed as ordinary income on the floor via `inflowTax` component (the retire engine already charges this); the silent-clamp gap applies only to event **outflows** (purchases, sabbatical cash) where the amount might exceed the available taxable balance.
-
-**Where:** `src/model/simulation.js:192` — the `Math.max(0, taxable + cTaxable + eventAdj)` line in the per-year loop (line ref trued 2026-07-13 close-out — was cited as :175 at filing time; shifted by unrelated additions earlier in the file). A proper fix would thread a `shortfallByType` return field (or similar) back to App.jsx so the UI can either warn the user ("this purchase would require early-withdrawal penalties") or auto-promote it to a deferred-to-retirement purchase (needs cross-account draw logic in the engine).
-
-**Re-verified 2026-07-13 (session close-out, PR #53):** confirmed reproduces at current line 192 (`src/model/simulation.js`). Also found **mis-filed**: this entry's text was written as Open but had been placed in the "Resolved Issues" section by mistake when filed; moved to Open Issues here (doc-consistency fix, no code change).
+## Resolved Issues
 
 ---
 
-## Resolved Issues
+### BUG-74 — Accumulation event spend beyond the taxable balance was silently "free" (filed 2026-07-13; FIXED same day after user re-report)
+
+**Owner:** me_theguy. **Found during:** duration-event income model pass code review; initially deferred, then **promoted to a fix the same day** when the user re-tested with a bigger trip ($15k/mo × 36 mo, $0 income) and the impact barely moved — tripling the trip's spend (+$324k) moved the at-65 impact by only ~$75k, because everything beyond the taxable balance was being forgiven.
+
+**What it was:** `src/model/simulation.js` clamped `taxable + cTaxable + eventAdj` to `Math.max(0, ...)` — an accumulation-phase event outflow exceeding the taxable balance silently "spent" only what existed and stubbed the rest as paid. No other account was touched, no warning surfaced. The retirement engine handles the same situation honestly (`spendShort` → visible depletion); accumulation swallowed it.
+
+**Fixed (2026-07-13, follow-up to PR #53):** the shortfall now cascades the way a person actually funds one:
+- **taxable** (exhausted) → **Roth** (grossed up for the 10% early-withdrawal penalty under 59½ per the owner-review refinement below — no ordinary income tax on the Roth portion, basis untracked) → **Traditional 401k**, GROSSED UP so the net covers the need: the withdrawal is ordinary income stacked on the year's income (`stackedIncomeTax`, same primitive the conversion path uses) plus the 10% early-withdrawal penalty under 59½ (`EARLY_WITHDRAWAL_AGE`/`PENALTY`), solved by the fixed-point iteration the engine's tax-on-tax gross-up established (run to sub-dollar convergence). **HSA is never touched** (medical-restricted).
+- The 401k draw joins the LTCG-bracket stack (`ltcgRate(nOI + conv + eventDraw401k)`) and any same-year working-year conversion's tax stacks on top of the draw.
+- Anything still unfunded once every account is empty is reported per-row as **`eventShortfall`** (plus `eventNet`/`eventDrawRoth`/`eventDraw401k`/`eventDrawTax` row fields). `calcWhatIfScenario` sums it into **`eventFundingShortfall`** (+`firstShortfallAge`); the shared **`verdictForScenarioResult`** (new — used by `verdictInfoForScenario` AND both tick rails, so a tick can never disagree with the card) forces **"unaffordable"** with an honest label ("$X of this can't be funded from savings"); `evaluateLifeEvent` exposes a named `fundingShortfall` field and the LifeEventSheet renders the warning line.
+- **Ledger honesty:** `buildAccumulationRows`' `draw` column (previously hardcoded 0, hiding event spending entirely) now shows the event outflow that actually left the portfolio, and its `tax` column includes the funding draw's tax/penalty.
+- **Two display fixes shipped alongside (same user report):** (1) the sheet's "Portfolio at 65" bullet showed ONLY the signed delta ("−$857k"), which read as a negative *balance* — now absolute + delta ("$2.4M (−$1.7M)"), matching the "Left at 90" format; (2) the cushion label could show an absurd "≈366 yrs of runway" for SS-covered plans (near-zero net draw denominator) — labels now cap at `ASSUMPTIONS.CUSHION_LABEL_CAP_YEARS` (50): "50+ yrs of runway left at 90" (the underlying `marginYears` stays exact for the verdict math).
+
+**Verified:** the user's exact scenario ($15k/mo × 36 @ 45, $0 income, default profile) now shows Portfolio at 65: $2.4M (−$1.7M) and Left at 90: $2.4M (−$2.0M) — the at-65 impact doubled once the swallowed spend + funding taxes actually left the portfolio. Browser-driven end to end.
+
+**Known simplifications (documented in the code):** Roth funding draw pays the 10% early-withdrawal penalty (per the owner-review refinement below) but no ordinary income tax — basis untracked, treated as withdrawable contributions for the tax side only; the 401k funding draw is excluded from the same year's Roth-phase-out MAGI (computed earlier in the loop; marginally generous, tiny); **committed**-plan surfaces (arc, Plan screen) don't yet surface a committed event's `eventShortfall` — only the what-if evaluation path does (the sheet re-evaluates on edit, so the warning IS visible whenever the event is opened). Golden master untouched (no events at default; cascade inert when taxable covers the event).
+
+**Where:** `src/model/simulation.js` (cascade + row fields), `src/model/what-if.js` (`eventFundingShortfall`/`firstShortfallAge`, `verdictForScenarioResult`, label cap, `fundingShortfall` field), `src/model/accumulation.js` (ledger draw/tax columns), `src/horizon/LifeEventSheet.jsx` (absolute+delta bullet, shortfall warning), `src/config/irs-2026.js` (`CUSHION_LABEL_CAP_YEARS`).
+
+**Tests:** +7 (cascade order/conservation, gross-up identity, 59½ penalty split, all-accounts-drained shortfall, the user-reported tripling-monotonicity regression, cascade-inert-when-funded, verdict-override + label-cap locks). 812 → 819.
+
+**Owner-review refinements (2026-07-13, same day, PR #54 review — three spec corrections):**
+1. **Salary growth clock pauses during a sabbatical.** The sim's salary now uses a pause-aware
+   growth CLOCK that advances by `incomeFrac` each year (1 in normal years and for the seeded
+   full-pay default — behavior-preserving; 0 during a zero-income pause; fractional for partial
+   pay). A $100k salary paused for 3 years resumes at the level it left off and grows from there —
+   it does not rejoin a clock that kept ticking ("age 36 should be 103k, not ~120k"). Spouse income
+   stays on the unpaused age clock (income replacement is primary-only, #30 scope);
+   `projectedIncomeAtAge` remains the NO-EVENT baseline (UI "usual pay" seed +
+   `eventIncomeImpact.usualPay`), equal to the clock when no events exist (golden-master safe).
+   New `salary` row field exposes the per-year figure.
+2. **Roth funding draws pay the 10% early-withdrawal penalty under 59½ too** (grossed up; no
+   ordinary income tax on the Roth portion — conservative middle, basis untracked). "The user
+   cannot take out anything in their Roth and 401k without big penalty."
+3. **Retirement-funded events can never read "comfortable".** New scenario fields
+   `eventRetirementDraw`/`eventRetirementDrawTax` (gross Roth+401k drawn + tax/penalties leaked);
+   `verdictForScenarioResult` caps the verdict at **"tight"** whenever they're non-zero, with the
+   honest label "needs early retirement-account withdrawals to fund"; `evaluateLifeEvent` exposes
+   `retirementFunding` and the sheet renders "Needs $X of early retirement-account withdrawals
+   ($Y in taxes & penalties)". Only a fully-cash-funded event can be "comfortable".
+   Display: the sheet's balance bullets now use phrases — "decreases/increases by $X" (and
+   "$X less/more" on the income bullet) — instead of signed parentheticals, per owner spec.
+   Browser-verified: the $15k/mo × 36 scenario now reads "is tight — watch it" with the $360k
+   early-withdrawal warning; Portfolio at 65 $2.2M (decreases by $1.8M). 819 → 824 tests.
+
+**Post-refinement review fixes (2026-07-14, PR #54, CodeRabbit rounds 2–3 — all display/timing
+corrections, golden master untouched, 824 tests throughout):**
+1. **One timing convention for the funding cascade.** The cascade originally ran the Roth/401k
+   fallback AFTER `trad`/`roth` had already compounded for the year — event-funded dollars that
+   spilled past taxable got a phantom extra year of investment returns. Moved the entire cascade
+   (taxable → Roth → 401k) to run on PRE-growth balances, matching the taxable account's own
+   timing; contributions still land after, unaffected.
+2. **De-duplicated the funding-shortfall / retirement-withdrawal warning.** `verdictInfoForScenario`'s
+   `marginLabel` override and `evaluateLifeEvent`'s dedicated `fundingShortfall`/`retirementFunding`
+   fields both fired on the same condition, so the LifeEventSheet showed the same fact twice with
+   two different dollar formats (a raw `.toLocaleString()` figure in the subtitle, an abbreviated
+   `fmt()` figure in the bullet). The `marginLabel` override now carries the REASON only ("part of
+   this can't be funded from savings" / "needs early retirement-account withdrawals to fund"); the
+   sheet's dedicated bullets are the sole carriers of the dollar amounts and detail (firstAge,
+   tax/penalty breakdown).
+3. **Trivial:** renamed the gross-up loop's block-scoped `g` to `grossDraw` — it shadowed the outer
+   `g = incomeGrowth / 100` in the same function (no behavior change).
 
 ---
 

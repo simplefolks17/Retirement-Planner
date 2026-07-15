@@ -350,6 +350,13 @@ export const ASSUMPTIONS = {
   // IRS rule.
   EVENT_COMFORT_BUFFER_YEARS: 5,
 
+  // Cushion-basis margin label cap (buildMarginLabel, what-if.js): a plan whose
+  // net draw at the plan age is nearly covered by SS/pension can compute a
+  // technically-true but absurd-looking runway ("≈366 yrs"); the LABEL caps at
+  // this value ("50+ yrs of runway") while the underlying marginYears stays
+  // exact for the verdict math. Display heuristic, not an IRS rule.
+  CUSHION_LABEL_CAP_YEARS: 50,
+
   // calcAffordabilityMax's binary search: dollar granularity of the search
   // and the upper bound it searches up to. Product-level default, not an IRS
   // rule — named here for Classic's WhatIfPanel "Max Affordable" mode, the

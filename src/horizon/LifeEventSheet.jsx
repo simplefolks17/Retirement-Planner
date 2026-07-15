@@ -333,23 +333,44 @@ export default function LifeEventSheet({
                   Income while it runs: {fmt(result.incomeImpact.eventPay)} instead of{" "}
                   {fmt(result.incomeImpact.usualPay)}{" "}
                   <span style={{ color: result.incomeImpact.dir === "down" ? t.warm : t.good }}>
-                    ({result.incomeImpact.dir === "down" ? "−" : "+"}{fmt(result.incomeImpact.netLostIncomeAbs)})
+                    ({fmt(result.incomeImpact.netLostIncomeAbs)}{" "}
+                    {result.incomeImpact.dir === "down" ? "less" : "more"})
                   </span>
                 </li>
               )}
               {result.atRetirement.dir && (
                 <li style={{ font: `500 12.5px ${HF}`, color: t.ink }}>
-                  Portfolio at {result.atRetirement.age}:{" "}
+                  {/* Absolute balance + a PHRASE for the change (owner spec:
+                      "decreases/increases by $X" — a bare "−$857k" read as a
+                      negative BALANCE, and even "(−$X)" left the direction
+                      easy to misread). */}
+                  Portfolio at {result.atRetirement.age}: {fmt(result.atRetirement.scenario)}{" "}
                   <span style={{ color: result.atRetirement.dir === "down" ? t.warm : t.good }}>
-                    {result.atRetirement.dir === "down" ? "−" : "+"}{fmt(result.atRetirement.deltaAbs)}
+                    ({result.atRetirement.dir === "down" ? "decreases" : "increases"} by{" "}
+                    {fmt(result.atRetirement.deltaAbs)})
                   </span>
+                </li>
+              )}
+              {result.fundingShortfall && (
+                <li style={{ font: `600 12.5px ${HF}`, color: t.warm }}>
+                  {fmt(result.fundingShortfall.amount)} of this can't be funded from
+                  your savings{result.fundingShortfall.firstAge != null
+                    ? ` (accounts run dry at ${result.fundingShortfall.firstAge})` : ""}
+                </li>
+              )}
+              {result.retirementFunding && (
+                <li style={{ font: `600 12.5px ${HF}`, color: t.warm }}>
+                  Needs {fmt(result.retirementFunding.drawTotal)} of early
+                  retirement-account withdrawals ({fmt(result.retirementFunding.taxAndPenalty)} in
+                  taxes &amp; penalties)
                 </li>
               )}
               {result.atPlanAge.dir && (
                 <li style={{ font: `500 12.5px ${HF}`, color: t.ink }}>
                   Left at {result.atPlanAge.age}: {fmt(result.atPlanAge.scenario)}{" "}
                   <span style={{ color: result.atPlanAge.dir === "down" ? t.warm : t.good }}>
-                    ({result.atPlanAge.dir === "down" ? "−" : "+"}{fmt(result.atPlanAge.deltaAbs)})
+                    ({result.atPlanAge.dir === "down" ? "decreases" : "increases"} by{" "}
+                    {fmt(result.atPlanAge.deltaAbs)})
                   </span>
                 </li>
               )}

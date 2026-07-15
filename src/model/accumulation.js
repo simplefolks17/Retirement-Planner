@@ -135,14 +135,22 @@ export function buildAccumulationRows({ simData, fedMarginal, currentAge, curren
       const contrib = Math.round((d.c401k ?? 0) + (d.cRoth ?? 0) + (d.cTaxable ?? 0) + (d.cHSA ?? 0));
       const growth  = Math.round(d.growth ?? 0);
       const convEvent = Math.round(d.convEvent ?? 0);
+      // Money-event outflow that actually LEFT the portfolio this year (BUG-74:
+      // the requested eventNet minus any unfundable shortfall — you can't show
+      // a draw the accounts never paid). Was a hardcoded 0, which hid event
+      // spending from the ledger entirely. Inflow events (positive eventNet)
+      // still surface only in the Portfolio column (no dedicated column).
+      const eventOutflow = Math.max(0, -(d.eventNet ?? 0) - (d.eventShortfall ?? 0));
       return {
         age: d.age,
         year: currentYear + (d.age - currentAge),
         total: sumAccountRow(d),
         contrib,
         growth,
-        draw: 0,
-        tax: Math.round(d.convEventTax ?? 0),  // conversion tax + penalty leaked from the portfolio
+        draw: Math.round(eventOutflow),
+        // conversion tax/penalty + BUG-74 event-funding 401k draw tax/penalty —
+        // every dollar the events leaked from the portfolio beyond the draw itself.
+        tax: Math.round((d.convEventTax ?? 0) + (d.eventDrawTax ?? 0)),
         rmd: null,
         conversion: convEvent > 0 ? convEvent : null,
         phase: "accum",
