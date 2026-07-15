@@ -1258,6 +1258,16 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   Plus Gemini PR #54 nitpicks (dropped `?? 0` fallbacks, NaN guard in the gross-up loop).
   Browser-verified: $15k/mo × 36 now reads "is tight — watch it" with the $360k warning.
   Golden master untouched. 819 → **824 tests**.
+- **PR #54 CodeRabbit review-fix round (2026-07-14, same branch).** Two more review passes on the
+  BUG-74 cascade: (1) the Roth/401k funding cascade ran AFTER `trad`/`roth` had already compounded
+  for the year, giving event-funded dollars a phantom extra year of returns — moved the whole
+  cascade to run on pre-growth balances, one timing convention for every account. (2) the verdict's
+  `marginLabel` override and the sheet's dedicated `fundingShortfall`/`retirementFunding` bullets
+  both stated the same funding-shortfall/retirement-draw fact, with two different dollar formats —
+  the label now carries the reason only ("part of this can't be funded from savings" / "needs early
+  retirement-account withdrawals to fund"), the bullets remain the sole carriers of amounts. Plus a
+  trivial rename (gross-up loop's `g` → `grossDraw`, was shadowing the outer income-growth `g`).
+  824 tests throughout, golden master untouched.
 
 ## Commands
 
