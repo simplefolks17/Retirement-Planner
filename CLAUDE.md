@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (824 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (827 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1268,11 +1268,24 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   retirement-account withdrawals to fund"), the bullets remain the sole carriers of amounts. Plus a
   trivial rename (gross-up loop's `g` → `grossDraw`, was shadowing the outer income-growth `g`).
   824 tests throughout, golden master untouched.
+- **BUG-76 fixed — Accounts-tab "Today" milestone pill always showed $0 (2026-07-15, branch
+  `claude/accounts-age-calculation-cgnz5e`, user report).** Root cause: the lifetime chart series
+  never contained the current age (`runSimulation` rows start at `currentAge + 1` and
+  `buildAccumChart` only seeded today's row in the already-retired case), and `calcChartMilestones`'
+  `balAtAge` fabricated $0 for out-of-range ages instead of degrading honestly. Fix in
+  `src/model/accumulation.js`: `buildAccumChart` now seeds the current-age row unconditionally
+  (same four-balance basis as `currentTotalSaved`, so pill == banner by construction — the arc and
+  Classic chart also honestly start at today now), and `balAtAge` returns null out-of-range so the
+  existing null-filter drops the anchor rather than rendering a fake $0 (principle 10). All chart
+  consumers audited (what-if overlay invariant, Flow-Down peak, ArcGraph clamp) — safe/improved.
+  Browser-verified on Numbers → Accounts + full repo verifier. Golden master untouched (locks no
+  chart data). 824 → **827 tests** (+3 regressions; 2 what-if series-start assertions updated —
+  they had locked the buggy `currentAge + 1` shape). Full record: `docs/BUGS.md` BUG-76.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (824 tests)
+- `npm test` — run model + formatter + render-smoke tests (827 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
