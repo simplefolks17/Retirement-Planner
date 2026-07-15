@@ -16,8 +16,10 @@ how `moneyEvents` reach `calcWhatIfDelta`.
 **What:** `src/App.jsx:1379-1389` (`surplusApplySite`'s "current" and "candidate" previews) passes
 the full committed `moneyEvents` array straight into `calcWhatIfDelta({ ...whatIfBundle,
 moneyEvents })`. Inside, `calcWhatIfScenario`'s retirement-phase merge
-(`src/model/what-if.js:215, 253`) builds `mergedRetEvents = [...(retDrawShared.moneyEvents ?? []),
-...retEvents]`, where `retEvents` is `moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge)`
+(`src/model/what-if.js:263, 301` — shifted from :215/:253 by PR #54's unrelated additions earlier
+in the file; re-verified 2026-07-15, content unchanged) builds `mergedRetEvents =
+[...(retDrawShared.moneyEvents ?? []), ...retEvents]`, where `retEvents` is
+`moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge)`
 — but `retDrawShared.moneyEvents` **is already** the committed retirement-phase event list (set once
 in App.jsx). Passing `moneyEvents` again re-derives `retEvents` from the SAME committed list and
 concatenates it onto `retDrawShared.moneyEvents`, so every committed retirement-phase event is
@@ -33,8 +35,8 @@ already carries `retDrawShared.moneyEvents` internally, so the merge only needs 
 *scenario* additions (none, for this Apply-site) — or `calcWhatIfDelta` needs a documented contract
 for "committed events are already in the bundle, don't pass them again" so future Apply-sites don't
 repeat the mistake.
-**Where:** `src/App.jsx:1379, 1382` (the two `moneyEvents` call-sites); `src/model/what-if.js:215,
-253` (the merge that double-counts them).
+**Where:** `src/App.jsx:1379, 1382` (the two `moneyEvents` call-sites); `src/model/what-if.js:263,
+301` (the merge that double-counts them).
 **Tests:** none yet — a regression test would run `surplusApplySite`'s preview against a bundle with
 a committed retirement-phase event and assert the walk sees it exactly once (e.g. compare against a
 direct `buildRetirementPhase` call with the event list passed once).
@@ -188,6 +190,10 @@ retired the same day it merged into the arc-event-placement branch — it backed
 "Scenarios" preset cards, which the owner had separately decided to retire that same day (see the
 BUG-44 addendum below). `surplusApplySite` is unaffected and remains a live `calcWhatIfDelta`
 consumer.
+**Re-verified 2026-07-15 (post PR #54 close-out) — still reproduces.** `calcWhatIfDelta`
+(`what-if.js:225-395`) still calls `buildRetirementDrawdown` at lines 303/313; `optimization.js:79`
+unchanged. PR #54 added new exports (`verdictForScenarioResult`, `eventFundingShortfall` fields)
+but touched neither function's retirement-walk call — the gap is unchanged in both location and scope.
 **Scope note (2026-07-10, life-event placement build):** `runSimulation` and
 `buildRetirementDrawdown` no longer inline the event sign — both now call the shared
 `eventNetForYear` (`money-events.js`), which also splits the new **duration events** ("$X/mo for
