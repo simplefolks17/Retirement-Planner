@@ -324,6 +324,51 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 
 ---
 
+### BUG-76 — Accounts-tab "Today" milestone pill always showed $0 (found + fixed 2026-07-15, user report)
+
+**Owner:** me_theguy. **Found by:** user report — "the Age x · today value says 0 regardless of age"
+on Numbers → Accounts, directly contradicting the banner right above it showing the real balance.
+
+**What it was:** two stacked defects, both in `src/model/accumulation.js`:
+1. **The lifetime chart series never contained the current age.** `runSimulation`'s rows start at
+   `currentAge + 1`, and `buildAccumChart` only seeded an `age: currentAge` row in the
+   already-retired special case (`safeRetAge === currentAge`) — so `totalChartData` normally
+   started one year in the future, with no "today" point at all.
+2. **`calcChartMilestones`' `balAtAge` fabricated $0 for out-of-range ages.** With no row at
+   `currentAge`, the exact-match and interpolation paths both missed and the accessor hit a
+   silent `return 0` fallback — the "missing data is not zero" shape principle 10 forbids. The
+   unit tests never caught it because their synthetic chart started exactly at `currentAge`,
+   unlike the real series.
+
+**Fix:** (1) `buildAccumChart` now seeds the `{ age: currentAge, total: bal401k + balRoth +
+balTaxable + balHSA }` row **unconditionally** — the same four-balance basis as
+`horizonProps.currentTotalSaved`, so the pill and the Accounts banner agree by construction (the
+already-retired branch collapsed into the same line, no behavior change there). (2) `balAtAge`
+returns **null** instead of 0 for an age outside the charted range; the existing
+`filter(r => r.total != null)` then drops the anchor entirely — a milestone is either real or
+absent, never a fake $0.
+
+**Consumers audited (all safe/improved):** the arc + Classic lifetime charts now honestly start
+at the current age (previously ArcGraph's below-range clamp silently substituted next year's
+balance for event dots/scrub at `currentAge`); a First-$1M crossing in the first year is now
+detectable; `calcWhatIfScenario` builds its accumulation chart through the same `buildAccumChart`
+helper (or reuses `baseChart`), so the no-op-overlay deep-equal invariant holds on both paths;
+`calcFlowDown` uses `accumChart` only inside a `Math.max` that already includes `startPortfolio`.
+Golden master untouched (it locks no chart data).
+
+**Where:** `src/model/accumulation.js` (`buildAccumChart` seed, `balAtAge` null fallback);
+`src/model/__tests__/accumulation.test.js` (+3 regression tests: unconditional today seed; a
+series starting at `currentAge + 1` must DROP the Today anchor, not render $0; chained
+buildAccumChart → calcChartMilestones Today == sum of current balances);
+`src/model/__tests__/what-if.test.js` (2 assertions updated — the lifetime series now starts AT
+`currentAge`, the old `currentAge + 1` expectation was the bug's shape).
+
+**Verified:** full suite 824 → 827 green, golden master byte-identical; lint clean; build OK;
+browser-verified — Today pill reads $165k matching the banner at the default state, and the repo
+verifier passes every screen + Numbers sub-tab.
+
+---
+
 ### BUG-74 — Accumulation event spend beyond the taxable balance was silently "free" (filed 2026-07-13; FIXED same day after user re-report)
 
 **Owner:** me_theguy. **Found during:** duration-event income model pass code review; initially deferred, then **promoted to a fix the same day** when the user re-tested with a bigger trip ($15k/mo × 36 mo, $0 income) and the impact barely moved — tripling the trip's spend (+$324k) moved the at-65 impact by only ~$75k, because everything beyond the taxable balance was being forgiven.

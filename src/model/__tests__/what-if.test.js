@@ -430,11 +430,13 @@ const chartBundle = {
 // retirement-only chart and are rewritten here for the new scope; the
 // "returns [] for missing inputs" case is unaffected.
 describe("calcWhatIfChart", () => {
-  it("no overrides: returns the full lifetime series, from just after current age through safeLifeExp", () => {
+  it("no overrides: returns the full lifetime series, from current age through safeLifeExp", () => {
     const series = calcWhatIfChart(chartBundle);
     expect(Array.isArray(series)).toBe(true);
     expect(series.length).toBeGreaterThan(0);
-    expect(series[0].age).toBe(currentAge + 1);
+    // buildAccumChart seeds today's row (the Accounts-tab "Today · $0" fix), so
+    // the lifetime series starts AT the current age, not one year after.
+    expect(series[0].age).toBe(currentAge);
     expect(series[series.length - 1].age).toBe(safeLifeExp);
   });
 
@@ -455,7 +457,7 @@ describe("calcWhatIfChart", () => {
     expect(Array.isArray(seriesEarly)).toBe(true);
     // The series still spans the whole lifetime — start age is unaffected by
     // WHEN retirement happens, only the boundary between the two phases moves.
-    expect(seriesEarly[0].age).toBe(currentAge + 1);
+    expect(seriesEarly[0].age).toBe(currentAge);
     expect(seriesEarly[seriesEarly.length - 1].age).toBe(safeLifeExp);
     const boundaryIdx = seriesEarly.findIndex(r => r.age === scenarioRetAge);
     expect(boundaryIdx).toBeGreaterThanOrEqual(0);

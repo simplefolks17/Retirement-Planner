@@ -68,7 +68,10 @@ export function calcChartMilestones({ chartData, currentAge, retirementAge, life
       if (age >= a0.age && age <= a1.age)
         return a0.total + (a1.total - a0.total) * (age - a0.age) / (a1.age - a0.age);
     }
-    return 0;
+    // Age outside the charted range: null, never a fabricated $0 (principle 10 —
+    // missing data is not zero). The filter below drops null-total anchor rows,
+    // so the milestone simply doesn't render instead of showing a fake value.
+    return null;
   };
 
   // First $1M crossing (linear interpolation between the bracketing rows)
@@ -161,13 +164,13 @@ export function buildAccumulationRows({ simData, fedMarginal, currentAge, curren
 
 // Accumulation chart rows ({age, total}) from current age through retirement — the
 // portfolio's growth phase, and the starting balance for the retirement walk.
-// When already retired (safeRetAge === currentAge there are no accumulation years),
-// seeds a single row from the current balances so the walk has a starting point.
+// Always seeds the current-age row from the current balances (the simulation's own
+// rows start at currentAge + 1): without it the lifetime series has no "today"
+// point, and calcChartMilestones' Today anchor had no row to read — the source of
+// the Accounts-tab "Today · $0" pill. Same basis as horizonProps.currentTotalSaved,
+// so the pill and the Accounts banner agree by construction.
 export function buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }) {
-  const rows = [];
-  if (safeRetAge === currentAge) {
-    rows.push({ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA });
-  }
+  const rows = [{ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA }];
   for (const d of simData) {
     rows.push({ age: d.age, total: sumAccountRow(d) });
     if (d.age >= safeRetAge) break;

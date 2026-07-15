@@ -132,8 +132,20 @@ describe("buildAccumChart", () => {
   it("emits {age,total} rows through retirement and stops at safeRetAge", () => {
     const simData = [mkRow(31, 100), mkRow(32, 200), mkRow(33, 300), mkRow(34, 400)];
     const rows = buildAccumChart({ simData, safeRetAge: 33, currentAge: 30,
-      bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0 });
-    expect(rows).toEqual([{ age: 31, total: 100 }, { age: 32, total: 200 }, { age: 33, total: 300 }]);
+      bal401k: 40, balRoth: 10, balTaxable: 0, balHSA: 0 });
+    expect(rows).toEqual([
+      { age: 30, total: 50 },
+      { age: 31, total: 100 }, { age: 32, total: 200 }, { age: 33, total: 300 },
+    ]);
+  });
+
+  it("always seeds today's row from the current balances (sim rows start at currentAge+1)", () => {
+    // The regression behind the Accounts-tab "Today · $0" pill: without this row
+    // the lifetime chart has no current-age point for the Today milestone to read.
+    const simData = [mkRow(31, 100_000)];
+    const rows = buildAccumChart({ simData, safeRetAge: 31, currentAge: 30,
+      bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000 });
+    expect(rows[0]).toEqual({ age: 30, total: 165_000 });
   });
 
   it("seeds a current-balance row when already retired (safeRetAge === currentAge)", () => {
@@ -209,5 +221,34 @@ describe("calcChartMilestones", () => {
   it("empty chart data → designed empty state ({ rows: [], peakTotal: 1 })", () => {
     expect(calcChartMilestones({ chartData: [], currentAge: 30, retirementAge: 65, lifeExpect: 90 }))
       .toEqual({ rows: [], peakTotal: 1 });
+  });
+
+  it("never fabricates a $0 anchor for an age outside the chart range", () => {
+    // Regression (Accounts-tab "Today · $0" pill): a series starting at
+    // currentAge + 1 — the real App shape before buildAccumChart seeded today's
+    // row — must DROP the Today anchor, not render it as $0.
+    const chart = mkChart().filter(d => d.age >= 31); // starts at currentAge + 1
+    const { rows } = calcChartMilestones({
+      chartData: chart, currentAge: 30, retirementAge: 65, lifeExpect: 90,
+    });
+    expect(rows.find(r => r.tag === "Today")).toBeUndefined();
+    expect(rows.some(r => r.total === 0)).toBe(false);
+  });
+
+  it("Today anchor from buildAccumChart-built data equals the sum of current balances", () => {
+    // Chained regression through the real App path: buildAccumChart seeds the
+    // current-age row, so the Today milestone matches the Accounts banner's
+    // currentTotalSaved (same four-balance basis) instead of $0.
+    const simData = [];
+    for (let age = 31; age <= 65; age++) {
+      simData.push({ age, "Trad 401k": age * 10_000, "Roth IRA": 0, "Taxable": 0, "HSA": 0 });
+    }
+    const chart = buildAccumChart({ simData, safeRetAge: 65, currentAge: 30,
+      bal401k: 120_000, balRoth: 30_000, balTaxable: 60_000, balHSA: 15_000 });
+    const { rows } = calcChartMilestones({
+      chartData: chart, currentAge: 30, retirementAge: 65, lifeExpect: 90,
+    });
+    const today = rows.find(r => r.tag === "Today");
+    expect(today).toEqual({ age: 30, total: 225_000, tag: "Today", tc: "good" });
   });
 });
