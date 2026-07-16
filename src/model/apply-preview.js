@@ -73,8 +73,11 @@ function renderLongevity(v) {
   if (v == null || v.years == null) return "—";
   const { years, depletionAge } = v;
   if (years === Infinity) return "lasts beyond your plan";
-  if (depletionAge == null) return `${years.toFixed(1)} yrs`;
-  return `depletes at ${depletionAge} (${years.toFixed(1)} yrs)`;
+  // Calm numbers (2026-07-16): phrase longevity as an AGE, not a decimal
+  // duration — "to age 87" reads clearer than "depletes at 87 (21.3 yrs)" and
+  // drops the stray decimal. The rare null-depletion case shows whole years.
+  if (depletionAge == null) return `~${Math.round(years)} yrs`;
+  return `to age ${depletionAge}`;
 }
 
 function longevityMetric({ id, label, before, after, betterDir }) {
@@ -105,16 +108,16 @@ function longevityMetric({ id, label, before, after, betterDir }) {
       // age where it didn't before. Always framed as "shorter".
       delta = { dir: "down", label: "shorter", tone: betterDir === "up" ? "warm" : "good" };
     } else {
-      // Diff the SAME one-decimal rounding renderLongevity displays (Gemini
-      // review) — a raw-float gap smaller than 0.05yr would otherwise show a
-      // nonzero delta beside two identically-displayed "X.X yrs" figures.
-      const d = Number(after.years.toFixed(1)) - Number(before.years.toFixed(1));
+      // Diff the SAME whole-year rounding renderLongevity displays (calm
+      // numbers) — a sub-year float gap never shows a nonzero delta beside two
+      // identically-displayed year/age figures.
+      const d = Math.round(after.years) - Math.round(before.years);
       if (d === 0) {
         delta = { dir: "none", label: "no change", tone: "neutral" };
       } else {
         const dir = d > 0 ? "up" : "down";
         const sign = d > 0 ? "+" : "−";
-        delta = { dir, label: `${sign}${Math.abs(d).toFixed(1)} yrs`, tone: dir === betterDir ? "good" : "warm" };
+        delta = { dir, label: `${sign}${Math.abs(d)} yrs`, tone: dir === betterDir ? "good" : "warm" };
       }
     }
   }

@@ -120,24 +120,24 @@ describe("buildPreviewMetric — longevity format", () => {
     expect(m.delta).toEqual({ dir: "none", label: "no change", tone: "neutral" });
   });
 
-  it("finite case renders 'depletes at {age} ({yrs} yrs)'", () => {
+  it("finite case renders 'to age {age}' (calm, no decimal)", () => {
     const m = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 21.3, depletionAge: 87 },
       after: { years: 25.0, depletionAge: 91 },
     });
-    expect(m.before).toBe("depletes at 87 (21.3 yrs)");
-    expect(m.after).toBe("depletes at 91 (25.0 yrs)");
+    expect(m.before).toBe("to age 87");
+    expect(m.after).toBe("to age 91");
   });
 
-  it("finite years with a null depletionAge renders just '{yrs} yrs'", () => {
+  it("finite years with a null depletionAge renders whole '~{yrs} yrs'", () => {
     const m = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 10.5, depletionAge: null },
       after: { years: 10.5, depletionAge: null },
     });
-    expect(m.before).toBe("10.5 yrs");
-    expect(m.after).toBe("10.5 yrs");
+    expect(m.before).toBe("~11 yrs");
+    expect(m.after).toBe("~11 yrs");
   });
 
   it("crossing from finite to Infinity is an improvement ('beyond plan')", () => {
@@ -158,20 +158,21 @@ describe("buildPreviewMetric — longevity format", () => {
     expect(m.delta).toEqual({ dir: "down", label: "shorter", tone: "warm" });
   });
 
-  it("both finite renders a signed one-decimal year delta", () => {
+  it("both finite renders a signed whole-year delta", () => {
+    // 21.3 → 25, 24.8 → 25 rounded: diff of the ROUNDED years (21 vs 25 = +4).
     const gained = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 21.3, depletionAge: 87 },
       after: { years: 24.8, depletionAge: 90 },
     });
-    expect(gained.delta).toEqual({ dir: "up", label: "+3.5 yrs", tone: "good" });
+    expect(gained.delta).toEqual({ dir: "up", label: "+4 yrs", tone: "good" });
 
     const lost = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 24.8, depletionAge: 90 },
       after: { years: 21.3, depletionAge: 87 },
     });
-    expect(lost.delta).toEqual({ dir: "down", label: "−3.5 yrs", tone: "warm" });
+    expect(lost.delta).toEqual({ dir: "down", label: "−4 yrs", tone: "warm" });
   });
 });
 
@@ -183,7 +184,7 @@ describe("buildPreviewMetric — longevity null-years guard", () => {
       after: { years: 21.3, depletionAge: 87 },
     });
     expect(m.before).toBe("—");
-    expect(m.after).toBe("depletes at 87 (21.3 yrs)");
+    expect(m.after).toBe("to age 87");
     expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
   });
 
@@ -193,7 +194,7 @@ describe("buildPreviewMetric — longevity null-years guard", () => {
       before: { years: 21.3, depletionAge: 87 },
       after: { years: null, depletionAge: null },
     });
-    expect(m.before).toBe("depletes at 87 (21.3 yrs)");
+    expect(m.before).toBe("to age 87");
     expect(m.after).toBe("—");
     expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
   });
