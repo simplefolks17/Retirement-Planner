@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (827 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (823 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1281,11 +1281,46 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   Browser-verified on Numbers → Accounts + full repo verifier. Golden master untouched (locks no
   chart data). 824 → **827 tests** (+3 regressions; 2 what-if series-start assertions updated —
   they had locked the buggy `currentAge + 1` shape). Full record: `docs/BUGS.md` BUG-76.
+- **Multi-goal timeline + Ideas retirement + calm numbers (2026-07-16, branch
+  `claude/multiple-events-timeline-rkcmev`).** Owner asks: (1) let users place MANY life events,
+  framed as numbered "Goals" (Goal 1, Goal 2 …) instead of one-per-preset; (2) holistic UX — retire
+  the redundant **Ideas** page and move its capabilities onto **Plan**; (3) calm the numbers
+  (Wealthfront-style — no stray decimals, `k`/`M`). Three staged commits, golden master untouched:
+  - **Goals on Plan via an arc-anchored Explore tray.** New `ExploreTray.jsx` (collapsed-by-default,
+    two facets `⚙ Try a change` · `✦ Goals`) sits under the hero arc as the ONE control surface —
+    both facets shape the same arc. New `GoalsPanel.jsx`: numbered goals list, preset quick-adds
+    (each ALWAYS seeds a NEW goal — id-keyed, never label-deduped, so multiple trips coexist),
+    progressive disclosure (`DEFAULT_VISIBLE_GOALS = 3` → "+ Add more goals" reveals the rest + a
+    "+ Custom goal"), cap note at `MAX_MONEY_EVENTS`. The blocker was never the model (events were
+    always id-keyed via `saveEvent`/`removeEvent`); it was the old Ideas Events UI gating presets
+    by `committedByLabel` (first-match-by-label). Config: `MAX_MONEY_EVENTS` **6 → 12** + new
+    `DEFAULT_VISIBLE_GOALS`. `TryAChangePanel` slimmed to a facet body (card/title/"More in Ideas"
+    link removed) + the `RETIRE_JUMPS` quick-jump chips; preset tables moved to shared
+    `src/horizon/presets.js` (survives Ideas' deletion). PortfolioHero/IncomeMeter moved to a
+    summary band below the tray.
+  - **Ideas page retired.** Removed from `HorizonShell` SCREENS/import/dispatch; **Journey**
+    promoted into the mobile bottom bar (Plan · Journey · Numbers · Strategies · More);
+    `navigate()` now degrades a stale `ideas` deep-link to Plan; `IdeasScreen.jsx` +
+    `ideas-screen.test.js` deleted; the "Retire at" stat card deep-links to My details; smoke +
+    verifier-browser updated (Ideas marker dropped; lever-preview + goal-placement deep paths moved
+    onto Plan's Explore tray).
+  - **Calm numbers.** `apply-preview.js` longevity now reads as an **age** ("to age 87"), not a
+    decimal duration ("depletes at 87 (21.3 yrs)"); year deltas are whole ("+4 yrs"); the
+    Try-a-change monthly readout uses the new shared `fmtMonthly` (nearest $100). Rates keep 1
+    decimal (policy); Journey "years sustained" was already a whole row-count.
+  - Browser-verified end-to-end (Playwright): placed Goal 1 (Big trip @70) + Goal 2 (Buy a home
+    @40) → both numbered rows + both arc badges + the portfolio/arc updated ($4.0M → $3.9M). All
+    Horizon screens render; Classic round-trip OK. 827 → **823 tests** (−11 ideas-screen.test.js,
+    +6 goals-panel.test.js, plan/smoke updated); lint clean; build OK.
+  - **Follow-ups noted (not done this session):** a full 4-formatter consolidation (`shared.jsx
+    fmt` vs `formatters.js` uppercase-K/2-dec vs `NumbersScreen fmtK` vs `apply-preview fmtMoney`)
+    into one calm-money source is the natural next polish; preview money deltas still show full
+    dollars.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (827 tests)
+- `npm test` — run model + formatter + render-smoke tests (823 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

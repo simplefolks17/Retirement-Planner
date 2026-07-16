@@ -62,6 +62,17 @@ Expanded Jun 12 2026 after a code audit of real Horizon incidents (wrong functio
 
 ### Navigation spec
 
+> **Dated amendment (2026-07-16) — Ideas retired; "explore" folds into Plan.** The **Ideas** screen
+> was removed and its capabilities moved onto **Plan** (an arc-anchored **Explore tray** with two
+> facets: Try a change = the levers; Goals = multi-event life-goal placement). The "Ideas = explore"
+> intent named in the End-state framing is now served *in place* on Plan rather than as a separate
+> screen — the arc is the shared canvas for both adjusting levers and placing goals, so co-locating
+> them there is the calmer expression of the same intent. Desktop content nav is now **Plan ·
+> Journey · Numbers · Strategies · Someday · My details** (6); mobile bar is **Plan · Journey ·
+> Numbers · Strategies · More**. The specs below are retained as the prior plan of record;
+> SP-2/SP-4/SP-5 items that referenced "Ideas → Events / Dials / My scenarios" now target Plan's
+> Explore tray. See `CLAUDE.md` dated status + `docs/HORIZON.md` Nav note.
+
 - **Desktop content nav (7):** **Plan · Journey · Ideas · Numbers · Strategies · Someday · My details** — plus **Settings as a right-side gear utility** next to the existing on-track pill / Classic button (not a content tab; content nav stays at 7).
 - **Mobile bottom bar (5), at Level 2 ship:** **Plan · Journey · Ideas · Numbers · More** — "More" opens a slide-up sheet (Strategies · Someday · My details · Settings).
 - **Mobile bottom bar at Level 3 ship:** **Plan · Ideas · Numbers · Strategies · More** (Journey · Someday · My details · Settings) — owner decision 1; Strategies replaces Journey in the bar because deciding is habitual, narrative is occasional. Desktop keeps Journey at position 2.

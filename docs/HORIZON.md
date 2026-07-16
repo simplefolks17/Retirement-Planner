@@ -153,7 +153,19 @@ Pass `scenarioData` (same shape as `chartData`) to render a dotted accent-colore
 
 ### Nav
 
-5-tab nav bar: **Plan · Ideas · The numbers · Someday · Settings**
+> **Updated 2026-07-16 — Ideas retired.** The **Ideas** page was removed; its capabilities moved
+> onto **Plan**. Plan now hosts an arc-anchored **Explore tray** (collapsed by default) with two
+> facets: **Try a change** (the preview-first Retire-at / Monthly-spend levers + quick-jump chips)
+> and **Goals** (multi-event life-goal placement — numbered Goal 1 / Goal 2 …, up to
+> `MAX_MONEY_EVENTS` = 12, `DEFAULT_VISIBLE_GOALS` = 3 shown before "+ Add more goals"). New files:
+> `src/horizon/ExploreTray.jsx`, `src/horizon/GoalsPanel.jsx`, `src/horizon/presets.js` (the
+> `LIFE_EVENTS`/`RETIRE_JUMPS` tables, moved out of the deleted `IdeasScreen.jsx`). Mobile bottom
+> bar is now **Plan · Journey · Numbers · Strategies · More**. The "Ideas screen" section below is
+> retained as history. See `CLAUDE.md`'s dated status entry + `docs/BUGS.md` BUG-44 addendum.
+
+Desktop nav (post-Ideas): **Plan · Journey · The numbers · Strategies · Someday · My details ·
+Settings**. *(Historical:* the original shell was a 5-tab bar: **Plan · Ideas · The numbers ·
+Someday · Settings**.)*
 
 Right side of nav: "On track" / "Needs attention" status pill + "Classic view" button (calls `onShowClassic` prop).
 
@@ -167,6 +179,11 @@ Right side of nav: "On track" / "Needs attention" status pill + "Classic view" b
 - **"Make this my plan"** button → ConfirmModal → calls `commitPlan({ retirementAge, annualExpenses })` → 2-second "✓ Plan saved" toast
 
 ### Ideas screen
+
+> **RETIRED 2026-07-16.** The Ideas screen no longer exists — see the "Ideas retired" note under
+> **Nav** above. Its Dials levers live on Plan's Explore tray "Try a change" facet (with the
+> `RETIRE_JUMPS` quick-jump chips); its Events life-goal placement lives on the "Goals" facet
+> (`GoalsPanel.jsx`), now supporting multiple numbered goals. The text below is kept for history.
 
 > **Updated 2026-07-12 (owner decision).** This section describes the CURRENT shape after two
 > redesigns: the 2026-07-11 Plan/Ideas re-differentiation (SP-5 tidy — segmented control + live

@@ -1001,6 +1001,13 @@ var DATA = [
     ds: "Pattern SP-6 for the spouse engine (#30): per-person data gets a You / Spouse / Household segment toggle, rendered only when household.hasSpouse (the applicability flag travels with the data, principle 8) and only on genuinely per-scope surfaces — Plan stats, Numbers → Accounts, Journey. Strategy flows stay household-scope by default (conversion, SS coordination, and RMDs are inherently MFJ-level computations), which keeps the catalogue from exploding into per-scope answers. The locked Spouse segment is the natural #30 upsell surface; the Household segment is #31's dashboard.",
     dt: "Gated on the #30 engine shipping its household bundle. Done when the single-filer default renders no toggle anywhere, the three surfaces scope correctly with a spouse bundle present (smoke tests), and strategy flows show one household answer. See docs/ROADMAP.md WI-5.6 + SP-6.",
     cx: "Medium", im: "Medium", af: ["PlanScreen.jsx / NumbersScreen.jsx / JourneyScreen.jsx (scope toggle)", "App.jsx (household bundle pass-through)"], sv: "none (renders #30's bundle)"
+  },
+  {
+    id: 125, pr: 1, sec: "Horizon Depth Ladder", st: "done",
+    ti: "Multi-goal timeline on Plan + Ideas retirement + calm numbers",
+    ds: "Users can place MANY life events as numbered Goals (Goal 1, Goal 2 …) instead of one-per-preset. Goals + the 'Try a change' levers now live on the Plan screen's arc-anchored Explore tray (collapsed by default, two facets), and the redundant Ideas page was retired. Numbers calmed (age-based longevity, no stray decimals).",
+    dt: "New ExploreTray.jsx (facets: Try a change · Goals) + GoalsPanel.jsx (numbered list, preset quick-adds each seeding a NEW id-keyed goal so duplicates coexist, DEFAULT_VISIBLE_GOALS=3 → '+ Add more goals' + Custom, cap MAX_MONEY_EVENTS=12). Presets moved to shared presets.js. IdeasScreen deleted; Journey promoted into the mobile bar; navigate() degrades stale ideas deep-links to Plan. apply-preview.js longevity now reads 'to age 87'; shared fmtMonthly for lever readouts. Browser-verified two goals on the arc. 827→823 tests; golden master untouched.",
+    cx: "Medium", im: "High", af: ["src/horizon/ExploreTray.jsx (new)", "src/horizon/GoalsPanel.jsx (new)", "src/horizon/presets.js (new)", "src/horizon/screens/PlanScreen.jsx", "src/components/HorizonShell.jsx", "src/model/apply-preview.js", "src/config/irs-2026.js"], sv: "moneyEvents (existing; id-keyed saveEvent/removeEvent)"
   }
 ];
 

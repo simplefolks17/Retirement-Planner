@@ -700,6 +700,20 @@ Events-mode placed-pill regression test replacing this bug's original test cover
 "Big trip" only lives there); `src/__tests__/horizon-screens-smoke.test.js` (Ideas scenario-run
 smoke retargeted to the Dials chip). 716 → **715** tests; golden master untouched.
 
+**Addendum (2026-07-16) — the label-based "placed pill" mechanism is retired, but BUG-44's
+failure class stays closed.** The multi-goal timeline feature (see `CLAUDE.md` status) deletes
+the whole Ideas Events UI, including `committedByLabel`. Goals are now placed/listed/edited on
+the Plan screen's Explore tray (`GoalsPanel.jsx`). The by-label "✓ placed" convention is gone —
+**and that is intentional**: a user placing two "Big trip" goals is now a first-class, supported
+outcome (Goal 1 / Goal 2), not something to dedupe. BUG-44's actual failure mode (a stateless
+preset card minting a fresh id on every re-apply) does **not** return, and for a stronger reason
+than before: presets are pure **add** affordances (they always seed a NEW goal via
+`presetSeed`, no `eventId`), while every EDIT path — a goal-row tap or an arc-badge tap — carries
+the committed `eventId` into `saveEvent`'s **upsert-by-id**. There is no "tap a card, a hidden
+value silently applies" surface left at all, so a re-apply can't duplicate. The
+`goals-panel.test.js` block locks that two same-label goals coexist and that edit/remove are
+id-keyed.
+
 ---
 
 ### BUG-45 — `buildDurationRail` didn't inherit the H1 exclude-committed-event fix (found + fixed 2026-07-11, post-fix verification pass)
