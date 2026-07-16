@@ -6,7 +6,7 @@ import {
   ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
-import { fmt, fmtPct } from "./formatters.js";
+import { fmt, fmtPct, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
@@ -2073,7 +2073,7 @@ export default function App() {
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <Slider label="Gross Income" value={currentIncome} min={20_000} max={500_000} step={5_000}
-                  format={v => `$${v.toLocaleString()}`} onChange={setCurrentIncome} />
+                  format={v => fmtFull(v)} onChange={setCurrentIncome} />
                 <Slider label="Income Growth / yr" value={incomeGrowth} min={0} max={15} step={0.5}
                   format={v => `${v}%`} onChange={setIncomeGrowth} valueColor={C.purple} />
                 {incomeGrowth > 0 && (
@@ -2129,7 +2129,7 @@ export default function App() {
                   </div>
                   <Slider label="Other Pre-Tax (FSA, dep. care, transit)" value={otherPreTaxDeduc}
                     min={0} max={20_000} step={250}
-                    format={v => v === 0 ? "None" : `$${v.toLocaleString()}`}
+                    format={v => v === 0 ? "None" : fmtFull(v)}
                     onChange={setOtherPreTaxDeduc} valueColor={C.blue} />
                   <p style={{ margin: "-8px 0 0", fontSize: 9, color: C.muted, lineHeight: 1.4 }}>
                     401k + HSA are auto-included. Add FSA, dependent care, or other payroll deductions here.
@@ -2144,7 +2144,7 @@ export default function App() {
                     Spouse / Partner Income
                   </p>
                   <Slider label="Spouse Gross Income" value={spouseIncome} min={0} max={500_000} step={5_000}
-                    format={v => v === 0 ? "None" : `$${v.toLocaleString()}`} onChange={setSpouseIncome} valueColor={C.purple} />
+                    format={v => v === 0 ? "None" : fmtFull(v)} onChange={setSpouseIncome} valueColor={C.purple} />
                   {spouseIncome > 0 && (
                     <>
                       <Slider label="Spouse Income Growth / yr" value={spouseIncomeGrowth} min={0} max={15} step={0.5}
@@ -2307,7 +2307,7 @@ export default function App() {
               label="Annual Living Expenses"
               value={effectiveLiving}
               min={10_000} max={Math.max(grossAfterTax, 30_000)} step={1_000}
-              format={v => `$${v.toLocaleString()}`}
+              format={v => fmtFull(v)}
               onChange={v => { setLivingExpenses(v); setPreApplySnapshot(null); }}
             />
             <p style={{ margin: "-8px 0 0", fontSize: 10, color: C.muted }}>
@@ -2789,7 +2789,7 @@ export default function App() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 12, color, fontWeight: 600 }}>{acct?.key ?? dataKey}</span>
                     <span style={{ fontSize: 10, color: C.muted }}>
-                      {acct?.contrib > 0 ? `$${acct.contrib.toLocaleString()}/yr` : "no contributions"}
+                      {acct?.contrib > 0 ? `${fmtFull(acct.contrib)}/yr` : "no contributions"}
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -2816,7 +2816,7 @@ export default function App() {
           <div>
             <Slider label="Estimated Annual Expenses in Retirement"
               value={effectiveExpenses} min={10_000} max={300_000} step={1_000}
-              format={v => `$${v.toLocaleString()}`}
+              format={v => fmtFull(v)}
               onChange={v => setAnnualExpenses(v)} />
             <p style={{ margin: "4px 0 0", fontSize: 10, color: C.muted }}>
               Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}</span>
@@ -3154,7 +3154,7 @@ export default function App() {
 
                 <Slider label="Spouse's Own SS Benefit at FRA (age 67, annual)" value={spouseSsEstimate}
                   min={0} max={60_000} step={500}
-                  format={v => v === 0 ? "None" : `$${v.toLocaleString()}`}
+                  format={v => v === 0 ? "None" : fmtFull(v)}
                   onChange={setSpouseSsEstimate} valueColor={C.green} />
                 <p style={{ margin: "-6px 0 10px", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
                   Enter the benefit shown on the spouse's my Social Security statement (their estimated benefit <strong>at age 67</strong>).
@@ -3227,7 +3227,7 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <Slider label="Monthly Pension Amount" value={pensionMonthly}
                   min={0} max={10_000} step={100}
-                  format={v => v === 0 ? "None" : `$${v.toLocaleString()}/mo`}
+                  format={v => v === 0 ? "None" : `${fmtFull(v)}/mo`}
                   onChange={setPensionMonthly} valueColor={C.blue} />
                 {pensionMonthly > 0 && (
                   <Slider label="Pension Start Age" value={pensionStartAge} min={50} max={75}
@@ -3533,7 +3533,7 @@ export default function App() {
                   {conversionMode === "custom" && (
                     <Slider label="Annual conversion amount" value={annualConversionAmt}
                       min={0} max={500_000} step={5_000}
-                      format={v => `$${v.toLocaleString()}`}
+                      format={v => fmtFull(v)}
                       onChange={setAnnualConversionAmt} valueColor={C.blue} />
                   )}
                 </div>

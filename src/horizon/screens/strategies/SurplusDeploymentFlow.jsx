@@ -8,7 +8,8 @@
 
 import React, { useState } from "react";
 import { HF, HM } from "../../ThemeContext.jsx";
-import { DetailField, money } from "../../fields.jsx";
+import { DetailField } from "../../fields.jsx";
+import { fmt } from "../../../formatters.js";
 import { SectionLabel, NoteBox, ListRow, ListCard } from "./flow-ui.jsx";
 import ApplyPreviewModal from "../../ApplyPreviewModal.jsx";
 
@@ -27,7 +28,7 @@ export default function SurplusDeploymentFlow({ t, props, isMobile = false }) {
         taxable overflow).
       </NoteBox>
       <div style={{ font: `400 12px ${HF}`, color: t.mut }}>
-        Available surplus: <span style={{ font: `600 12px ${HM}`, color: t.ink }}>{money(sv.availableSurplus)}/yr</span>
+        Available surplus: <span style={{ font: `600 12px ${HM}`, color: t.ink }}>{fmt(sv.availableSurplus)}/yr</span>
       </div>
 
       {/* ── 2. Deploy-percent control ── */}
@@ -44,7 +45,7 @@ export default function SurplusDeploymentFlow({ t, props, isMobile = false }) {
           <ListCard t={t}>
             {sv.extraRows.map((row, i) => (
               <ListRow key={row.key} t={t} first={i === 0}
-                label={row.label} value={`${money(row.amount)}/yr`} sub={row.sub} tone="good" />
+                label={row.label} value={`${fmt(row.amount)}/yr`} sub={row.sub} tone="good" />
             ))}
           </ListCard>
         ) : (
@@ -57,7 +58,7 @@ export default function SurplusDeploymentFlow({ t, props, isMobile = false }) {
         {sv.optRows.length > 0 ? (
           <ListCard t={t}>
             {sv.optRows.map((row, i) => (
-              <ListRow key={row.key} t={t} first={i === 0} label={row.label} value={`${money(row.amount)}/yr`} />
+              <ListRow key={row.key} t={t} first={i === 0} label={row.label} value={`${fmt(row.amount)}/yr`} />
             ))}
           </ListCard>
         ) : (

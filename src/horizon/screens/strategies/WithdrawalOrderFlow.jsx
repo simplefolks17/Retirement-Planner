@@ -6,7 +6,7 @@
 // component performs zero arithmetic and zero comparisons on model values.
 
 import React from "react";
-import { money } from "../../fields.jsx";
+import { fmt } from "../../../formatters.js";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW, ListRow, ListCard } from "./flow-ui.jsx";
 
 export default function WithdrawalOrderFlow({ t, props }) {
@@ -28,7 +28,7 @@ export default function WithdrawalOrderFlow({ t, props }) {
         <ListCard t={t}>
           {wv.steps.map((step, i) => (
             <ListRow key={step.key} t={t} first={i === 0}
-              index={i + 1} label={step.label} value={money(step.amount)} sub={step.note} />
+              index={i + 1} label={step.label} value={fmt(step.amount)} sub={step.note} />
           ))}
         </ListCard>
       </div>
@@ -37,8 +37,8 @@ export default function WithdrawalOrderFlow({ t, props }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <SectionLabel t={t}>Tax-optimal vs. worst case</SectionLabel>
         <div style={STAT_ROW}>
-          <StatTile t={t} label="This order" value={money(wv.yr1TaxOptimal)} tone="good" />
-          <StatTile t={t} label="Worst case" value={money(wv.yr1TaxWorstCase)}
+          <StatTile t={t} label="This order" value={fmt(wv.yr1TaxOptimal)} tone="good" />
+          <StatTile t={t} label="Worst case" value={fmt(wv.yr1TaxWorstCase)}
             sub="drawing all pre-tax first" tone="warm" />
         </div>
       </div>
@@ -46,7 +46,7 @@ export default function WithdrawalOrderFlow({ t, props }) {
       {/* ── 4. Savings callout (only when there IS a saving to claim) ── */}
       {wv.hasSavings && (
         <NoteBox t={t} tone="good">
-          {money(wv.yr1TaxSavings)} saved in year-1 tax by drawing in this order, instead of
+          {fmt(wv.yr1TaxSavings)} saved in year-1 tax by drawing in this order, instead of
           worst case.
         </NoteBox>
       )}

@@ -25,6 +25,7 @@
 
 import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
+import { fmt as fmtMoney } from "../formatters.js";
 
 const VW = 1200;
 const AGE_SPAN_FIXED_START = 30; // coordinate system always starts at 30 for consistent scale
@@ -66,12 +67,6 @@ function smoothPath(pts) {
     d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0]} ${p2[1]}`;
   }
   return d;
-}
-
-function fmtMoney(n) {
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1)}M`;
-  if (n >= 1e3) return `$${Math.round(n / 1e3)}k`;
-  return `$${Math.round(n)}`;
 }
 
 // Find the age at which chartData first crosses a target value (going up)

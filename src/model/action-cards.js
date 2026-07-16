@@ -3,7 +3,7 @@
 // This keeps impactColor values consistent with the rest of the UI without
 // requiring a COLOR_MAP translation layer.
 
-import { fmt } from "../formatters.js";
+import { fmt, fmtFull } from "../formatters.js";
 import { TAX_DATA_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026, SS_MAX_CLAIM_AGE, SS_FRA, RMD_START_AGE } from "../config/irs-2026.js";
 import { C } from "../theme.js";
 
@@ -96,8 +96,8 @@ export function generatePhaseActions({
       mode: "comparative",
       title: rothFullyPhased ? "Roth IRA: Over the Limit" : "Roth IRA: Phase-Out Zone",
       body: rothFullyPhased
-        ? `Your ${filingStatus === "mfj" ? "combined household " : ""}MAGI ($${rothMAGI.toLocaleString()}) exceeds the ${TAX_DATA_2026[filingStatus].label} Roth IRA contribution limit. Direct contributions aren't allowed, but a Backdoor Roth IRA conversion is still available — contribute to a Traditional IRA, then immediately convert to Roth.`
-        : `Your ${filingStatus === "mfj" ? "combined " : ""}MAGI ($${rothMAGI.toLocaleString()}) is in the Roth phase-out zone. Your maximum Roth contribution is reduced. Consider a Backdoor Roth to get the full amount in.`,
+        ? `Your ${filingStatus === "mfj" ? "combined household " : ""}MAGI (${fmtFull(rothMAGI)}) exceeds the ${TAX_DATA_2026[filingStatus].label} Roth IRA contribution limit. Direct contributions aren't allowed, but a Backdoor Roth IRA conversion is still available — contribute to a Traditional IRA, then immediately convert to Roth.`
+        : `Your ${filingStatus === "mfj" ? "combined " : ""}MAGI (${fmtFull(rothMAGI)}) is in the Roth phase-out zone. Your maximum Roth contribution is reduced. Consider a Backdoor Roth to get the full amount in.`,
       vsA: { label: "Direct Roth", value: rothFullyPhased ? "$0" : "Reduced", color: C.orange },
       vsB: { label: "Backdoor Roth", value: fmt(ROTH_IRA_LIMIT_2026), color: C.green, sub: "full amount" },
     });

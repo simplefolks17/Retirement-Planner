@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (823 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (837 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1312,15 +1312,34 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     @40) → both numbered rows + both arc badges + the portfolio/arc updated ($4.0M → $3.9M). All
     Horizon screens render; Classic round-trip OK. 827 → **823 tests** (−11 ideas-screen.test.js,
     +6 goals-panel.test.js, plan/smoke updated); lint clean; build OK.
-  - **Follow-ups noted (not done this session):** a full 4-formatter consolidation (`shared.jsx
-    fmt` vs `formatters.js` uppercase-K/2-dec vs `NumbersScreen fmtK` vs `apply-preview fmtMoney`)
-    into one calm-money source is the natural next polish; preview money deltas still show full
-    dollars.
+  - **Follow-up CLOSED same-day (see next entry):** the full formatter consolidation shipped as
+    the "calm money" pass below.
+- **Calm-money formatter consolidation (2026-07-16, same branch).** The follow-up flagged above,
+  done app-wide: SEVEN money-format implementations (`formatters.js` uppercase-K/2-dec-M,
+  `horizon/shared.jsx` fmt, local copies in `ArcGraph.jsx` + `HorizonShell.jsx`, `fields.jsx
+  money`, `apply-preview.js` fmtMoney/signedMoneyLabel, `NumbersScreen` fmtK/fmtExact) collapsed
+  into ONE canonical, dependency-free `src/formatters.js` importable by model + components +
+  horizon: `fmt` (calm: `$980`/`$118k`/`$1.2M`, U+2212 negatives, `—` for missing — never a
+  fabricated `$0`), `fmtFull` (whole-dollar commas — ONLY editable-input readouts + Statement/
+  Classic ledger tables), `fmtSigned` (`+$22k` deltas), `fmtMonthly`/`fmtMo` (nearest $100),
+  `fmtPct`. Everything else re-exports/delegates. **Two-tier policy:** a number the user TYPES
+  stays full; a number the model DERIVES for display goes calm. User-visible: Classic goes calm
+  everywhere (`$3.57M`→`$3.6M`, `$118K`→`$118k`, `-$2K`→`−$2k`, non-finite `$0`→`—`); preview
+  metrics + Strategies card headlines/stat tiles calm (`−$9,854`→`−$10k`, first RMD
+  `$62,508`→`$63k`). A **source-scan guard test** (formatters.test.js) fails the suite if any
+  file outside `formatters.js`/`DeferredInput.jsx` builds a `$${…}` template literal, locking
+  the one-formatter convention. Classic detail-tier JSX-text `$`-companion lines (MAGI notes,
+  "Monthly:" readouts) intentionally stay full precision; Classic WhatIfPanel's decimal-year
+  delta left as-is (legacy power view). Implemented by a Sonnet subagent from a written spec;
+  orchestrator reviewed the diff, fixed a `fmtMonthly` negative-sign edge, browser-verified all
+  screens + Classic. 823 → **837 tests** (formatters 9→23 incl. the guard + the 999,600→`$1M`
+  promotion edge; strategies/apply-preview/conversion-wiring/money-events locks recalibrated);
+  golden master untouched; lint clean; build OK.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (823 tests)
+- `npm test` — run model + formatter + render-smoke tests (837 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

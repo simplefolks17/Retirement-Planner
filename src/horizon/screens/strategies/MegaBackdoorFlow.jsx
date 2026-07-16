@@ -9,7 +9,8 @@
 
 import React from "react";
 import { HF } from "../../ThemeContext.jsx";
-import { DetailField, money } from "../../fields.jsx";
+import { DetailField } from "../../fields.jsx";
+import { fmt } from "../../../formatters.js";
 import { SectionLabel, NoteBox, ListRow, ListCard } from "./flow-ui.jsx";
 
 export default function MegaBackdoorFlow({ t, props, isMobile = false }) {
@@ -33,7 +34,7 @@ export default function MegaBackdoorFlow({ t, props, isMobile = false }) {
         <ListCard t={t}>
           {mv.capacityRows.map((row, i) => (
             <ListRow key={row.label} t={t} first={i === 0}
-              label={row.label} value={money(row.val)} strong={row.isTotal}
+              label={row.label} value={fmt(row.val)} strong={row.isTotal}
               tone={row.isTotal ? "good" : undefined} />
           ))}
         </ListCard>
@@ -66,7 +67,7 @@ export default function MegaBackdoorFlow({ t, props, isMobile = false }) {
           <ListCard t={t}>
             {mv.growth.map((g, i) => (
               <ListRow key={g.yrs} t={t} first={i === 0}
-                label={`In ${g.yrs} years`} value={money(g.val)} />
+                label={`In ${g.yrs} years`} value={fmt(g.val)} />
             ))}
           </ListCard>
         </div>

@@ -8,6 +8,7 @@
 import React from "react";
 import { HF, HM } from "../../ThemeContext.jsx";
 import { DetailField, money } from "../../fields.jsx";
+import { fmt } from "../../../formatters.js";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW } from "./flow-ui.jsx";
 import { RMD_START_AGE } from "../../../config/irs-2026.js";
 
@@ -69,11 +70,11 @@ export default function RMDOutlookFlow({ t, props, isMobile = false }) {
         </NoteBox>
       ) : (
         <div style={STAT_ROW}>
-          <StatTile t={t} label={`First RMD at ${RMD_START_AGE}`} value={money(rv.firstRMDAmount)}
+          <StatTile t={t} label={`First RMD at ${RMD_START_AGE}`} value={fmt(rv.firstRMDAmount)}
             sub="mandatory · taxed as income" tone="warm" />
-          <StatTile t={t} label="Lifetime RMD total" value={money(rv.totalRMDs)}
+          <StatTile t={t} label="Lifetime RMD total" value={fmt(rv.totalRMDs)}
             sub="forced out of the 401k" tone="warm" />
-          <StatTile t={t} label="Est. total tax on RMDs" value={money(rv.rmdTaxBite)}
+          <StatTile t={t} label="Est. total tax on RMDs" value={fmt(rv.rmdTaxBite)}
             sub={`at ${rv.effectiveRMDTaxRateLabel} effective`} tone="warm" />
         </div>
       )}
@@ -94,9 +95,9 @@ export default function RMDOutlookFlow({ t, props, isMobile = false }) {
                 <React.Fragment key={age}>
                   <span style={{ font: `600 12px ${HM}`, color: t.accent }}>{age}</span>
                   <span style={{ font: `400 12px ${HM}`, color: t.mut }}>{divisor ?? "—"}</span>
-                  <span style={{ font: `400 12px ${HM}`, color: t.ink }}>{money(bal)}</span>
-                  <span style={{ font: `600 12px ${HM}`, color: t.warm }}>{money(rmd)}</span>
-                  <span style={{ font: `400 12px ${HM}`, color: t.mut }}>{money(tax)}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.ink }}>{fmt(bal)}</span>
+                  <span style={{ font: `600 12px ${HM}`, color: t.warm }}>{fmt(rmd)}</span>
+                  <span style={{ font: `400 12px ${HM}`, color: t.mut }}>{fmt(tax)}</span>
                 </React.Fragment>
               ))}
             </div>

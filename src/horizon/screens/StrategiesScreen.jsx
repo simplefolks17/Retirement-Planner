@@ -28,7 +28,7 @@ import { HF, HM } from "../ThemeContext.jsx";
 // IRS ages come from config even in display copy (rule 1 / principle 9) — never
 // hardcode "73"/"67" in strings (the BUG-25 / WI-0.1 anti-pattern).
 import { RMD_START_AGE } from "../../config/irs-2026.js";
-import { money } from "../fields.jsx";   // shared sign-aware money formatter
+import { fmt } from "../../formatters.js";   // calm money — card headlines are derived summaries, not editable readouts
 import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
 import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
 import ConversionPlannerFlow from "./strategies/ConversionPlannerFlow.jsx";
@@ -80,7 +80,7 @@ function faceFor(id, props) {
       const nb = cd?.adjustedNetConversionBenefit;
       return {
         applicable: sv.conversion.applicable,
-        headline: money(nb),
+        headline: fmt(nb),
         sub: nb == null
           ? "estimate unavailable"
           : cd.isPositive ? "est. lifetime benefit, after healthcare" : "not worth it at this spend",
@@ -90,7 +90,7 @@ function faceFor(id, props) {
     case "withdrawal":
       return {
         applicable: sv.withdrawal.applicable,
-        headline: money(props.withdrawalView?.yr1TaxSavings),
+        headline: fmt(props.withdrawalView?.yr1TaxSavings),
         sub: "saved in year-1 tax",
         tone: "good",
       };
@@ -100,7 +100,7 @@ function faceFor(id, props) {
       const v = props.ssView;
       return {
         applicable: sv.ss.applicable,
-        headline: `${money(v.ssMonthly)}/mo`,
+        headline: `${fmt(v.ssMonthly)}/mo`,
         sub: `claiming at age ${v.claimAge}`,
         tone: "accent",
       };
@@ -109,7 +109,7 @@ function faceFor(id, props) {
       const v = props.rmdView;
       return {
         applicable: sv.rmd.applicable,
-        headline: money(v.firstRMDAmount),
+        headline: fmt(v.firstRMDAmount),
         sub: v.firstRMDAge != null ? `first RMD at age ${v.firstRMDAge}` : "first RMD",
         tone: "accent",
       };
@@ -117,14 +117,14 @@ function faceFor(id, props) {
     case "surplus":
       return {
         applicable: sv.surplus.applicable,
-        headline: `${money(props.budget?.availableSurplus)}/yr`,
+        headline: `${fmt(props.budget?.availableSurplus)}/yr`,
         sub: "unallocated savings",
         tone: "good",
       };
     case "mega":
       return {
         applicable: sv.mega.applicable,
-        headline: `${money(props.megaView?.capacity)}/yr`,
+        headline: `${fmt(props.megaView?.capacity)}/yr`,
         sub: "after-tax space",
         tone: "accent",
       };
@@ -141,13 +141,13 @@ function faceFor(id, props) {
 function detailRows(id, props) {
   switch (id) {
     case "withdrawal":
-      return [["Year-1 tax saved", money(props.withdrawalView?.yr1TaxSavings)]];
+      return [["Year-1 tax saved", fmt(props.withdrawalView?.yr1TaxSavings)]];
     case "surplus":
-      return [["Available surplus", `${money(props.budget?.availableSurplus)}/yr`]];
+      return [["Available surplus", `${fmt(props.budget?.availableSurplus)}/yr`]];
     case "mega": {
       const mv = props.megaView;
-      const rows = [["After-tax space", `${money(mv?.capacity)}/yr`]];
-      (mv?.growth ?? []).forEach(g => rows.push([`Grows to, in ${g.yrs} yrs`, money(g.val)]));
+      const rows = [["After-tax space", `${fmt(mv?.capacity)}/yr`]];
+      (mv?.growth ?? []).forEach(g => rows.push([`Grows to, in ${g.yrs} yrs`, fmt(g.val)]));
       return rows;
     }
     default:

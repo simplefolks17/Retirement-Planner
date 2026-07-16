@@ -8,9 +8,11 @@
 // language without re-implementing delta/edge-case semantics per site.
 //
 // The three format kinds:
-//   "money"     — a plain before/after dollar figure (sign-aware: a negative
-//                 Roth benefit reads "−$9,854", matching src/horizon/fields.jsx
-//                 `money`).
+//   "money"     — a CALM, abbreviated before/after dollar figure via the
+//                 canonical `fmt` (src/formatters.js) — "−$10k" not
+//                 "−$9,854" (2026-07-16 "calm money" consolidation: a preview
+//                 metric is a headline-style at-a-glance figure, not an
+//                 editable-input readout, so it gets the calm tier).
 //   "longevity" — a { years, depletionAge } pair. `years === Infinity` means
 //                 "never depletes within the walk horizon" (BUG-35's
 //                 trivially-sustainable case) and gets its own copy + delta
@@ -22,27 +24,19 @@
 //                 codebase's existing convention, e.g. withdrawalRate). Delta
 //                 is in percentage points ("+2.1 pts" / "−2.1 pts").
 
-// Sign-aware dollar formatter — same visual rule as fields.jsx `money` (kept
-// as a separate copy here rather than importing across the model/horizon
-// boundary: src/model/ must stay import-free of src/horizon/, and this one
-// is small/stable enough that duplication is cheaper than a shared-import
-// detour). U+2212 (minus sign), not the ASCII hyphen, for the negative case.
-export function fmtMoney(v) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const r = Math.round(v);
-  return r < 0 ? `−$${Math.abs(r).toLocaleString("en-US")}` : `$${r.toLocaleString("en-US")}`;
-}
+import { fmt, fmtFull, fmtSigned } from "../formatters.js";
 
-// Signed delta label for a nonzero money delta, e.g. "+$22,254" / "−$9,854".
-function signedMoneyLabel(delta) {
-  const r = Math.round(delta);
-  const abs = Math.abs(r).toLocaleString("en-US");
-  return r < 0 ? `−$${abs}` : `+$${abs}`;
-}
+// `fmtMoney` — kept as a named export (aliased to the canonical fmtFull) for
+// existing importers (action-line copy below, and tests that check exact
+// full-precision formatting). New code that wants FULL precision should
+// import fmtFull from "../formatters.js" directly; this alias exists only so
+// nothing importing `fmtMoney` from this module needs to change.
+export const fmtMoney = fmtFull;
 
 function moneyMetric({ id, label, before, after, betterDir }) {
-  const beforeStr = fmtMoney(before);
-  const afterStr = fmtMoney(after);
+  // Calm, abbreviated display — a preview metric is a headline-style figure.
+  const beforeStr = fmt(before);
+  const afterStr = fmt(after);
 
   let delta;
   if (before == null || after == null || !Number.isFinite(before) || !Number.isFinite(after)) {
@@ -50,15 +44,18 @@ function moneyMetric({ id, label, before, after, betterDir }) {
     // been computed yet). Never fabricate a delta from a half-known pair.
     delta = { dir: "none", label: "—", tone: "neutral" };
   } else {
-    // Round before differencing — matches what fmtMoney actually displays, so a
-    // sub-dollar float gap between before/after can never render a "+$0"/"−$0"
-    // delta beside two identical-looking dollar figures (Gemini review).
+    // Round before differencing — matches what fmt() actually displays (to
+    // the nearest whole dollar/k/M step), so a sub-dollar float gap between
+    // before/after can never render a nonzero delta beside two identical-
+    // looking dollar figures (Gemini review; rounding rule preserved from the
+    // pre-calm implementation, now rounding to the whole dollar the abbrev-
+    // iation itself is built from).
     const d = Math.round(after) - Math.round(before);
     if (d === 0) {
       delta = { dir: "none", label: "no change", tone: "neutral" };
     } else {
       const dir = d > 0 ? "up" : "down";
-      delta = { dir, label: signedMoneyLabel(d), tone: dir === betterDir ? "good" : "warm" };
+      delta = { dir, label: fmtSigned(d), tone: dir === betterDir ? "good" : "warm" };
     }
   }
   return { id, label, before: beforeStr, after: afterStr, delta };
@@ -219,8 +216,8 @@ export function isSuggestionApplicable({
 export function buildConversionPreview({ current, candidate, suggestion, refAge }) {
   return {
     title: "Apply optimizer suggestion",
-    action: `Convert ${fmtMoney(suggestion.optimalConversion)}/yr starting at age ${suggestion.optimalStartAge} `
-      + `(now: ${fmtMoney(current.annualConversion)}/yr from age ${current.startAge})`,
+    action: `Convert ${fmt(suggestion.optimalConversion)}/yr starting at age ${suggestion.optimalStartAge} `
+      + `(now: ${fmt(current.annualConversion)}/yr from age ${current.startAge})`,
     confirmLabel: "Apply",
     metrics: [
       buildPreviewMetric({
@@ -265,8 +262,8 @@ export function buildConversionPreview({ current, candidate, suggestion, refAge 
 export function buildSurplusPreview({ current, candidate, deployment }) {
   return {
     title: "Apply optimized allocation",
-    action: `Deploy ${fmtMoney(deployment.totalExtra)}/yr (${deployment.pct}% of your `
-      + `${fmtMoney(deployment.availableSurplus)} surplus) in IRS-priority order`,
+    action: `Deploy ${fmt(deployment.totalExtra)}/yr (${deployment.pct}% of your `
+      + `${fmt(deployment.availableSurplus)} surplus) in IRS-priority order`,
     confirmLabel: "Apply",
     metrics: [
       buildPreviewMetric({

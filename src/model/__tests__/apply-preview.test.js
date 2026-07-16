@@ -71,15 +71,17 @@ describe("fmtMoney", () => {
 
 describe("buildPreviewMetric — money format", () => {
   it("dir up / tone good when the delta matches betterDir", () => {
+    // Preview metrics render CALM (abbreviated) money, not full precision —
+    // a headline-style at-a-glance figure, matching src/formatters.js `fmt`.
     const m = buildPreviewMetric({ id: "x", label: "L", before: -9_854, after: 12_400, betterDir: "up" });
-    expect(m.before).toBe("−$9,854");
-    expect(m.after).toBe("$12,400");
-    expect(m.delta).toEqual({ dir: "up", label: "+$22,254", tone: "good" });
+    expect(m.before).toBe("−$10k");
+    expect(m.after).toBe("$12k");
+    expect(m.delta).toEqual({ dir: "up", label: "+$22k", tone: "good" });
   });
 
   it("dir down / tone warm when betterDir is up but value fell", () => {
     const m = buildPreviewMetric({ id: "x", label: "L", before: 100_000, after: 80_000, betterDir: "up" });
-    expect(m.delta).toEqual({ dir: "down", label: "−$20,000", tone: "warm" });
+    expect(m.delta).toEqual({ dir: "down", label: "−$20k", tone: "warm" });
   });
 
   it("betterDir 'down' flips the tone mapping (e.g. lifetime RMD tax)", () => {
@@ -394,9 +396,11 @@ describe("buildConversionPreview", () => {
   });
 
   it("action string names both the suggested and the current amount/age", () => {
+    // Calm abbreviated money (fmt), matching the moneyMetric tier — a preview
+    // action line is headline-style copy, not an editable-input readout.
     const preview = buildConversionPreview({ current, candidate, suggestion, refAge: 90 });
-    expect(preview.action).toContain("$90,000/yr starting at age 61");
-    expect(preview.action).toContain("$82,765/yr from age 61");
+    expect(preview.action).toContain("$90k/yr starting at age 61");
+    expect(preview.action).toContain("$83k/yr from age 61");
   });
 
   it("the balAtRef label uses refAge", () => {

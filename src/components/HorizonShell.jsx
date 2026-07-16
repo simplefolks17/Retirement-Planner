@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
+import { fmt, fmtFull } from "../formatters.js";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
 import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
 import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
@@ -172,20 +173,15 @@ const OB_CLAMPS = {
   monthlySpend:  [500, 50_000],
 };
 
-// Compact money: $3.5M / $185k / $900 — never the runaway "$3484k".
-function obMoney(val) {
-  if (val >= 1e6) return `$${(val / 1e6).toFixed(val % 1e6 === 0 ? 0 : 1)}M`;
-  if (val >= 1e3) return `$${Math.round(val / 1e3)}k`;
-  return `$${Math.round(val)}`;
-}
-
 function fmtField(field, val) {
   switch (field) {
     case "currentAge":
     case "retirementAge": return String(val);
-    case "currentIncome": return obMoney(val);
-    case "totalSaved":    return obMoney(val);
-    case "monthlySpend":  return `$${val.toLocaleString()}`;
+    case "currentIncome": return fmt(val);
+    case "totalSaved":    return fmt(val);
+    // monthlySpend is a live editable-input readout (onboarding stepper) —
+    // full precision, not abbreviated (rule 10 tier: editable stays full).
+    case "monthlySpend":  return fmtFull(val);
     default: return String(val);
   }
 }
@@ -257,8 +253,8 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 
   const summaryStats = [
     ["Retire at",       String(vals.retirementAge),                        t.ink],
-    ["Monthly income",  `$${vals.monthlySpend.toLocaleString()}/mo`,       t.warm],
-    ["Savings today",   obMoney(vals.totalSaved),                          t.ink],
+    ["Monthly income",  `${fmtFull(vals.monthlySpend)}/mo`,                t.warm],
+    ["Savings today",   fmt(vals.totalSaved),                              t.ink],
   ];
 
   const stepBtnStyle = {
@@ -395,7 +391,7 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
         <ConfirmModal
           t={t}
           title="Save your answers as your starting plan?"
-          body={`Age ${vals.currentAge} · Retire at ${vals.retirementAge} · $${vals.monthlySpend.toLocaleString()}/mo`}
+          body={`Age ${vals.currentAge} · Retire at ${vals.retirementAge} · ${fmtFull(vals.monthlySpend)}/mo`}
           confirmLabel="Yes, save my plan"
           onConfirm={handleSave}
           onCancel={() => setShowConfirm(false)}

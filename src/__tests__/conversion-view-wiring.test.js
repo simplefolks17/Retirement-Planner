@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
-import { fmtMoney } from "../model/apply-preview.js";
+import { fmt } from "../formatters.js";
 import ConversionPlannerFlow from "../horizon/screens/strategies/ConversionPlannerFlow.jsx";
 
 // ── WI-3.6 (#103) conversionView wiring + WI-3.9 Apply-site self-consistency ──
@@ -114,7 +114,7 @@ describe("conversionView wiring (WI-3.6)", () => {
     // net benefit IS the optimizer's optimalBenefit — one objective, rendered
     // on two surfaces, so they can never diverge.
     const netRow = site.preview.metrics.find(m => m.id === "netBenefit");
-    expect(netRow.after).toBe(fmtMoney(optimizer.suggestedBenefit));
+    expect(netRow.after).toBe(fmt(optimizer.suggestedBenefit));
 
     app.unmount();
   });
