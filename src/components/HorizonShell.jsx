@@ -9,7 +9,6 @@ import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/The
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
 import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
 import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
-import IdeasScreen   from "../horizon/screens/IdeasScreen.jsx";
 import NumbersScreen from "../horizon/screens/NumbersScreen.jsx";
 import StrategiesScreen from "../horizon/screens/StrategiesScreen.jsx";
 import SomedayScreen from "../horizon/screens/SomedayScreen.jsx";
@@ -417,7 +416,8 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 export const SCREENS = [
   { id: "plan",       label: "Plan",        short: "Plan",     emoji: "◎",  icon: "◎" },
   { id: "journey",    label: "Journey",     short: "Journey",  emoji: "🗺", icon: "🗺" },
-  { id: "ideas",      label: "Ideas",       short: "Ideas",    emoji: "✦",  icon: "✦" },
+  // Ideas retired (2026-07-16): its levers ("Try a change") + life-event
+  // placement (Goals) moved onto the Plan screen's Explore tray.
   { id: "numbers",    label: "The numbers", short: "Numbers",  emoji: "▦",  icon: "▦" },
   // WI-3.3 (#100): Strategies — the decide-here destination (desktop position 5).
   { id: "strategies", label: "Strategies",  short: "Strategy", emoji: "♟",  icon: "♟" },
@@ -431,7 +431,7 @@ export const SCREENS = [
 // decide (owner decision 1, ROADMAP "End state"): Strategies swaps in at Level 3,
 // Journey moves to the More sheet. These are EXPLICIT id lists, not slices, because
 // the bar is no longer the first N screens (Strategies is desktop position 5).
-const MOBILE_BAR_IDS = ["plan", "ideas", "numbers", "strategies"];
+const MOBILE_BAR_IDS = ["plan", "journey", "numbers", "strategies"];
 const byId = id => SCREENS.find(s => s.id === id);
 // filter(Boolean) guards against a typo'd id in MOBILE_BAR_IDS (byId → undefined
 // → crash on the bar's destructuring map); the two sets stay exhaustive + disjoint.
@@ -506,8 +506,11 @@ export default function HorizonShell({ onShowClassic, ...props }) {
   // Single navigation entry point, passed to every screen alongside t/props.
   // Stat cards, the signals strip, and future deep-links all route through it.
   const navigate = useCallback((screenId, sub) => {
-    setScreen(screenId);
-    setSubView(sub ?? null);
+    // Unknown/retired screen ids (e.g. a stale "ideas" deep-link) degrade to
+    // Plan rather than rendering a blank body.
+    const validId = SCREENS.some(s => s.id === screenId) ? screenId : "plan";
+    setScreen(validId);
+    setSubView(validId === screenId ? (sub ?? null) : null);
   }, []);
 
   const { isSustainable, retirementAge, planView } = props;
@@ -585,7 +588,6 @@ export default function HorizonShell({ onShowClassic, ...props }) {
           }}>
             {screen === "plan"     && <PlanScreen    t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} />}
             {screen === "journey"  && <JourneyScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
-            {screen === "ideas"    && <IdeasScreen   t={t} props={props} glow={glow} strokeWidth={strokeWidth} isMobile={isMobile} navigate={navigate} initialMode={subView} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialTab={subView} />}
             {screen === "strategies" && <StrategiesScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialStrategy={subView} />}
             {screen === "someday"  && <SomedayScreen t={t} props={props} navigate={navigate} />}

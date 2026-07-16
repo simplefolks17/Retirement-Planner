@@ -1003,7 +1003,7 @@ export default function App() {
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
-  // need so IdeasScreen can call them directly. Memoized (V9 / principle 13) with the
+  // need so the screens can call them directly. Memoized (V9 / principle 13) with the
   // memoized whatIfSimInputs + retDrawShared as deps. Grown by named fields only —
   // baseYearsSustained added for calcWhatIfScenario's deltaYears (never repurpose).
   // retPhaseBase/conversionByAge/baseChart/addlPreTaxBal (2026-07-11, overlay-

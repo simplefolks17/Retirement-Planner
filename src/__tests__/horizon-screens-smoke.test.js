@@ -50,7 +50,6 @@ afterAll(() => {
 const SCREEN_MARKERS = {
   plan:     "Income for life",        // PlanScreen stat-card label
   journey:  "Building years",         // JourneyScreen Chapter 2 headline
-  ideas:    "Your future, explored.", // IdeasScreen page title
   numbers:  "Year by year",           // NumbersScreen tab label (always rendered)
   strategies: "Ways to keep more of what you've built", // StrategiesScreen subtitle (card-grid root)
   someday:  "work optional.",         // SomedayScreen display copy
@@ -143,16 +142,38 @@ describe("Horizon screens render smoke", () => {
     act(() => renderer.unmount());
   });
 
-  it("Ideas runs the calcWhatIfScenario one-run path when a Dials quick-jump chip is tapped", () => {
+  it("Plan runs the lever-preview path when a 'Try a change' quick-jump chip is tapped", () => {
     const { renderer, root } = mountApp();
-    clickByText(root, "Ideas");
-    clickByText(root, "Dials");
-    const jumpChip = root.findAll(
-      n => typeof n.props?.onClick === "function" && textOf(n).includes("Retire 2 yrs earlier")
+    // Plan is the default screen. Open the Explore tray's "Try a change" facet.
+    const changeTab = root.findAll(
+      n => n.type === "button" && textOf(n).includes("Try a change")
     )[0];
-    expect(jumpChip, "Ideas Dials quick-jump chip not found").toBeTruthy();
+    expect(changeTab, "Explore tray 'Try a change' facet not found").toBeTruthy();
+    act(() => { changeTab.props.onClick(); });
+    const jumpChip = root.findAll(
+      n => n.type === "button" && textOf(n).includes("Retire 2 yrs earlier")
+    )[0];
+    expect(jumpChip, "Try-a-change quick-jump chip not found").toBeTruthy();
     act(() => { jumpChip.props.onClick(); });
     expect(renderer.toJSON()).toBeTruthy();
+    act(() => renderer.unmount());
+  });
+
+  it("Plan places a goal via the Explore tray Goals facet (LifeEventSheet opens)", () => {
+    const { renderer, root } = mountApp();
+    const goalsTab = root.findAll(
+      n => n.type === "button" && textOf(n).includes("Goals")
+    )[0];
+    expect(goalsTab, "Explore tray 'Goals' facet not found").toBeTruthy();
+    act(() => { goalsTab.props.onClick(); });
+    // A preset quick-add opens the sheet in NEW mode.
+    const preset = root.findAll(
+      n => n.type === "button" && textOf(n).includes("Buy a home")
+    )[0];
+    expect(preset, "Goals preset quick-add not found").toBeTruthy();
+    act(() => { preset.props.onClick(); });
+    expect(renderer.toJSON()).toBeTruthy();
+    expect(visibleTextLength(renderer)).toBeGreaterThan(80);
     act(() => renderer.unmount());
   });
 });

@@ -574,7 +574,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           value={String(retirementAge)}
           sub={planHighlights?.yearsToRetirement != null ? `in ${planHighlights.yearsToRetirement} yrs` : undefined}
           accent={t.ink}
-          onClick={() => navigate("ideas", "dials")} />
+          onClick={() => navigate("details")} />
         <StatCard t={t} label="Income for life"
           value={fmtMo(effectiveExpenses)}
           sub={planHighlights?.incomeReplacementPct != null ? `${planHighlights.incomeReplacementPct}% replaced` : undefined}
