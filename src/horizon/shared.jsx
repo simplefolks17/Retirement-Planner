@@ -16,6 +16,15 @@ export function fmtMo(annual) {
   return `$${Math.round(annual / 12).toLocaleString()}`;
 }
 
+// Calm monthly formatter for a value that is ALREADY monthly (not annual):
+// rounds to the nearest $100 so lever readouts read "$5,200", not "$5,183".
+// Callers append "/mo". (Monthly figures stay full-dollar — abbreviating to
+// "$5k/mo" would lose too much — but they never show stray odd dollars.)
+export function fmtMonthly(monthly) {
+  if (monthly == null || isNaN(monthly)) return "—";
+  return `$${(Math.round(monthly / 100) * 100).toLocaleString()}`;
+}
+
 // onClick (optional, WI-1.1): makes the card a door to the screen that explains
 // its number. The card's natural size (~70px tall) already exceeds the 44px
 // minimum touch target; minHeight guards it if padding ever shrinks.

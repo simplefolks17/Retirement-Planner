@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RETIRE_JUMPS, LIFE_EVENTS } from "../screens/IdeasScreen.jsx";
+import { RETIRE_JUMPS, LIFE_EVENTS } from "../presets.js";
 
 // ── V11 / WI-0.2: value-locks for the hardcoded Ideas preset tables ──────────
 // These tables drive real model runs (calcWhatIfScenario overrides via the
