@@ -21,10 +21,18 @@ const FACETS = [
 export default function ExploreTray({
   t, isMobile, goalsCount = 0, changeStaged = false, changeFacet, goalsFacet,
 }) {
+  // Tri-state: null = auto (falls back to "change" while a change is staged,
+  // so a staged Apply/Discard is never silently hidden by default), "closed" =
+  // the user explicitly collapsed (wins over the staged fallback — without
+  // this sentinel the fallback re-opened the tray on every render and the
+  // collapse click silently did nothing), or a facet key.
   const [open, setOpen] = useState(null);
-  const effOpen = open ?? (changeStaged ? "change" : null);
+  const effOpen = open === "closed" ? null : (open ?? (changeStaged ? "change" : null));
 
-  const toggle = (k) => setOpen(cur => ((cur ?? (changeStaged ? "change" : null)) === k ? null : k));
+  // Collapsing while a change is staged is allowed: the offsets live in
+  // PlanScreen (nothing is lost), the staged dot on the facet tab stays
+  // visible on the collapsed bar, and one click reopens to Apply/Discard.
+  const toggle = (k) => setOpen(effOpen === k ? "closed" : k);
 
   const tab = (f) => {
     const on = effOpen === f.k;

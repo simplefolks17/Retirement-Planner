@@ -263,6 +263,29 @@ describe("PlanScreen — Explore tray: Try a change facet", () => {
     act(() => renderer.unmount());
   });
 
+  // Gemini review (PR #56): with a change staged, the auto-open fallback used
+  // to re-open the tray on every render, so the collapse click silently did
+  // nothing. The explicit "closed" sentinel must let the user collapse a dirty
+  // tray — and reopening must still offer Apply (the offsets survive).
+  it("the tray can be collapsed while a change is staged, and reopening restores Apply", () => {
+    const { renderer } = mount();
+    openFacet(renderer, "Try a change");
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBeGreaterThan(0);
+
+    // Collapse: the facet body (sliders + Apply) must actually disappear.
+    openFacet(renderer, "Try a change");
+    expect(rangeInputs(renderer.root).length).toBe(0);
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
+
+    // Reopen: the staged change survived — Apply/Discard are back.
+    openFacet(renderer, "Try a change");
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBeGreaterThan(0);
+    expect(buttonsByText(renderer.root, "Discard").length).toBe(1);
+    act(() => renderer.unmount());
+  });
+
   it("Discard clears the preview back to idle", () => {
     const { renderer } = mount();
     openFacet(renderer, "Try a change");
