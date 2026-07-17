@@ -3,10 +3,11 @@ import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo, fmtMonthly } from "../shared.jsx";
 import { fmtFull, fmtPct } from "../../formatters.js";
 
-// A deduction row: "−$12,400" for a finite value, plain "—" when missing —
-// never the "−—" a bare `−${fmtFull(v)}` template would produce (rule 10:
-// missing data renders the em dash without a fabricated sign).
-const negFull = (v) => (Number.isFinite(v) ? `−${fmtFull(v)}` : "—");
+// A deduction row: "−$12,400" for a finite value, plain "—" when missing.
+// Negation goes THROUGH the canonical formatter (never a hand-prepended "−",
+// which would render a genuine $0 deduction as "−$0"): fmtFull signs only a
+// nonzero rounded magnitude, and returns "—" for missing data itself.
+const negFull = (v) => fmtFull(v == null ? null : -v);
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
@@ -897,7 +898,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   {/* AGI derivation table */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: 16 }}>
                     {(() => {
-                      const fmtDeduc = v => v != null ? `−${fmtFull(v)}` : "—";
+                      const fmtDeduc = negFull; // one deduction-row convention (see top of file)
                       return [
                         ["Gross income",            fmtFull(taxView.householdIncome), false, false],
                         ["Pre-tax deductions",       fmtDeduc(taxView.safeDeduc),       false, false],
