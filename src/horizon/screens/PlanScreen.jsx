@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
 import { StatCard, fmt, fmtMo, fmtMonthly, kbActivate } from "../shared.jsx";
-import { RETIRE_JUMPS } from "../presets.js";
+import { RETIRE_JUMPS, resolveRetireJump } from "../presets.js";
 import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
 import { VerdictTickRail } from "../fields.jsx";
@@ -243,11 +243,8 @@ function TryAChangePanel({
     border: `1px solid ${t.line2}`, background: "transparent",
     font: `500 12px ${HF}`, color: t.mut,
   };
-  const applyJump = (jump) => {
-    const target = jump.kind === "absolute" ? jump.targetAge : retirementAge + jump.retireAdj;
-    const clamped = Math.min(sliderBounds.retireMax, Math.max(sliderBounds.retireMin, target));
-    setRetireOffset(clamped - retirementAge);
-  };
+  const applyJump = (jump) =>
+    setRetireOffset(resolveRetireJump(jump, retirementAge, sliderBounds) - retirementAge);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>

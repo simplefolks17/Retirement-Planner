@@ -38,3 +38,17 @@ export const LIFE_EVENTS = [
 // ({ label, ...rest }). Never carries an `id` — a preset always seeds a NEW
 // goal; the sheet mints the id on save.
 export const presetSeed = ({ l, ...rest }) => ({ ...rest, label: l });
+
+// Seed for the "+ Custom goal" button — lives beside the preset table (not in
+// the screen, rule 10/rule 1) so its dollar figure is a reviewed data value
+// like every LIFE_EVENTS amount. The screen fills `age` from lifeEventBounds.
+export const CUSTOM_GOAL_SEED = { label: "New goal", amount: 25_000, isInflow: false };
+
+// Resolve a RETIRE_JUMPS chip to a clamped target age. Lives beside the table
+// so a future chip kind ships with its resolver — the screen only converts the
+// returned target into its slider offset (control-state mechanics), never
+// resolves or clamps ages itself.
+export const resolveRetireJump = (jump, retirementAge, { retireMin, retireMax }) => {
+  const target = jump.kind === "absolute" ? jump.targetAge : retirementAge + jump.retireAdj;
+  return Math.min(retireMax, Math.max(retireMin, target));
+};

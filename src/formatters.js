@@ -24,9 +24,14 @@
 // ASCII hyphen: "−$118k".
 export function fmt(n) {
   if (!Number.isFinite(n)) return "—";
-  const sign = n < 0 ? "−" : "";
   const a = Math.abs(n);
-  if (a < 1_000) return `${sign}$${Math.round(a)}`;
+  if (a < 1_000) {
+    // Sign only when the ROUNDED magnitude is nonzero — fmt(-0.4) is "$0",
+    // never "−$0". (Rounding |n| also keeps halves symmetric: ±1.5 → ±$2.)
+    const r = Math.round(a);
+    return `${n < 0 && r > 0 ? "−" : ""}$${r}`;
+  }
+  const sign = n < 0 ? "−" : "";
   if (a < 1_000_000) {
     const k = Math.round(a / 1_000);
     if (k >= 1_000) return `${sign}$${(k / 1_000).toFixed(1).replace(/\.0$/, "")}M`;
@@ -43,9 +48,11 @@ export function fmt(n) {
 // headline stat, which should read calm via fmt().
 export function fmtFull(n) {
   if (!Number.isFinite(n)) return "—";
-  const r = Math.round(n);
-  const sign = r < 0 ? "−" : "";
-  return `${sign}$${Math.abs(r).toLocaleString("en-US")}`;
+  // Round the ABSOLUTE value (Math.round on a signed value rounds halves
+  // toward +∞, making ±X.5 asymmetric), and sign only a nonzero result.
+  const r = Math.round(Math.abs(n));
+  const sign = n < 0 && r > 0 ? "−" : "";
+  return `${sign}$${r.toLocaleString("en-US")}`;
 }
 
 // fmtSigned(d) — a signed calm DELTA: "+$22k" / "−$60k" / "+$500". Always
@@ -65,9 +72,10 @@ export function fmtSigned(d) {
 // -> "—".
 export function fmtMonthly(m) {
   if (!Number.isFinite(m)) return "—";
-  const r = Math.round(m / 100) * 100;
-  const sign = r < 0 ? "−" : "";
-  return `${sign}$${Math.abs(r).toLocaleString("en-US")}`;
+  // Same symmetry/no-−$0 rules as fmtFull, at $100 granularity.
+  const r = Math.round(Math.abs(m) / 100) * 100;
+  const sign = m < 0 && r > 0 ? "−" : "";
+  return `${sign}$${r.toLocaleString("en-US")}`;
 }
 
 // fmtMo(annual) — an annual value, converted to monthly then fmtMonthly'd.

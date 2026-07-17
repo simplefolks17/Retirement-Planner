@@ -53,6 +53,22 @@ describe("fmt — calm currency abbreviation", () => {
     expect(fmt(-500)[0]).not.toBe("-"); // ASCII hyphen must never appear
   });
 
+  // CodeRabbit (PR #56): rounding the SIGNED value made halves asymmetric
+  // (Math.round rounds halfway cases toward +∞), and a small negative could
+  // render "−$0". Magnitudes are rounded as absolutes; the sign only applies
+  // to a nonzero rounded result.
+  it("rounds negative halves symmetrically and never renders −$0", () => {
+    expect(fmt(-1.5)).toBe("−$2");       // symmetric with fmt(1.5) === "$2"
+    expect(fmt(1.5)).toBe("$2");
+    expect(fmt(-0.4)).toBe("$0");        // rounds to zero → unsigned
+    expect(fmtFull(-150.5)).toBe("−$151");
+    expect(fmtFull(150.5)).toBe("$151");
+    expect(fmtFull(-0.4)).toBe("$0");
+    expect(fmtMonthly(-150)).toBe("−$200"); // symmetric with fmtMonthly(150)
+    expect(fmtMonthly(150)).toBe("$200");
+    expect(fmtMonthly(-49)).toBe("$0");
+  });
+
   it("maps non-finite inputs to an em dash — missing data is never a fabricated $0", () => {
     expect(fmt(NaN)).toBe("—");
     expect(fmt(Infinity)).toBe("—");

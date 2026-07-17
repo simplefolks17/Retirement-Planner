@@ -1,7 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
-import { fmt, fmtMo } from "../shared.jsx";
-import { fmtFull } from "../../formatters.js";
+import { fmt, fmtMo, fmtMonthly } from "../shared.jsx";
+import { fmtFull, fmtPct } from "../../formatters.js";
+
+// A deduction row: "−$12,400" for a finite value, plain "—" when missing —
+// never the "−—" a bare `−${fmtFull(v)}` template would produce (rule 10:
+// missing data renders the em dash without a fabricated sign).
+const negFull = (v) => (Number.isFinite(v) ? `−${fmtFull(v)}` : "—");
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
@@ -388,9 +393,9 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
             <div style={{ flex: 1, display: "flex", gap: 28, minHeight: 0, flexWrap: "wrap" }}>
               <StmtCol t={t} title="Income & tax" items={[
                 ["Gross income",    fmtFull(sv.gross), null, false],
-                ["Federal tax",     `−${fmtFull(fedTax)}`,  "1",  false],
-                ["FICA + state",    `−${fmtFull(sv.ficaPlusState)}`, null, false],
-                ["Pre-tax savings", `−${fmtFull(sv.preTaxDeductions)}`, null, false],
+                ["Federal tax",     negFull(fedTax),  "1",  false],
+                ["FICA + state",    negFull(sv.ficaPlusState), null, false],
+                ["Pre-tax savings", negFull(sv.preTaxDeductions), null, false],
                 ["Paycheck deposit", fmtFull(takeHome),       null, true],
               ]} bar={sv.keepPct == null ? null : {
                 segs: [
@@ -419,11 +424,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
               <StmtCol t={t} title="Income for life" items={[
                 ["Social Security",   `${fmtMo(householdSS)}/mo`, "3",  false],
-                ...(sv.monthlyPension > 0 ? [["Pension", `${fmtFull(sv.monthlyPension)}/mo`, null, false]] : []),
-                ["Portfolio draw",    `${fmtFull(sv.monthlyPortDraw)}/mo`, null, false],
-                ["Safe rate",         `${(Math.round(withdrawalRate * 10) / 10).toFixed(1)}%`, null, false],
+                ...(sv.monthlyPension > 0 ? [["Pension", `${fmtMonthly(sv.monthlyPension)}/mo`, null, false]] : []),
+                ["Portfolio draw",    `${fmtMonthly(sv.monthlyPortDraw)}/mo`, null, false],
+                ["Safe rate",         fmtPct(withdrawalRate), null, false],
                 ["Runs dry at",       runsOutLabel,  null, false],
-                ["Total monthly",     `${fmtFull(sv.monthlyTotal)}/mo`, null, true],
+                ["Total monthly",     `${fmtMonthly(sv.monthlyTotal)}/mo`, null, true],
               ]} bar={{
                 segs: [
                   { f: sv.monthlyHHSS,     c: t.warm,   l: "Soc Sec" },

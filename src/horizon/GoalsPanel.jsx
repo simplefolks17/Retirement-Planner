@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
-import { fmt } from "./shared.jsx";
+import { fmt, fmtMonthly } from "./shared.jsx";
 import { isDurationEvent, MAX_MONEY_EVENTS } from "../model/money-events.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
-import { LIFE_EVENTS, presetSeed } from "./presets.js";
+import { LIFE_EVENTS, presetSeed, CUSTOM_GOAL_SEED } from "./presets.js";
 
 // ── Goals panel ──────────────────────────────────────────────────────────────
 // The "Goals" facet of the Plan Explore tray. Multiple life events ("goals")
@@ -20,7 +20,8 @@ function goalSummary(ev) {
   const at = `at age ${ev.age}`;
   if (isDurationEvent(ev)) {
     const dir = ev.isInflow ? "+" : "−";
-    return `${dir}${fmt(ev.monthlyAmount)}/mo · ${ev.durationMonths} mo · ${at}`;
+    // Already-monthly value → fmtMonthly (nearest $100), per the canonical tier.
+    return `${dir}${fmtMonthly(ev.monthlyAmount)}/mo · ${ev.durationMonths} mo · ${at}`;
   }
   const dir = ev.isInflow ? "+" : "−";
   return `${dir}${fmt(ev.amount)} · ${at}`;
@@ -40,7 +41,7 @@ export default function GoalsPanel({ t, moneyEvents, onNewGoal, onEditGoal, onRe
   });
 
   const startCustom = () =>
-    onNewGoal({ label: "New goal", age: bounds?.retirementAge, amount: 25_000, isInflow: false });
+    onNewGoal({ ...CUSTOM_GOAL_SEED, age: bounds?.retirementAge });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
