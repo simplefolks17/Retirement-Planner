@@ -160,21 +160,43 @@ describe("buildPreviewMetric — longevity format", () => {
     expect(m.delta).toEqual({ dir: "down", label: "shorter", tone: "warm" });
   });
 
-  it("both finite renders a signed whole-year delta", () => {
-    // 21.3 → 25, 24.8 → 25 rounded: diff of the ROUNDED years (21 vs 25 = +4).
+  it("both finite diffs the displayed depletion AGES, not the rounded years", () => {
+    // Display shows "to age 87 → to age 90" — the delta must diff the same
+    // basis (90 − 87 = +3), never Math.round(years) (which here would say +4).
     const gained = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 21.3, depletionAge: 87 },
       after: { years: 24.8, depletionAge: 90 },
     });
-    expect(gained.delta).toEqual({ dir: "up", label: "+4 yrs", tone: "good" });
+    expect(gained.delta).toEqual({ dir: "up", label: "+3 yrs", tone: "good" });
 
     const lost = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 24.8, depletionAge: 90 },
       after: { years: 21.3, depletionAge: 87 },
     });
-    expect(lost.delta).toEqual({ dir: "down", label: "−4 yrs", tone: "warm" });
+    expect(lost.delta).toEqual({ dir: "down", label: "−3 yrs", tone: "warm" });
+  });
+
+  // Adversarial review (PR #56 F1): year-fractions straddling .5 must not
+  // contradict the age-based display — identical rounded years with different
+  // ages is a real ±1 change, and identical ages is "no change" regardless of
+  // the underlying year-fractions (e.g. a retire-earlier lever shifts startAge,
+  // decoupling duration from depletion age entirely).
+  it("age-basis regression: same rounded years / different ages → ±1 yr; same ages → no change", () => {
+    const crossedUp = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: { years: 21.6, depletionAge: 87 },
+      after: { years: 22.3, depletionAge: 88 },
+    });
+    expect(crossedUp.delta).toEqual({ dir: "up", label: "+1 yrs", tone: "good" });
+
+    const sameAge = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: { years: 21.4, depletionAge: 87 },
+      after: { years: 23.6, depletionAge: 87 },
+    });
+    expect(sameAge.delta).toEqual({ dir: "none", label: "no change", tone: "neutral" });
   });
 });
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
-import { fmt, fmtMo, fmtMonthly } from "../shared.jsx";
+import { fmt, fmtMo } from "../shared.jsx";
 import { fmtFull, fmtPct } from "../../formatters.js";
 
 // A deduction row: "−$12,400" for a finite value, plain "—" when missing.
@@ -199,7 +199,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
   const {
     currentIncome, fedTax, takeHome,
     totalAtRet, spendableAtRet, retVals, effectiveExpenses, balAt90,
-    householdSS, effectivePension, isSustainable, withdrawalRate,
+    effectivePension, isSustainable, withdrawalRate,
     retirementAge, currentAge,
     netConversionBenefit, yr1TaxSavings,
     retirementWalk, currentTotalSaved,
@@ -423,13 +423,17 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 cap: `${fmt(totalAtRet)} across four buckets`
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
+              {/* Ledger tier: EXACT model-rounded dollars on every income row so
+                  the column visibly reconciles to the bolded total (the model
+                  guarantees the bands sum — per-row $100 rounding broke that
+                  identity by up to ~$200; adversarial review, PR #56 F3). */}
               <StmtCol t={t} title="Income for life" items={[
-                ["Social Security",   `${fmtMo(householdSS)}/mo`, "3",  false],
-                ...(sv.monthlyPension > 0 ? [["Pension", `${fmtMonthly(sv.monthlyPension)}/mo`, null, false]] : []),
-                ["Portfolio draw",    `${fmtMonthly(sv.monthlyPortDraw)}/mo`, null, false],
+                ["Social Security",   `${fmtFull(sv.monthlyHHSS)}/mo`, "3",  false],
+                ...(sv.monthlyPension > 0 ? [["Pension", `${fmtFull(sv.monthlyPension)}/mo`, null, false]] : []),
+                ["Portfolio draw",    `${fmtFull(sv.monthlyPortDraw)}/mo`, null, false],
                 ["Safe rate",         fmtPct(withdrawalRate), null, false],
                 ["Runs dry at",       runsOutLabel,  null, false],
-                ["Total monthly",     `${fmtMonthly(sv.monthlyTotal)}/mo`, null, true],
+                ["Total monthly",     `${fmtFull(sv.monthlyTotal)}/mo`, null, true],
               ]} bar={{
                 segs: [
                   { f: sv.monthlyHHSS,     c: t.warm,   l: "Soc Sec" },

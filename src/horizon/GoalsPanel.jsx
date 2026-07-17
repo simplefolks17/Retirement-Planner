@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
-import { fmt, fmtMonthly } from "./shared.jsx";
+import { fmtFull } from "../formatters.js";
 import { isDurationEvent, MAX_MONEY_EVENTS } from "../model/money-events.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 import { LIFE_EVENTS, presetSeed, CUSTOM_GOAL_SEED } from "./presets.js";
@@ -15,16 +15,17 @@ import { LIFE_EVENTS, presetSeed, CUSTOM_GOAL_SEED } from "./presets.js";
 
 const DEFAULT_VISIBLE = ASSUMPTIONS.DEFAULT_VISIBLE_GOALS;
 
-// A plain-language one-liner for a committed goal row.
+// A plain-language one-liner for a committed goal row. Both dollar figures
+// are values the user TYPED into the sheet, so they render full precision
+// (two-tier policy) — a calm/rounded formatter here misstated typed amounts
+// ($250/mo read "$300/mo"; $49/mo read a fabricated "−$0/mo").
 function goalSummary(ev) {
   const at = `at age ${ev.age}`;
-  if (isDurationEvent(ev)) {
-    const dir = ev.isInflow ? "+" : "−";
-    // Already-monthly value → fmtMonthly (nearest $100), per the canonical tier.
-    return `${dir}${fmtMonthly(ev.monthlyAmount)}/mo · ${ev.durationMonths} mo · ${at}`;
-  }
   const dir = ev.isInflow ? "+" : "−";
-  return `${dir}${fmt(ev.amount)} · ${at}`;
+  if (isDurationEvent(ev)) {
+    return `${dir}${fmtFull(ev.monthlyAmount)}/mo · ${ev.durationMonths} mo · ${at}`;
+  }
+  return `${dir}${fmtFull(ev.amount)} · ${at}`;
 }
 
 export default function GoalsPanel({ t, moneyEvents, onNewGoal, onEditGoal, onRemoveGoal, bounds }) {

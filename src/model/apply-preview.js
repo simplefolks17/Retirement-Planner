@@ -105,10 +105,16 @@ function longevityMetric({ id, label, before, after, betterDir }) {
       // age where it didn't before. Always framed as "shorter".
       delta = { dir: "down", label: "shorter", tone: betterDir === "up" ? "warm" : "good" };
     } else {
-      // Diff the SAME whole-year rounding renderLongevity displays (calm
-      // numbers) — a sub-year float gap never shows a nonzero delta beside two
-      // identically-displayed year/age figures.
-      const d = Math.round(after.years) - Math.round(before.years);
+      // Diff the SAME basis renderLongevity displays: depletion AGES when both
+      // are known ("to age X" is the display), whole years only in the rare
+      // null-depletion fallback. Rounding years here while showing ages could
+      // render "to age 87 → to age 88 · no change" (or "+2 yrs" beside two
+      // identical ages) whenever the walks' year-fractions straddle .5
+      // differently — the ages and the rounded durations are different bases.
+      const bothAges = before.depletionAge != null && after.depletionAge != null;
+      const d = bothAges
+        ? after.depletionAge - before.depletionAge
+        : Math.round(after.years) - Math.round(before.years);
       if (d === 0) {
         delta = { dir: "none", label: "no change", tone: "neutral" };
       } else {
