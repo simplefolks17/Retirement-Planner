@@ -59,9 +59,9 @@ describe("MoneyEventsPanel — duration + one-time mix", () => {
     const root = renderPanel([duration]);
     const flat = JSON.stringify(root.toJSON());
     // JSX splits the interpolated summary into separate text-node children
-    // ("$6K", "/mo × ", "6", " mo") rather than one concatenated string —
+    // ("$6k", "/mo × ", "6", " mo") rather than one concatenated string —
     // check the pieces are all present rather than one exact substring.
-    expect(flat).toContain("$6K"); // fmt(6000) === "$6K"
+    expect(flat).toContain("$6k"); // fmt(6000) === "$6k"
     expect(flat).toContain("/mo × ");
     expect(flat).toContain(" mo");
 
@@ -82,7 +82,7 @@ describe("MoneyEventsPanel — duration + one-time mix", () => {
   it("a duration row with a positive incomeAnnual appends the income annotation", () => {
     const partTime = { ...duration, id: "dur-2", incomeAnnual: 24_000 };
     const flat = JSON.stringify(renderPanel([partTime]).toJSON());
-    expect(flat).toContain("income $24K/yr");
+    expect(flat).toContain("income $24k/yr");
   });
 
   it("a duration row with incomeAnnual 0 (or absent) shows no income annotation", () => {

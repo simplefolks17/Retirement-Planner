@@ -71,15 +71,17 @@ describe("fmtMoney", () => {
 
 describe("buildPreviewMetric — money format", () => {
   it("dir up / tone good when the delta matches betterDir", () => {
+    // Preview metrics render CALM (abbreviated) money, not full precision —
+    // a headline-style at-a-glance figure, matching src/formatters.js `fmt`.
     const m = buildPreviewMetric({ id: "x", label: "L", before: -9_854, after: 12_400, betterDir: "up" });
-    expect(m.before).toBe("−$9,854");
-    expect(m.after).toBe("$12,400");
-    expect(m.delta).toEqual({ dir: "up", label: "+$22,254", tone: "good" });
+    expect(m.before).toBe("−$10k");
+    expect(m.after).toBe("$12k");
+    expect(m.delta).toEqual({ dir: "up", label: "+$22k", tone: "good" });
   });
 
   it("dir down / tone warm when betterDir is up but value fell", () => {
     const m = buildPreviewMetric({ id: "x", label: "L", before: 100_000, after: 80_000, betterDir: "up" });
-    expect(m.delta).toEqual({ dir: "down", label: "−$20,000", tone: "warm" });
+    expect(m.delta).toEqual({ dir: "down", label: "−$20k", tone: "warm" });
   });
 
   it("betterDir 'down' flips the tone mapping (e.g. lifetime RMD tax)", () => {
@@ -120,24 +122,24 @@ describe("buildPreviewMetric — longevity format", () => {
     expect(m.delta).toEqual({ dir: "none", label: "no change", tone: "neutral" });
   });
 
-  it("finite case renders 'depletes at {age} ({yrs} yrs)'", () => {
+  it("finite case renders 'to age {age}' (calm, no decimal)", () => {
     const m = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 21.3, depletionAge: 87 },
       after: { years: 25.0, depletionAge: 91 },
     });
-    expect(m.before).toBe("depletes at 87 (21.3 yrs)");
-    expect(m.after).toBe("depletes at 91 (25.0 yrs)");
+    expect(m.before).toBe("to age 87");
+    expect(m.after).toBe("to age 91");
   });
 
-  it("finite years with a null depletionAge renders just '{yrs} yrs'", () => {
+  it("finite years with a null depletionAge renders whole '~{yrs} yrs'", () => {
     const m = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 10.5, depletionAge: null },
       after: { years: 10.5, depletionAge: null },
     });
-    expect(m.before).toBe("10.5 yrs");
-    expect(m.after).toBe("10.5 yrs");
+    expect(m.before).toBe("~11 yrs");
+    expect(m.after).toBe("~11 yrs");
   });
 
   it("crossing from finite to Infinity is an improvement ('beyond plan')", () => {
@@ -158,20 +160,43 @@ describe("buildPreviewMetric — longevity format", () => {
     expect(m.delta).toEqual({ dir: "down", label: "shorter", tone: "warm" });
   });
 
-  it("both finite renders a signed one-decimal year delta", () => {
+  it("both finite diffs the displayed depletion AGES, not the rounded years", () => {
+    // Display shows "to age 87 → to age 90" — the delta must diff the same
+    // basis (90 − 87 = +3), never Math.round(years) (which here would say +4).
     const gained = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 21.3, depletionAge: 87 },
       after: { years: 24.8, depletionAge: 90 },
     });
-    expect(gained.delta).toEqual({ dir: "up", label: "+3.5 yrs", tone: "good" });
+    expect(gained.delta).toEqual({ dir: "up", label: "+3 yrs", tone: "good" });
 
     const lost = buildPreviewMetric({
       id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
       before: { years: 24.8, depletionAge: 90 },
       after: { years: 21.3, depletionAge: 87 },
     });
-    expect(lost.delta).toEqual({ dir: "down", label: "−3.5 yrs", tone: "warm" });
+    expect(lost.delta).toEqual({ dir: "down", label: "−3 yrs", tone: "warm" });
+  });
+
+  // Adversarial review (PR #56 F1): year-fractions straddling .5 must not
+  // contradict the age-based display — identical rounded years with different
+  // ages is a real ±1 change, and identical ages is "no change" regardless of
+  // the underlying year-fractions (e.g. a retire-earlier lever shifts startAge,
+  // decoupling duration from depletion age entirely).
+  it("age-basis regression: same rounded years / different ages → ±1 yr; same ages → no change", () => {
+    const crossedUp = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: { years: 21.6, depletionAge: 87 },
+      after: { years: 22.3, depletionAge: 88 },
+    });
+    expect(crossedUp.delta).toEqual({ dir: "up", label: "+1 yrs", tone: "good" });
+
+    const sameAge = buildPreviewMetric({
+      id: "longevity", label: "Portfolio lasts", format: "longevity", betterDir: "up",
+      before: { years: 21.4, depletionAge: 87 },
+      after: { years: 23.6, depletionAge: 87 },
+    });
+    expect(sameAge.delta).toEqual({ dir: "none", label: "no change", tone: "neutral" });
   });
 });
 
@@ -183,7 +208,7 @@ describe("buildPreviewMetric — longevity null-years guard", () => {
       after: { years: 21.3, depletionAge: 87 },
     });
     expect(m.before).toBe("—");
-    expect(m.after).toBe("depletes at 87 (21.3 yrs)");
+    expect(m.after).toBe("to age 87");
     expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
   });
 
@@ -193,7 +218,7 @@ describe("buildPreviewMetric — longevity null-years guard", () => {
       before: { years: 21.3, depletionAge: 87 },
       after: { years: null, depletionAge: null },
     });
-    expect(m.before).toBe("depletes at 87 (21.3 yrs)");
+    expect(m.before).toBe("to age 87");
     expect(m.after).toBe("—");
     expect(m.delta).toEqual({ dir: "none", label: "—", tone: "neutral" });
   });
@@ -393,9 +418,11 @@ describe("buildConversionPreview", () => {
   });
 
   it("action string names both the suggested and the current amount/age", () => {
+    // Calm abbreviated money (fmt), matching the moneyMetric tier — a preview
+    // action line is headline-style copy, not an editable-input readout.
     const preview = buildConversionPreview({ current, candidate, suggestion, refAge: 90 });
-    expect(preview.action).toContain("$90,000/yr starting at age 61");
-    expect(preview.action).toContain("$82,765/yr from age 61");
+    expect(preview.action).toContain("$90k/yr starting at age 61");
+    expect(preview.action).toContain("$83k/yr from age 61");
   });
 
   it("the balAtRef label uses refAge", () => {

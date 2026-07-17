@@ -55,7 +55,7 @@ function resolveChromium() {
 const SCREENS = [
   { id: 'plan',     label: 'Plan',        marker: 'Income for life'        },
   { id: 'journey',  label: 'Journey',     marker: 'Building years'         },
-  { id: 'ideas',    label: 'Ideas',       marker: 'Your future, explored.' },
+  // Ideas retired 2026-07-16 — levers + goals moved onto Plan's Explore tray.
   { id: 'numbers',  label: 'The numbers', marker: 'Year by year'           },
   { id: 'someday',  label: 'Someday',     marker: 'work optional.'         },
   { id: 'settings', label: 'Settings',    marker: 'Theme'                  },

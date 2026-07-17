@@ -247,13 +247,16 @@ describe("StrategiesScreen", () => {
   it("shows correct headline dollars, including the NEGATIVE Roth benefit", () => {
     const app = mount(makeProps());
     const txt = app.text();
-    expect(txt).toContain("−$9,854");          // sign-aware Roth headline (value-lock)
+    // Card headlines are CALM (abbreviated) money — src/formatters.js `fmt` —
+    // a headline stat, not an editable-input readout (2026-07-16 "calm money"
+    // consolidation).
+    expect(txt).toContain("−$10k");            // sign-aware Roth headline (value-lock)
     expect(txt).toContain("not worth it");     // negative framing
-    expect(txt).toContain("$12,400");          // withdrawal yr1 savings
-    expect(txt).toContain("$4,010/mo");        // SS monthly (ssView)
-    expect(txt).toContain("$62,508");          // first RMD (rmdView)
-    expect(txt).toContain("$18,000/yr");       // surplus
-    expect(txt).toContain("$30,000/yr");       // mega capacity
+    expect(txt).toContain("$12k");             // withdrawal yr1 savings
+    expect(txt).toContain("$4k/mo");           // SS monthly (ssView)
+    expect(txt).toContain("$63k");             // first RMD (rmdView)
+    expect(txt).toContain("$18k/yr");          // surplus
+    expect(txt).toContain("$30k/yr");          // mega capacity
     act(() => app.r.unmount());
   });
 
@@ -271,7 +274,7 @@ describe("StrategiesScreen", () => {
     const txt = app.text();
     expect(txt).toContain("All strategies");          // back affordance present
     expect(txt).toContain("Annual benefit");          // SSTimingFlow stat tile
-    expect(txt).toContain("$48,120");                 // ssView.ssAnnual value-lock
+    expect(txt).toContain("$48k");                    // ssView.ssAnnual value-lock (calm)
     expect(txt).toContain("Include Social Security");  // live control from the ss bundle
     app.click(n => textOf(n) === "‹ All strategies");
     expect(app.text()).toContain("Ways to keep more of what you've built");  // back at the grid
@@ -287,7 +290,7 @@ describe("StrategiesScreen", () => {
     const app = mount(props, { initialStrategy: "ss" });
     const txt = app.text();
     expect(txt).toContain("Delay to 70");
-    expect(txt).toContain("+$9,200/yr");
+    expect(txt).toContain("+$9k/yr");
     expect(txt).toContain("3.2% → 2.4%");
     act(() => app.r.unmount());
   });
@@ -307,7 +310,7 @@ describe("StrategiesScreen", () => {
     const txt = app.text();
     expect(txt).toContain("RMD outlook");                     // detail title
     expect(txt).toContain("First RMD at 73");                 // RMD_START_AGE-driven stat label
-    expect(txt).toContain("$62,508");                         // firstRMDAmount value-lock
+    expect(txt).toContain("$63k");                            // firstRMDAmount value-lock (calm)
     expect(txt).toContain("Table III (Uniform Lifetime)");   // active table label
     act(() => app.r.unmount());
   });
@@ -337,7 +340,7 @@ describe("StrategiesScreen", () => {
     it("value-locks: the sign-aware adjusted verdict and the synthetic window label", () => {
       const app = mount(makeProps(), { initialStrategy: "conversion" });
       const txt = app.text();
-      expect(txt).toContain("−$9,854");                // adjusted net benefit (taxView.conversionDetail)
+      expect(txt).toContain("−$10k");                  // adjusted net benefit (taxView.conversionDetail), calm
       expect(txt).toContain("Adjusted net benefit");
       expect(txt).toContain("7-year window · age 66 → 72");
       act(() => app.r.unmount());
@@ -456,7 +459,7 @@ describe("StrategiesScreen", () => {
     it("shows the savings callout when hasSavings is true", () => {
       const app = mount(makeProps(), { initialStrategy: "withdrawal" });
       const txt = app.text();
-      expect(txt).toContain("$12,400 saved in year-1 tax");
+      expect(txt).toContain("$12k saved in year-1 tax");
       act(() => app.r.unmount());
     });
 

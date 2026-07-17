@@ -18,6 +18,7 @@
 import React, { useState } from "react";
 import { HF, HM } from "../../ThemeContext.jsx";
 import { DetailField, money } from "../../fields.jsx";
+import { fmt } from "../../../formatters.js";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW } from "./flow-ui.jsx";
 import ApplyPreviewModal from "../../ApplyPreviewModal.jsx";
 import { RMD_START_AGE, EARLY_WITHDRAWAL_AGE } from "../../../config/irs-2026.js";
@@ -105,8 +106,8 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                     <> · larger in early years before Social Security/pension start, tapering once they begin</>
                   ) : (
                     <>
-                      {" "}· assumes Social Security ({money(props.householdSS)}/yr, 85% taxable)
-                      {cv.targets.assumesPension && <> + pension ({money(props.effectivePension)}/yr)</>} as
+                      {" "}· assumes Social Security ({fmt(props.householdSS)}/yr, 85% taxable)
+                      {cv.targets.assumesPension && <> + pension ({fmt(props.effectivePension)}/yr)</>} as
                       other ordinary income
                     </>
                   )}
@@ -131,11 +132,11 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
             {cv.outcome.showTaxSourceComparison && (
               <>
                 <div style={STAT_ROW}>
-                  <StatTile t={t} label="Roth (tax from converted)" value={money(cv.outcome.rothBalEndConv)} dim />
-                  <StatTile t={t} label="Roth (tax from taxable)" value={money(cv.outcome.rothBalEndTax)} tone="good" />
+                  <StatTile t={t} label="Roth (tax from converted)" value={fmt(cv.outcome.rothBalEndConv)} dim />
+                  <StatTile t={t} label="Roth (tax from taxable)" value={fmt(cv.outcome.rothBalEndTax)} tone="good" />
                 </div>
                 <div style={{ font: `400 11px ${HF}`, color: t.good }}>
-                  Paying from taxable puts {money(cv.outcome.rothAdvantage)} more into Roth.
+                  Paying from taxable puts {fmt(cv.outcome.rothAdvantage)} more into Roth.
                 </div>
               </>
             )}
@@ -150,10 +151,10 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                 figure appears only in section 7's strip) ── */}
           <div style={STAT_ROW}>
             <StatTile t={t} label="Annual conversion" value={cv.outcome.annualConversionLabel} />
-            <StatTile t={t} label="Conversion tax cost" value={money(cd.conversionCost)} tone="warm" />
-            <StatTile t={t} label="RMD tax saved" value={money(cd.rmdTaxSaved)} tone="good" />
+            <StatTile t={t} label="Conversion tax cost" value={fmt(cd.conversionCost)} tone="warm" />
+            <StatTile t={t} label="RMD tax saved" value={fmt(cd.rmdTaxSaved)} tone="good" />
             <StatTile t={t} label={cv.outcome.netIsPositive ? "Net savings" : "Net cost"}
-              value={money(props.netConversionBenefit)} sub="before healthcare costs"
+              value={fmt(props.netConversionBenefit)} sub="before healthcare costs"
               tone={cv.outcome.netIsPositive ? "good" : "warm"} />
           </div>
 
@@ -171,18 +172,18 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                 {cv.healthcare.showAcaWarning ? (
                   <NoteBox t={t} tone="warm">
                     {cv.healthcare.cliffCount} year{cv.healthcare.cliffCount === 1 ? "" : "s"} exceed the ACA
-                    subsidy cliff — at this household size, the threshold is {money(cv.healthcare.cliffThreshold)}
+                    subsidy cliff — at this household size, the threshold is {fmt(cv.healthcare.cliffThreshold)}
                     {" "}MAGI. Conversions push you over at age{cv.healthcare.cliffCount === 1 ? "" : "s"}{" "}
                     {cv.healthcare.cliffAges.join(", ")}
                     {/* Only claim a dollar loss when the premium is set (Classic parity) —
                         a crossed cliff with an unset premium isn't "$0 lost", it's unknown. */}
                     {cv.healthcare.hasAcaLoss
-                      ? <> — an estimated {money(cv.healthcare.acaAnnualLoss)} in lost subsidy.</>
+                      ? <> — an estimated {fmt(cv.healthcare.acaAnnualLoss)} in lost subsidy.</>
                       : <>. Add your monthly premium above to estimate the subsidy lost.</>}
                   </NoteBox>
                 ) : cv.healthcare.showNoCliffNote ? (
                   <NoteBox t={t} tone="good">
-                    No ACA cliff crossings — conversions stay under {money(cv.healthcare.cliffThreshold)} each year.
+                    No ACA cliff crossings — conversions stay under {fmt(cv.healthcare.cliffThreshold)} each year.
                   </NoteBox>
                 ) : null}
               </div>
@@ -193,9 +194,9 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                 {F({ label: "People on Medicare", field: health.personOnMedicare })}
                 {cv.healthcare.showIrmaa ? (
                   <NoteBox t={t} tone="warm">
-                    IRMAA surcharge — {money(cv.healthcare.irmaaCost)} total. Conversion income at these
+                    IRMAA surcharge — {fmt(cv.healthcare.irmaaCost)} total. Conversion income at these
                     ages triggers Medicare premium surcharges (2-year lookback):{" "}
-                    {cv.healthcare.irmaaRows.map(r => `${r.age}: ${money(r.cost)}`).join(" · ")}
+                    {cv.healthcare.irmaaRows.map(r => `${r.age}: ${fmt(r.cost)}`).join(" · ")}
                   </NoteBox>
                 ) : (
                   <NoteBox t={t} tone="good">No IRMAA surcharges — conversions stay below Medicare thresholds.</NoteBox>
@@ -215,11 +216,11 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                 $0 loss must not render a "−$0" tile or a gross==adjusted strip. */}
             {cv.healthcare.showAdjustedStrip && (
               <div style={STAT_ROW}>
-                <StatTile t={t} label="Gross benefit" value={money(props.netConversionBenefit)}
+                <StatTile t={t} label="Gross benefit" value={fmt(props.netConversionBenefit)}
                   tone={cv.outcome.netIsPositive ? "good" : "warm"} />
-                {cv.healthcare.showIrmaa && <StatTile t={t} label="IRMAA" value={`−${money(cv.healthcare.irmaaCost)}`} tone="warm" />}
-                {cv.healthcare.hasAcaLoss && <StatTile t={t} label="ACA loss" value={`−${money(cv.healthcare.acaAnnualLoss)}`} tone="warm" />}
-                <StatTile t={t} label="Adjusted net benefit" value={money(cd.adjustedNetConversionBenefit)}
+                {cv.healthcare.showIrmaa && <StatTile t={t} label="IRMAA" value={`−${fmt(cv.healthcare.irmaaCost)}`} tone="warm" />}
+                {cv.healthcare.hasAcaLoss && <StatTile t={t} label="ACA loss" value={`−${fmt(cv.healthcare.acaAnnualLoss)}`} tone="warm" />}
+                <StatTile t={t} label="Adjusted net benefit" value={fmt(cd.adjustedNetConversionBenefit)}
                   tone={cd.isPositive ? "good" : "warm"} />
               </div>
             )}
@@ -238,9 +239,9 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                   {cv.tables.simYears.slice(0, 12).map(({ age, conversion, tradBal, tax }) => (
                     <React.Fragment key={age}>
                       <span style={{ font: `600 12px ${HM}`, color: t.accent }}>{age}</span>
-                      <span style={{ font: `400 12px ${HM}`, color: t.ink }}>{money(conversion)}</span>
-                      <span style={{ font: `400 12px ${HM}`, color: t.mut }}>{money(tradBal)}</span>
-                      <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{money(tax)}</span>
+                      <span style={{ font: `400 12px ${HM}`, color: t.ink }}>{fmt(conversion)}</span>
+                      <span style={{ font: `400 12px ${HM}`, color: t.mut }}>{fmt(tradBal)}</span>
+                      <span style={{ font: `400 12px ${HM}`, color: t.faint }}>{fmt(tax)}</span>
                     </React.Fragment>
                   ))}
                 </div>
@@ -257,9 +258,9 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                   {cv.tables.rmdCompare.slice(0, 8).map(({ age, noConv, withConv, improved }) => (
                     <React.Fragment key={age}>
                       <span style={{ font: `600 12px ${HM}`, color: t.accent }}>{age}</span>
-                      <span style={{ font: `400 12px ${HM}`, color: t.warm }}>{money(noConv)}</span>
+                      <span style={{ font: `400 12px ${HM}`, color: t.warm }}>{fmt(noConv)}</span>
                       <span style={{ font: `400 12px ${HM}`, color: improved ? t.good : t.ink }}>
-                        {withConv == null ? "—" : money(withConv)}
+                        {withConv == null ? "—" : fmt(withConv)}
                       </span>
                     </React.Fragment>
                   ))}
@@ -334,9 +335,9 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
       {applySite.available && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <NoteBox t={t} tone="good">
-            Converting {money(cv.optimizer.suggestedAmount)}/yr starting at age{" "}
+            Converting {fmt(cv.optimizer.suggestedAmount)}/yr starting at age{" "}
             {cv.optimizer.suggestedStartAge} maximizes net benefit after healthcare costs
-            (est. {money(cv.optimizer.suggestedBenefit)} net). Your current setting:{" "}
+            (est. {fmt(cv.optimizer.suggestedBenefit)} net). Your current setting:{" "}
             {cv.optimizer.currentAmountLabel}/yr from age {cv.optimizer.currentStartAge}.
           </NoteBox>
           <button type="button" onClick={() => setPreviewOpen(true)}

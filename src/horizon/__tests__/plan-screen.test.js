@@ -162,6 +162,12 @@ const allText = (root) => textOf({ children: [root] });
 const rangeInputs = (root) => root.findAll(n => n.type === "input" && n.props?.type === "range");
 const buttonsByText = (root, label) =>
   root.findAll(n => n.type === "button" && textOf({ children: n.children }) === label);
+const buttonContaining = (root, substr) =>
+  root.findAll(n => n.type === "button" && textOf({ children: n.children }).includes(substr));
+// The Explore tray is collapsed by default — open a facet before asserting on
+// its body (levers or goals).
+const openFacet = (renderer, label) =>
+  act(() => { buttonContaining(renderer.root, label)[0].props.onClick(); });
 const dashedPaths = (root) =>
   root.findAll(n => n.type === "path" && n.props?.strokeDasharray === "8 5");
 const tickDivs = (root) =>
@@ -211,26 +217,30 @@ describe("PlanScreen — command center survivors", () => {
   });
 });
 
-describe("PlanScreen — Try a change panel", () => {
-  it("renders both sliders with aria-labels and a non-empty tick rail, idle by default", () => {
+describe("PlanScreen — Explore tray: Try a change facet", () => {
+  it("levers live behind the collapsed tray; opening 'Try a change' reveals both sliders + a tick rail, idle", () => {
     const { renderer } = mount();
-    const inputs = rangeInputs(renderer.root);
-    const labels = inputs.map(n => n.props["aria-label"]);
+    // Collapsed by default — no sliders rendered yet.
+    expect(rangeInputs(renderer.root).length).toBe(0);
+
+    openFacet(renderer, "Try a change");
+    const labels = rangeInputs(renderer.root).map(n => n.props["aria-label"]);
     expect(labels).toContain("Retire at");
     expect(labels).toContain("Monthly spend");
     expect(tickDivs(renderer.root).length).toBeGreaterThan(0);
-    // Idle: no dashed overlay, no Apply/Discard, the "More in Ideas" link shows.
+    // Idle: no dashed overlay, no Apply/Discard, calm hint (no "More in Ideas").
     expect(dashedPaths(renderer.root).length).toBe(0);
-    expect(allText(renderer.root)).toContain("More in Ideas");
+    expect(allText(renderer.root)).not.toContain("More in Ideas");
+    expect(allText(renderer.root)).toContain("nothing changes until you Apply");
     expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
     act(() => renderer.unmount());
   });
 
   // BUG-73: the labeled comfortable/tight/unaffordable ranges must be visible
-  // (owner requirement), but shown ONCE per panel — not repeated under both
-  // the retire-at and monthly-spend rails.
+  // (owner requirement), but shown ONCE per panel.
   it("shows the verdict legend once under the rail group, not once per rail", () => {
     const { renderer } = mount();
+    openFacet(renderer, "Try a change");
     const text = allText(renderer.root);
     expect(text).toContain("5+ yrs of runway");
     expect(text).toContain("runs out before 90");
@@ -241,6 +251,7 @@ describe("PlanScreen — Try a change panel", () => {
 
   it("dragging the retire slider shows a delta chip + Apply/Discard, and a dashed overlay reaches ArcGraph", () => {
     const { renderer } = mount();
+    openFacet(renderer, "Try a change");
     const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
     act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
 
@@ -252,8 +263,32 @@ describe("PlanScreen — Try a change panel", () => {
     act(() => renderer.unmount());
   });
 
+  // Gemini review (PR #56): with a change staged, the auto-open fallback used
+  // to re-open the tray on every render, so the collapse click silently did
+  // nothing. The explicit "closed" sentinel must let the user collapse a dirty
+  // tray — and reopening must still offer Apply (the offsets survive).
+  it("the tray can be collapsed while a change is staged, and reopening restores Apply", () => {
+    const { renderer } = mount();
+    openFacet(renderer, "Try a change");
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBeGreaterThan(0);
+
+    // Collapse: the facet body (sliders + Apply) must actually disappear.
+    openFacet(renderer, "Try a change");
+    expect(rangeInputs(renderer.root).length).toBe(0);
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
+
+    // Reopen: the staged change survived — Apply/Discard are back.
+    openFacet(renderer, "Try a change");
+    expect(buttonsByText(renderer.root, "Apply changes").length).toBeGreaterThan(0);
+    expect(buttonsByText(renderer.root, "Discard").length).toBe(1);
+    act(() => renderer.unmount());
+  });
+
   it("Discard clears the preview back to idle", () => {
     const { renderer } = mount();
+    openFacet(renderer, "Try a change");
     const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
     act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
     expect(buttonsByText(renderer.root, "Discard").length).toBe(1);
@@ -262,12 +297,13 @@ describe("PlanScreen — Try a change panel", () => {
 
     expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
     expect(dashedPaths(renderer.root).length).toBe(0);
-    expect(allText(renderer.root)).toContain("More in Ideas");
+    expect(allText(renderer.root)).toContain("nothing changes until you Apply");
     act(() => renderer.unmount());
   });
 
   it("Apply opens ApplyPreviewModal; confirming fires applyPlanLevers and returns to idle", () => {
     const { renderer, props } = mount();
+    openFacet(renderer, "Try a change");
     const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
     act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
 
@@ -288,19 +324,35 @@ describe("PlanScreen — Try a change panel", () => {
     expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
     act(() => renderer.unmount());
   });
+});
 
-  it("the idle footer's 'More in Ideas' button navigates to Ideas/dials", () => {
-    const navigate = vi.fn();
-    const props = makeMockProps();
-    let renderer;
-    act(() => {
-      renderer = create(React.createElement(PlanScreen, { t, props, navigate, isMobile: false }));
-    });
-    const link = buttonsByText(renderer.root, "More in Ideas →");
-    expect(link.length).toBe(1);
-    act(() => { link[0].props.onClick(); });
-    expect(navigate).toHaveBeenCalledWith("ideas", "dials");
+describe("PlanScreen — Explore tray: Goals facet", () => {
+  it("opening 'Goals' reveals preset quick-adds; a preset seeds a NEW goal sheet (no eventId)", () => {
+    const { renderer } = mount();
+    openFacet(renderer, "Goals");
+    const text = allText(renderer.root);
+    expect(text).toContain("Add a goal");
+    // First 3 presets visible by default (DEFAULT_VISIBLE_GOALS).
+    expect(buttonContaining(renderer.root, "Buy a home").length).toBe(1);
+    // A preset opens the LifeEventSheet in NEW mode (its own header input appears).
+    act(() => { buttonContaining(renderer.root, "Buy a home")[0].props.onClick(); });
+    expect(allText(renderer.root)).toContain("Buy a home");
+    act(() => renderer.unmount());
+  });
 
+  it("lists committed goals as numbered rows, tappable to edit", () => {
+    const goal = { id: "g1", label: "Big trip", icon: "🧳", age: 70, amount: 40_000, isInflow: false };
+    const { renderer, props } = mount({ moneyEvents: [goal] });
+    // Collapsed tray shows a "Goals · 1" affordance.
+    expect(allText(renderer.root)).toContain("Goals · 1");
+    openFacet(renderer, "Goals");
+    const text = allText(renderer.root);
+    expect(text).toContain("Goal 1");
+    expect(text).toContain("Big trip");
+    // Remove wired to removeEvent by id.
+    const rm = buttonContaining(renderer.root, "✕").find(n => n.props["aria-label"]?.startsWith("Remove goal 1"));
+    act(() => { rm.props.onClick(); });
+    expect(props.removeEvent).toHaveBeenCalledWith("g1");
     act(() => renderer.unmount());
   });
 });

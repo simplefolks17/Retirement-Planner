@@ -1,6 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo } from "../shared.jsx";
+import { fmtFull, fmtPct } from "../../formatters.js";
+
+// A deduction row: "−$12,400" for a finite value, plain "—" when missing.
+// Negation goes THROUGH the canonical formatter (never a hand-prepended "−",
+// which would render a genuine $0 deduction as "−$0"): fmtFull signs only a
+// nonzero rounded magnitude, and returns "—" for missing data itself.
+const negFull = (v) => fmtFull(v == null ? null : -v);
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
@@ -118,8 +125,6 @@ function IncomeWaterfall({ t, view }) {
   // showPaycheckLine comes from the model so the screen makes no applicability checks (rule 10).
   const { showPaycheckLine } = view;
 
-  const fmtK = n => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1e3)}k`;
-
   return (
     <div ref={wrapRef} style={{ width: "100%" }}>
       <svg viewBox={`0 0 ${w} ${H}`} width="100%" height={H}>
@@ -134,7 +139,7 @@ function IncomeWaterfall({ t, view }) {
               stroke={t.good} strokeWidth={1} strokeDasharray="4 4" opacity={0.45} />
             <text x={6} y={y(paycheck) - 5}
               style={{ font: `700 10px ${HM}` }} fill={t.good}>
-              Paycheck deposit: {fmtK(paycheck)}
+              Paycheck deposit: {fmt(paycheck)}
             </text>
           </>
         )}
@@ -155,7 +160,7 @@ function IncomeWaterfall({ t, view }) {
               {/* dollar amount above the bar */}
               <text x={cx(b.i)} y={yt - 9} textAnchor="middle"
                 style={{ font: `600 11.5px ${HM}` }} fill={t.ink}>
-                {(b.full ? "" : "−") + fmtK(b.val)}
+                {(b.full ? "" : "−") + fmt(b.val)}
               </text>
               {/* label */}
               <text x={cx(b.i)} y={H - 38} textAnchor="middle"
@@ -194,7 +199,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
   const {
     currentIncome, fedTax, takeHome,
     totalAtRet, spendableAtRet, retVals, effectiveExpenses, balAt90,
-    householdSS, effectivePension, isSustainable, withdrawalRate,
+    effectivePension, isSustainable, withdrawalRate,
     retirementAge, currentAge,
     netConversionBenefit, yr1TaxSavings,
     retirementWalk, currentTotalSaved,
@@ -272,7 +277,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         <span style={{ width: 1.5, height: 26, background: t.line2, flexShrink: 0 }} />
         <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
           <span style={{ font: `600 18px ${HM}`, color: t.good }}>
-            {yr1TaxSavings > 0 ? `$${Math.round(yr1TaxSavings).toLocaleString()}` : "—"}
+            {yr1TaxSavings > 0 ? fmt(yr1TaxSavings) : "—"}
           </span>
           <span style={{ font: `400 12px ${HF}`, color: t.mut }}>saved in tax this year</span>
         </span>
@@ -388,11 +393,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
             <div style={{ flex: 1, display: "flex", gap: 28, minHeight: 0, flexWrap: "wrap" }}>
               <StmtCol t={t} title="Income & tax" items={[
-                ["Gross income",    `$${Math.round(sv.gross).toLocaleString()}`, null, false],
-                ["Federal tax",     `−$${Math.round(fedTax).toLocaleString()}`,  "1",  false],
-                ["FICA + state",    `−$${Math.round(sv.ficaPlusState).toLocaleString()}`, null, false],
-                ["Pre-tax savings", `−$${Math.round(sv.preTaxDeductions).toLocaleString()}`, null, false],
-                ["Paycheck deposit", `$${Math.round(takeHome).toLocaleString()}`,       null, true],
+                ["Gross income",    fmtFull(sv.gross), null, false],
+                ["Federal tax",     negFull(fedTax),  "1",  false],
+                ["FICA + state",    negFull(sv.ficaPlusState), null, false],
+                ["Pre-tax savings", negFull(sv.preTaxDeductions), null, false],
+                ["Paycheck deposit", fmtFull(takeHome),       null, true],
               ]} bar={sv.keepPct == null ? null : {
                 segs: [
                   { f: sv.keepPct, c: t.good, l: `Keep ${sv.keepPct}%` },
@@ -418,13 +423,17 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 cap: `${fmt(totalAtRet)} across four buckets`
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
+              {/* Ledger tier: EXACT model-rounded dollars on every income row so
+                  the column visibly reconciles to the bolded total (the model
+                  guarantees the bands sum — per-row $100 rounding broke that
+                  identity by up to ~$200; adversarial review, PR #56 F3). */}
               <StmtCol t={t} title="Income for life" items={[
-                ["Social Security",   `${fmtMo(householdSS)}/mo`, "3",  false],
-                ...(sv.monthlyPension > 0 ? [["Pension", `$${sv.monthlyPension.toLocaleString()}/mo`, null, false]] : []),
-                ["Portfolio draw",    `$${sv.monthlyPortDraw.toLocaleString()}/mo`, null, false],
-                ["Safe rate",         `${(Math.round(withdrawalRate * 10) / 10).toFixed(1)}%`, null, false],
+                ["Social Security",   `${fmtFull(sv.monthlyHHSS)}/mo`, "3",  false],
+                ...(sv.monthlyPension > 0 ? [["Pension", `${fmtFull(sv.monthlyPension)}/mo`, null, false]] : []),
+                ["Portfolio draw",    `${fmtFull(sv.monthlyPortDraw)}/mo`, null, false],
+                ["Safe rate",         fmtPct(withdrawalRate), null, false],
                 ["Runs dry at",       runsOutLabel,  null, false],
-                ["Total monthly",     `$${sv.monthlyTotal.toLocaleString()}/mo`, null, true],
+                ["Total monthly",     `${fmtFull(sv.monthlyTotal)}/mo`, null, true],
               ]} bar={{
                 segs: [
                   { f: sv.monthlyHHSS,     c: t.warm,   l: "Soc Sec" },
@@ -893,16 +902,15 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   {/* AGI derivation table */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: 16 }}>
                     {(() => {
-                      const fmtExact = v => v != null ? `$${Math.round(v).toLocaleString()}` : "—";
-                      const fmtDeduc = v => v != null ? `−$${Math.round(v).toLocaleString()}` : "—";
+                      const fmtDeduc = negFull; // one deduction-row convention (see top of file)
                       return [
-                        ["Gross income",            fmtExact(taxView.householdIncome), false, false],
+                        ["Gross income",            fmtFull(taxView.householdIncome), false, false],
                         ["Pre-tax deductions",       fmtDeduc(taxView.safeDeduc),       false, false],
-                        ["Adjusted Gross Income",    fmtExact(taxView.agi),             false, true ],
+                        ["Adjusted Gross Income",    fmtFull(taxView.agi),             false, true ],
                         ["Federal tax",              fmtDeduc(fedTax),                  false, false],
                         ["State tax",                fmtDeduc(taxView.stateTax),        false, false],
                         ["FICA",                     fmtDeduc(taxView.fica),            false, false],
-                        ["Paycheck deposit",          fmtExact(takeHome),                false, true ],
+                        ["Paycheck deposit",          fmtFull(takeHome),                false, true ],
                       ];
                     })().map(([label, val, , strong]) => (
                       <div key={label} style={{
@@ -954,7 +962,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       font: `400 13px ${SERIF}`, color: t.ink,
                     }}>
                       Your 401k and HSA contributions save approximately{" "}
-                      <strong>${taxView.taxSaveFromPreTax.toLocaleString()}</strong> in federal tax
+                      <strong>{fmtFull(taxView.taxSaveFromPreTax)}</strong> in federal tax
                       this year at your {Math.round(taxView.fedMarginal * 100)}% marginal rate.
                     </div>
                   )}
@@ -1020,7 +1028,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     {[
                       ["Projected retirement bracket", taxView.projectedRetBracket != null ? `${Math.round(taxView.projectedRetBracket * 100)}%` : "—"],
                       ["Effective RMD tax rate",       taxView.effectiveRMDTaxRate != null ? `${Math.round(taxView.effectiveRMDTaxRate * 100)}%` : "—"],
-                      ["Total lifetime RMD tax burden", taxView.rmdTaxBite != null ? `$${Math.round(taxView.rmdTaxBite).toLocaleString()}` : "—"],
+                      ["Total lifetime RMD tax burden", fmtFull(taxView.rmdTaxBite)],
                     ].map(([label, val]) => (
                       <div key={label} style={{
                         display: "flex", justifyContent: "space-between",

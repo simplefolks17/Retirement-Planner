@@ -1,11 +1,14 @@
 import React, { useState, useMemo } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
-import { StatCard, fmt, fmtMo, kbActivate } from "../shared.jsx";
+import { StatCard, fmt, fmtMo, fmtMonthly, kbActivate } from "../shared.jsx";
+import { RETIRE_JUMPS, resolveRetireJump } from "../presets.js";
 import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
 import { VerdictTickRail } from "../fields.jsx";
 import { buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
+import ExploreTray from "../ExploreTray.jsx";
+import GoalsPanel from "../GoalsPanel.jsx";
 
 // ── Signals strip (WI-1.2 / #89) ──────────────────────────────────────────────
 function SignalsStrip({ t, signals, navigate, isMobile }) {
@@ -184,7 +187,7 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
 // compares dollars.
 
 function TryAChangePanel({
-  t, isMobile, navigate,
+  t, isMobile,
   retirementAge, monthlySpend, sliderBounds, whatIfSimInputs, applyPlanLevers,
   // Controlled from PlanScreen (not local state here) so the arc — rendered
   // ABOVE this panel — reads the exact same offsets/preview and can never
@@ -216,7 +219,7 @@ function TryAChangePanel({
 
   const applyPayload = (preview?.changed) ? {
     title: "Apply these changes?",
-    action: `Retire at ${draggedAge} · ${fmt(draggedMonthly)}/mo spend`,
+    action: `Retire at ${draggedAge} · ${fmtMonthly(draggedMonthly)}/mo spend`,
     confirmLabel: "Apply changes",
     metrics: preview.metrics,
     note: "Preview uses the same model as your headline numbers.",
@@ -235,15 +238,23 @@ function TryAChangePanel({
   const rowLabel = { display: "flex", justifyContent: "space-between", marginBottom: 6 };
   const sliderInput = { width: "100%", cursor: "pointer", accentColor: t.accent, height: 6 };
 
+  const jumpChip = {
+    padding: "5px 11px", borderRadius: 999, cursor: "pointer",
+    border: `1px solid ${t.line2}`, background: "transparent",
+    font: `500 12px ${HF}`, color: t.mut,
+  };
+  const applyJump = (jump) =>
+    setRetireOffset(resolveRetireJump(jump, retirementAge, sliderBounds) - retirementAge);
+
   return (
-    <div style={{
-      background: t.surf, borderRadius: 14,
-      border: `1px solid ${t.line}`,
-      padding: "16px 18px",
-      display: "flex", flexDirection: "column", gap: 16,
-    }}>
-      <div style={{ font: `600 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-        Try a change
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Quick-jump chips — pure nudges of the retire-at offset below. */}
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+        {RETIRE_JUMPS.map(jump => (
+          <button key={jump.k} type="button" onClick={() => applyJump(jump)} style={jumpChip}>
+            {jump.label}
+          </button>
+        ))}
       </div>
 
       {/* Retire-at slider */}
@@ -269,7 +280,7 @@ function TryAChangePanel({
       <div>
         <div style={rowLabel}>
           <span style={{ font: `500 13px ${HF}`, color: t.ink }}>Monthly spend</span>
-          <span style={{ font: `600 13px ${HM}`, color: t.accent }}>${draggedMonthly.toLocaleString()}/mo</span>
+          <span style={{ font: `600 13px ${HM}`, color: t.accent }}>{fmtMonthly(draggedMonthly)}/mo</span>
         </div>
         <input
           type="range"
@@ -318,16 +329,9 @@ function TryAChangePanel({
           </div>
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => navigate("ideas", "dials")}
-          style={{
-            font: `500 12.5px ${HF}`, color: t.mut, cursor: "pointer",
-            background: "transparent", border: "none", padding: 0, textAlign: "left",
-          }}
-        >
-          More in Ideas <span style={{ color: t.accent }}>→</span>
-        </button>
+        <div style={{ font: `500 12.5px ${HF}`, color: t.faint }}>
+          Drag a slider to preview it on your arc — nothing changes until you Apply.
+        </div>
       )}
 
       {showApply && applyPayload && (
@@ -407,9 +411,12 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     return buildLeverPreview(whatIfSimInputs, overrides);
   }, [whatIfSimInputs, retireOffset, spendOffset, draggedAge, draggedMonthly]);
 
-  // Committed-event edit sheet ({ seed, eventId }) — opened by tapping an arc badge.
+  // Life-event sheet. Opened as EDIT ({ seed, eventId }) from an arc badge or a
+  // goal row, or as NEW ({ seed }) from a Goals-panel preset / custom button.
   const [eventSheet, setEventSheet] = useState(null);
-  const openEventSheet = (ev) => setEventSheet({ seed: ev, eventId: ev.id });
+  const openEventSheet = (ev) => setEventSheet({ seed: ev, eventId: ev.id }); // arc badge → edit
+  const openEditGoal   = (ev) => setEventSheet({ seed: ev, eventId: ev.id });
+  const openNewGoal    = (seed) => setEventSheet({ seed });
   const handleEventSave = (ev) => {
     saveEvent(ev);
     setEventSheet(null);
@@ -512,46 +519,42 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
 
       {isMobile && <div style={{ marginBottom: 14, flexShrink: 0 }}>{progressBar}</div>}
 
-      {/* ── hero row + Try a change panel ────────────────────────────────────── */}
-      {isMobile ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, flexShrink: 0 }}>
-          <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <PortfolioHero t={t} totalAtRet={totalAtRet} planHighlights={planHighlights} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
-            </div>
-          </div>
-          <TryAChangePanel
-            t={t} isMobile navigate={navigate}
-            retirementAge={retirementAge} monthlySpend={monthlySpend}
-            sliderBounds={sliderBounds} whatIfSimInputs={whatIfSimInputs}
-            applyPlanLevers={applyPlanLevers}
-            retireOffset={retireOffset} spendOffset={spendOffset}
-            setRetireOffset={setRetireOffset} setSpendOffset={setSpendOffset}
-            preview={arcPreview}
-            verdictLegend={verdictLegend}
-          />
-        </div>
-      ) : (
-        <div style={{
-          display: "grid", gridTemplateColumns: "1fr 1.1fr 1.2fr", gap: 14, flexShrink: 0,
-        }}>
-          <PortfolioHero t={t} totalAtRet={totalAtRet} planHighlights={planHighlights} />
-          <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
-          <TryAChangePanel
-            t={t} isMobile={false} navigate={navigate}
-            retirementAge={retirementAge} monthlySpend={monthlySpend}
-            sliderBounds={sliderBounds} whatIfSimInputs={whatIfSimInputs}
-            applyPlanLevers={applyPlanLevers}
-            retireOffset={retireOffset} spendOffset={spendOffset}
-            setRetireOffset={setRetireOffset} setSpendOffset={setSpendOffset}
-            preview={arcPreview}
-            verdictLegend={verdictLegend}
-          />
-        </div>
-      )}
+      {/* ── Explore tray: one arc-anchored control surface (Try a change · Goals) ── */}
+      <div style={{ flexShrink: 0 }}>
+        <ExploreTray
+          t={t} isMobile={isMobile}
+          goalsCount={(moneyEvents ?? []).length}
+          changeStaged={!!arcPreview?.changed}
+          changeFacet={
+            <TryAChangePanel
+              t={t} isMobile={isMobile}
+              retirementAge={retirementAge} monthlySpend={monthlySpend}
+              sliderBounds={sliderBounds} whatIfSimInputs={whatIfSimInputs}
+              applyPlanLevers={applyPlanLevers}
+              retireOffset={retireOffset} spendOffset={spendOffset}
+              setRetireOffset={setRetireOffset} setSpendOffset={setSpendOffset}
+              preview={arcPreview}
+              verdictLegend={verdictLegend}
+            />
+          }
+          goalsFacet={
+            <GoalsPanel
+              t={t} moneyEvents={moneyEvents}
+              onNewGoal={openNewGoal} onEditGoal={openEditGoal} onRemoveGoal={removeEvent}
+              bounds={lifeEventBounds}
+            />
+          }
+        />
+      </div>
+
+      {/* ── summary band: portfolio + income ─────────────────────────────────── */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr 1fr",
+        gap: isMobile ? 10 : 14, marginTop: 14, flexShrink: 0,
+      }}>
+        <PortfolioHero t={t} totalAtRet={totalAtRet} planHighlights={planHighlights} />
+        <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
+      </div>
 
       {/* ── stat cards ───────────────────────────────────────────────────────── */}
       <div style={{
@@ -568,7 +571,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           value={String(retirementAge)}
           sub={planHighlights?.yearsToRetirement != null ? `in ${planHighlights.yearsToRetirement} yrs` : undefined}
           accent={t.ink}
-          onClick={() => navigate("ideas", "dials")} />
+          onClick={() => navigate("details")} />
         <StatCard t={t} label="Income for life"
           value={fmtMo(effectiveExpenses)}
           sub={planHighlights?.incomeReplacementPct != null ? `${planHighlights.incomeReplacementPct}% replaced` : undefined}

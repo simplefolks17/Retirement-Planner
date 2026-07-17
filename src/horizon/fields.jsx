@@ -10,15 +10,13 @@
 
 import React from "react";
 import { HF, HM } from "./ThemeContext.jsx";
+import { fmtFull } from "../formatters.js";
 
 // ── display-only formatters (shared so screens format values identically) ──────
-// Sign-aware: a negative figure (e.g. a Roth net benefit) reads "−$9,854", never
-// "$-9,854". Non-negative values are unchanged, so existing callers are unaffected.
-export const money = v => {
-  if (v == null || isNaN(v)) return "—";
-  const r = Math.round(v);
-  return r < 0 ? `−$${Math.abs(r).toLocaleString()}` : `$${r.toLocaleString()}`;
-};
+// `money` is the editable-field readout — full precision (rule 10 tier), same
+// semantics as before (sign-aware: a negative figure reads "−$9,854", never
+// "$-9,854") — now delegating to the canonical fmtFull (src/formatters.js).
+export const money = v => fmtFull(v);
 export const ageFmt = v => (v == null ? "—" : `age ${v}`);
 export const pctYr  = v => (v == null ? "—" : `${v}%/yr`);
 export const pct    = v => (v == null ? "—" : `${v}%`);

@@ -10,6 +10,7 @@
 import React from "react";
 import { HF, HM } from "../../ThemeContext.jsx";
 import { DetailField, money } from "../../fields.jsx";
+import { fmt } from "../../../formatters.js";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW } from "./flow-ui.jsx";
 import { SS_FRA, SS_MAX_CLAIM_AGE } from "../../../config/irs-2026.js";
 
@@ -46,9 +47,9 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
       </div>
 
       <div style={row3}>
-        <StatTile t={t} label="Monthly benefit" value={`${money(sv.ssMonthly)}/mo`}
+        <StatTile t={t} label="Monthly benefit" value={`${fmt(sv.ssMonthly)}/mo`}
           sub={`at ${sv.claimAgeLabel}`} tone="good" dim={!includeSS} />
-        <StatTile t={t} label="Annual benefit" value={money(sv.ssAnnual)}
+        <StatTile t={t} label="Annual benefit" value={fmt(sv.ssAnnual)}
           sub={!includeSS ? "excluded from calcs"
             : sv.ssCoveragePct != null ? `${sv.ssCoveragePct}% of expenses` : "—"}
           tone="good" dim={!includeSS} />
@@ -58,7 +59,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
       </div>
 
       <div style={{ font: `400 11px ${HF}`, color: t.faint }}>
-        Estimated AIME {money(sv.ssAIME)}/mo · up to 85% of the benefit may be taxable depending on combined income.
+        Estimated AIME {fmt(sv.ssAIME)}/mo · up to 85% of the benefit may be taxable depending on combined income.
       </div>
 
       {/* ── Delay-to-70 impact (only when delaying still helps) ── */}
@@ -69,7 +70,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
             <span>Additional SS income</span>
-            <span style={{ font: `600 12px ${HM}`, color: t.good }}>+{money(sv.ss70DrawReduction)}/yr</span>
+            <span style={{ font: `600 12px ${HM}`, color: t.good }}>+{fmt(sv.ss70DrawReduction)}/yr</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
             <span>Portfolio draw drops</span>
@@ -102,14 +103,14 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
           {sv.spouseAltHigher && (
             <NoteBox t={t} tone="warm">
               Their {ss.spouseBenefitBasis.value === "spousal" ? "own-record" : "spousal"} benefit would be
-              higher (~{money(sv.spouseAlt)}/yr) — consider switching basis.
+              higher (~{fmt(sv.spouseAlt)}/yr) — consider switching basis.
             </NoteBox>
           )}
           <div style={row3}>
-            <StatTile t={t} label="Spouse benefit" value={`${money(sv.spouseSsBenefit)}/yr`}
+            <StatTile t={t} label="Spouse benefit" value={`${fmt(sv.spouseSsBenefit)}/yr`}
               sub={ss.spouseBenefitBasis.value === "own" ? "own record" : "spousal (50%)"} tone="good" dim={!includeSS} />
-            <StatTile t={t} label="Household SS" value={`${money(props.householdSS)}/yr`}
-              sub={`${money(sv.householdSSMonthly)}/mo`} tone="good" dim={!includeSS} />
+            <StatTile t={t} label="Household SS" value={`${fmt(props.householdSS)}/yr`}
+              sub={`${fmt(sv.householdSSMonthly)}/mo`} tone="good" dim={!includeSS} />
             <StatTile t={t} label="SS coverage"
               value={sv.householdCoveragePct != null ? `${sv.householdCoveragePct}%` : "—"}
               sub="of annual expenses" />
@@ -131,7 +132,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
         {/* Applicability of the DERIVED effectivePension travels with the data (model flag). */}
         {sv.showEffectivePension && (
           <div style={{ font: `400 11px ${HF}`, color: t.faint }}>
-            Counts as {money(props.effectivePension)}/yr of retirement income.
+            Counts as {fmt(props.effectivePension)}/yr of retirement income.
           </div>
         )}
       </div>

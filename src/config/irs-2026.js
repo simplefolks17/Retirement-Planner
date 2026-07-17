@@ -365,8 +365,12 @@ export const ASSUMPTIONS = {
   AFFORDABILITY_STEP:      1_000,
   AFFORDABILITY_MAX_SEARCH: 5_000_000,
 
-  // Max number of one-time/duration events a user can add in the Money Events
-  // panel (Classic) / LifeEventSheet (Horizon) — a product-level UI cap, not
-  // an IRS rule, named here so both surfaces stay identical by construction.
-  MAX_MONEY_EVENTS: 6,
+  // Max number of one-time/duration events ("Goals") a user can add in the
+  // Money Events panel (Classic) / the Plan-screen Goals panel (Horizon) — a
+  // product-level UI cap, not an IRS rule, named here so both surfaces stay
+  // identical by construction. Raised 6 → 12 (multi-goal timeline).
+  MAX_MONEY_EVENTS: 12,
+  // Goals shown by default on the Plan Goals panel before "add more goals"
+  // reveals the rest (progressive disclosure — not an IRS rule).
+  DEFAULT_VISIBLE_GOALS: 3,
 };
