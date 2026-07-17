@@ -40,6 +40,9 @@ repeat the mistake.
 **Tests:** none yet — a regression test would run `surplusApplySite`'s preview against a bundle with
 a committed retirement-phase event and assert the walk sees it exactly once (e.g. compare against a
 direct `buildRetirementPhase` call with the event list passed once).
+**Re-verified 2026-07-17 (PR #56 close-out):** `calcWhatIfDelta({ ...whatIfBundle, moneyEvents })`
+still at `App.jsx:1379` (both preview calls). Still reproduces; PR #56 touched neither
+`surplusApplySite` nor `what-if.js`'s merge.
 
 ---
 
@@ -86,6 +89,13 @@ onChange(id)}` still at line 134, still no `tabIndex`/`onKeyDown`. `OnTrackPill`
 (`role="button"`, no `tabIndex`) still at line 73. Still reproduces; this session's work was
 CodeRabbit-review fixes in `App.jsx`/`what-if.js`/`IdeasScreen.jsx`/`AffordabilityPanel.jsx`/
 `LifeEventSheet.jsx`/`money-events.js`/`irs-2026.js` — `HorizonShell.jsx` was not touched.
+**Re-verified 2026-07-17 (PR #56 close-out) — scope narrows again, still open.** `IdeasScreen.jsx`
+was DELETED this PR (Ideas retired; its capabilities moved to Plan's Explore tray, whose new
+surfaces — facet tabs, goal rows/pills, quick-jump chips — are all native `<button>`s by
+construction). Every IdeasScreen reference in this entry is now historical. The `HorizonShell.jsx`
+nav-shell portion **still reproduces**: `TabBar` `<div key={id} onClick>` confirmed at line 134
+(no `tabIndex`/`onKeyDown`); mobile bar / `MoreSheet` rows / onboarding controls unchanged (PR #56
+touched HorizonShell only for the Ideas removal, the `navigate` guard, and formatter imports).
 
 ### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
 
@@ -102,6 +112,9 @@ handler for keyboard parity (ties into BUG-49's broader keyboard-access gap).
 **Re-verified 2026-07-12 (session close-out, PR #52):** the popover (`open && (<div ...>`) still
 closes only via its own `✕` (line 102) — no outside-click or `Escape` handler. Still reproduces;
 `HorizonShell.jsx` untouched this session.
+**Re-verified 2026-07-17 (PR #56 close-out):** `✕`-only close confirmed at line 102. Still
+reproduces; PR #56's HorizonShell edits (Ideas removal, navigate guard, formatters) didn't touch
+the popover.
 
 ---
 
@@ -140,6 +153,9 @@ present (now `App.jsx:1503`, shifted by this session's `retirementMoneyEvents` h
 reordering earlier in the file); `retirement-phase.js` still has no `totalDrawTax` field. Still
 reproduces; this session's CodeRabbit-fix work never touched the composition memo or
 `retirement-phase.js`.
+**Re-verified 2026-07-17 (PR #56 close-out):** composition memo (now ~`App.jsx:1473-1480`) still
+RMD + conversion only; `retirement-phase.js` still has no `totalDrawTax` (grep-confirmed). Still
+reproduces; PR #56 touched neither file's relevant code.
 
 ---
 
@@ -318,9 +334,66 @@ Still reproduces; `flow-down.js` was not touched by this session's build.
 **Re-verified 2026-07-12 (session close-out, PR #52):** `totalGrowth` still the residual formula at
 line 34, unchanged. Still reproduces; `flow-down.js` was not touched this session.
 
+> **BUG-36 / BUG-37 / BUG-38 / BUG-39 — shared re-verification, 2026-07-17 (PR #56 close-out):**
+> all four are engine/model-scope deferrals, and PR #56's entire diff touches only
+> `apply-preview.js` + `action-cards.js` in `src/model/` (git-diff-confirmed: `what-if.js`,
+> `retirement-engine.js`, `retirement-phase.js`, `flow-down.js`, `optimization.js` all
+> byte-untouched). All four remain open exactly as documented.
+
 ---
 
 ## Resolved Issues
+
+---
+
+### PR #56 review-fix batch — multi-goal/Ideas-retirement/calm-money (found + fixed 2026-07-16/17, pre-merge)
+
+Bugs found by the PR's review battery (Gemini + CodeRabbit ×2 rounds + an internal Fable
+adversarial review + a Fable math-contamination audit) and fixed on the branch before merge.
+All display/control-layer — golden master untouched throughout; suite 823 → **840** across the PR.
+
+1. **ExploreTray collapse trap while a change is staged** (Gemini; fixed `21992d8`). The
+   auto-open fallback (`open ?? (changeStaged ? "change" : null)`) re-resolved to `"change"` on
+   every render, so clicking the facet tab to collapse a dirty tray silently did nothing —
+   permanently stuck open until Discard. Fix: explicit `"closed"` sentinel that wins over the
+   fallback; offsets survive collapse (they live in PlanScreen), the staged dot stays visible on
+   the tab, one click reopens. Regression test: collapse-while-staged → reopen → Apply present.
+   **Where:** `src/horizon/ExploreTray.jsx`; test in `plan-screen.test.js`.
+2. **Longevity preview delta contradicted the age-based display** (internal adversarial review
+   F1, the batch's one P1; fixed `4a52713`). The calm-numbers change switched the *display* to
+   depletion ages ("to age 87") but the *delta* still diffed `Math.round(years)` — a lever drag
+   could render "to age 87 → to age 88 · no change", or "+2 yrs" beside two identical ages
+   (year-fractions straddling .5; worse when a retire-earlier lever shifts `startAge`, decoupling
+   duration from depletion age entirely). Fix: `longevityMetric` diffs the depletion **ages**
+   when both are known — the same basis the display shows — falling back to whole years only in
+   the rare null-depletion branch. **Where:** `src/model/apply-preview.js`; regression tests lock
+   both contradiction directions.
+3. **Goal rows misstated typed amounts** (F2; fixed `4a52713`). `GoalsPanel`'s summary
+   $100-rounded *typed* values — a typed $49/mo read a fabricated "−$0/mo", $250/mo read
+   "$300/mo" while the sheet showed $250. Fix: typed values render `fmtFull` (two-tier policy),
+   both monthly and one-time branches. **Where:** `src/horizon/GoalsPanel.jsx`.
+4. **Statement ledger stopped reconciling to its own total** (F3; fixed `4a52713`). Applying
+   CodeRabbit's "consistency" suggestion had put per-row nearest-$100 rounding on the
+   "Income for life" column — a verify-ledger with a bolded total — drifting rows vs total by up
+   to ~$200. Fix: all four income rows restored to the model's exact-dollar monthly values (SS
+   row now reads `sv.monthlyHHSS` directly instead of re-deriving from annual `householdSS`), so
+   the column sums by model construction. **Where:** `src/horizon/screens/NumbersScreen.jsx`.
+5. **Canonical-formatter rounding asymmetry + `−$0`** (CodeRabbit r1; fixed `61c09e4`).
+   `Math.round` on signed values rounds halves toward +∞ (`fmtMonthly(-150)` → "−$100" vs
+   `fmtMonthly(150)` → "$200"), and small negatives rendered "−$0". Fix: round absolute
+   magnitudes, sign only nonzero results; `negFull`/`fmtDeduc` later collapsed to negate
+   *through* `fmtFull` (CodeRabbit r2, `f7c2357`) so a genuine $0 deduction reads "$0", not
+   "−$0". **Where:** `src/formatters.js`, `NumbersScreen.jsx`; formatter tests 9 → 24 cases.
+
+**Also recorded from the batch:** one CodeRabbit suggestion was *corrected* rather than applied
+(`fmtMo` on already-monthly values would divide by 12 twice — `fmtMonthly` was the right
+consistency fix), and one declined with rationale on the PR thread (moving `CUSTOM_GOAL_SEED`/
+`resolveRetireJump` out of `presets.js` — preset data stays co-located and value-locked; the
+clamp is slider-bounds mechanics matching accepted precedent). A final **math-contamination
+audit** (owner request: "did formatting leak into the calculations?") came back clean app-wide:
+every formatter output dead-ends at a render; every committed value traces to raw state or raw
+model output; the only rounding reaching committed state is the pre-existing, deliberate
+whole-dollar monthly-spend slider quantization (≤$6/yr, once per commit, never compounds).
 
 ---
 

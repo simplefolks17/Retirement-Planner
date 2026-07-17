@@ -1335,6 +1335,23 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   screens + Classic. 823 → **837 tests** (formatters 9→23 incl. the guard + the 999,600→`$1M`
   promotion edge; strategies/apply-preview/conversion-wiring/money-events locks recalibrated);
   golden master untouched; lint clean; build OK.
+- **PR #56 review battery + merge (2026-07-16/17, same branch → merged to `main`).** The
+  multi-goal/Ideas-retirement/calm-money PR went through Gemini + CodeRabbit (2 rounds) + an
+  internal Fable adversarial review + a Fable **math-contamination audit** (owner concern:
+  formatting rounding leaking into calculations — verdict CLEAN app-wide; every formatter output
+  dead-ends at a render, every committed value traces to raw state; the only rounding reaching
+  committed state is the pre-existing ≤$6/yr whole-dollar monthly-slider quantization, once per
+  commit, non-compounding). Five real bugs found + fixed pre-merge — the ExploreTray
+  collapse-while-staged trap (Gemini), the P1 longevity-delta/age-display contradiction, typed-tier
+  goal-row amounts ("−$0/mo"), Statement-ledger reconciliation, and formatter rounding
+  symmetry/−$0 — full record in `docs/BUGS.md` → "PR #56 review-fix batch". One CodeRabbit
+  suggestion corrected (`fmtMo` would double-divide already-monthly values), one declined with
+  rationale (presets.js layer placement). A separate **convention-drift audit** (same disease as
+  the money formatters, other classes) is filed as the next follow-up: percent/rate formatting
+  (6–7 conventions, user-visible disagreement on `effectiveRMDTaxRate`), 3 disagreeing
+  verdict→tone maps, 4 copies of the draft-commit input pattern, ~20 inline clamps in 2 operand
+  orders, mixed id minting, and the money-guard's JSX-text blind spot. 837 → **840 tests**;
+  golden master untouched; lint clean; build OK.
 
 ## Commands
 

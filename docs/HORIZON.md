@@ -95,6 +95,32 @@ const { t, palKey, setPalKey, modePref, setModePref, resolvedMode, arcStyle, set
 
 ---
 
+## Calm-Money Formatting Policy (2026-07-16, binding)
+
+**One formatter module: `src/formatters.js`.** No file outside it (plus the sanctioned
+`DeferredInput.jsx` input machinery) may build a `$${…}` dollar string — enforced by a
+source-scan guard test in `src/__tests__/formatters.test.js`. `horizon/shared.jsx` re-exports
+the canonical functions; `fields.jsx money` delegates to `fmtFull`.
+
+**Two tiers — a number the user TYPES stays full; a number the model DERIVES goes calm:**
+
+| Function | Output | Use for |
+|---|---|---|
+| `fmt` | `$980` / `$118k` / `$1.2M` (U+2212 negatives, `—` missing) | headline stats, card values, derived numbers |
+| `fmtFull` | `$1,240,000` | editable-input readouts, typed-value summaries, verify LEDGERS (Statement tab, Classic tables) |
+| `fmtSigned` | `+$22k` / `−$60k` | before→after deltas |
+| `fmtMonthly` / `fmtMo` | nearest $100 (`$5,200`) | derived monthly figures (never ledger rows, never typed values) |
+| `fmtPct` | `3.4%` (1 decimal) | rates; whole percents for shares |
+
+Hard rules learned from the PR #56 review battery: **ledger columns with a total row use exact
+`fmtFull` on every row** (per-row $100 rounding breaks the reconciles-to-total property);
+**typed values are never rounded for display** (a typed $49/mo must not read "−$0/mo"); missing
+data renders `—`, never a fabricated `$0`; longevity is phrased as an **age** ("to age 87") and
+its deltas diff the same age basis the display shows. Formatter outputs are strings and must
+never feed back into arithmetic or committed state (audited clean 2026-07-17).
+
+---
+
 ## ArcGraph Component
 
 **File:** `src/components/ArcGraph.jsx`
