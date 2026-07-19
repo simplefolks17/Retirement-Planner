@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (840 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (843 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1353,10 +1353,29 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   orders, mixed id minting, and the money-guard's JSX-text blind spot. 837 → **840 tests**;
   golden master untouched; lint clean; build OK.
 
+- **Backlog impact-reprioritization + Batch 0 (2026-07-19, branch
+  `claude/feature-prioritization-implementation-vesl3k`):** owner-approved re-ranking of the
+  planned backlog after a 3-agent code audit verified every top candidate against the CURRENT
+  source (several specs predated the duration-events system, the Ideas retirement, and the
+  per-account engine). Verdicts recorded as dated notes in `feature-tracker.html`: **#112/#48
+  timeline primitive OBSOLETE as specced** (moneyEvents already is the canonical store; rescoped
+  to a targeted extension — per-event growth, open-ended durations, taxed retirement-phase event
+  income, lifted UI bounds), #53/#10 rescoped onto that extension, #35 mostly done, #55/#85/#56
+  shrunk to thin layers over shipped lever-preview/verdict/composition machinery, #113/#30/#114/#116
+  confirmed as real builds. New P1 work list (complex-first, dependency-honest): #113 entitlements →
+  #30 spouse engine → #114 Monte Carlo lens → moneyEvents extension → #116/#85/#55/#56. Demotions:
+  #82/#83 → P3 (Solvers surface retired by owner 2026-07-13), Advanced-Income #58/#59/#62/#63/#64/#65
+  → P2 (blocked on the P1 infra). **Batch 0 fixes shipped:** BUG-75 (calcWhatIfDelta's `moneyEvents`
+  param is now additions-only — committed events ride the bundle on BOTH phases; `surplusApplySite`
+  stops passing them; the re-sim merge also fixes Classic WhatIfPanel's latent committed-accum-event
+  drop) and BUG-40 (`totalDrawTax` rollup in `buildRetirementPhase`; composition bar gains the
+  "401k draw tax" segment; `inflowTax` consciously excluded, noted in BUGS.md). Both inert at the
+  default state — golden master untouched. 840 → **843 tests**.
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (840 tests)
+- `npm test` — run model + formatter + render-smoke tests (843 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

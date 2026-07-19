@@ -240,7 +240,11 @@ export function calcWhatIfDelta({
   baseTotalAtRet,
   baseYearsSustained,
   // ── scenario overrides ──
-  moneyEvents = [],             // { label, amount, age, isInflow, isTaxable }
+  moneyEvents = [],             // scenario ADDITIONS only ({ label, amount, age, isInflow, isTaxable }).
+                                // Committed events travel inside the bundle — simInputs.moneyEvents
+                                // for the sim, retDrawShared.moneyEvents for the walk — and are merged
+                                // below on BOTH phases. Passing committed events here double-counts
+                                // them in the retirement walk (BUG-75).
   annualExpensesOverride = null, // change annual retirement spending (number or null)
   retirementAgeOverride  = null, // shift retirement age (number or null — re-runs sim)
   contribOverrides = null,       // { contrib401k?, contribRoth?, contribTaxable?, contribHSA? } — re-runs sim
@@ -273,8 +277,15 @@ export function calcWhatIfDelta({
       && scenarioRetAge > simInputs.currentAge) {
     // contribOverrides spread AFTER simInputs so it takes precedence; moneyEvents
     // is written explicitly last so a stray key in contribOverrides (not part of
-    // its documented shape) can never silently override the real accumEvents.
-    const raw = runSimulation({ ...simInputs, ...(contribOverrides ?? {}), moneyEvents: accumEvents });
+    // its documented shape) can never silently override the real event list.
+    // Committed events (simInputs.moneyEvents) must ride along in the re-sim —
+    // the no-resim baseline (baseTotalAtRet) already includes them, so dropping
+    // them here would make a forced re-sim's basis asymmetric (BUG-75 fix; same
+    // class as the BUG-34/BUG-61 basis mismatches).
+    const raw = runSimulation({
+      ...simInputs, ...(contribOverrides ?? {}),
+      moneyEvents: [...(simInputs.moneyEvents ?? []), ...accumEvents],
+    });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
     const at = raw[retIdx];

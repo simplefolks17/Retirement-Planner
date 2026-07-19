@@ -7,45 +7,6 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-### BUG-75 — `surplusApplySite` double-applies committed retirement-phase events in both its previews (found 2026-07-13, Fable adversarial review of PR #53)
-
-**Owner:** me_theguy. **Found by:** a Fable adversarial review requested to hunt for correctness
-bugs in PR #53's BUG-72/73 work; this finding is **pre-existing** — present since `surplusApplySite`
-shipped (WI-3.7) and unrelated to the income-channel/verdict changes, but surfaced while tracing
-how `moneyEvents` reach `calcWhatIfDelta`.
-**What:** `src/App.jsx:1379-1389` (`surplusApplySite`'s "current" and "candidate" previews) passes
-the full committed `moneyEvents` array straight into `calcWhatIfDelta({ ...whatIfBundle,
-moneyEvents })`. Inside, `calcWhatIfScenario`'s retirement-phase merge
-(`src/model/what-if.js:263, 301` — shifted from :215/:253 by PR #54's unrelated additions earlier
-in the file; re-verified 2026-07-15, content unchanged) builds `mergedRetEvents =
-[...(retDrawShared.moneyEvents ?? []), ...retEvents]`, where `retEvents` is
-`moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge)`
-— but `retDrawShared.moneyEvents` **is already** the committed retirement-phase event list (set once
-in App.jsx). Passing `moneyEvents` again re-derives `retEvents` from the SAME committed list and
-concatenates it onto `retDrawShared.moneyEvents`, so every committed retirement-phase event is
-counted twice in the walk.
-**Impact:** symmetric between the "current" and "candidate" runs in the surplus modal, so the
-*delta* (and therefore the surplus-deployment recommendation) mostly survives — but the absolute
-`yearsSustained`/depletion figures the modal displays are wrong whenever the user has any committed
-retirement-phase money events. The BUG-72 income channel makes this worse for income-bearing
-duration events: the doubled event now also doubles the (portfolio-channel) income term.
-**Fix shape (not yet applied — needs an owner nod since it touches a shipped Apply-site's inputs):**
-`surplusApplySite`'s two `calcWhatIfDelta` calls should NOT pass `moneyEvents` at all — `whatIfBundle`
-already carries `retDrawShared.moneyEvents` internally, so the merge only needs the deliberate
-*scenario* additions (none, for this Apply-site) — or `calcWhatIfDelta` needs a documented contract
-for "committed events are already in the bundle, don't pass them again" so future Apply-sites don't
-repeat the mistake.
-**Where:** `src/App.jsx:1379, 1382` (the two `moneyEvents` call-sites); `src/model/what-if.js:263,
-301` (the merge that double-counts them).
-**Tests:** none yet — a regression test would run `surplusApplySite`'s preview against a bundle with
-a committed retirement-phase event and assert the walk sees it exactly once (e.g. compare against a
-direct `buildRetirementPhase` call with the event list passed once).
-**Re-verified 2026-07-17 (PR #56 close-out):** `calcWhatIfDelta({ ...whatIfBundle, moneyEvents })`
-still at `App.jsx:1379` (both preview calls). Still reproduces; PR #56 touched neither
-`surplusApplySite` nor `what-if.js`'s merge.
-
----
-
 ### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
 
 **Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell,
@@ -115,47 +76,6 @@ closes only via its own `✕` (line 102) — no outside-click or `Escape` handle
 **Re-verified 2026-07-17 (PR #56 close-out):** `✕`-only close confirmed at line 102. Still
 reproduces; PR #56's HorizonShell edits (Ideas removal, navigate guard, formatters) didn't touch
 the popover.
-
----
-
-### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
-
-**Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
-**What:** The Taxes tab's "Retirement-phase tax composition" bar uses `taxView.composition.total =
-rmdTaxBite + convTaxTotal` (`App.jsx`, `taxViewBundle`). This captures the RMD-schedule tax and
-the conversion-window tax, but misses `drawTax` — the incremental tax the per-account engine
-charges when the 401k is tapped for living expenses beyond RMDs/conversions (e.g. after the
-conversion window closes but before depletion). In scenarios with meaningful extra 401k draws, the
-displayed retirement-phase tax total is understated.
-**Root cause:** `rmdTaxBite` and `convTaxTotal` are scalar aggregates from the existing plan-level
-fields; `drawTax` is a per-row field inside `retirementWalk.rows` that has no existing scalar
-rollup. Adding it requires either (a) a new `totalDrawTax = Σ(row.drawTax)` field in
-`retirementWalk` (preferred — keeps the rollup in the model, rule 10) or (b) a `Σ` over the rows
-in App.jsx before the `taxViewBundle` memo.
-**Inert at the default state:** the default plan is trivially sustainable (Infinity longevity) and
-`drawTax` is near-zero at the default spending level; effect is visible for under-funded plans.
-**Fix path:** add `totalDrawTax: rows.reduce((s, r) => s + (r.drawTax ?? 0), 0)` to `buildRetirementPhase`
-return; include it in `taxView.composition.total` and as a third "draw" segment in `taxViewBundle`.
-**Where:** `src/model/retirement-phase.js` (add field), `src/App.jsx` `taxViewBundle` (consume it),
-`src/horizon/screens/NumbersScreen.jsx` (render third segment), `src/horizon/__tests__/numbers-tabs.test.js`
-(update composition mock).
-**Re-verified 2026-07-08 (L3c close-out):** `App.jsx`'s `taxViewBundle` still computes
-`total = rmdTax + convTax` with no `drawTax` term (line shifted to ~1272 by this session's
-unrelated additions elsewhere in the file); `retirement-phase.js`'s `buildRetirementPhase` return
-still has no `totalDrawTax` field. Still reproduces exactly as described; this session's build
-never touched either file's relevant code.
-**Re-verified 2026-07-09 (L3d close-out):** `taxViewBundle`'s `composition.total = rmdTax + convTax`
-confirmed unchanged (now at `App.jsx:1565`, shifted by this session's additions elsewhere in the
-file); `retirement-phase.js` still has no `totalDrawTax` field. Still reproduces; this session's
-WI-3.7/WI-3.8 build touched neither the composition memo nor `retirement-phase.js`.
-**Re-verified 2026-07-12 (session close-out, PR #52):** `composition.total = rmdTax + convTax` still
-present (now `App.jsx:1503`, shifted by this session's `retirementMoneyEvents` hoist + `commitPlan`
-reordering earlier in the file); `retirement-phase.js` still has no `totalDrawTax` field. Still
-reproduces; this session's CodeRabbit-fix work never touched the composition memo or
-`retirement-phase.js`.
-**Re-verified 2026-07-17 (PR #56 close-out):** composition memo (now ~`App.jsx:1473-1480`) still
-RMD + conversion only; `retirement-phase.js` still has no `totalDrawTax` (grep-confirmed). Still
-reproduces; PR #56 touched neither file's relevant code.
 
 ---
 
@@ -343,6 +263,60 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-75 — `surplusApplySite` double-applied committed retirement-phase events in both its previews (found 2026-07-13, Fable adversarial review of PR #53; FIXED 2026-07-19)
+
+**Owner:** me_theguy. **Fixed:** 2026-07-19 (Batch 0 of the reprioritized-backlog build, owner-approved plan).
+**Root cause:** `surplusApplySite`'s "current" and "candidate" previews passed the full committed
+`moneyEvents` array into `calcWhatIfDelta({ ...whatIfBundle, moneyEvents })`, but the walk-side
+merge (`what-if.js`) already concatenates `retDrawShared.moneyEvents` — the committed
+retirement-phase list — with the param-derived `retEvents`. Every committed retirement-phase event
+was therefore counted twice in both previews' walks (absolute `yearsSustained`/depletion figures
+wrong whenever committed retirement-phase events existed; deltas mostly survived by symmetry).
+**Fix (contract change, both halves):**
+1. `calcWhatIfDelta`'s `moneyEvents` param is now documented as **scenario ADDITIONS only** —
+   committed events travel inside the bundle (`simInputs.moneyEvents` for the sim,
+   `retDrawShared.moneyEvents` for the walk).
+2. The forced-re-sim path now merges `[...(simInputs.moneyEvents ?? []), ...accumEvents]` instead
+   of overriding with the additions alone — without this, dropping the param from callers would
+   have re-introduced the BUG-34/BUG-61 basis-mismatch class (a `contribOverrides` re-sim dropping
+   committed accumulation events while the no-resim baseline `baseTotalAtRet` includes them).
+   This also fixes the same latent asymmetry in Classic `WhatIfPanel`'s delta mode (its forced
+   re-sims previously dropped committed accumulation events).
+3. `surplusApplySite` no longer passes `moneyEvents` (and dropped it from its dep array).
+**Where:** `src/App.jsx` (`surplusApplySite`), `src/model/what-if.js` (param doc + re-sim merge).
+**Tests (+2):** `what-if.test.js` → "committed events contract (BUG-75)": (a) a committed
+retirement-phase event is counted exactly once (equals a direct `buildRetirementDrawdown` with the
+event passed once); (b) a no-change `contribOverrides` candidate matches the no-override current
+with committed events in BOTH phases — the anti-divergence property the Apply-site markets.
+Golden master untouched (defaults have no events).
+
+---
+
+### BUG-40 — `taxView.composition.total` missed `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review; FIXED 2026-07-19)
+
+**Owner:** me_theguy. **Fixed:** 2026-07-19 (Batch 0 of the reprioritized-backlog build).
+**Root cause:** the Taxes tab's "Retirement-phase tax composition" total was `rmdTaxBite +
+convTaxTotal` only; `drawTax` (the engine's incremental tax on 401k draws beyond RMDs/conversions)
+existed only as a per-row field with no scalar rollup, so under-funded plans understated the
+displayed retirement-phase tax total.
+**Fix (the documented preferred path):** `buildRetirementPhase` now returns
+`totalDrawTax = Math.round(Σ row.drawTax)` over the display rows (bounded to `lifeExp`, same
+convention as `rmdTaxBite`/`conversionCost` so the three compose); `taxViewBundle` includes it in
+`composition.total` and as a third `{ key: "draw", label: "401k draw tax" }` segment; the
+NumbersScreen anchor copy now reads "(RMD, conversion & 401k draws)".
+**Conscious exclusion, recorded:** the engine's per-row `inflowTax` (tax on one-time *taxable
+inflow events*, e.g. an inherited pre-tax IRA) remains outside the composition bar — it is
+event-driven (zero unless such an event exists) and is a tax on external money entering the plan,
+not on the plan's own retirement drawdown; revisit if taxable-inflow events become prominent.
+**Where:** `src/model/retirement-phase.js` (rollup + return field), `src/App.jsx` (`taxViewBundle`),
+`src/horizon/screens/NumbersScreen.jsx` (copy), `src/horizon/__tests__/numbers-tabs.test.js`
+(mock gains the draw segment + segment assertion).
+**Tests (+1):** `retirement-phase.test.js` — `totalDrawTax` equals `Σ(row.drawTax)` over display
+rows, and is strictly positive in a trad-only fixture where every pre-RMD draw comes from the 401k.
+**Inert at the default state** (near-zero `drawTax` at the default spend) — golden master untouched.
 
 ---
 

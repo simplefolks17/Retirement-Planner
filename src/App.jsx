@@ -1376,10 +1376,14 @@ export default function App() {
         applied: preApplySnapshot !== null,
       };
     }
-    const before = calcWhatIfDelta({ ...whatIfBundle, moneyEvents });
+    // BUG-75 fix: no `moneyEvents` here — calcWhatIfDelta's param is scenario
+    // ADDITIONS only (this site has none). Committed events already travel inside
+    // whatIfBundle (simInputs.moneyEvents for the sim, retDrawShared.moneyEvents
+    // for the walk); passing them again double-counted every committed
+    // retirement-phase event in both previews' walks.
+    const before = calcWhatIfDelta({ ...whatIfBundle });
     const after = calcWhatIfDelta({
       ...whatIfBundle,
-      moneyEvents,
       contribOverrides: {
         contrib401k: optimizedAllocation.opt401k,
         contribRoth: optimizedAllocation.optRoth,
@@ -1411,7 +1415,7 @@ export default function App() {
       applied: false, // preApplySnapshot is null here (we're in the `available` branch)
     };
   }, [optimizedAllocation, preApplySnapshot, applyAllocation, revertAllocation, whatIfBundle,
-      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus, moneyEvents]);
+      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus]);
 
   // WI-3.7 (#104): Surplus-deployment flow bundle. Sibling of strategiesView keyed
   // by the "surplus" strategy id — the card face reads props.budget.* directly
@@ -1477,16 +1481,19 @@ export default function App() {
   // one source for the retirement-phase tax composition (BUG-35).
   // Memoized so horizonProps stays identity-stable (V9).
   const taxViewBundle = useMemo(() => {
-    // Retirement-phase tax composition — RMD + conversion (both lifetime totals).
+    // Retirement-phase tax composition — RMD + conversion + extra-401k-draw tax
+    // (all lifetime totals from the ONE engine; BUG-40 added the draw segment).
     // Working-year tax is excluded: fedTax is one year, not a lifetime figure,
     // so mixing it here would distort the bar. Computed ONCE here (rule 10).
     // Segments carry their own dollar val + integer pct; bar widths are layout math.
     const rmdTax  = rmdTaxBite ?? 0;
     const convTax = retPhase.conversionCost ?? 0;
-    const total   = rmdTax + convTax;
+    const drawTax = retPhase.totalDrawTax ?? 0;
+    const total   = rmdTax + convTax + drawTax;
     const rawSegs = [
       { label: "RMD tax",        val: rmdTax,  key: "rmd" },
       { label: "Conversion tax", val: convTax, key: "conv" },
+      { label: "401k draw tax",  val: drawTax, key: "draw" },
     ];
     const segments = total > 0
       ? rawSegs.filter(s => s.val > 0).map(s => ({

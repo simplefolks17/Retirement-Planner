@@ -292,6 +292,60 @@ describe("calcWhatIfDelta", () => {
   });
 });
 
+// ── BUG-75: committed events are bundle-carried; the param is additions-only ──
+// Committed events reach calcWhatIfDelta via simInputs.moneyEvents (sim) and
+// retDrawShared.moneyEvents (walk). Passing them AGAIN as the `moneyEvents`
+// param double-counted every committed retirement-phase event in the walk
+// (surplusApplySite did exactly that), and before the fix a forced re-sim
+// dropped committed accumulation events entirely (simInputs.moneyEvents was
+// overridden with the scenario additions).
+describe("calcWhatIfDelta — committed events contract (BUG-75)", () => {
+  const accumE = { label: "Roof", amount: 30_000, age: 45, isInflow: false, isTaxable: false };
+  const retE   = { label: "Trip", amount: 60_000, age: 70, isInflow: false, isTaxable: false };
+
+  // Baseline WITH the committed accumulation event, mirroring App.jsx's main path.
+  const simInputsC = { ...simInputs, moneyEvents: [accumE] };
+  const simC  = runSimulation(simInputsC);
+  const atC   = simC[safeRetAge - currentAge - 1];
+  const baseTotalC = (atC.tradGross ?? 0)
+    + (atC["Roth IRA"] ?? 0) + (atC["Taxable"] ?? 0) + (atC["HSA"] ?? 0);
+  // Depleting retirement shared (finite years) carrying the committed retirement event.
+  const retDrawC = { ...depletingRetDrawShared, moneyEvents: [retE] };
+  const walkC = buildRetirementDrawdown({
+    ...retDrawC, startBal: baseTotalC, startAge: safeRetAge, endAge: safeRetAge + 130,
+  });
+  const argsC = {
+    simInputs: simInputsC, fedMarginal, retDrawShared: retDrawC,
+    safeRetAge, safeLifeExp,
+    baseTotalAtRet: baseTotalC, baseYearsSustained: walkC.yearsSustained,
+  };
+
+  it("counts a committed retirement-phase event exactly once in the walk", () => {
+    // No scenario additions → the walk must equal a direct buildRetirementDrawdown
+    // with the committed event passed once. A double-count shifts yearsSustained.
+    const r = calcWhatIfDelta({ ...argsC, moneyEvents: [] });
+    expect(r.scenarioYears).toBe(walkC.yearsSustained);
+    expect(r.scenarioTotalAtRet).toBe(baseTotalC);
+  });
+
+  it("a no-change contribOverrides candidate matches the no-override current when committed events exist in both phases", () => {
+    // This is surplusApplySite's anti-divergence property: "current" (no resim,
+    // baseTotalAtRet includes the committed accum event) vs "candidate" (forced
+    // resim) must agree when the candidate changes nothing. Pre-fix the resim
+    // dropped the committed accum event → spurious basis delta.
+    const before = calcWhatIfDelta({ ...argsC, moneyEvents: [] });
+    const after  = calcWhatIfDelta({
+      ...argsC, moneyEvents: [],
+      contribOverrides: {
+        contrib401k: simInputs.contrib401k, contribRoth: simInputs.contribRoth,
+        contribTaxable: simInputs.contribTaxable, contribHSA: simInputs.contribHSA,
+      },
+    });
+    expect(after.scenarioTotalAtRet).toBeCloseTo(before.scenarioTotalAtRet, 6);
+    expect(after.scenarioYears).toBe(before.scenarioYears);
+  });
+});
+
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
 // 2026-07-11 (fix-pass-2): calcAffordabilityMax moved from the blended walk
 // (calcWhatIfDelta) onto the per-account engine (calcWhatIfScenario), matching

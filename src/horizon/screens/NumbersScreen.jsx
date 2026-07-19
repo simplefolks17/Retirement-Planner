@@ -986,7 +986,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       borderRadius: 9, padding: "9px 14px", marginBottom: 14,
                       font: `400 13px ${SERIF}`, color: t.ink,
                     }}>
-                      Retirement-phase income tax (RMD + conversion):{" "}
+                      Retirement-phase income tax (RMD, conversion &amp; 401k draws):{" "}
                       <span style={{ font: `700 14px ${HM}`, color: t.warm }}>
                         {fmt(taxView.composition.total)}
                       </span>

@@ -73,6 +73,10 @@ export function buildRetirementPhase({
 
   const sumRmdTax  = rows => rows.reduce((s, r) => s + (r.rmdTax  ?? 0), 0);
   const sumConvTax = rows => rows.reduce((s, r) => s + (r.convTax ?? 0), 0);
+  // drawTax is the engine's INCREMENTAL tax on extra 401k draws beyond
+  // RMDs/conversions (retirement-engine.js) — additive with rmdTax/convTax,
+  // never overlapping, so the three sum to the full retirement-phase tax (BUG-40).
+  const sumDrawTax = rows => rows.reduce((s, r) => s + (r.drawTax ?? 0), 0);
 
   // Chart/Flow-Down rows + all lifetime tax sums are bounded to the display life
   // expectancy: RMDs past the planning horizon (death) don't happen, and the prior
@@ -106,6 +110,7 @@ export function buildRetirementPhase({
   // rmdTaxBiteNoConv is the counterfactual that values the conversion's RMD-tax saving.
   const rmdTaxBite       = Math.round(sumRmdTax(rows));
   const conversionCost   = Math.round(sumConvTax(rows));
+  const totalDrawTax     = Math.round(sumDrawTax(rows));
   const rmdTaxBiteNoConv = Math.round(sumRmdTax(noConvRows));
   // Apples-to-apples saving: when conversions change longevity, the two walks can end at
   // different ages (one depletes earlier → fewer RMD years → its bite drops spuriously).
@@ -128,6 +133,9 @@ export function buildRetirementPhase({
     endVal: plan.endVal,
     // RMD display
     rmdSchedule, rmdScheduleNoConv, firstRMD, totalRMDs, rmdTaxBite,
+    // lifetime tax on extra 401k draws beyond RMDs/conversions (BUG-40) —
+    // bounded to lifeExp like rmdTaxBite/conversionCost so the three compose.
+    totalDrawTax,
     // conversion benefit (before IRMAA/ACA — those layer on in conversion-evaluation)
     conversionCost, rmdTaxBiteNoConv, rmdTaxSaved, grossNetBenefit,
     // full far-horizon walks for any consumer that needs the tail

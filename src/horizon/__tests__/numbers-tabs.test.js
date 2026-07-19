@@ -150,13 +150,15 @@ const taxView = {
   projectedRetBracket:   0.12,   // 12% projected retirement bracket (decimal, not integer — BUG-33 + Phase-1 fix)
   rmdTaxBite:         683_974,   // golden-master rmdTaxBite
   convTaxTotal:        82_765,   // golden-master conversion tax
-  // WI-2.4: retirement-phase tax composition (RMD + conversion only) — pre-computed by
-  // the model (App taxViewBundle). Working-year tax excluded (one year ≠ lifetime scope).
+  // WI-2.4: retirement-phase tax composition (RMD + conversion + 401k-draw tax,
+  // BUG-40) — pre-computed by the model (App taxViewBundle). Working-year tax
+  // excluded (one year ≠ lifetime scope).
   composition: {
-    total: 766_739,             // 683_974 + 82_765
+    total: 786_739,             // 683_974 + 82_765 + 20_000
     segments: [
-      { label: "RMD tax",        val: 683_974, key: "rmd",  pct: 89 },
+      { label: "RMD tax",        val: 683_974, key: "rmd",  pct: 87 },
       { label: "Conversion tax", val:  82_765, key: "conv", pct: 11 },
+      { label: "401k draw tax",  val:  20_000, key: "draw", pct: 3 },
     ],
   },
   // Session-3: conversion breakdown — always surfaced so the verdict is honest (+ or −)
@@ -502,12 +504,13 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
-  it("retirement-phase composition bar renders RMD and Conversion segments (no Working tax)", () => {
+  it("retirement-phase composition bar renders RMD, Conversion and 401k-draw segments (no Working tax)", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
     expect(allText).not.toContain("Working tax");
     expect(allText).toContain("RMD tax");
     expect(allText).toContain("Conversion tax");
+    expect(allText).toContain("401k draw tax"); // BUG-40 third segment
     act(() => renderer.unmount());
   });
 
