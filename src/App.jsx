@@ -50,12 +50,34 @@ import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
 import { ConversionEventsPanel } from "./components/ConversionEventsPanel.jsx";
 import { calcWhatIfDelta, buildVerdictLegend }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
-import { HorizonThemeProvider } from "./horizon/ThemeContext.jsx";
+import { HorizonThemeProvider, safeGet } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
 
 // The four account display keys (static — module level so memos that map over
 // them can keep honest, complete dependency arrays).
 const ACCOUNT_DATA_KEYS = ["Trad 401k", "Roth IRA", "Taxable", "HSA"];
+
+// WI-5.2 (#113): entitlements read at init. Default renders byte-identical to today —
+// isPremium true (nothing premium-gated yet → no surface locks) and readOnly false
+// (every setter live). Dev/QA/test flip path: browser via localStorage (safeGet), node
+// tests via a globalThis override. No user-facing toggle ships this batch.
+function readEntitlements() {
+  const g = (typeof globalThis !== "undefined" && globalThis.__HZ_ENTITLEMENTS__) || null;
+  if (g) return { isPremium: g.isPremium !== false, readOnly: g.readOnly === true };
+  return {
+    isPremium: safeGet("hz-premium") !== "0",
+    readOnly: safeGet("hz-readonly") === "1",
+  };
+}
+
+// WI-5.2: neuter a write callback when readOnly (advisor read-only share / future
+// locked states). Applied at every write-surface construction site so "all setters
+// inert" is mechanical, not a per-surface hunt. Returns the original fn unchanged when
+// !readOnly (identity-stable default path → V9 unaffected); a shared noop when readOnly.
+const RO_NOOP = () => {};
+function guardWrite(fn, readOnly) {
+  return readOnly ? RO_NOOP : fn;
+}
 
 // WI-3.1 (#98) setter-bundle options. Built once at module load from the static
 // config maps — referentially stable, so the bundle memos that spread them stay
@@ -124,6 +146,10 @@ export default function App() {
   // Horizon shell state
   const [showHorizon, setShowHorizon] = useState(true);
   const [activity,    setActivity]    = useState("golf course");
+
+  // WI-5.2 (#113) entitlements. See readEntitlements/guardWrite above.
+  const [entitlements] = useState(readEntitlements);
+  const readOnly = entitlements.readOnly;
 
   const [ssClaimingAge,     setSsClaimingAge]     = useState(SS_FRA);
   const [isMarried,         setIsMarried]         = useState(false);
@@ -729,8 +755,8 @@ export default function App() {
   const conversionApplySite = useMemo(() => {
     const available = isSuggestionApplicable({
       optimizerResult, annualConversion, resolvedStartAge, hasMedicare, hasMarketplaceInsurance,
-    });
-    if (!available) return { available: false, preview: null, apply: applyConversionSuggestion };
+    }) && !readOnly;
+    if (!available) return { available: false, preview: null, apply: guardWrite(applyConversionSuggestion, readOnly) };
 
     const candidateByAge = buildConversionByAge({
       startAge: optimizerResult.optimalStartAge, endAge: resolvedEndAge,
@@ -756,11 +782,11 @@ export default function App() {
         },
         refAge: safeLifeExp,
       }),
-      apply: applyConversionSuggestion,
+      apply: guardWrite(applyConversionSuggestion, readOnly),
     };
   }, [optimizerResult, annualConversion, resolvedStartAge, hasMedicare, hasMarketplaceInsurance,
       resolvedEndAge, retPhaseBase, adjustedNetConversionBenefit, yearsSustained, depletionAge,
-      balAt90, rmdTaxBite, safeLifeExp, applyConversionSuggestion]);
+      balAt90, rmdTaxBite, safeLifeExp, applyConversionSuggestion, readOnly]);
 
   const limit415c        = currentAge >= CATCHUP_AGE ? LIMIT_415C_CATCHUP_2026 : LIMIT_415C_2026;
   const employerMatchAmt = employerMatch(currentIncome, contrib401k);
@@ -1161,47 +1187,49 @@ export default function App() {
   // only — no screen consumes these yet; golden master untouched.
 
   const profileBundle = useMemo(() => ({
-    currentIncome:      { value: currentIncome, set: setCurrentIncome, min: 20_000, max: 500_000, step: 5_000 },
-    incomeGrowth:       { value: incomeGrowth, set: setIncomeGrowth, min: 0, max: 15, step: 0.5 },
+    currentIncome:      { value: currentIncome, set: guardWrite(setCurrentIncome, readOnly), min: 20_000, max: 500_000, step: 5_000 },
+    incomeGrowth:       { value: incomeGrowth, set: guardWrite(setIncomeGrowth, readOnly), min: 0, max: 15, step: 0.5 },
     incomeGrowthEndAge: { value: incomeGrowthEndAge,
-      set: v => setIncomeGrowthEndAge(v >= safeRetAge ? null : v),
+      set: guardWrite(v => setIncomeGrowthEndAge(v >= safeRetAge ? null : v), readOnly),
       min: currentAge + 1, max: safeRetAge, step: 1 },
-    spouseIncome:       { value: spouseIncome, set: setSpouseIncome, min: 0, max: 500_000, step: 5_000 },
-    spouseIncomeGrowth: { value: spouseIncomeGrowth, set: setSpouseIncomeGrowth, min: 0, max: 15, step: 0.5 },
-    filingStatus:       { value: filingStatus, set: setFilingStatus, options: FILING_STATUS_OPTIONS },
+    spouseIncome:       { value: spouseIncome, set: guardWrite(setSpouseIncome, readOnly), min: 0, max: 500_000, step: 5_000 },
+    spouseIncomeGrowth: { value: spouseIncomeGrowth, set: guardWrite(setSpouseIncomeGrowth, readOnly), min: 0, max: 15, step: 0.5 },
+    filingStatus:       { value: filingStatus, set: guardWrite(setFilingStatus, readOnly), options: FILING_STATUS_OPTIONS },
     selectedState:      { value: selectedState,
-      set: v => { setSelectedState(v); setStateRateOverride(null); }, options: STATE_OPTIONS },
+      set: guardWrite(v => { setSelectedState(v); setStateRateOverride(null); }, readOnly), options: STATE_OPTIONS },
     stateRateOverride:  { value: stateRateOverride, defaultPct: stateRateDefault * 100,
       // pct: the effective rate as a percent for display/editing (override when set,
       // else the state default) — so screens never multiply the fraction (rule 10).
       pct: (stateRateOverride !== null ? stateRateOverride : stateRateDefault) * 100,
       // Snap-to-default threshold (0.05) is below the 0.1 step so a single stepper
       // tap escapes the default instead of snapping back (matches the Classic copy).
-      set: v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.05 ? null : v / 100),
+      set: guardWrite(v => setStateRateOverride(Math.abs(v - stateRateDefault * 100) < 0.05 ? null : v / 100), readOnly),
       min: 0, max: 13, step: 0.1 },
-    otherPreTaxDeduc:   { value: otherPreTaxDeduc, set: setOtherPreTaxDeduc, min: 0, max: 20_000, step: 250 },
+    otherPreTaxDeduc:   { value: otherPreTaxDeduc, set: guardWrite(setOtherPreTaxDeduc, readOnly), min: 0, max: 20_000, step: 250 },
   }), [currentIncome, incomeGrowth, incomeGrowthEndAge, spouseIncome, spouseIncomeGrowth,
        filingStatus, selectedState, stateRateOverride, otherPreTaxDeduc, currentAge, safeRetAge,
        stateRateDefault, setCurrentIncome, setIncomeGrowth, setIncomeGrowthEndAge, setSpouseIncome,
-       setSpouseIncomeGrowth, setFilingStatus, setSelectedState, setStateRateOverride, setOtherPreTaxDeduc]);
+       setSpouseIncomeGrowth, setFilingStatus, setSelectedState, setStateRateOverride, setOtherPreTaxDeduc,
+       readOnly]);
 
   const spendingBundle = useMemo(() => ({
     livingExpenses:      { value: livingExpenses,
-      set: v => { setLivingExpenses(v); setPreApplySnapshot(null); },
+      set: guardWrite(v => { setLivingExpenses(v); setPreApplySnapshot(null); }, readOnly),
       min: 10_000, max: Math.max(grossAfterTax, 30_000), step: 1_000 },
-    livingExpenseGrowth: { value: livingExpenseGrowth, set: setLivingExpenseGrowth, min: 0, max: 10, step: 0.5 },
-    annualExpenses:      { value: annualExpenses, set: setAnnualExpenses, min: 10_000, max: 300_000, step: 1_000 },
-    retirementTarget:    { value: retirementTarget, set: setRetirementTarget, min: 100_000, max: 20_000_000 },
+    livingExpenseGrowth: { value: livingExpenseGrowth, set: guardWrite(setLivingExpenseGrowth, readOnly), min: 0, max: 10, step: 0.5 },
+    annualExpenses:      { value: annualExpenses, set: guardWrite(setAnnualExpenses, readOnly), min: 10_000, max: 300_000, step: 1_000 },
+    retirementTarget:    { value: retirementTarget, set: guardWrite(setRetirementTarget, readOnly), min: 100_000, max: 20_000_000 },
   }), [livingExpenses, livingExpenseGrowth, annualExpenses, retirementTarget, grossAfterTax,
-       setLivingExpenses, setPreApplySnapshot, setLivingExpenseGrowth, setAnnualExpenses, setRetirementTarget]);
+       setLivingExpenses, setPreApplySnapshot, setLivingExpenseGrowth, setAnnualExpenses, setRetirementTarget,
+       readOnly]);
 
   const accountsBundle = useMemo(() => {
     // Per-account balance slider caps at 1M (Classic range) but the DeferredInput
     // accepts up to 5M; both bounds are exposed (sliderMax vs max).
     const acct = (bal, setBal, contrib, setContrib, contribMax, endAge, setEndAge) => ({
-      bal:        { value: bal, set: setBal, min: 0, max: 5_000_000, sliderMax: 1_000_000, step: 10_000 },
-      contrib:    { value: contrib, set: setContrib, min: 0, max: contribMax, step: contribStep(contribMax) },
-      contribEnd: { value: endAge, set: setEndAge, min: currentAge + 1, max: safeLifeExp, step: 1 },
+      bal:        { value: bal, set: guardWrite(setBal, readOnly), min: 0, max: 5_000_000, sliderMax: 1_000_000, step: 10_000 },
+      contrib:    { value: contrib, set: guardWrite(setContrib, readOnly), min: 0, max: contribMax, step: contribStep(contribMax) },
+      contribEnd: { value: endAge, set: guardWrite(setEndAge, readOnly), min: currentAge + 1, max: safeLifeExp, step: 1 },
     });
     return {
       trad401k: acct(bal401k, setBal401k, contrib401k, setContrib401k, TRAD_401K_LIMIT_2026, contribEnd401k, setContribEnd401k),
@@ -1210,12 +1238,12 @@ export default function App() {
       hsa:      acct(balHSA, setBalHSA, contribHSA, setContribHSA, HSA_LIMIT_2026, contribEndHSA, setContribEndHSA),
       // Unbounded (no Classic max) — rendered as a stepper, so it carries a UI step
       // but no max; the set wrapper clamps at ≥ 0.
-      addlPreTaxBal:    { value: addlPreTaxBal, set: v => setAddlPreTaxBal(Math.max(0, v || 0)), min: 0, step: 10_000 },
-      matchMode:        { value: matchMode, set: setMatchMode,
+      addlPreTaxBal:    { value: addlPreTaxBal, set: guardWrite(v => setAddlPreTaxBal(Math.max(0, v || 0)), readOnly), min: 0, step: 10_000 },
+      matchMode:        { value: matchMode, set: guardWrite(setMatchMode, readOnly),
         options: [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }] },
-      employerMatchPct: { value: employerMatchPct, set: setEmployerMatchPct, min: 0, max: 10, step: 0.5 },
-      matchFormulaRate: { value: matchFormulaRate, set: setMatchFormulaRate, min: 0, max: 200, step: 5 },
-      matchFormulaCap:  { value: matchFormulaCap, set: setMatchFormulaCap, min: 1, max: 15, step: 0.5 },
+      employerMatchPct: { value: employerMatchPct, set: guardWrite(setEmployerMatchPct, readOnly), min: 0, max: 10, step: 0.5 },
+      matchFormulaRate: { value: matchFormulaRate, set: guardWrite(setMatchFormulaRate, readOnly), min: 0, max: 200, step: 5 },
+      matchFormulaCap:  { value: matchFormulaCap, set: guardWrite(setMatchFormulaCap, readOnly), min: 1, max: 15, step: 0.5 },
     };
   }, [bal401k, contrib401k, contribEnd401k, balRoth, contribRoth, contribEndRoth,
       balTaxable, contribTaxable, contribEndTaxable, balHSA, contribHSA, contribEndHSA,
@@ -1223,75 +1251,79 @@ export default function App() {
       currentAge, safeLifeExp,
       setBal401k, setContrib401k, setContribEnd401k, setBalRoth, setContribRoth, setContribEndRoth,
       setBalTaxable, setContribTaxable, setContribEndTaxable, setBalHSA, setContribHSA, setContribEndHSA,
-      setAddlPreTaxBal, setMatchMode, setEmployerMatchPct, setMatchFormulaRate, setMatchFormulaCap]);
+      setAddlPreTaxBal, setMatchMode, setEmployerMatchPct, setMatchFormulaRate, setMatchFormulaCap,
+      readOnly]);
 
   const ssBundle = useMemo(() => ({
-    includeSS:        { value: includeSS, set: setIncludeSS },
+    includeSS:        { value: includeSS, set: guardWrite(setIncludeSS, readOnly) },
     // BUG-17: claim age can never precede the user's current age — but also cap the
     // floor at SS_MAX_CLAIM_AGE so min never exceeds max when currentAge > 70
     // (currentAge ranges to 80). Mirrors the Classic slider's clamp exactly.
-    ssClaimingAge:    { value: ssClaimingAge, set: setSsClaimingAge,
+    ssClaimingAge:    { value: ssClaimingAge, set: guardWrite(setSsClaimingAge, readOnly),
       min: Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge)), max: SS_MAX_CLAIM_AGE, step: 1 },
     ssOverride:       { value: ssOverride, estimated: ssAnnualBenefit,
       // max expands to fit a current override above the default cap (mirrors the
       // sliderBounds dynamic-max pattern) so the slider never visually clamps.
-      set: v => setSsOverride(v === ssAnnualBenefit ? null : v),
+      set: guardWrite(v => setSsOverride(v === ssAnnualBenefit ? null : v), readOnly),
       // When null the field seeds from ssAnnualBenefit, so the cap must clear that
       // too (high earners / delayed claims can exceed 60k) or the slider clamps.
       min: 0, max: Math.max(60_000, ssOverride || ssAnnualBenefit || 0), step: 500 },
-    isMarried:        { value: isMarried, set: setIsMarried },
-    spouseSsEstimate: { value: spouseSsEstimate, set: setSpouseSsEstimate, min: 0, max: 60_000, step: 500 },
-    spouseClaimingAge:{ value: spouseClaimingAge, set: setSpouseClaimingAge,
+    isMarried:        { value: isMarried, set: guardWrite(setIsMarried, readOnly) },
+    spouseSsEstimate: { value: spouseSsEstimate, set: guardWrite(setSpouseSsEstimate, readOnly), min: 0, max: 60_000, step: 500 },
+    spouseClaimingAge:{ value: spouseClaimingAge, set: guardWrite(setSpouseClaimingAge, readOnly),
       min: SS_MIN_CLAIM_AGE, max: SS_MAX_CLAIM_AGE, step: 1 },
-    spouseBenefitBasis:{ value: spouseBenefitBasis, set: setSpouseBenefitBasis,
+    spouseBenefitBasis:{ value: spouseBenefitBasis, set: guardWrite(setSpouseBenefitBasis, readOnly),
       options: [{ value: "own", label: "Own record" }, { value: "spousal", label: "Spousal (50%)" }] },
-    spouseCurrentAge: { value: spouseCurrentAge, set: setSpouseCurrentAge, min: 18, max: currentAge - 1, step: 1 },
-    spouseIsSoleBenef:{ value: spouseIsSoleBenef, set: setSpouseIsSoleBenef },
+    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAge, readOnly), min: 18, max: currentAge - 1, step: 1 },
+    spouseIsSoleBenef:{ value: spouseIsSoleBenef, set: guardWrite(setSpouseIsSoleBenef, readOnly) },
   }), [includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge,
        spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef, currentAge, ssAnnualBenefit,
        setIncludeSS, setSsClaimingAge, setSsOverride, setIsMarried, setSpouseSsEstimate,
-       setSpouseClaimingAge, setSpouseBenefitBasis, setSpouseCurrentAge, setSpouseIsSoleBenef]);
+       setSpouseClaimingAge, setSpouseBenefitBasis, setSpouseCurrentAge, setSpouseIsSoleBenef,
+       readOnly]);
 
   const pensionBundle = useMemo(() => ({
-    pensionMonthly:  { value: pensionMonthly, set: setPensionMonthly, min: 0, max: 10_000, step: 100 },
-    pensionStartAge: { value: pensionStartAge, set: setPensionStartAge, min: 50, max: 75, step: 1 },
-  }), [pensionMonthly, pensionStartAge, setPensionMonthly, setPensionStartAge]);
+    pensionMonthly:  { value: pensionMonthly, set: guardWrite(setPensionMonthly, readOnly), min: 0, max: 10_000, step: 100 },
+    pensionStartAge: { value: pensionStartAge, set: guardWrite(setPensionStartAge, readOnly), min: 50, max: 75, step: 1 },
+  }), [pensionMonthly, pensionStartAge, setPensionMonthly, setPensionStartAge, readOnly]);
 
   const conversionBundle = useMemo(() => ({
-    conversionMode:          { value: conversionMode, set: setConversionMode,
+    conversionMode:          { value: conversionMode, set: guardWrite(setConversionMode, readOnly),
       options: [{ value: "bracket", label: "Fill to bracket" }, { value: "custom", label: "Custom amount" }] },
-    conversionBracketTarget: { value: conversionBracketTarget, set: setConversionBracketTarget, options: CONVERSION_BRACKET_OPTIONS },
-    annualConversionAmt:     { value: annualConversionAmt, set: setAnnualConversionAmt, min: 0, max: 500_000, step: 5_000 },
-    conversionTaxSource:     { value: conversionTaxSource, set: setConversionTaxSource,
+    conversionBracketTarget: { value: conversionBracketTarget, set: guardWrite(setConversionBracketTarget, readOnly), options: CONVERSION_BRACKET_OPTIONS },
+    annualConversionAmt:     { value: annualConversionAmt, set: guardWrite(setAnnualConversionAmt, readOnly), min: 0, max: 500_000, step: 5_000 },
+    conversionTaxSource:     { value: conversionTaxSource, set: guardWrite(setConversionTaxSource, readOnly),
       options: [{ value: "converted", label: "From the conversion" }, { value: "taxable", label: "From taxable" }] },
   }), [conversionMode, conversionBracketTarget, annualConversionAmt, conversionTaxSource,
-       setConversionMode, setConversionBracketTarget, setAnnualConversionAmt, setConversionTaxSource]);
+       setConversionMode, setConversionBracketTarget, setAnnualConversionAmt, setConversionTaxSource,
+       readOnly]);
 
   const healthBundle = useMemo(() => ({
-    hasMarketplaceInsurance:  { value: hasMarketplaceInsurance, set: setHasMarketplaceInsurance },
-    householdSize:            { value: householdSize, set: setHouseholdSize, min: 1, max: 6, step: 1 },
+    hasMarketplaceInsurance:  { value: hasMarketplaceInsurance, set: guardWrite(setHasMarketplaceInsurance, readOnly) },
+    householdSize:            { value: householdSize, set: guardWrite(setHouseholdSize, readOnly), min: 1, max: 6, step: 1 },
     marketplaceMonthlyPremium:{ value: marketplaceMonthlyPremium,
-      set: v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v)), min: 0, step: 50 },
-    hasMedicare:              { value: hasMedicare, set: setHasMedicare },
-    personOnMedicare:         { value: personOnMedicare, set: setPersonOnMedicare,
+      set: guardWrite(v => setMarketplaceMonthlyPremium(v === "" ? null : Number(v)), readOnly), min: 0, step: 50 },
+    hasMedicare:              { value: hasMedicare, set: guardWrite(setHasMedicare, readOnly) },
+    personOnMedicare:         { value: personOnMedicare, set: guardWrite(setPersonOnMedicare, readOnly),
       options: [{ value: 1, label: "Person 1" }, { value: 2, label: "Person 2" }] },
   }), [hasMarketplaceInsurance, householdSize, marketplaceMonthlyPremium, hasMedicare, personOnMedicare,
-       setHasMarketplaceInsurance, setHouseholdSize, setMarketplaceMonthlyPremium, setHasMedicare, setPersonOnMedicare]);
+       setHasMarketplaceInsurance, setHouseholdSize, setMarketplaceMonthlyPremium, setHasMedicare, setPersonOnMedicare,
+       readOnly]);
 
   const assumptionsBundle = useMemo(() => ({
     // Timeline trio uses the coupled setters so the cross-field invariants Classic
     // enforces (retire ≥ current, contribEnd ages in range) hold from Horizon too.
-    currentAge:        { value: currentAge, set: setCurrentAgeCoupled, min: 18, max: 80, step: 1 },
-    retirementAge:     { value: retirementAge, set: setRetirementAgeCoupled, min: currentAge, max: lifeExpect - 1, step: 1 },
-    lifeExpect:        { value: lifeExpect, set: setLifeExpectCoupled, min: retirementAge + 1, max: 115, step: 1 },
-    returnRate:        { value: returnRate, set: setReturnRate, min: 1, max: 15, step: 1 },
-    inflationRate:     { value: inflationRate, set: setInflationRate, min: 1, max: 8, step: 0.5 },
-    retirementState:   { value: retirementState, set: setRetirementState, options: RETIREMENT_STATE_OPTIONS },
+    currentAge:        { value: currentAge, set: guardWrite(setCurrentAgeCoupled, readOnly), min: 18, max: 80, step: 1 },
+    retirementAge:     { value: retirementAge, set: guardWrite(setRetirementAgeCoupled, readOnly), min: currentAge, max: lifeExpect - 1, step: 1 },
+    lifeExpect:        { value: lifeExpect, set: guardWrite(setLifeExpectCoupled, readOnly), min: retirementAge + 1, max: 115, step: 1 },
+    returnRate:        { value: returnRate, set: guardWrite(setReturnRate, readOnly), min: 1, max: 15, step: 1 },
+    inflationRate:     { value: inflationRate, set: guardWrite(setInflationRate, readOnly), min: 1, max: 8, step: 0.5 },
+    retirementState:   { value: retirementState, set: guardWrite(setRetirementState, readOnly), options: RETIREMENT_STATE_OPTIONS },
     savingsSurplusPct: { value: savingsSurplusPct,
-      set: v => { setSavingsSurplusPct(v); setPreApplySnapshot(null); }, min: 0, max: 100, step: 5 },
+      set: guardWrite(v => { setSavingsSurplusPct(v); setPreApplySnapshot(null); }, readOnly), min: 0, max: 100, step: 5 },
   }), [currentAge, retirementAge, lifeExpect, returnRate, inflationRate, retirementState, savingsSurplusPct,
        setCurrentAgeCoupled, setRetirementAgeCoupled, setLifeExpectCoupled, setReturnRate, setInflationRate,
-       setRetirementState, setSavingsSurplusPct, setPreApplySnapshot]);
+       setRetirementState, setSavingsSurplusPct, setPreApplySnapshot, readOnly]);
 
   // Plan-screen signals strip (WI-1.2): calcSignals ranks nudges from values
   // computed ABOVE (one definition per number — it never recomputes):
@@ -1369,10 +1401,11 @@ export default function App() {
   // site contract's optional `revert` slot: an exact restore from preApplySnapshot,
   // so it doesn't need (and the modal never renders) a preview.
   const surplusApplySite = useMemo(() => {
-    const available = optimizedAllocation.totalExtra > 0 && preApplySnapshot === null;
+    const available = optimizedAllocation.totalExtra > 0 && preApplySnapshot === null && !readOnly;
     if (!available) {
       return {
-        available: false, preview: null, apply: applyAllocation, revert: revertAllocation,
+        available: false, preview: null,
+        apply: guardWrite(applyAllocation, readOnly), revert: guardWrite(revertAllocation, readOnly),
         applied: preApplySnapshot !== null,
       };
     }
@@ -1410,12 +1443,12 @@ export default function App() {
           totalExtra: optimizedAllocation.totalExtra, pct: savingsSurplusPct, availableSurplus,
         },
       }),
-      apply: applyAllocation,
-      revert: revertAllocation,
+      apply: guardWrite(applyAllocation, readOnly),
+      revert: guardWrite(revertAllocation, readOnly),
       applied: false, // preApplySnapshot is null here (we're in the `available` branch)
     };
   }, [optimizedAllocation, preApplySnapshot, applyAllocation, revertAllocation, whatIfBundle,
-      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus]);
+      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus, readOnly]);
 
   // WI-3.7 (#104): Surplus-deployment flow bundle. Sibling of strategiesView keyed
   // by the "surplus" strategy id — the card face reads props.budget.* directly
@@ -1675,12 +1708,12 @@ export default function App() {
       windowLabel: `${conversionWindowYrs}-year window · age ${resolvedStartAge} → ${resolvedEndAge}`,
       startAgeField: {
         value: resolvedStartAge,
-        set: v => setConversionStartAge(Math.min(v, resolvedEndAge)),
+        set: guardWrite(v => setConversionStartAge(Math.min(v, resolvedEndAge)), readOnly),
         min: convWindowFloor, max: convWindowCeil, step: 1,
       },
       endAgeField: {
         value: resolvedEndAge,
-        set: v => setConversionEndAge(Math.max(v, resolvedStartAge)),
+        set: guardWrite(v => setConversionEndAge(Math.max(v, resolvedStartAge)), readOnly),
         min: convWindowFloor, max: convWindowCeil, step: 1,
       },
       isDefaultWindow: conversionStartAge === null && conversionEndAge === null,
@@ -1739,39 +1772,39 @@ export default function App() {
           value: ev.age,
           // Clamp-in-setter (simpler than Classic's free-type-then-blur-clamp —
           // a single field-object write path, per the header note above).
-          set: v => {
+          set: guardWrite(v => {
             const n = Number(v);
             const clamped = Number.isFinite(n)
               ? Math.min(safeRetAge - 1, Math.max(currentAge + 1, n))
               : currentAge + 1;
             setConversionEvents(evs => evs.map(e => e.id === ev.id ? { ...e, age: clamped } : e));
-          },
+          }, readOnly),
           min: currentAge + 1, max: safeRetAge - 1, step: 1,
         },
         amountField: {
           value: ev.amount,
-          set: v => {
+          set: guardWrite(v => {
             const n = Number(v);
             const amt = Number.isFinite(n) ? Math.max(0, n) : 0;
             setConversionEvents(evs => evs.map(e => e.id === ev.id ? { ...e, amount: amt } : e));
-          },
+          }, readOnly),
           min: 0, step: 5_000,
         },
         estTaxLabel: convEventTaxByAge[ev.age] != null && ev.amount > 0
           ? `est. tax ${fmt(convEventTaxByAge[ev.age])} this year`
           : "401k → Roth, taxed as income",
-        remove: () => setConversionEvents(evs => evs.filter(e => e.id !== ev.id)),
+        remove: guardWrite(() => setConversionEvents(evs => evs.filter(e => e.id !== ev.id)), readOnly),
       })),
-      add: () => {
+      add: guardWrite(() => {
         if (conversionEvents.length >= MAX_CONVERSION_EVENTS) return;
         // Mirrors ConversionEventsPanel's emptyEvent: default to a year mid-career,
         // clamped inside the working window.
         const mid = Math.round((currentAge + safeRetAge) / 2);
         const age = Math.min(Math.max(currentAge + 1, mid), Math.max(currentAge + 1, safeRetAge - 1));
         setConversionEvents(evs => [...evs, { id: Date.now() + Math.random(), age, amount: 0 }]);
-      },
+      }, readOnly),
       atMax: conversionEvents.length >= MAX_CONVERSION_EVENTS,
-      inServiceField: { value: conversionInService, set: setConversionInService },
+      inServiceField: { value: conversionInService, set: guardWrite(setConversionInService, readOnly) },
       hasWorkingYears: currentAge + 1 <= safeRetAge - 1,
       totalPlannedLabel: fmt(conversionEvents.reduce(
         (s, e) => s + (Number.isFinite(e.amount) ? Math.max(0, e.amount) : 0), 0)),
@@ -1793,7 +1826,7 @@ export default function App() {
        totalIRMAACost, healthcareExposure, personOnMedicare, hasMedicare,
        retPhase, conversionEvents, convEventTaxByAge, setConversionEvents, currentAge,
        conversionInService, setConversionInService,
-       optimizerResult, conversionApplySite]);
+       optimizerResult, conversionApplySite, readOnly]);
 
   // Life-event sheet bounds (rule 10: the age math lives here, not in the sheet).
   // Events can land on any year from next year through the plan (life-expectancy)
@@ -1827,7 +1860,7 @@ export default function App() {
     totalAtRet, yearsSustained, isSustainable,
     takeHome, effectiveExpenses, withdrawalRate,
     balAt90, contribSeries,
-    householdSS, effectivePension, activity, setActivity,
+    householdSS, effectivePension, activity, setActivity: guardWrite(setActivity, readOnly),
     currentIncome,
     fedTax, ficaTotal: fica, stateTaxAmt: stateTax,
     currentContribTotal,
@@ -1844,13 +1877,13 @@ export default function App() {
     // Wrapped write surface (list-mutation callbacks) — see the definitions above
     // for why this replaced a raw setMoneyEvents (docs/ARCHITECTURE.md write-surface
     // convention: no bundle exposes a raw setter).
-    saveEvent, removeEvent,
+    saveEvent: guardWrite(saveEvent, readOnly), removeEvent: guardWrite(removeEvent, readOnly),
     whatIfSimInputs: whatIfBundle,
-    commitPlan,
+    commitPlan: guardWrite(commitPlan, readOnly),
     // Plan screen "Try a change" panel (2026-07-11 redesign): the ONLY write path
     // from a Horizon lever preview back to real state — always called from
     // ApplyPreviewModal's onConfirm, never directly by a slider (preview-first).
-    applyPlanLevers,
+    applyPlanLevers: guardWrite(applyPlanLevers, readOnly),
     retirementWalk,
     // Life-event sheet (sheet-first placement): age bounds for the sheet's
     // sliders — memoized separately above (V9). The sheet's verdict/impact come
@@ -1929,6 +1962,11 @@ export default function App() {
     conversion: conversionBundle,
     health: healthBundle,
     assumptions: assumptionsBundle,
+    // WI-5.2 (#113): entitlements bundle ({isPremium, readOnly}) — see
+    // readEntitlements/guardWrite above. Every write surface in this object has
+    // already been guarded at its construction site (bundles, apply sites,
+    // conversionView) so screens never need to test entitlements themselves.
+    entitlements,
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
@@ -1959,7 +1997,9 @@ export default function App() {
        verdictLegend,
        // WI-3.1 setter bundles (each memoized separately above):
        profileBundle, spendingBundle, accountsBundle, ssBundle, pensionBundle,
-       conversionBundle, healthBundle, assumptionsBundle]);
+       conversionBundle, healthBundle, assumptionsBundle,
+       // WI-5.2 (#113): entitlements gate every write surface above.
+       readOnly, entitlements]);
 
   // Stable handler (V9): keeps HorizonShell's props identity-stable across
   // no-op re-renders so the referential-stability smoke test can assert it.
