@@ -45,6 +45,9 @@ export function buildConversionByAge({
 export function buildRetirementPhase({
   // per-account GROSS balances at retirement (the BUG-35 gross seed)
   tradGross = 0, roth = 0, taxable = 0, hsa = 0,
+  // OPTIONAL second (spouse) Traditional 401k bucket (#30). Defaults keep this
+  // byte-identical to the no-spouse case — see retirement-engine.js.
+  tradGrossSpouse = 0, spouseRmdStartAge = Infinity,
   startAge,                 // safeRetAge
   lifeExp,                  // safeLifeExp — display/chart horizon
   longevityHorizon,         // far cap (e.g. safeRetAge + 130) for "years sustained" + lifetime tax
@@ -61,6 +64,7 @@ export function buildRetirementPhase({
   const common = {
     startAge, endAge: longevityHorizon, rReal, effectiveExpenses,
     tradGross, roth, taxable, hsa,
+    tradGrossSpouse, spouseRmdStartAge,
     ssGross, ssTaxable, ssClaimAge,
     pension, pensionStartAge,
     filingStatus, retStateRate,
@@ -88,7 +92,9 @@ export function buildRetirementPhase({
   // RMD schedule (display) — 73+, withdrawal-aware, real $. Zero-RMD years dropped
   // (the section lists required ones only). Each row carries divisor + per-year RMD
   // tax so it feeds the RMD table directly (this IS rmdDataWithTax — one source, no
-  // separate calcRMDTaxSchedule pass).
+  // separate calcRMDTaxSchedule pass). PRIMARY-only — the spouse RMD sub-schedule
+  // display is a deferred household-dashboard follow-up (#31); the household TOTAL
+  // (totalRMDs, below) already includes it.
   const rmdSchedule = rows
     .filter(r => r.age >= rmdStartAge && r.rmd > 0)
     .map(r => ({
@@ -96,7 +102,9 @@ export function buildRetirementPhase({
       divisor: r.rmdDivisor, tax: Math.round(r.rmdTax),
     }));
   const firstRMD  = rmdSchedule[0]?.rmd ?? 0;
-  const totalRMDs = Math.round(rows.reduce((s, r) => s + r.rmd, 0));
+  // Household total — primary + spouse RMDs (rmdSpouse is 0 with no spouse bucket,
+  // so this is byte-identical to the pre-#30 sum in the default case).
+  const totalRMDs = Math.round(rows.reduce((s, r) => s + r.rmd + (r.rmdSpouse ?? 0), 0));
 
   // No-conversion RMD schedule (same shape) for the pre/post-conversion comparison
   // table — the counterfactual "what your RMDs would be without converting".

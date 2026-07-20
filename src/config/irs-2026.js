@@ -80,6 +80,9 @@ export const CATCHUP_401K_2026       =  8_000; // 401k catch-up addition, age 50
 export const ROTH_IRA_LIMIT_2026     =  7_500; // Roth IRA annual limit, under 50
 export const CATCHUP_ROTH_2026       =  1_000; // Roth IRA catch-up addition, age 50+
 export const HSA_LIMIT_2026          =  4_400; // HSA self-only annual limit (2026; Rev. Proc. 2025-19)
+// HSA family-HDHP annual limit (2026; Rev. Proc. 2025-19) — shared household ceiling.
+// The feature-tracker's $8,550 figure was the stale 2025 family limit; 2026 raised it to $8,750.
+export const HSA_FAMILY_LIMIT_2026   =  8_750; // HSA family-HDHP annual limit (2026; Rev. Proc. 2025-19)
 export const LIMIT_415C_2026         = 72_000; // 415(c) combined employer+employee, under 50 (2026)
 export const LIMIT_415C_CATCHUP_2026 = 80_000; // 415(c) 72,000 + 8,000 age-50 catch-up (2026; 60–63 super-catchup = 83,250)
 export const CATCHUP_AGE             =     50; // age at which catch-up contributions begin

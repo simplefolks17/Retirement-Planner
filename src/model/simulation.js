@@ -70,6 +70,8 @@ export function runSimulation({
   moneyEvents = [],   // one-time or duration events (see money-events.js) — applied to taxable account per active year
   conversionEvents = [], // { age, amount } — one-time 401k→Roth conversion in a working year
   stateRate = 0,      // working-year state income-tax rate, applied only to conversion-event tax
+  hsaLimit = HSA_LIMIT_2026, // per-run HSA cap (#30: App passes a lower shared-family-ceiling
+                              // split when a spouse account competes for the same family HSA limit)
 }) {
   let trad    = bal401k;
   let roth    = balRoth;
@@ -142,7 +144,7 @@ export function runSimulation({
       ? calcEmployerMatchFn(Math.min(primaryIncomeYr, baseSalary), employeeDeferral)
       : 0;
     const c401k = Math.min(employeeDeferral + matchAmt, limit415cYr);
-    const cHSA  = age <= contribEndHSA ? Math.min(contribHSA * incomeFrac, HSA_LIMIT_2026) : 0;
+    const cHSA  = age <= contribEndHSA ? Math.min(contribHSA * incomeFrac, hsaLimit) : 0;
 
     const primaryMAGI = primaryIncomeYr;
     // Spouse income plateaus at incomeGrowthEndAge too (same growthYears cap as primary).

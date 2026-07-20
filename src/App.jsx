@@ -32,7 +32,7 @@ import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
 import { eventLastAge } from "./model/money-events.js";
 import {
   TAX_DATA_2026,
-  TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026,
+  TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026, HSA_FAMILY_LIMIT_2026,
   LIMIT_415C_2026, LIMIT_415C_CATCHUP_2026, CATCHUP_AGE, CATCHUP_401K_2026,
   RMD_START_AGE,
   SS_FRA, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE,
@@ -52,10 +52,6 @@ import { calcWhatIfDelta, buildVerdictLegend }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider, safeGet } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
-
-// The four account display keys (static — module level so memos that map over
-// them can keep honest, complete dependency arrays).
-const ACCOUNT_DATA_KEYS = ["Trad 401k", "Roth IRA", "Taxable", "HSA"];
 
 // WI-5.2 (#113): entitlements read at init. Default renders byte-identical to today —
 // isPremium true (nothing premium-gated yet → no surface locks) and readOnly false
@@ -132,6 +128,25 @@ export default function App() {
   const [contribEndRoth,    setContribEndRoth]    = useState(65);
   const [contribEndTaxable, setContribEndTaxable] = useState(65);
   const [contribEndHSA,     setContribEndHSA]     = useState(65);
+
+  // Spouse accounts (#30). All zero/default at init → hasSpouse false (see
+  // below) → the spouse sim doesn't run and every household total collapses to
+  // the primary total. This is the whole golden-master safety story for this
+  // feature: nothing here changes a single existing value unless a spouse is
+  // actually modeled.
+  const [spouseBal401k,        setSpouseBal401k]        = useState(0);
+  const [spouseBalRoth,        setSpouseBalRoth]        = useState(0);
+  const [spouseBalTaxable,     setSpouseBalTaxable]     = useState(0);
+  const [spouseBalHSA,         setSpouseBalHSA]         = useState(0);
+  const [spouseContrib401k,    setSpouseContrib401k]    = useState(0);
+  const [spouseContribRoth,    setSpouseContribRoth]    = useState(0);
+  const [spouseContribTaxable, setSpouseContribTaxable] = useState(0);
+  const [spouseContribHSA,     setSpouseContribHSA]     = useState(0);
+  const [spouseMatchMode,          setSpouseMatchMode]          = useState("flat");
+  const [spouseEmployerMatchPct,   setSpouseEmployerMatchPct]   = useState(3);
+  const [spouseMatchFormulaRate,   setSpouseMatchFormulaRate]   = useState(50);
+  const [spouseMatchFormulaCap,    setSpouseMatchFormulaCap]    = useState(6);
+  const [hsaCoverageType, setHsaCoverageType] = useState("self"); // 'self' | 'family'
 
   const [retirementTarget, setRetirementTarget] = useState(3_000_000);
   const [annualExpenses,   setAnnualExpenses]   = useState(null);
@@ -224,6 +239,14 @@ export default function App() {
       matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
     }), [matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct]);
 
+  // Spouse's own employer-match terms (#30) — a separate bound function so the
+  // spouse's accumulation sim never reads the primary's match settings.
+  const spouseEmployerMatch = useCallback((salary, employeeContrib) =>
+    calcEmployerMatch(salary, employeeContrib, {
+      matchMode: spouseMatchMode, matchFormulaCap: spouseMatchFormulaCap,
+      matchFormulaRate: spouseMatchFormulaRate, employerMatchPct: spouseEmployerMatchPct,
+    }), [spouseMatchMode, spouseMatchFormulaCap, spouseMatchFormulaRate, spouseEmployerMatchPct]);
+
   // Working-year tax basis (agi, fed/state/FICA, Roth phase-out, grossAfterTax),
   // extracted to src/model/tax-basis.js. Computed here as ONE call — before
   // simData / currentSnapshot, which read fedMarginal — so there is no
@@ -250,6 +273,21 @@ export default function App() {
     return conversionEvents.filter(e => e.amount > 0 && e.age >= minAge && e.age <= maxAge);
   }, [conversionInService, conversionEvents, currentAge, safeRetAge]);
 
+  // Spouse accounts are modeled only when there's a spouse to model. Default (all
+  // zero, unmarried) → hasSpouse false → the spouse sim below is skipped entirely
+  // and every household total equals the primary total → golden master untouched.
+  const hasSpouse = isMarried || spouseIncome > 0 || spouseBal401k > 0 || spouseBalRoth > 0
+    || spouseBalTaxable > 0 || spouseBalHSA > 0 || spouseContrib401k > 0 || spouseContribRoth > 0
+    || spouseContribTaxable > 0 || spouseContribHSA > 0;
+  // HSA family HDHP limit is a SHARED household ceiling (rule 4). Under 'self' each
+  // person keeps the self-only cap (runSimulation's default, HSA_LIMIT_2026 — the
+  // existing behavior, byte-identical). Under 'family' the household shares
+  // HSA_FAMILY_LIMIT_2026: primary draws first, spouse gets the rest.
+  const primaryHsaLimit = hsaCoverageType === "family" ? HSA_FAMILY_LIMIT_2026 : HSA_LIMIT_2026;
+  const spouseHsaLimit  = hsaCoverageType === "family"
+    ? Math.max(0, HSA_FAMILY_LIMIT_2026 - Math.min(contribHSA, HSA_FAMILY_LIMIT_2026))
+    : HSA_LIMIT_2026;
+
   const simData = useMemo(() => {
     const raw = runSimulation({
       totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
@@ -260,6 +298,7 @@ export default function App() {
       calcEmployerMatchFn: employerMatch,
       moneyEvents,
       conversionEvents: activeConversionEvents, stateRate,
+      hsaLimit: primaryHsaLimit,
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards
@@ -278,7 +317,46 @@ export default function App() {
     employerMatch,
     moneyEvents,
     activeConversionEvents, stateRate,
+    primaryHsaLimit,
   ]);
+
+  // Spouse's own accumulation sim (#30) — mirrors the primary's runSimulation call
+  // but with the spouse's own age/income/accounts/match terms. The spouse contributes
+  // over the same CALENDAR window as the primary (spouseContribEnd), so the spouse's
+  // retirement-year row lands at the same array index (phase2End - 1) as the
+  // primary's. spouseIncome/incomeGrowth are swapped into the "other earner" slot so
+  // calcTaxBasis-equivalent MFJ combined-income math inside runSimulation sees the
+  // same household income the primary sim does (rule 9). Money events and Roth-
+  // conversion events are primary/household-modeled only — never run on the spouse
+  // sim (no double-count). hasSpouse=false → [] → every spouse scalar below is 0.
+  const spouseContribEnd = spouseCurrentAge + (safeRetAge - currentAge);
+  const spouseSimData = useMemo(() => {
+    if (!hasSpouse) return [];
+    const raw = runSimulation({
+      totalYears, currentAge: spouseCurrentAge,
+      currentIncome: spouseIncome, incomeGrowth: spouseIncomeGrowth, incomeGrowthEndAge, filingStatus,
+      spouseIncome: currentIncome, spouseIncomeGrowth: incomeGrowth, returnRate,
+      bal401k: spouseBal401k, balRoth: spouseBalRoth, balTaxable: spouseBalTaxable, balHSA: spouseBalHSA,
+      contrib401k: spouseContrib401k, contribRoth: spouseContribRoth,
+      contribTaxable: spouseContribTaxable, contribHSA: spouseContribHSA,
+      contribEnd401k: spouseContribEnd, contribEndRoth: spouseContribEnd,
+      contribEndTaxable: spouseContribEnd, contribEndHSA: spouseContribEnd,
+      calcEmployerMatchFn: spouseEmployerMatch,
+      hsaLimit: spouseHsaLimit,
+    });
+    return raw.map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  }, [hasSpouse, totalYears, spouseCurrentAge, spouseIncome, spouseIncomeGrowth, incomeGrowthEndAge,
+      filingStatus, currentIncome, incomeGrowth, returnRate, spouseBal401k, spouseBalRoth,
+      spouseBalTaxable, spouseBalHSA, spouseContrib401k, spouseContribRoth, spouseContribTaxable,
+      spouseContribHSA, spouseContribEnd, spouseEmployerMatch, spouseHsaLimit]);
+
+  const spouseCurrentSnapshot = useMemo(() => ({
+    age: currentAge, tradGross: spouseBal401k, "Roth IRA": spouseBalRoth,
+    "Taxable": spouseBalTaxable, "HSA": spouseBalHSA,
+  }), [currentAge, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
+  const spouseAtRet = phase2End > 0
+    ? (spouseSimData[phase2End - 1] ?? spouseCurrentSnapshot)
+    : spouseCurrentSnapshot;
 
   // Per-age estimated tax (incl. any early-withdrawal penalty) for the working-year
   // conversions actually set — read straight off the engine-computed simData rows so
@@ -369,39 +447,54 @@ export default function App() {
   ];
 
   // Memoized on atRetirement (a stable reference: either a memoized simData row or
-  // the memoized currentSnapshot). Built over the static ACCOUNT_DATA_KEYS (not the
-  // per-render ACCOUNTS array, which carries setters) so the deps array is honest
-  // and complete — keeping retVals stable lets conversionSim/optimizer skip
+  // the memoized currentSnapshot) plus the spouse balances — keeping retVals stable
+  // lets conversionSim/optimizer skip
   // re-running unless the retirement balances actually change.
-  // Display values for the per-account cards/chart. The "Trad 401k" card shows the
-  // FULL pre-tax 401k INCLUDING additional pre-tax balances, so the cards reconcile to
-  // the gross `totalAtRet` (which also includes addlPreTaxBal) and the card's %-width is
-  // correct. [review fix] addlPreTaxBal is 0 by default → inert at the golden master.
-  const retVals = useMemo(() => Object.fromEntries(
-    ACCOUNT_DATA_KEYS.map(k =>
-      [k, (atRetirement[k] ?? 0) + (k === "Trad 401k" ? addlPreTaxBal : 0)])
-  ), [atRetirement, addlPreTaxBal]);
-  const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
-
-  // Per-account retirement balances as plain scalars, extracted once so the
-  // conversion-plan and optimizer memos can list them in their deps arrays
-  // (exhaustive-deps forbids `retVals["…"]` expressions in deps).
-  const retTaxable     = retVals["Taxable"]   ?? 0;
-  const retRoth        = retVals["Roth IRA"]  ?? 0;
-  const retHsa         = retVals["HSA"]        ?? 0;
+  // Primary per-account balances at retirement (unchanged meaning — these feed the
+  // conversion sim / optimizer / withdrawal card, all primary-modeled strategies).
+  // The "Trad 401k" scalar shows the FULL pre-tax 401k INCLUDING additional pre-tax
+  // balances. [review fix] addlPreTaxBal is 0 by default → inert at the golden master.
+  const pRoth    = atRetirement["Roth IRA"] ?? 0;
+  const pTaxable = atRetirement["Taxable"]  ?? 0;
+  const pHsa     = atRetirement["HSA"]       ?? 0;
   // Pre-tax GROSS 401k at retirement, INCLUDING additional pre-tax balances.
   const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;
+  const retTrad    = tradGrossAtRet;
+  const retRoth    = pRoth;
+  const retTaxable = pTaxable;
+  const retHsa     = pHsa;
+
+  // Spouse per-account balances at retirement (0 when no spouse — byte-identical path).
+  const sTrad    = spouseAtRet.tradGross ?? 0;
+  const sRoth    = spouseAtRet["Roth IRA"] ?? 0;
+  const sTaxable = spouseAtRet["Taxable"]  ?? 0;
+  const sHsa     = spouseAtRet["HSA"]       ?? 0;
+
+  // Household per-account (primary + spouse) — the retirement WALK and the displayed
+  // cards/headline are household; spouse=0 → household == primary (golden master safe).
+  const hhRoth    = pRoth + sRoth;
+  const hhTaxable = pTaxable + sTaxable;
+  const hhHsa     = pHsa + sHsa;
+  const retVals = useMemo(() => ({
+    "Trad 401k": tradGrossAtRet + sTrad,
+    "Roth IRA":  hhRoth,
+    "Taxable":   hhTaxable,
+    "HSA":       hhHsa,
+  }), [tradGrossAtRet, sTrad, hhRoth, hhTaxable, hhHsa]);
+  const ranked = Object.entries(retVals).sort((a, b) => b[1] - a[1]);
+
   // retTrad is the tax-calc scalar — the GROSS 401k INCLUDING addlPreTaxBal, so the
   // optimal withdrawal strategy (calcWithdrawalOrderTax) draws from the SAME full
   // pre-tax pool the worst-case path caps at (tradGrossAtRet). [review fix — Gemini]
-  const retTrad        = tradGrossAtRet;
+  // (retTrad is defined above, alongside the other primary scalars it's derived from.)
 
   // BUG-35: the model now tracks GROSS balances and the engine taxes withdrawals
   // per-year, so every FORMULA (and the headline) uses the gross portfolio.
-  // `totalAtRet` is gross. The after-tax "spendable" reference chip (spendableAtRet)
-  // is defined further below — once the RETIREMENT effective tax rate is known, so it
-  // haircuts the 401k at the retirement rate (not the working rate, the Point-2 fix).
-  const totalAtRet     = tradGrossAtRet + retRoth + retTaxable + retHsa;
+  // `totalAtRet` is now HOUSEHOLD gross (primary + spouse, #30). The after-tax
+  // "spendable" reference chip (spendableAtRet) is defined further below — once the
+  // RETIREMENT effective tax rate is known, so it haircuts the 401k at the
+  // retirement rate (not the working rate, the Point-2 fix).
+  const totalAtRet     = (tradGrossAtRet + sTrad) + hhRoth + hhTaxable + hhHsa;
 
   // Default retirement spend = the user's CURRENT living expenses (take-home − what
   // they save now), in today's dollars — portfolio-INDEPENDENT, so it can't balloon
@@ -522,7 +615,8 @@ export default function App() {
     [moneyEvents, safeRetAge]);
 
   const retPhaseBase = useMemo(() => ({
-    tradGross: tradGrossAtRet, roth: retRoth, taxable: retTaxable, hsa: retHsa,
+    tradGross: tradGrossAtRet, tradGrossSpouse: sTrad, spouseRmdStartAge: RMD_START_AGE,
+    roth: hhRoth, taxable: hhTaxable, hsa: hhHsa,
     startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
     rReal, effectiveExpenses,
     ssGross: householdSS, ssTaxable: ssTaxableRet,
@@ -532,10 +626,11 @@ export default function App() {
     filingStatus, retStateRate, rmdStartAge: RMD_START_AGE,
     useTable2, spouseCurrentAge, currentAge,
     moneyEvents: retirementMoneyEvents,
-  }), [tradGrossAtRet, retRoth, retTaxable, retHsa, safeRetAge, safeLifeExp, rReal,
+  }), [tradGrossAtRet, sTrad, safeRetAge, safeLifeExp, rReal,
        effectiveExpenses, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
        pensionMonthly, pensionStartAge, filingStatus, retStateRate,
-       useTable2, spouseCurrentAge, currentAge, retirementMoneyEvents]);
+       useTable2, spouseCurrentAge, currentAge, retirementMoneyEvents,
+       hhRoth, hhTaxable, hhHsa]);
 
   const retPhase = useMemo(
     () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),
@@ -557,7 +652,7 @@ export default function App() {
   // haircut); Roth/HSA are tax-free and Taxable is already net of LTCG drag. This is
   // the "worth ~X to you / ≈ $Y/mo" anchor beside the gross headline.
   const spendableAtRet = Math.round(
-    tradGrossAtRet * (1 - effectiveRMDTaxRate) + retRoth + retTaxable + retHsa);
+    (tradGrossAtRet + sTrad) * (1 - effectiveRMDTaxRate) + hhRoth + hhTaxable + hhHsa);
 
   // Amount maps for the Year-by-year RMD / Conversion columns (WI-2.5) — the ACTUAL
   // amounts the walk applied (conversions capped at the live balance), one source.
@@ -1254,6 +1349,41 @@ export default function App() {
       setAddlPreTaxBal, setMatchMode, setEmployerMatchPct, setMatchFormulaRate, setMatchFormulaCap,
       readOnly]);
 
+  // Spouse's own accounts + match terms (#30). Shapes mirror accountsBundle — same
+  // self-describing field convention (rule 10) — minus contribEnd (the spouse
+  // contributes until household retirement, no separate end-age lever). Balances
+  // min 0 max 5M sliderMax 1M step 10k (accountsBundle's convention). Contribution
+  // caps are the IRS per-account limits (rule 1); HSA's contribution cap is the
+  // household FAMILY ceiling (not spouseHsaLimit, which is a derived per-run split,
+  // not a slider bound the user should see shrink as the primary's HSA contrib moves).
+  const spouseAccountsBundle = useMemo(() => {
+    const acct = (bal, setBal, contrib, setContrib, contribMax) => ({
+      bal:     { value: bal, set: guardWrite(setBal, readOnly), min: 0, max: 5_000_000, sliderMax: 1_000_000, step: 10_000 },
+      contrib: { value: contrib, set: guardWrite(setContrib, readOnly), min: 0, max: contribMax, step: contribStep(contribMax) },
+    });
+    return {
+      trad401k: acct(spouseBal401k, setSpouseBal401k, spouseContrib401k, setSpouseContrib401k, TRAD_401K_LIMIT_2026),
+      roth:     acct(spouseBalRoth, setSpouseBalRoth, spouseContribRoth, setSpouseContribRoth, ROTH_IRA_LIMIT_2026),
+      taxable:  acct(spouseBalTaxable, setSpouseBalTaxable, spouseContribTaxable, setSpouseContribTaxable, 100_000),
+      hsa:      acct(spouseBalHSA, setSpouseBalHSA, spouseContribHSA, setSpouseContribHSA, HSA_FAMILY_LIMIT_2026),
+      matchMode:        { value: spouseMatchMode, set: guardWrite(setSpouseMatchMode, readOnly),
+        options: [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }] },
+      employerMatchPct: { value: spouseEmployerMatchPct, set: guardWrite(setSpouseEmployerMatchPct, readOnly), min: 0, max: 10, step: 0.5 },
+      matchFormulaRate: { value: spouseMatchFormulaRate, set: guardWrite(setSpouseMatchFormulaRate, readOnly), min: 0, max: 200, step: 5 },
+      matchFormulaCap:  { value: spouseMatchFormulaCap, set: guardWrite(setSpouseMatchFormulaCap, readOnly), min: 1, max: 15, step: 0.5 },
+      hsaCoverageType:  { value: hsaCoverageType, set: guardWrite(setHsaCoverageType, readOnly),
+        options: [{ value: "self", label: "Self-only" }, { value: "family", label: "Family" }] },
+    };
+  }, [spouseBal401k, spouseContrib401k, spouseBalRoth, spouseContribRoth,
+      spouseBalTaxable, spouseContribTaxable, spouseBalHSA, spouseContribHSA,
+      spouseMatchMode, spouseEmployerMatchPct, spouseMatchFormulaRate, spouseMatchFormulaCap,
+      hsaCoverageType,
+      setSpouseBal401k, setSpouseContrib401k, setSpouseBalRoth, setSpouseContribRoth,
+      setSpouseBalTaxable, setSpouseContribTaxable, setSpouseBalHSA, setSpouseContribHSA,
+      setSpouseMatchMode, setSpouseEmployerMatchPct, setSpouseMatchFormulaRate, setSpouseMatchFormulaCap,
+      setHsaCoverageType,
+      readOnly]);
+
   const ssBundle = useMemo(() => ({
     includeSS:        { value: includeSS, set: guardWrite(setIncludeSS, readOnly) },
     // BUG-17: claim age can never precede the user's current age — but also cap the
@@ -1851,6 +1981,13 @@ export default function App() {
   // slice of horizonProps.
   const verdictLegend = useMemo(() => buildVerdictLegend(safeLifeExp), [safeLifeExp]);
 
+  // #30: gates the spouse-accounts UI surface — a screen shows the spouse account
+  // cards/inputs when there's a spouse to model at all (mirrors hasSpouse's
+  // "married OR has spouse income" condition, but doesn't include the spouse
+  // account balances/contributions themselves, so it stays true even if the user
+  // zeroes them back out mid-edit).
+  const spouseAccountsApplicable = isMarried || spouseIncome > 0;
+
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
   // so the bundle reference only changes when an input actually changes.
@@ -1962,6 +2099,10 @@ export default function App() {
     conversion: conversionBundle,
     health: healthBundle,
     assumptions: assumptionsBundle,
+    // #30: spouse accounts setter bundle + applicability flag (memoized separately
+    // above for V9 stability).
+    spouseAccounts: spouseAccountsBundle,
+    spouseAccountsApplicable,
     // WI-5.2 (#113): entitlements bundle ({isPremium, readOnly}) — see
     // readEntitlements/guardWrite above. Every write surface in this object has
     // already been guarded at its construction site (bundles, apply sites,
@@ -1998,6 +2139,8 @@ export default function App() {
        // WI-3.1 setter bundles (each memoized separately above):
        profileBundle, spendingBundle, accountsBundle, ssBundle, pensionBundle,
        conversionBundle, healthBundle, assumptionsBundle,
+       // #30: spouse accounts bundle + applicability flag.
+       spouseAccountsBundle, spouseAccountsApplicable,
        // WI-5.2 (#113): entitlements gate every write surface above.
        readOnly, entitlements]);
 
