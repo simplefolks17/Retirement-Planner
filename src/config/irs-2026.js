@@ -376,4 +376,19 @@ export const ASSUMPTIONS = {
   // Goals shown by default on the Plan Goals panel before "add more goals"
   // reveals the rest (progressive disclosure — not an IRS rule).
   DEFAULT_VISIBLE_GOALS: 3,
+
+  // ── Monte Carlo "Range" lens (monte-carlo.js) ──────────────────────────────
+  // Modeling heuristics for the display-only confidence lens, NOT IRS rules and
+  // NOT a guarantee — they parameterize a return-risk-only simulation.
+  //
+  // Standard deviation of annual NOMINAL portfolio returns. ~12% is a common
+  // illustrative proxy for a broad-equity / 60-40 blend's yearly volatility.
+  MONTE_CARLO_STD_DEV:              0.12,
+  // Default number of simulated market paths per run.
+  MONTE_CARLO_ITERATIONS:           600,
+  // Success rate (%) at/above which the Plan confidence driver reads "ok" — a
+  // planning heuristic, roughly the common 80–90% success band.
+  MONTE_CARLO_SUCCESS_GUIDELINE_PCT: 80,
+  // Success rate (%) below which the low-odds Plan signal fires.
+  MONTE_CARLO_LOW_ODDS_PCT:          70,
 };

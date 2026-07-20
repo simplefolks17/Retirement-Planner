@@ -77,6 +77,36 @@ describe("calcSignals — deep-link guard (BUG-43 class)", () => {
   });
 });
 
+describe("calcSignals — low-odds confidence signal (#114 Range lens)", () => {
+  it("no lowodds signal when monteCarloSuccessPct is null or omitted", () => {
+    expect(calcSignals(quiet)).toEqual([]); // omitted → default null
+    expect(calcSignals({ ...quiet, monteCarloSuccessPct: null })).toEqual([]);
+  });
+
+  it("fires below MONTE_CARLO_LOW_ODDS_PCT with pct set, target {screen:'plan'}, and NO dollars key", () => {
+    const below = calcSignals({ ...quiet, monteCarloSuccessPct: ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT - 1 });
+    expect(below).toHaveLength(1);
+    expect(below[0].id).toBe("lowodds");
+    expect(below[0].pct).toBe(ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT - 1);
+    expect(below[0].target).toEqual({ screen: "plan" });
+    expect("dollars" in below[0]).toBe(false);
+  });
+
+  it("does NOT fire at/above MONTE_CARLO_LOW_ODDS_PCT", () => {
+    expect(calcSignals({ ...quiet, monteCarloSuccessPct: ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT })).toEqual([]);
+    expect(calcSignals({ ...quiet, monteCarloSuccessPct: ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT + 5 })).toEqual([]);
+  });
+
+  it("dollar signals rank before the dollar-less lowodds signal", () => {
+    const s = calcSignals({
+      ...quiet,
+      budgetDeficit: 12_000,
+      monteCarloSuccessPct: ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT - 10,
+    }, 5);
+    expect(s.map(x => x.id)).toEqual(["deficit", "lowodds"]);
+  });
+});
+
 describe("calcSignals — ranking and cap", () => {
   const allThree = {
     extraMatch: 3_000,

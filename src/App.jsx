@@ -23,6 +23,7 @@ import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-pl
 import { findOptimalConversionPlan } from "./model/roth-conversion.js";
 import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
+import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
 import { fvAnnuity } from "./model/finance-math.js";
@@ -719,6 +720,52 @@ export default function App() {
        pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
        retirementMoneyEvents]);
 
+  // ── Monte Carlo "Range" lens (WI-5.3 / #114) ──────────────────────────────────
+  // A DISPLAY-ONLY confidence lens — it never feeds any headline number (the
+  // golden master locks none of this). runMonteCarlo is deterministic (seeded), so
+  // this is reproducible. RECOMPUTE CONTRACT: this useMemo re-runs ONLY when the
+  // committed plan's retirement-walk inputs change (retDrawShared, totalAtRet,
+  // ages, returnRate, inflationRate) — NOT on every render. Crucially the Plan
+  // "Try a change" lever previews are preview-only (they never touch real App
+  // state), so dragging those sliders does NOT re-run the ~14ms/600-iteration MC;
+  // it re-runs only when the user actually commits a plan change or edits a real
+  // assumption. Iterations stay at ASSUMPTIONS.MONTE_CARLO_ITERATIONS for
+  // sub-frame runtime.
+  const rangeView = useMemo(() => {
+    const mc = runMonteCarlo({
+      startBal: totalAtRet,
+      startAge: safeRetAge,
+      endAge: safeLifeExp,
+      returnRate, inflationRate,
+      effectiveExpenses: retDrawShared.effectiveExpenses,
+      ssAmount: retDrawShared.ssAmount,
+      ssClaimAge: retDrawShared.ssClaimAge,
+      pensionAmount: retDrawShared.pensionAmount,
+      pensionStartAge: retDrawShared.pensionStartAge,
+      rmdTaxByAge: retDrawShared.rmdTaxByAge,
+      conversionTaxByAge: retDrawShared.conversionTaxByAge,
+      moneyEvents: retDrawShared.moneyEvents,
+    });
+    const hasData = mc.bands.length > 0;
+    const successPct = hasData ? Math.round(mc.successRate * 100) : null;
+    const successOk = successPct == null ? null : successPct >= ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT;
+    // Shape matches ArcGraph's rangeBands prop exactly (so PlanScreen passes it
+    // straight through), PLUS successOk for the pill/caption tone agreement.
+    return {
+      series: mc.bands,
+      successPct,
+      successOk,
+      note: mc.limitation,
+      medianDepletionAge: mc.depletionAgePercentiles?.p50 ?? null,
+      p10DepletionAge: mc.depletionAgePercentiles?.p10 ?? null,
+    };
+  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retDrawShared]);
+
+  // Scalar successPct extracted for V9 scalar-dep hygiene (fed to planView's
+  // confidence driver + the low-odds signal; the whole rangeView object stays out
+  // of those dep arrays).
+  const mcSuccessPct = rangeView.successPct;
+
   // Headline longevity + the ONE retirement walk come straight from the engine
   // (retPhase) — no second projection (BUG-35 / BUG-31). retirementWalk exposes
   // rows (to life expectancy), depletionAge, and yearsSustained.
@@ -1204,9 +1251,10 @@ export default function App() {
       withdrawalRate, yearsSustained, isSustainable,
       lifeExpect: safeLifeExp, retirementAge: safeRetAge,
       currentContribTotal, takeHome,
+      monteCarloSuccessPct: mcSuccessPct,
     }),
   }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge,
-       withdrawalRate, currentContribTotal, takeHome]);
+       withdrawalRate, currentContribTotal, takeHome, mcSuccessPct]);
 
   // Pre-computed display scalars shared by sliderBounds and horizonProps directly.
   // monthlySpend: the QuickTune spend slider value (rule 10 — month↔year in the model).
@@ -1465,7 +1513,8 @@ export default function App() {
   const extraMatch = optimizedAllocation.extraMatch;
   const signals = useMemo(() => calcSignals({
     extraMatch, adjustedNetConversionBenefit, budgetDeficit,
-  }), [extraMatch, adjustedNetConversionBenefit, budgetDeficit]);
+    monteCarloSuccessPct: mcSuccessPct,
+  }), [extraMatch, adjustedNetConversionBenefit, budgetDeficit, mcSuccessPct]);
 
   // Year-by-year table rows (WI-2.5): the WHOLE life, accumulation + retirement.
   // Accumulation rows (buildAccumulationRows) are on the GROSS basis (BUG-35) with a
@@ -2034,6 +2083,8 @@ export default function App() {
     // WI-1.2: ranked Plan-screen signals (calcSignals — ≤2, dollars-desc,
     // each with a {screen, subView} deep-link target). Empty array = no strip.
     signals,
+    // WI-5.3 (#114): Monte Carlo Range lens bundle for the arc's Range view + confidence surfaces.
+    rangeView,
     // WI-2.1 (#91): Journey screen fields.
     // flowDown: full calcFlowDown result — raw object, no picking here (rule 10).
     // conversionWindowYrs / rmdStartAge are scalars already computed above.
@@ -2118,6 +2169,8 @@ export default function App() {
        moneyEvents, saveEvent, removeEvent, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
        lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
+       // WI-5.3 (#114): Monte Carlo Range lens (memoized above, identity-stable).
+       rangeView,
        flowData, conversionWindowYrs,
        // WI-2.2 / WI-2.4 bundles (memoized separately for V9 stability):
        budgetView, taxViewBundle,

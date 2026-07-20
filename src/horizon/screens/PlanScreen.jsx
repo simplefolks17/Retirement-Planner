@@ -44,8 +44,8 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
             }}>
             <span style={{
               font: `600 16px ${HM}`, flexShrink: 0,
-              color: sig.id === "deficit" ? t.warm : t.good,
-            }}>{fmt(sig.dollars)}</span>
+              color: (sig.id === "deficit" || sig.id === "lowodds") ? t.warm : t.good,
+            }}>{sig.pct != null ? `${sig.pct}%` : fmt(sig.dollars)}</span>
             <span style={{ minWidth: 0 }}>
               <span style={{ display: "block", font: `600 13px ${HF}`, color: t.ink }}>
                 {sig.title}
@@ -388,6 +388,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     contribSeries, activity,
     planView, signals, moneyEvents, retirementWalk,
     planHighlights, statementView,
+    // WI-5.3 (#114): Monte Carlo Range lens — passed straight through to the arc's Range view.
+    rangeView,
     // Try-a-change panel + life-event edit-in-place.
     whatIfSimInputs, monthlySpend, sliderBounds, applyPlanLevers,
     saveEvent, removeEvent, lifeEventBounds,
@@ -468,6 +470,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       walkRows={retirementWalk?.rows ?? []}
       onEventTap={openEventSheet}
       scenarioData={arcPreview?.changed ? arcPreview.chart : null}
+      rangeBands={rangeView}
     />
   );
 

@@ -56,6 +56,14 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
       value: d.sustainedYears == null ? "beyond your plan" : `${d.sustainedYears} yrs`,
       note: `your retirement needs ${d.horizonYears} yrs of income`,
     };
+    if (d.id === "confidence") return {
+      ...d,
+      name: "Market confidence",
+      value: d.successPct == null ? "—" : `${d.successPct}%`,
+      note: d.successPct == null
+        ? "runs many market paths on your current plan"
+        : `of market paths fund your plan · guideline ${d.guidelinePct}%`,
+    };
     return {
       ...d,
       name: "Savings rate",
