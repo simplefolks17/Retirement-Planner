@@ -9,11 +9,26 @@ import { ASSUMPTIONS } from "../config/irs-2026.js";
 //     isInflow — true = money coming in (inheritance, bonus); false = going out
 //     isTaxable — true = inflow is ordinary income that year (e.g. trad IRA distribution)
 //
-//   Duration  { label, monthlyAmount, durationMonths, age, isInflow, incomeAnnual }
+//   Duration  { label, monthlyAmount, durationMonths, age, isInflow, incomeAnnual,
+//                growthPct, untilAge }
 //     monthlyAmount  — absolute $/month while the event runs (always positive)
 //     durationMonths — how many months it runs, starting at the year the user
 //                      turns `age` (months are allocated year by year: the first
 //                      12 months land in the `age` year, the next 12 in `age`+1, …)
+//     untilAge       — optional OPEN-ENDED alternative to durationMonths: "runs
+//                      through the year the person turns `untilAge`" (inclusive).
+//                      Resolved to an equivalent month count by spanMonths():
+//                      (untilAge − age + 1) × 12. When BOTH durationMonths and
+//                      untilAge are present, untilAge WINS (spanMonths prefers
+//                      it) — this is how a UI migrates a fixed-length event to
+//                      "rest of plan" (untilAge = plan horizon) without touching
+//                      durationMonths. untilAge < age resolves to 0 months (not
+//                      a duration event at all — degenerate/invalid input).
+//                      Legacy events (no untilAge) are byte-identical: spanMonths
+//                      falls through to the existing `durationMonths ?? 0`. The
+//                      walks themselves stop at their own endAge, so an
+//                      open-ended event is naturally bounded by the plan horizon
+//                      with no clamp needed in this module.
 //     isInflow       — direction of the monthly amount (travel spend = false,
 //                      part-time income = false→true)
 //     incomeAnnual   — optional $/year of TOTAL income during the event (OWNER
@@ -25,12 +40,28 @@ import { ASSUMPTIONS } from "../config/irs-2026.js";
 //                      MAGI; equal to salary = no change, the old inert default).
 //                      In RETIREMENT-walk years there is no salary to replace, so
 //                      incomeAnnual is additive side income there, prorated by the
-//                      months active — the pre-existing, unchanged behavior.
-//                      Undefined/non-finite incomeAnnual = "no statement about
-//                      income" = no salary replacement, no offset (legacy events).
+//                      months active — the pre-existing, unchanged behavior. As of
+//                      this slice that retirement-phase income term is ALSO fed
+//                      into applyMoneyEvents's taxableIncomeAdjustment (see below)
+//                      — it's real ordinary income (e.g. part-time work) and is
+//                      now taxed once, stacked on the SS/pension floor, narrowing
+//                      BUG-36. Undefined/non-finite incomeAnnual = "no statement
+//                      about income" = no salary replacement, no offset, no tax
+//                      (legacy events).
+//     growthPct      — optional annual escalation PERCENT applied to BOTH the
+//                      monthly spend/income and the incomeAnnual term (e.g. 3 =
+//                      3%/yr cost-of-living bump on a long-running event). 0,
+//                      absent, or non-finite = flat/no escalation (legacy
+//                      events are byte-identical). Compounds once per WHOLE
+//                      year offset from the event's start age (k = age −
+//                      ev.age; factor = (1 + growthPct/100)^k, k ≤ 0 → 1×) —
+//                      see growthFactorForAge. One-time events ignore
+//                      growthPct entirely (a single occurrence has nothing to
+//                      escalate against).
 //
-// An event is a duration event when durationMonths > 0 AND monthlyAmount is a
-// finite number — see isDurationEvent. Everything else is one-time.
+// An event is a duration event when its resolved span (spanMonths — prefers
+// untilAge, else durationMonths) is > 0 AND monthlyAmount is a finite number —
+// see isDurationEvent. Everything else is one-time.
 //
 // ── NO-DOUBLE-COUNT RULE ──────────────────────────────────────────────────────
 // Each event month's incomeAnnual counts exactly once, in exactly one channel:
@@ -40,26 +71,55 @@ import { ASSUMPTIONS } from "../config/irs-2026.js";
 //     income term from its portfolio adjustment by using eventAmountForYear
 //     (not eventNetForYear) for the taxable-account event line.
 //   - Months landing in a retirement-walk year flow through the PORTFOLIO
-//     channel: eventNetForYear's income term (there's no salary to replace).
+//     channel: eventNetForYear's income term (there's no salary to replace),
+//     AND — as of this slice — through the TAX channel: applyMoneyEvents adds
+//     that same income term to taxableIncomeAdjustment, so it's taxed once as
+//     ordinary income stacked on the SS/pension floor (via the engine's
+//     inflowTax), not received tax-free.
 // A duration event spanning the retirement boundary splits by month exactly as
 // spend already does (eventFirstAge/eventLastAge): the sim owns months through
 // the retirement-age row, the retirement walks own retAge+1 onward — so a
 // boundary-spanning event's income is never double-counted or dropped.
 //
 // applyMoneyEvents is the ONE source for a RETIREMENT-WALK year's per-event effect
-// (it still uses eventNetForYear — the additive/portfolio-channel basis). It
-// returns the net portfolio adjustment AND any additional taxable income for that
-// age, so the caller can incorporate both without this module knowing the
-// caller's data model. Used by the retirement engine (buildRetirementWalkByAccount)
-// and the blended what-if walk (buildRetirementDrawdown). runSimulation does NOT
-// use applyMoneyEvents/eventNetForYear for its portfolio line — it uses
+// (it still uses eventNetForYear — the additive/portfolio-channel basis — for the
+// portfolio adjustment). It returns the net portfolio adjustment AND any
+// additional taxable income for that age (one-time flagged-taxable inflows PLUS,
+// as of this slice, every event's own prorated income term), so the caller can
+// incorporate both without this module knowing the caller's data model. Used by
+// the retirement engine (buildRetirementWalkByAccount) and the blended what-if
+// walk (buildRetirementDrawdown). runSimulation does NOT use
+// applyMoneyEvents/eventNetForYear for its portfolio line — it uses
 // eventAmountForYear (income excluded, see the salary channel above) plus
 // eventsIncomeAdjustment() for the income/contribution-scaling side.
 // NOTE: the blended what-if walk still does NOT charge event income tax on
 // one-time taxable inflows outside applyMoneyEvents's own path — tracked as BUG-36.
 
+// Resolves a duration event's span in months, preferring the open-ended
+// `untilAge` over the fixed `durationMonths` when both are present (see the
+// module header). Module-internal — callers use isDurationEvent /
+// monthsActiveInYear / eventLastAge / eventGrossCost, not this directly.
+function spanMonths(ev) {
+  if (Number.isFinite(ev?.untilAge)) {
+    return Math.max(0, (ev.untilAge - ev.age + 1) * 12);
+  }
+  return ev?.durationMonths ?? 0;
+}
+
+// Per-year escalation factor for a duration event's dollar terms. k is the
+// whole-year offset from the event's start age (k=0 at the start year, no
+// escalation yet). Absent/zero/non-finite growthPct → 1× at every age
+// (byte-identical to the pre-growth behavior). Module-internal.
+function growthFactorForAge(ev, age) {
+  const g = ev?.growthPct;
+  if (!Number.isFinite(g) || g === 0) return 1;
+  const k = age - ev.age;
+  if (k <= 0) return 1;
+  return Math.pow(1 + g / 100, k);
+}
+
 export function isDurationEvent(ev) {
-  return (ev?.durationMonths ?? 0) > 0 && Number.isFinite(ev?.monthlyAmount);
+  return spanMonths(ev) > 0 && Number.isFinite(ev?.monthlyAmount);
 }
 
 // THE one predicate for "this event replaces salary during working years":
@@ -82,7 +142,7 @@ export function isIncomeReplacingEvent(ev) {
 export function monthsActiveInYear(ev, age) {
   const k = age - ev.age;
   if (k < 0) return 0;
-  return Math.max(0, Math.min(12, ev.durationMonths - 12 * k));
+  return Math.max(0, Math.min(12, spanMonths(ev) - 12 * k));
 }
 
 // The event's OWN signed cash for the year, EXCLUDING the incomeAnnual term.
@@ -95,7 +155,7 @@ export function eventAmountForYear(ev, age) {
     const months = monthsActiveInYear(ev, age);
     if (months <= 0) return 0;
     const monthly = Math.abs(ev.monthlyAmount);
-    return (ev.isInflow ? 1 : -1) * months * monthly;
+    return (ev.isInflow ? 1 : -1) * months * monthly * growthFactorForAge(ev, age);
   }
   if (ev.age !== age || !Number.isFinite(ev.amount)) return 0;
   return ev.isInflow ? Math.abs(ev.amount) : -Math.abs(ev.amount);
@@ -108,7 +168,7 @@ export function eventIncomeForYear(ev, age) {
   if (!ev || !isDurationEvent(ev) || !Number.isFinite(ev.incomeAnnual)) return 0;
   const months = monthsActiveInYear(ev, age);
   if (months <= 0) return 0;
-  return (months / 12) * Math.abs(ev.incomeAnnual);
+  return (months / 12) * Math.abs(ev.incomeAnnual) * growthFactorForAge(ev, age);
 }
 
 // Signed net portfolio impact of ONE event in the given age-year — the
@@ -166,13 +226,23 @@ export function eventFirstAge(ev) {
   return ev.age;
 }
 export function eventLastAge(ev) {
-  if (isDurationEvent(ev)) return ev.age + Math.ceil(ev.durationMonths / 12) - 1;
+  if (isDurationEvent(ev)) return ev.age + Math.ceil(spanMonths(ev) / 12) - 1;
   return ev.age;
 }
 
 // Gross size of the event itself, before any income offset (display: "Total: $X").
+// Duration events sum per active YEAR (not a flat monthly × months) so growthPct
+// escalation is reflected in the total; flat/no-growth events reduce to the
+// same monthly × totalMonths figure as before (growthFactorForAge is 1× there).
 export function eventGrossCost(ev) {
-  if (isDurationEvent(ev)) return Math.abs(ev.monthlyAmount) * ev.durationMonths;
+  if (isDurationEvent(ev)) {
+    let sum = 0;
+    for (let age = eventFirstAge(ev); age <= eventLastAge(ev); age++) {
+      const months = monthsActiveInYear(ev, age);
+      sum += months * Math.abs(ev.monthlyAmount) * growthFactorForAge(ev, age);
+    }
+    return sum;
+  }
   return Number.isFinite(ev?.amount) ? Math.abs(ev.amount) : 0;
 }
 
@@ -203,11 +273,17 @@ export function applyMoneyEvents(events = [], age) {
 
   for (const ev of events) {
     portfolioAdjustment += eventNetForYear(ev, age);
-    // Taxable-income flag: one-time taxable inflows only (duration events are
-    // untaxed by design — documented simplification above).
+    // Taxable-income flag: one-time taxable inflows (e.g. an inherited
+    // pre-tax IRA distribution, flagged isTaxable).
     if (!isDurationEvent(ev) && ev.age === age && ev.isInflow && ev.isTaxable) {
       taxableIncomeAdjustment += Math.abs(ev.amount);
     }
+    // Every event's own prorated income term (duration-event side income,
+    // e.g. part-time work) is real ordinary income in a retirement-walk
+    // year — tax it once, stacked on the SS/pension floor (narrows BUG-36;
+    // see the module header's NO-DOUBLE-COUNT RULE). Zero for one-time
+    // events and for duration events with no/zero incomeAnnual.
+    taxableIncomeAdjustment += eventIncomeForYear(ev, age);
   }
 
   return { portfolioAdjustment, taxableIncomeAdjustment };
