@@ -196,6 +196,27 @@ invariants Classic enforces.
 | `conversion` | conversionMode, conversionBracketTarget, annualConversionAmt, conversionTaxSource |
 | `health` | hasMarketplaceInsurance, householdSize, marketplaceMonthlyPremium, hasMedicare, personOnMedicare |
 | `assumptions` | currentAge, retirementAge, lifeExpect (coupled setters), returnRate, inflationRate, retirementState, savingsSurplusPct |
+| `spouseAccounts` (#30, premium) | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib }` — no per-account `contribEnd`; the spouse contributes until the household retirement), hsaCoverageType (`self`/`family`), matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
+
+**`spouseAccounts` (#30) — spouse account modeling.** Same self-describing field
+convention as `accounts`. The spouse's HSA contribution cap is `HSA_FAMILY_LIMIT_2026`
+(not the self-only limit) because the family HDHP limit is a **shared household
+ceiling** — App splits it between the two earners (primary draws first, spouse gets
+the remainder) and passes each `runSimulation` its own effective `hsaLimit` (rule 4).
+The card is gated on the model-provided `spouseAccountsApplicable` flag (`isMarried ||
+spouseIncome > 0`) and rendered behind `LockedCard` when `entitlements.isPremium`
+is false (the first premium-gated surface). **Household model:** a second
+`runSimulation` run projects the spouse's accounts to the household retirement year;
+`totalAtRet`, the drawdown chart, and `retVals` display cards are HOUSEHOLD (primary +
+spouse), while the conversion sim / optimizer / withdrawal card keep reading the
+**primary** per-account scalars (primary-modeled strategies). The retirement engine
+(`buildRetirementWalkByAccount`) carries a second Traditional 401k bucket
+(`tradGrossSpouse`) with its **own** RMD schedule keyed to the spouse's age
+(`spouseRmdStartAge`) — so a younger spouse's RMDs begin later — feeding the ONE joint
+tax walk (both RMDs stacked together for a single bracket-accurate tax; Roth/taxable/HSA
+stay merged household buckets — no per-person tax-timing difference). With no spouse
+data every value collapses to the primary total (golden master untouched). Combined
+per-account toggle + household budget view are deferred to #31/#32.
 
 The Roth-conversion **window** fields (`conversionStartAge`/`conversionEndAge`), the
 in-service toggle, and `conversionEvents` are intentionally **not** in the `conversion`

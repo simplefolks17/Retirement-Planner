@@ -153,3 +153,45 @@ describe("MyDetailsScreen", () => {
     act(() => app.r.unmount());
   });
 });
+
+// ── #30 spouse & household card ──────────────────────────────────────────────
+function spouseBundle() {
+  const acct = (bal) => ({ bal: num(bal, 0, 5_000_000, 10_000), contrib: num(5_000, 0, 24_500, 500) });
+  return {
+    trad401k: acct(200_000), roth: acct(60_000), taxable: acct(40_000), hsa: acct(8_000),
+    hsaCoverageType: choice("family", [{ value: "self", label: "Self-only" }, { value: "family", label: "Family" }]),
+    matchMode: choice("flat", [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }]),
+    employerMatchPct: num(4, 0, 10, 0.5),
+    matchFormulaRate: num(50, 0, 200, 5),
+    matchFormulaCap: num(6, 1, 15, 0.5),
+  };
+}
+
+describe("MyDetailsScreen — spouse & household (#30)", () => {
+  it("does NOT render the spouse card when not applicable", () => {
+    const props = { ...makeProps(), spouseAccountsApplicable: false, entitlements: { isPremium: true }, spouseAccounts: spouseBundle() };
+    const app = mount(props);
+    expect(app.text()).not.toContain("Spouse & household");
+    act(() => app.r.unmount());
+  });
+
+  it("renders a LockedCard when applicable but not premium (no editable summary)", () => {
+    const props = { ...makeProps(), spouseAccountsApplicable: true, entitlements: { isPremium: false }, spouseAccounts: spouseBundle() };
+    const app = mount(props);
+    const txt = app.text();
+    expect(txt).toContain("Spouse & household");
+    expect(txt).toContain("Model your spouse's 401k");   // LockedCard teaser
+    expect(txt).not.toContain("Spouse 401k $200,000");   // editable summary must NOT show when locked
+    act(() => app.r.unmount());
+  });
+
+  it("renders the editable card when applicable and premium, and writes a balance edit through the setter", () => {
+    const props = { ...makeProps(), spouseAccountsApplicable: true, entitlements: { isPremium: true }, spouseAccounts: spouseBundle() };
+    const app = mount(props);
+    expect(app.text()).toContain("Spouse 401k $200,000 · match 4%");   // summary from raw bundle values
+    app.click(n => textOf(n).startsWith("Spouse & household"));         // open the card
+    app.clickText("+");                                                 // first field = spouse 401k balance
+    expect(props.spouseAccounts.trad401k.bal.set).toHaveBeenCalledWith(210_000); // 200k + 10k step
+    act(() => app.r.unmount());
+  });
+});

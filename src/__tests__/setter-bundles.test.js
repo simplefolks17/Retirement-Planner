@@ -64,6 +64,19 @@ describe("WI-3.1 setter bundles", () => {
     app.unmount();
   });
 
+  it("exposes and round-trips the spouseAccounts bundle (#30)", () => {
+    const app = mount();
+    expect(app.latest().spouseAccounts, "missing spouseAccounts bundle").toBeTruthy();
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(400_000));
+    expect(app.latest().spouseAccounts.trad401k.bal.value).toBe(400_000);
+    app.fire(() => app.latest().spouseAccounts.hsaCoverageType.set("family"));
+    expect(app.latest().spouseAccounts.hsaCoverageType.value).toBe("family");
+    // Spouse HSA contribution cap is the FAMILY limit (shared household ceiling, rule 4),
+    // not the self-only limit — a self-describing bound, so the screen never hardcodes it.
+    expect(app.latest().spouseAccounts.hsa.contrib.max).toBe(8_750);
+    app.unmount();
+  });
+
   it("round-trips a toggle and a select", () => {
     const app = mount();
 
