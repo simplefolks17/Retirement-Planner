@@ -38,6 +38,11 @@ describe("LIFE_EVENTS preset table (IdeasScreen)", () => {
     // events (monthlyAmount/durationMonths/incomeAnnual — money-events.js).
     // "Big trip" folded in from the retired Scenarios card (2026-07-12,
     // owner decision) — same seed values, now a normal editable pill.
+    // "Mortgage paid off" + "Higher early-retirement spend" added 2026-07-20
+    // (moneyEvents extension): open-ended durations via `untilAge` (#53 / #10),
+    // which fixed-length events couldn't model. Mortgage is the freed-cash
+    // INFLOW from payoff (the baseline already contains the payment — an added
+    // pre-payoff outflow would double-count it; coordinator review fix).
     expect(LIFE_EVENTS).toEqual([
       { l: "Buy a home",      icon: "🏠", age: 40, amount: 60_000, isInflow: false },
       { l: "Kid's college",   icon: "🎓", age: 52, amount: 50_000, isInflow: false },
@@ -47,6 +52,10 @@ describe("LIFE_EVENTS preset table (IdeasScreen)", () => {
       { l: "Part-time at 60", icon: "💼", age: 60, monthlyAmount: 2_000, durationMonths: 12,
         incomeAnnual: 0, isInflow: true  },
       { l: "Big trip",        icon: "🧳", age: 70, amount: 40_000, isInflow: false },
+      { l: "Mortgage paid off", icon: "🔑", age: 60, monthlyAmount: 2_000, untilAge: 90,
+        incomeAnnual: 0, isInflow: true },
+      { l: "Higher early-retirement spend", icon: "🎢", age: 65, monthlyAmount: 1_500,
+        untilAge: 75, isInflow: false },
     ]);
   });
 
@@ -54,7 +63,7 @@ describe("LIFE_EVENTS preset table (IdeasScreen)", () => {
     // Only seed/presentation fields are allowed — every displayed verdict/delta
     // comes from evaluateLifeEvent at open time (V1: stats come from the model run).
     const allowed = ["l", "icon", "age", "amount", "monthlyAmount", "durationMonths",
-      "incomeAnnual", "isInflow"];
+      "untilAge", "growthPct", "incomeAnnual", "isInflow"];
     for (const ev of LIFE_EVENTS) {
       expect(Object.keys(ev).every(key => allowed.includes(key))).toBe(true);
     }

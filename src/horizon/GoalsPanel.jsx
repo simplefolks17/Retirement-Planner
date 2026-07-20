@@ -23,7 +23,12 @@ function goalSummary(ev) {
   const at = `at age ${ev.age}`;
   const dir = ev.isInflow ? "+" : "−";
   if (isDurationEvent(ev)) {
-    return `${dir}${fmtFull(ev.monthlyAmount)}/mo · ${ev.durationMonths} mo · ${at}`;
+    // Span: an open-ended event (untilAge) reads "through age X"; a fixed-length
+    // one keeps "N mo". Optional escalation shows as "· +X%/yr". Both are the
+    // event's own seed fields — plain formatting, no arithmetic (rule 10).
+    const span = ev.untilAge != null ? `through age ${ev.untilAge}` : `${ev.durationMonths} mo`;
+    const growth = ev.growthPct ? ` · +${ev.growthPct}%/yr` : "";
+    return `${dir}${fmtFull(ev.monthlyAmount)}/mo · ${span}${growth} · ${at}`;
   }
   return `${dir}${fmtFull(ev.amount)} · ${at}`;
 }

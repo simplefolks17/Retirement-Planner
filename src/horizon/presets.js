@@ -32,6 +32,21 @@ export const LIFE_EVENTS = [
   { l: "Part-time at 60", icon: "💼", age: 60, monthlyAmount: 2_000, durationMonths: 12,
     incomeAnnual: 0, isInflow: true  },
   { l: "Big trip",        icon: "🧳", age: 70, amount: 40_000, isInflow: false },
+  // moneyEvents-extension presets (open-ended durations via `untilAge` —
+  // money-events.js), which the old fixed-length (durationMonths, 36-mo UI cap)
+  // events could not express:
+  //   • "Mortgage paid off" — the freed-up cash AFTER payoff, as an inflow from
+  //     the payoff age through the plan (#53). The living-expenses baseline
+  //     already includes the mortgage payment for a typical user, so the honest
+  //     event is the step-DOWN at payoff — an added pre-payoff outflow would
+  //     double-count the payment against that baseline.
+  //   • "Higher early-retirement spend" — the go-go-years delta ABOVE baseline
+  //     spending, from retirement until a step-down age, then back to baseline
+  //     (#10 — a delta, so no overlap with the baseline).
+  { l: "Mortgage paid off", icon: "🔑", age: 60, monthlyAmount: 2_000, untilAge: 90,
+    incomeAnnual: 0, isInflow: true },
+  { l: "Higher early-retirement spend", icon: "🎢", age: 65, monthlyAmount: 1_500,
+    untilAge: 75, isInflow: false },
 ];
 
 // Convert a LIFE_EVENTS preset ({ l, ...rest }) into a LifeEventSheet seed

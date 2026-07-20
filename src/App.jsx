@@ -2011,6 +2011,11 @@ export default function App() {
   // Events can land on any year from next year through the plan (life-expectancy)
   // age. Memoized separately (V9).
   const lifeEventBounds = useMemo(() => ({
+    // minAge stays currentAge+1 (NOT currentAge): runSimulation's accumulation
+    // rows begin at currentAge+1, so an event dated exactly at currentAge would
+    // never be applied by the accumulation walk — it would silently vanish. The
+    // earliest sound start age is next year. (Evaluated for the moneyEvents
+    // extension; kept deliberately.)
     minAge: currentAge + 1,
     maxAge: safeLifeExp,
     retirementAge: safeRetAge,

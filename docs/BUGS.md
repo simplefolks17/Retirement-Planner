@@ -121,6 +121,19 @@ sites are internally consistent (their own "current" and "candidate" both use th
 mechanism, so no divergence *within* a site) — the gap is only the blended-vs-engine comparison
 this bug already tracks. `docs/ARCHITECTURE.md`'s `buildSurplusPreview` note now states this
 honestly in its `note` field, shown to the user in the preview itself.
+**Scope NARROWED 2026-07-20 (moneyEvents extension):** the "retirement-phase **duration-event
+income** is untaxed" strand of this bug is now **closed on the headline path**. `applyMoneyEvents`
+(`money-events.js`) adds every event's prorated `eventIncomeForYear` to `taxableIncomeAdjustment`,
+and the per-account engine (`buildRetirementWalkByAccount`) already taxes that as ordinary income
+stacked on the SS/pension floor (`inflowTax`). Since the engine is the source for the chart,
+longevity, Flow-Down, and RMD/conversion numbers, a duration event's retirement-phase side income
+(part-time work, etc.) is now taxed once there. The **remaining** BUG-36 residual is unchanged and
+purely the *blended-walk comparison* surfaces: `calcWhatIfDelta` / `calcOptimizedScenario` (and the
+blended `buildRetirementDrawdown` fallback) still don't charge the per-year spending-draw tax or the
+event-income tax — `buildRetirementDrawdown` consumes `eventNetForYear` directly and never calls
+`applyMoneyEvents`, so it is deliberately outside this fix. Inert at the default state (no events →
+golden master untouched); users WITH retirement event income now see honest (slightly lower)
+headline numbers.
 **Correction (2026-07-12):** `buildScenarioCommitSite` (Ideas' "make this scenario my plan") was
 retired the same day it merged into the arc-event-placement branch — it backed the locked
 "Scenarios" preset cards, which the owner had separately decided to retire that same day (see the
@@ -1635,7 +1648,7 @@ DOM; 443 tests pass under `node`), the screen-`useState` / formatter-division "r
 **PR #32 review rounds (6, CodeRabbit + Gemini; merged 2026-06-15):** the engine drew heavy review. Resolved in-PR: (1) **RMD before conversion** (IRS sequencing — RMD on the full pre-tax balance, then convert the remainder); (2) **tax-on-tax gross-up** (when Taxable is exhausted and the 401k funds the income tax, that withdrawal is itself taxed — fixed-point solve); (3) **money events folded into `needed`** before the tax solve (a 401k-funded purchase is taxed + grossed up; depletion sees it via `spendShort`); (4) **stale "after-tax" display copy** → gross; (5) **taxable inflows taxed** (engine routes events through the shared `applyMoneyEvents`; flagged taxable inflow → `inflowTax` ordinary-income component); (6) **RMD-schedule `bal` = `r.trad`** not `r.total` ("Est. 401k Balance" column); (7) **conversion-benefit `rmdTaxSaved`** compared over the common active span (apples-to-apples when conversions change longevity); (8) **Flow-Down accumulation clamp removed** (negative real growth reconciles); (9) **per-account cards reconcile** to gross `totalAtRet` when `addlPreTaxBal>0`, and `retTrad` = `tradGrossAtRet` so the optimal/worst-case withdrawal pools match. +11 regression tests over the rounds (412 → **441**).
 
 **Follow-ups (documented, not blocking — open in this file):**
-- **BUG-36** — `what-if.js` (`calcWhatIfDelta`/`calcWhatIfScenario`) + `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` for *deltas* (don't charge the spending-draw tax); accumulation event income tax also not on the engine.
+- **BUG-36** — `what-if.js` (`calcWhatIfDelta`) + `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` for *deltas* (don't charge the spending-draw tax). NARROWED 2026-07-20: retirement-phase **duration-event income** is now taxed on the headline path (engine via `applyMoneyEvents.taxableIncomeAdjustment`); only the blended-walk comparison surfaces remain.
 - **BUG-37** — engine ignores the `conversionTaxSource` toggle (always "taxable"-style); honoring "converted" would move the golden master (owner-deferred).
 - **BUG-38** — engine charges only *incremental* tax above the SS/pension floor, so SS/pension is effectively tax-free (`tFloor` never charged). Inert at default; needs income-surplus handling.
 - **BUG-39** — Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (rule 2b).
