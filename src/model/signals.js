@@ -29,6 +29,8 @@ export function calcSignals({
   adjustedNetConversionBenefit = 0, // net conversion benefit after IRMAA/ACA costs
   budgetDeficit = 0,                // expenses + contributions overshoot of after-tax income
   monteCarloSuccessPct = null,      // Monte Carlo success rate (integer %), null when unavailable
+  preTaxConcentrationPct = null,    // pre-tax share of the portfolio (integer %), null when unavailable
+  preTaxConcentrationCost = null,   // $ the pre-tax concentration adds to the RMD bill if rates rise (rate-rise companion)
 }, max = 2) {
   const signals = [];
 
@@ -77,19 +79,35 @@ export function calcSignals({
     });
   }
 
+  // 3b. Pre-tax concentration — most of the portfolio is tax-deferred, so a
+  //     future rate hike quietly taxes a larger share. Dollar-quantified via the
+  //     rate-rise companion (preTaxConcentrationCost) so it ranks among the
+  //     dollar nudges, not the confidence signal. Fires only above the HIGH
+  //     threshold (calcTaxDiversification.concentrated), gated in App.jsx.
+  if (preTaxConcentrationPct != null && preTaxConcentrationCost != null
+      && preTaxConcentrationPct > ASSUMPTIONS.TAX_DIVERSIFICATION_HIGH_PCT) {
+    signals.push({
+      id: "concentration",
+      title: "Most of your savings is pre-tax",
+      body: "A large pre-tax balance means a future rate increase taxes more of your retirement. Roth space diversifies that risk.",
+      dollars: Math.round(preTaxConcentrationCost),
+      target: { screen: "numbers", subView: "accounts" },
+    });
+  }
+
   // 4. Low market-survival odds — the Monte Carlo Range lens says a meaningful
   //    share of market paths deplete before the plan age. This is a CONFIDENCE
   //    signal, not a dollar nudge (it carries `pct`, not `dollars`), so it sorts
-  //    after the dollar-quantified signals below. Deep-links to Plan (the arc's
-  //    Range view + the "Try a change" retire lever); a dedicated "work longer"
-  //    card retargets this in a later batch (#55).
+  //    after the dollar-quantified signals below. Deep-links to the Strategies
+  //    "Working longer" card (#55) — the concrete lever most directly addressed
+  //    by "retiring a little later" from the body copy below.
   if (monteCarloSuccessPct != null && monteCarloSuccessPct < ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT) {
     signals.push({
       id: "lowodds",
       title: "Market swings could strain this plan",
       body: "In a meaningful share of market paths your savings run short before your plan age. Retiring a little later or trimming spending lifts the odds.",
       pct: monteCarloSuccessPct,
-      target: { screen: "plan" },
+      target: { screen: "strategies", subView: "worklonger" },
     });
   }
 

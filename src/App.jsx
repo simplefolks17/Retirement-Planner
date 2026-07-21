@@ -25,7 +25,7 @@ import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "./model/accumulation.js";
 import { fvAnnuity } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
@@ -49,7 +49,7 @@ import { FlowConn }          from "./components/FlowConn.jsx";
 import { WhatIfPanel }       from "./components/WhatIfPanel.jsx";
 import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
 import { ConversionEventsPanel } from "./components/ConversionEventsPanel.jsx";
-import { calcWhatIfDelta, buildVerdictLegend }   from "./model/what-if.js";
+import { calcWhatIfDelta, buildVerdictLegend, calcWorkLongerBreakEven }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider, safeGet } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
@@ -1199,6 +1199,16 @@ export default function App() {
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
        addlPreTaxBal, depletionAge]);
 
+  // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
+  // scenario engine as every lever (calcWhatIfScenario) + SS helpers + a pure
+  // conversion-window count. Null when already retired. Feeds the Strategies
+  // "Working longer" card + flow (rule 10 — the screen renders these fields only).
+  const workLongerView = useMemo(() => calcWorkLongerBreakEven({
+    bundle: whatIfBundle, safeRetAge, currentAge, includeSS,
+    ssInputs: { currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge },
+  }), [whatIfBundle, safeRetAge, currentAge, includeSS,
+       currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge]);
+
   // ── Horizon display bundles (WI-0.1) — derived numbers come from the model, ──
   // pre-gated and display-ready, so screens only format (principle 6).
   // Edge states are documented at the model functions; none use ?? 0 fallbacks.
@@ -1503,6 +1513,18 @@ export default function App() {
        setCurrentAgeCoupled, setRetirementAgeCoupled, setLifeExpectCoupled, setReturnRate, setInflationRate,
        setRetirementState, setSavingsSurplusPct, setPreApplySnapshot, readOnly]);
 
+  // Tax diversification (#56): the pre-tax/tax-free/taxable split at retirement +
+  // concentration level + rate-rise companion. Model-computed (rule 10); the
+  // Accounts tab renders these fields only. retVals + rmdTaxBite + effectiveRMDTaxRate
+  // are all already derived above.
+  const taxDiversification = useMemo(() => calcTaxDiversification({
+    trad:    retVals["Trad 401k"],
+    roth:    retVals["Roth IRA"],
+    taxable: retVals["Taxable"],
+    hsa:     retVals["HSA"],
+    totalAtRet, rmdTaxBite, effectiveRMDTaxRate,
+  }), [retVals, totalAtRet, rmdTaxBite, effectiveRMDTaxRate]);
+
   // Plan-screen signals strip (WI-1.2): calcSignals ranks nudges from values
   // computed ABOVE (one definition per number — it never recomputes):
   // extraMatch ← calcOptimizedAllocation, adjustedNetConversionBenefit ←
@@ -1511,10 +1533,18 @@ export default function App() {
   // scalar so the memo deps stay honest (optimizedAllocation itself is a
   // fresh object per render).
   const extraMatch = optimizedAllocation.extraMatch;
-  const signals = useMemo(() => calcSignals({
+  // ONE signal-input object feeds BOTH the Plan strip (max 2) and the Strategies
+  // "For you" strip (max 3) — same calcSignals brain, one ranking, two surfaces
+  // (#116 / SP-1). calcSignals sorts then slices, so the max-3 list's first two
+  // ALWAYS equal the max-2 list (anti-divergence locked by a model test).
+  const signalInputs = useMemo(() => ({
     extraMatch, adjustedNetConversionBenefit, budgetDeficit,
     monteCarloSuccessPct: mcSuccessPct,
-  }), [extraMatch, adjustedNetConversionBenefit, budgetDeficit, mcSuccessPct]);
+    preTaxConcentrationPct:  taxDiversification?.preTaxPct ?? null,
+    preTaxConcentrationCost: taxDiversification?.rateRiseCost ?? null,
+  }), [extraMatch, adjustedNetConversionBenefit, budgetDeficit, mcSuccessPct, taxDiversification]);
+  const signals = useMemo(() => calcSignals(signalInputs, 2), [signalInputs]);
+  const strategiesForYou = useMemo(() => calcSignals(signalInputs, 3), [signalInputs]);
 
   // Year-by-year table rows (WI-2.5): the WHOLE life, accumulation + retirement.
   // Accumulation rows (buildAccumulationRows) are on the GROSS basis (BUG-35) with a
@@ -1791,12 +1821,13 @@ export default function App() {
     conversion: { applicable: conversionWindowYrs > 0 },
     rmd:        { applicable: !!firstRMD },
     ss:         { applicable: includeSS },
+    worklonger: { applicable: safeRetAge > currentAge },
     withdrawal: { applicable: true },
     // > 0 (has surplus to deploy), deliberately stricter than budgetView's
     // surplusPositive (>= 0 = "not a deficit"): a $0 surplus = nothing to deploy.
     surplus:    { applicable: availableSurplus > 0 },
     mega:       { applicable: megaCapacity > 0 },
-  }), [conversionWindowYrs, firstRMD, includeSS, availableSurplus, megaCapacity]);
+  }), [conversionWindowYrs, firstRMD, includeSS, availableSurplus, megaCapacity, safeRetAge, currentAge]);
 
   // WI-3.4 (#101): Social Security timing flow bundle. Sibling of strategiesView
   // keyed by the "ss" strategy id (forward contract in docs/ARCHITECTURE.md). All
@@ -2107,6 +2138,11 @@ export default function App() {
     // scalars (memoized separately for V9). Cards whose headline is already wired
     // read it directly: netConversionBenefit / yr1TaxSavings (above) and budget.*.
     strategiesView,
+    // #116: the Strategies "For you" strip — the SAME calcSignals ranking as the
+    // Plan strip's `signals`, capped at 3 instead of 2 (one brain, two surfaces).
+    strategiesForYou,
+    // #56: tax diversification score + rate-rise companion (Numbers → Accounts).
+    taxDiversification,
     // WI-3.4 (#101) / WI-3.5 (#102) / WI-3.6 (#103) / WI-3.7 (#104/#105): interactive
     // flow bundles, siblings of strategiesView keyed by strategy id. Memoized
     // separately above (V9).
@@ -2116,6 +2152,8 @@ export default function App() {
     withdrawalView,
     surplusView,
     megaView,
+    // #55: "working longer" break-even bundle (memoized separately above, V9).
+    workLongerView,
     // Raw return-rate assumption (a user input, not a derived number) — Numbers footnote.
     returnRate,
     // Session-3 additions: SS timing + lifecycle markers + phase boxes for Year by year.
@@ -2174,6 +2212,8 @@ export default function App() {
        moneyEvents, saveEvent, removeEvent, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
        lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
+       // #116: Strategies "For you" strip (memoized separately above, same signalInputs as `signals`).
+       strategiesForYou,
        // WI-5.3 (#114): Monte Carlo Range lens (memoized above, identity-stable).
        rangeView,
        flowData, conversionWindowYrs,
@@ -2181,8 +2221,12 @@ export default function App() {
        budgetView, taxViewBundle,
        // WI-3.3 strategies bundle (memoized separately for V9 stability):
        strategiesView,
+       // #56 tax diversification bundle (memoized separately for V9 stability):
+       taxDiversification,
        // WI-3.4 / WI-3.5 / WI-3.6 / WI-3.7 flow bundles (memoized separately for V9 stability):
        ssView, rmdView, conversionView, withdrawalView, surplusView, megaView,
+       // #55 working-longer bundle (memoized separately for V9 stability):
+       workLongerView,
        returnRate,
        // Session-3 additions:
        ssClaimingAge, includeSS,

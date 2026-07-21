@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "../accumulation.js";
+import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "../accumulation.js";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 
 describe("buildAccumulationRows (WI-2.5)", () => {
@@ -250,5 +250,67 @@ describe("calcChartMilestones", () => {
     });
     const today = rows.find(r => r.tag === "Today");
     expect(today).toEqual({ age: 30, total: 225_000, tag: "Today", tc: "good" });
+  });
+});
+
+describe("calcTaxDiversification (#56)", () => {
+  it("returns null when totalAtRet <= 0", () => {
+    expect(calcTaxDiversification({
+      trad: 0, roth: 0, taxable: 0, hsa: 0, totalAtRet: 0,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    })).toBeNull();
+    expect(calcTaxDiversification({
+      trad: 10, roth: 10, taxable: 10, hsa: 0, totalAtRet: -5,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    })).toBeNull();
+  });
+
+  it("classifies a well-diversified split as low/good, not concentrated", () => {
+    const r = calcTaxDiversification({
+      trad: 30, roth: 30, taxable: 30, hsa: 10, totalAtRet: 100,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    });
+    expect(r.preTaxPct).toBe(30);
+    expect(r.taxFreePct).toBe(40); // roth 30 + hsa 10
+    expect(r.taxablePct).toBe(30);
+    expect(r.level).toBe("low");
+    expect(r.levelLabel).toBe("Well diversified");
+    expect(r.tone).toBe("good");
+    expect(r.concentrated).toBe(false);
+    // div-by-zero guard: effectiveRMDTaxRate 0 → rateRiseCost null
+    expect(r.rateRiseCost).toBeNull();
+  });
+
+  it("classifies a highly pre-tax-concentrated split as high/warm, with a rate-rise cost", () => {
+    const r = calcTaxDiversification({
+      trad: 90, roth: 5, taxable: 5, hsa: 0, totalAtRet: 100,
+      rmdTaxBite: 200_000, effectiveRMDTaxRate: 0.2,
+    });
+    expect(r.preTaxPct).toBe(90);
+    expect(r.level).toBe("high");
+    expect(r.levelLabel).toBe("Highly concentrated");
+    expect(r.tone).toBe("warm");
+    expect(r.concentrated).toBe(true);
+    expect(r.rateRiseCost).toBe(50_000); // round(200000 * 0.05 / 0.2)
+  });
+
+  it("classifies a moderate pre-tax-heavy split as moderate/warm, not concentrated", () => {
+    const r = calcTaxDiversification({
+      trad: 70, roth: 20, taxable: 10, hsa: 0, totalAtRet: 100,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    });
+    expect(r.preTaxPct).toBe(70);
+    expect(r.level).toBe("moderate");
+    expect(r.levelLabel).toBe("Pre-tax heavy");
+    expect(r.tone).toBe("warm");
+    expect(r.concentrated).toBe(false);
+  });
+
+  it("div-by-zero guard: rateRiseCost is null when effectiveRMDTaxRate is 0, even with a positive rmdTaxBite", () => {
+    const r = calcTaxDiversification({
+      trad: 90, roth: 5, taxable: 5, hsa: 0, totalAtRet: 100,
+      rmdTaxBite: 500_000, effectiveRMDTaxRate: 0,
+    });
+    expect(r.rateRiseCost).toBeNull();
   });
 });

@@ -88,7 +88,7 @@ describe("calcSignals — low-odds confidence signal (#114 Range lens)", () => {
     expect(below).toHaveLength(1);
     expect(below[0].id).toBe("lowodds");
     expect(below[0].pct).toBe(ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT - 1);
-    expect(below[0].target).toEqual({ screen: "plan" });
+    expect(below[0].target).toEqual({ screen: "strategies", subView: "worklonger" });
     expect("dollars" in below[0]).toBe(false);
   });
 
@@ -163,5 +163,81 @@ describe("calcSignals — golden-master default state", () => {
     expect(s).toHaveLength(1);
     expect(s[0].id).toBe("conversion");
     expect(s[0].dollars).toBe(77_861);
+  });
+});
+
+describe("calcSignals — pre-tax concentration signal (#56)", () => {
+  it("fires when preTaxConcentrationPct is above TAX_DIVERSIFICATION_HIGH_PCT, dollars = the rate-rise cost", () => {
+    const s = calcSignals({
+      ...quiet,
+      preTaxConcentrationPct: ASSUMPTIONS.TAX_DIVERSIFICATION_HIGH_PCT + 5, // 85
+      preTaxConcentrationCost: 50_000,
+    });
+    expect(s).toHaveLength(1);
+    expect(s[0].id).toBe("concentration");
+    expect(s[0].dollars).toBe(50_000);
+    expect(s[0].target).toEqual({ screen: "numbers", subView: "accounts" });
+  });
+
+  it("does NOT fire at exactly TAX_DIVERSIFICATION_HIGH_PCT or below", () => {
+    expect(calcSignals({
+      ...quiet,
+      preTaxConcentrationPct: ASSUMPTIONS.TAX_DIVERSIFICATION_HIGH_PCT,
+      preTaxConcentrationCost: 50_000,
+    })).toEqual([]);
+    expect(calcSignals({
+      ...quiet,
+      preTaxConcentrationPct: ASSUMPTIONS.TAX_DIVERSIFICATION_HIGH_PCT - 20,
+      preTaxConcentrationCost: 50_000,
+    })).toEqual([]);
+  });
+
+  it("does NOT fire when preTaxConcentrationCost is null, even if the pct is high", () => {
+    expect(calcSignals({
+      ...quiet,
+      preTaxConcentrationPct: ASSUMPTIONS.TAX_DIVERSIFICATION_HIGH_PCT + 10,
+      preTaxConcentrationCost: null,
+    })).toEqual([]);
+  });
+
+  it("ranks among the dollar-quantified nudges by dollars descending", () => {
+    const s = calcSignals({
+      extraMatch: 0,
+      adjustedNetConversionBenefit: ASSUMPTIONS.CONVERSION_STEP + 1_000, // small dollar signal, above the fire threshold
+      budgetDeficit: 0,
+      preTaxConcentrationPct: 90,
+      preTaxConcentrationCost: 80_000, // large dollar signal
+    }, 5);
+    expect(s.map(x => x.id)).toEqual(["concentration", "conversion"]);
+    expect(s[0].dollars).toBeGreaterThan(s[1].dollars);
+  });
+});
+
+describe("calcSignals — anti-divergence (#116: Plan strip vs Strategies 'For you' strip)", () => {
+  // App.jsx builds ONE signalInputs object and calls calcSignals(signalInputs, 2)
+  // for Plan and calcSignals(signalInputs, 3) for Strategies. Because calcSignals
+  // ranks then slices, the max-3 list's first two entries must ALWAYS equal the
+  // max-2 list — the two surfaces can never show a different top signal.
+  const cases = [
+    // Only one signal fires.
+    { extraMatch: 0, adjustedNetConversionBenefit: 77_861, budgetDeficit: 0 },
+    // Two signals fire.
+    { extraMatch: 3_000, adjustedNetConversionBenefit: 0, budgetDeficit: 12_000 },
+    // 3+ signals fire (extraMatch, conversion, deficit, lowodds all qualify).
+    {
+      extraMatch: 3_000,
+      adjustedNetConversionBenefit: ASSUMPTIONS.CONVERSION_STEP + 20_000,
+      budgetDeficit: 12_000,
+      monteCarloSuccessPct: ASSUMPTIONS.MONTE_CARLO_LOW_ODDS_PCT - 10,
+    },
+    // Nothing fires.
+    quiet,
+  ];
+
+  it.each(cases)("max-3 list's first 2 entries deep-equal the max-2 list (case %#)", (inputs) => {
+    const two = calcSignals(inputs, 2);
+    const three = calcSignals(inputs, 3);
+    expect(three.slice(0, 2)).toEqual(two);
+    expect(three.length).toBeLessThanOrEqual(3);
   });
 });

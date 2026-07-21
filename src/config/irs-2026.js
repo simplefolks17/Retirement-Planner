@@ -391,4 +391,16 @@ export const ASSUMPTIONS = {
   MONTE_CARLO_SUCCESS_GUIDELINE_PCT: 80,
   // Success rate (%) below which the low-odds Plan signal fires.
   MONTE_CARLO_LOW_ODDS_PCT:          70,
+
+  // ── Tax diversification (#56) ──────────────────────────────────────────────
+  // Pre-tax (tax-deferred) share of the retirement portfolio, classified into
+  // a concentration level. Planning heuristics, not IRS rules: below MODERATE =
+  // well diversified; MODERATE..HIGH = pre-tax heavy; above HIGH = highly
+  // concentrated (a rising-rate risk). The colored score row + the concentration
+  // signal both key off these.
+  TAX_DIVERSIFICATION_MODERATE_PCT: 60,
+  TAX_DIVERSIFICATION_HIGH_PCT:     80,
+  // "If tax rates rise N points" companion scenario used to dollar-quantify the
+  // pre-tax concentration risk against the projected lifetime RMD tax bill.
+  RATE_RISE_SCENARIO_PCT:           5,
 };

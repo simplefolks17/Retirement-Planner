@@ -7,6 +7,7 @@ import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
 import { VerdictTickRail } from "../fields.jsx";
 import { buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
+import { verdictDisplay } from "../../model/apply-preview.js";
 import ExploreTray from "../ExploreTray.jsx";
 import GoalsPanel from "../GoalsPanel.jsx";
 
@@ -223,7 +224,7 @@ function TryAChangePanel({
     confirmLabel: "Apply changes",
     metrics: preview.metrics,
     note: "Preview uses the same model as your headline numbers.",
-    verdict: null, // reserved slot (WI-5.4) — not filled by a lever preview
+    verdict: verdictDisplay(preview.verdict), // #85: real verdict from the lever preview (years-gap based; comfortable/tight/unaffordable → label+tone). Shown ONLY in the Apply modal — the OnTrackPill remains Plan's glance verdict (SP-3).
   } : null;
 
   const handleConfirm = () => {

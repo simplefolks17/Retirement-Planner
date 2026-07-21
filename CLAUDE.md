@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (892 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (921 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (125 items, 74 done, 51 planned)
+- Feature backlog: `feature-tracker.html` (125 items, 78 done, 47 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -1403,11 +1403,44 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   events → **golden master byte-untouched**. 843 → **892 tests** (+8 money-events model, +3
   LifeEventSheet authoring; existing "duration events never produce taxable income" test rewritten
   to assert the new taxation). Tracker: #112/#48/#53/#35/#10 → done (69 → 74 done, 56 → 51 planned).
+- **Quick-win batch — #116 / #85 / #55 / #56 (2026-07-21, branch
+  `claude/feature-prioritization-implementation-vesl3k`):** four display/lens-layer features closing the
+  planned quick-win list. All additive display — **golden master byte-untouched**; 892 → **921 tests**;
+  lint clean; build OK. Implemented by Sonnet subagents (one per feature) from written specs, orchestrator
+  reviewing every diff against the plan and running the gates; no implementation code written by the
+  orchestrating session.
+  - **#56 — Tax diversification score.** New pure `calcTaxDiversification` (`accumulation.js`) → pre-tax /
+    tax-free / taxable percentages of `totalAtRet`, a threshold-classified concentration `level` +
+    render-ready `levelLabel`/`tone`, and the rate-rise companion (`rateRiseCost` = `rmdTaxBite × 5% /
+    effectiveRMDTaxRate`, div-by-zero-guarded → null). Thresholds are named ASSUMPTIONS
+    (`TAX_DIVERSIFICATION_MODERATE_PCT` 60 / `_HIGH_PCT` 80 / `RATE_RISE_SCENARIO_PCT` 5). Surfaced as a
+    colored composition + warning row on Numbers → Accounts (rule 10 — screen renders the model fields).
+    New `concentration` signal in `calcSignals` (dollar-quantified via the rate-rise figure; fires only
+    above the HIGH threshold). Default state classifies "low" (pre-tax ≈ 53%) → signal dormant → Plan
+    strip unchanged. No red tone (palette has none) — "high" differs from "moderate" by copy.
+  - **#55 — Working-longer break-even.** New pure `calcWorkLongerBreakEven` (`what-if.js`), built ON the
+    existing scenario engine (`calcWhatIfScenario`) + SS helpers (AIME improvement from more work years) +
+    a pure conversion-window count — never a re-implemented walk. New "Working longer" Strategies card
+    (Income timing) + read-only `WorkLongerFlow.jsx` showing +1/+3/+5-year comparison rows (portfolio at
+    retirement, longevity, SS-benefit delta, shrinking Roth window). Honest headline when the base plan is
+    already sustainable (portfolio framing, not infinite "runway"). The #114 Monte-Carlo low-odds signal's
+    deep-link retargeted `{screen:"plan"}` → `{screen:"strategies", subView:"worklonger"}`.
+  - **#116 — Strategies catalogue v2.** Added the empty "Assets" editorial section (declared-with-no-cards,
+    stays hidden until a card is added — data-only). True applicability RENDER-gating: non-applicable free
+    cards hide behind a quiet "Browse all strategies (N more)" disclosure. "For you" strip (≤3) driven by
+    the SAME `calcSignals` ranking Plan uses — one `signalInputs` object feeds `signals` (max 2) and
+    `strategiesForYou` (max 3); anti-divergence locked by a model test (`slice(0,2)` equality). Premium-lock
+    mechanism wired: exported `isCardLocked(entry, entitlements)` + `LockedCard` render path for a registry
+    entry declaring `premium: true` (NONE premium today; mechanism unit-tested via a flag flip).
+  - **#85 — Verdict badge.** Fed a real `verdictDisplay(preview.verdict)` into the reserved verdict slot of
+    Plan's "Try a change" `ApplyPreviewModal` (was `null`). Years-gap-based (Comfortable / Tight / Doesn't
+    fit); no invented red tone; the badge appears ONLY inside the Apply modal — the OnTrackPill stays Plan's
+    glance verdict (SP-3). Tracker: #116/#85/#55/#56 → done (74 → 78 done, 51 → 47 planned).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (892 tests)
+- `npm test` — run model + formatter + render-smoke tests (921 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

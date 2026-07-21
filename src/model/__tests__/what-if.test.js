@@ -3,7 +3,7 @@ import {
   calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
   buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS, eventIncomeImpact,
   marginForScenario, verdictInfoForScenario, buildVerdictLegend, verdictForMargin,
-  verdictForScenarioResult,
+  verdictForScenarioResult, calcWorkLongerBreakEven,
 } from "../what-if.js";
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
 import { calcEmployerMatch } from "../employer-match.js";
@@ -1424,5 +1424,65 @@ describe("buildDurationRail", () => {
     expect(buildDurationRail(depletingArgs, null, { maxMonths: 24, step: 6 })).toEqual([]);
     expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 0, step: 6 })).toEqual([]);
     expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 24, step: 0 })).toEqual([]);
+  });
+});
+
+// ── calcWorkLongerBreakEven (#55) ────────────────────────────────────────────
+describe("calcWorkLongerBreakEven", () => {
+  const ssInputs = { currentIncome: 100_000, incomeGrowth: 3, incomeGrowthEndAge: null, ssClaimingAge: 67 };
+
+  it("returns null when already retired (safeRetAge <= currentAge)", () => {
+    expect(calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge: currentAge, currentAge, includeSS: true, ssInputs,
+    })).toBeNull();
+  });
+
+  it("returns null for a missing bundle", () => {
+    expect(calcWorkLongerBreakEven({
+      bundle: null, safeRetAge, currentAge, includeSS: true, ssInputs,
+    })).toBeNull();
+  });
+
+  it("valid bundle: applicable, 3 offset rows (1/3/5), numeric portfolioAtRet, non-empty headline", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: true, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    expect(result.applicable).toBe(true);
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows.map(r => r.years).sort()).toEqual([1, 3, 5]);
+    for (const row of result.rows) {
+      expect(typeof row.portfolioAtRet).toBe("number");
+      expect(Number.isFinite(row.portfolioAtRet)).toBe(true);
+      expect([1, 3, 5]).toContain(row.years);
+    }
+    expect(typeof result.headline).toBe("string");
+    expect(result.headline.length).toBeGreaterThan(0);
+  });
+
+  it("SS companion: more working years never lowers the AIME-based benefit; includeSS=false zeroes every row", () => {
+    const withSS = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: true, ssInputs,
+    });
+    const row1 = withSS.rows.find(r => r.years === 1);
+    const row5 = withSS.rows.find(r => r.years === 5);
+    expect(row5.ssAnnual).toBeGreaterThanOrEqual(row1.ssAnnual);
+
+    const withoutSS = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    for (const row of withoutSS.rows) {
+      expect(row.ssAnnual).toBe(0);
+    }
+  });
+
+  it("Roth-conversion window shrinks (non-increasing) as the offset grows", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: true, ssInputs,
+    });
+    const sorted = [...result.rows].sort((a, b) => a.years - b.years);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i].conversionWindowYrs).toBeLessThanOrEqual(sorted[i - 1].conversionWindowYrs);
+    }
   });
 });
