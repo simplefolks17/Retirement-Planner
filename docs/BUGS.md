@@ -7,6 +7,24 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-77 — Spouse Traditional 401k isn't re-grown through a `calcWhatIfScenario` re-sim (found 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** an Opus interoperability audit requested before merging PR #57 (the reprioritized-backlog batch), specifically checking whether the spouse engine (#30) actually reaches every downstream consumer.
+**What:** `calcWhatIfScenario`'s per-account-engine path (`src/model/what-if.js`) seeds a scenario's spouse Traditional 401k bucket from `retPhaseBase.tradGrossSpouse` unconditionally — including on a forced re-sim (a retirement-age change, a contribution override, or a pre-retirement scenario event). The PRIMARY bucket is correctly recomputed from the re-sim row (`resimAt.tradGross`), but the spouse bucket stays frozen at its base-retirement-age value; it never compounds through the extra/fewer working years the scenario implies.
+**Impact:** for a household with spouse 401k balances, a "retire 3 years later" or "add $X/mo contribution" scenario preview shows the spouse's Traditional 401k as if retirement age never changed — understating the scenario's actual portfolio delta. The scalar-inclusion fix shipped in this same session (spouse trad is now counted at all — see the "Resolved" entry below) makes this THE remaining gap; before that fix the bucket was silently excluded entirely, which was strictly worse.
+**Fix shape (not yet applied — deferred, real scope, not a quick patch):** `calcWhatIfScenario` would need a spouse-sim re-run analogous to the primary's `runSimulation` call in the `needsResim` branch — i.e., the bundle needs a `spouseSimInputs` field (mirroring `simInputs`) so a resim can recompute both people's balances in lockstep, the same way `buildAccumChart`'s new household chart (BUG-77's sibling fix) zips two independently-generated sim arrays by index.
+**Where:** `src/model/what-if.js` — the `needsResim` branch (~line 456-478) and the `seeds.tradGross` construction (~line 522-534).
+**Inert at default state:** no spouse data → `retPhaseBase.tradGrossSpouse` is 0 or absent → no effect. Golden master untouched.
+
+### BUG-78 — `rmdTaxByAge` (Monte Carlo / what-if tax maps) has no entry for a year where only the spouse has an RMD (found 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** the same interoperability audit as BUG-77.
+**What:** `rmdTaxByAge` (`src/App.jsx`) is built by filtering `retPhase.rmdSchedule` to rows where the PRIMARY's RMD is positive — `rmdSchedule` is deliberately primary-only by design (`retirement-phase.js`'s documented scope: the spouse RMD sub-schedule display is a deferred household-dashboard follow-up, #31). In a year where the spouse has an RMD but the primary does not (spouse older, or primary's Traditional 401k already depleted), no row exists in the filtered map for that age, so `rmdTaxByAge` contributes nothing for that year even though real household RMD tax is due.
+**Impact:** the Monte Carlo lens (#114) and the blended what-if walk both consume `rmdTaxByAge` as a baseline tax estimate and would understate tax in a spouse-only-RMD year. This is within Monte Carlo's already-documented "reuses your baseline RMD tax estimates, does not re-derive them per iteration" limitation (see its module header), so it's a real but low-severity seam, not a new class of error.
+**Fix shape (deferred — needs the #31 household-dashboard RMD-schedule work first):** once a joint `rmdSchedule` (primary + spouse rows, keyed by the union of their RMD-active years) exists for #31, `rmdTaxByAge` should build from that instead of the primary-only schedule.
+**Where:** `src/App.jsx` (`rmdTaxByAge` construction), `src/model/retirement-phase.js` (`rmdSchedule`, primary-only by design).
+**Inert at default state:** no spouse data → no effect. Golden master untouched.
+
 ### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
 
 **Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell,
@@ -278,6 +296,28 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 ## Resolved Issues
 
 ---
+
+### BUG-79 — `calcWhatIfScenario`'s reported `scenarioTotalAtRet` excluded the spouse Traditional 401k bucket (found + fixed 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** an Opus interoperability audit requested before merging PR #57, tracing whether the spouse engine (#30) reaches every downstream consumer.
+**What:** `buildRetirementPhase` (the walk `calcWhatIfScenario` calls) is correctly seeded with the household's spouse Traditional 401k via `retPhaseBase.tradGrossSpouse`, but the SCALAR `scenarioTotalAtRet` the function *reports* alongside that walk was `seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa` — four fields, none of them the spouse bucket.
+**Impact:** for a household with spouse 401k dollars, every scenario preview built on `calcWhatIfScenario` — Plan's "Try a change" lever preview and the new #55 "Working longer" card both included — reported a scalar that omitted the entire spouse Traditional balance while `baseTotalAtRet` (household) included it. A pure spend-lever drag (which should show $0 change to the retirement balance) instead showed a phantom drop equal to the spouse's trad balance; #55's working-longer comparison could show a *negative* portfolio delta for working additional years.
+**Root cause:** the scalar was written before #30 existed and was never updated when the spouse bucket was added to the walk's inputs — an "accidental silo," not a documented deferral.
+**Fix:** `scenarioTotalAtRet` now adds `retPhaseBase.tradGrossSpouse ?? 0`, matching what the walk is actually seeded with. The bucket itself is NOT re-grown through a scenario re-sim (that's the separate, larger BUG-77, left open) — this fix only makes the reported number consistent with the walk's own (possibly frozen-at-base) basis.
+**Where:** `src/model/what-if.js` (`calcWhatIfScenario`'s per-account-engine branch).
+**Tests:** `what-if.test.js` — a household fixture (`tradGrossSpouse: 600_000`) asserts a non-resim override (`annualExpenses` change) reports `scenarioTotalAtRet` unchanged from the household `baseTotalAtRet`.
+**Inert at default state:** no spouse data → `tradGrossSpouse` is 0/absent → no effect. Golden master untouched.
+
+### BUG-80 — the portfolio arc's accumulation phase was primary-only while the retirement phase was household (found + fixed 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** the same interoperability audit as BUG-79.
+**What:** `docs/ARCHITECTURE.md` documented `totalAtRet`, the drawdown chart, and the `retVals` display cards as HOUSEHOLD once #30 shipped, but only the *retirement* half of that promise was true. `accumChart` (`src/App.jsx`, feeding `totalChartData` via `buildAccumChart`) was built from primary-only `simData` and primary-only starting balances; `retirementWalk` (from `retPhase`/`retPhaseBase`) was correctly household. The two were concatenated into one series (`totalChartData = [...accumChart, ...retirementWalk.rows]`).
+**Impact:** for any household with spouse account balances, the arc climbed through the working years at the primary-only total, then jumped up by the full spouse balance exactly at the retirement-age boundary — a visible, dishonest discontinuity, reintroducing the "no chart jump" defect class this codebase specifically fixed once already for the pre-#30 tax-basis case.
+**Fix:** `buildAccumChart` (`src/model/accumulation.js`) gained optional `spouseSimData` (default `[]`) and `spouseStartingBal` (default `0`) params. `spouseSimData` is zipped in **by array index**, not joined by the `age` field — both `simData` and `spouseSimData` are generated over the same shared `totalYears` (one row per calendar year), but each carries the respective person's OWN age, so a spouse of a different age would never match a primary row by age value; the merged row keeps the primary's age (the chart's x-axis throughout the app). Absent spouse args reproduce the pre-#30 chart exactly. `src/App.jsx`'s `accumChart` memo now passes `spouseSimData` + the four spouse starting balances.
+**Residual, not fixed here (documented separately):** `calcMilestones` (Classic "$1M crossing" milestone cards) and `buildAccumulationRows` (Year-by-year table's accumulation-phase Contrib/Growth columns) are two more primary-only consumers of raw `simData` found during the same audit. Both need a genuine per-row household reconciliation (contribution/growth split across two people's sim rows with different bases), which is more invasive than this session's review-fix scope — filed as a follow-up rather than rushed. Also see BUG-77 (spouse bucket frozen through a `calcWhatIfScenario` re-sim) and BUG-78 (RMD tax map gap in spouse-only-RMD years), found by the same audit.
+**Where:** `src/model/accumulation.js` (`buildAccumChart`), `src/App.jsx` (`accumChart` memo).
+**Tests:** `accumulation.test.js` — omitting spouse args reproduces the single-person chart byte-for-byte; index-alignment (not age-join) verified with a spouse at a different age; a spouse sim shorter than primary's contributes 0 for the missing tail years.
+**Inert at default state:** no spouse data → `spouseSimData` is `[]`, spouse balances are 0 → no effect. Golden master untouched.
 
 ### BUG-75 — `surplusApplySite` double-applied committed retirement-phase events in both its previews (found 2026-07-13, Fable adversarial review of PR #53; FIXED 2026-07-19)
 

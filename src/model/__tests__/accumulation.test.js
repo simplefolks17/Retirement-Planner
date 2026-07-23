@@ -153,6 +153,51 @@ describe("buildAccumChart", () => {
       bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000 });
     expect(rows).toEqual([{ age: 60, total: 165_000 }]);
   });
+
+  // #30 interop fix: household chart. spouseSimData zips in BY INDEX (both
+  // arrays are generated over the same shared totalYears, one row per calendar
+  // year), not by age value — a spouse of a different age would never match a
+  // primary row by `age`. The merged row keeps the PRIMARY age.
+  it("omitting spouse args reproduces the single-person chart exactly (golden-master safety)", () => {
+    const simData = [mkRow(31, 100), mkRow(32, 200)];
+    const withoutSpouse = buildAccumChart({ simData, safeRetAge: 32, currentAge: 30,
+      bal401k: 40, balRoth: 10, balTaxable: 0, balHSA: 0 });
+    const withEmptySpouse = buildAccumChart({ simData, safeRetAge: 32, currentAge: 30,
+      bal401k: 40, balRoth: 10, balTaxable: 0, balHSA: 0, spouseSimData: [], spouseStartingBal: 0 });
+    expect(withEmptySpouse).toEqual(withoutSpouse);
+  });
+
+  it("sums spouse balances into the Today row and spouse sim totals index-aligned into each year", () => {
+    // Spouse is a DIFFERENT age (35 vs primary's 30) — their sim row `age` field
+    // (36, 37) must NOT be used to join; index 0 pairs with primary's index 0
+    // regardless of the age gap.
+    const simData = [mkRow(31, 100), mkRow(32, 200)];
+    const spouseSimData = [mkRow(36, 500), mkRow(37, 900)];
+    const rows = buildAccumChart({
+      simData, safeRetAge: 32, currentAge: 30, bal401k: 40, balRoth: 10, balTaxable: 0, balHSA: 0,
+      spouseSimData, spouseStartingBal: 1_000,
+    });
+    expect(rows).toEqual([
+      { age: 30, total: 50 + 1_000 },     // today: primary + spouse starting balances
+      { age: 31, total: 100 + 500 },      // primary's age, index-paired with spouse index 0
+      { age: 32, total: 200 + 900 },
+    ]);
+  });
+
+  it("a spouse sim shorter than primary's contributes 0 for the missing tail years", () => {
+    const simData = [mkRow(31, 100), mkRow(32, 200), mkRow(33, 300)];
+    const spouseSimData = [mkRow(50, 500)]; // spouse already retired — no further rows
+    const rows = buildAccumChart({
+      simData, safeRetAge: 33, currentAge: 30, bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0,
+      spouseSimData, spouseStartingBal: 0,
+    });
+    expect(rows).toEqual([
+      { age: 30, total: 0 },
+      { age: 31, total: 100 + 500 },
+      { age: 32, total: 200 },  // spouseSimData[1] is undefined -> 0
+      { age: 33, total: 300 },
+    ]);
+  });
 });
 
 describe("calcChartMilestones", () => {

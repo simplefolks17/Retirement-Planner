@@ -169,10 +169,23 @@ export function buildAccumulationRows({ simData, fedMarginal, currentAge, curren
 // point, and calcChartMilestones' Today anchor had no row to read — the source of
 // the Accounts-tab "Today · $0" pill. Same basis as horizonProps.currentTotalSaved,
 // so the pill and the Accounts banner agree by construction.
-export function buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }) {
-  const rows = [{ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA }];
-  for (const d of simData) {
-    rows.push({ age: d.age, total: sumAccountRow(d) });
+// #30 interop fix: optional household terms. spouseSimData (default []) is
+// ZIPPED BY INDEX against `simData`, not joined by `age` — both are generated
+// over the same shared `totalYears` (App.jsx), one row per calendar year, but
+// carry each person's OWN age in their `age` field (a spouse of a different
+// age would never match by age value). The merged row keeps PRIMARY's age
+// (`d.age`) since the chart's x-axis is the primary user's age throughout the
+// app. Absent spouse args (spouseSimData=[], spouseStartingBal=0) reproduces
+// the pre-#30 single-person chart exactly — golden master safe.
+export function buildAccumChart({
+  simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA,
+  spouseSimData = [], spouseStartingBal = 0,
+}) {
+  const rows = [{ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA + spouseStartingBal }];
+  for (let i = 0; i < simData.length; i++) {
+    const d = simData[i];
+    const spouseTotal = spouseSimData[i] ? sumAccountRow(spouseSimData[i]) : 0;
+    rows.push({ age: d.age, total: sumAccountRow(d) + spouseTotal });
     if (d.age >= safeRetAge) break;
   }
   return rows;

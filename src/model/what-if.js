@@ -13,7 +13,7 @@ import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
-import { ASSUMPTIONS, RMD_START_AGE } from "../config/irs-2026.js";
+import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
   isIncomeReplacingEvent, monthsActiveInYear,
@@ -572,7 +572,16 @@ export function calcWhatIfScenario({
     }
 
     const walkRows = rp.rows ?? [];
-    const scenarioTotalAtRet = seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa;
+    // #30 interop fix: the walk (buildRetirementPhase, just above) already
+    // includes the spouse Traditional bucket via the `...retPhaseBase` spread
+    // (tradGrossSpouse — frozen at its base-retirement-age value; re-growing it
+    // through a scenario resim is a documented follow-up, not this fix's scope).
+    // The reported SCALAR must include the same dollars the walk is seeded with,
+    // or every scenario preview (Plan's lever preview, #55 Working longer) shows
+    // a phantom ~spouse-trad-balance swing for a household with spouse 401k
+    // dollars, even when nothing about the spouse account changed.
+    const scenarioTotalAtRet = seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa
+      + (retPhaseBase.tradGrossSpouse ?? 0);
     const chart = [...accumChartRows, ...walkRows.map(r => ({ age: r.age, total: r.total }))];
 
     // Balance at safeLifeExp (the field keeps its historical "90" name — see
@@ -1283,7 +1292,7 @@ export function calcWorkLongerBreakEven({
   const { baseTotalAtRet, baseYearsSustained, baseDepletionAge } = bundle;
   const baseSustainable = baseYearsSustained === Infinity;
 
-  const { currentIncome = 0, incomeGrowth = 0, incomeGrowthEndAge = null, ssClaimingAge = 67 } = ssInputs;
+  const { currentIncome = 0, incomeGrowth = 0, incomeGrowthEndAge = null, ssClaimingAge = SS_FRA } = ssInputs;
   const ssAnnualAt = (retAge) => includeSS
     ? calcBenefit(
         calcPIA(calcAIME(currentIncome, incomeGrowth, retAge - currentAge, incomeGrowthEndAge, currentAge)),

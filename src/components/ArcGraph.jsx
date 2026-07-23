@@ -32,6 +32,7 @@
 import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
 import { fmt as fmtMoney } from "../formatters.js";
+import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 const VW = 1200;
 const AGE_SPAN_FIXED_START = 30; // coordinate system always starts at 30 for consistent scale
@@ -574,7 +575,8 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null })
     // MONTE_CARLO_SUCCESS_GUIDELINE_PCT), so this caption's green/warm can never
     // disagree with the Plan pill's confidence driver (principle 7). Falls back
     // to a local threshold only for callers that don't pass successOk.
-    const pctColor = (rangeBands.successOk ?? (pct >= 80)) ? t.good : t.warm;
+    const pctColor = (rangeBands.successOk ?? (pct >= ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT))
+      ? t.good : t.warm;
     return (
       <div style={{
         position: "absolute", left: px(s.pad.l + 6), top: 12,

@@ -550,6 +550,21 @@ describe("calcWhatIfScenario", () => {
     expect(s.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
   });
 
+  // #30 interop fix: scenarioTotalAtRet must include the spouse Traditional 401k
+  // bucket the walk is actually seeded with (retPhaseBase.tradGrossSpouse), or a
+  // household-with-spouse-401k scenario reports a phantom drop/rise equal to the
+  // entire spouse trad balance for a change that never touched it (e.g. a pure
+  // spend-lever preview).
+  it("includes the spouse Traditional 401k bucket in scenarioTotalAtRet (no false delta)", () => {
+    const spouseTrad = 600_000;
+    const householdRetPhaseBase = { ...baseRetPhaseBase, tradGrossSpouse: spouseTrad };
+    const householdBaseTotalAtRet = realBaseTotalAtRet + spouseTrad;
+    const s = calcWhatIfScenario({
+      ...baseArgs, retPhaseBase: householdRetPhaseBase, baseTotalAtRet: householdBaseTotalAtRet,
+    }, { annualExpenses: retDrawShared.effectiveExpenses + 1_000 }); // non-resim override — no accum/retirement-age change
+    expect(s.scenarioTotalAtRet).toBe(householdBaseTotalAtRet);
+  });
+
   it("scenarioBalAt90 reads the safeLifeExp row of the SAME walk the chart shows", () => {
     const s = calcWhatIfScenario(baseArgs); // baseArgs.safeLifeExp === 90
     const rowAtLifeExp = s.chart.find(r => r.age === safeLifeExp);

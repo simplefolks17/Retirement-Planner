@@ -774,9 +774,18 @@ export default function App() {
 
   // Accumulation rows (current → retirement) — gross basis, so the chart joins the
   // engine's gross retirement walk with no discontinuity at retirement.
+  // #30 interop fix: household chart. spouseSimData/spouse starting balances
+  // are zipped in by buildAccumChart (index-aligned, not age-joined — see its
+  // comment); hasSpouse=false → spouseSimData=[] and the four spouse balances
+  // are 0 → byte-identical to the pre-#30 primary-only chart.
   const accumChart = useMemo(
-    () => buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }),
-    [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA]);
+    () => buildAccumChart({
+      simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA,
+      spouseSimData,
+      spouseStartingBal: spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
+    }),
+    [simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA,
+     spouseSimData, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
 
   const retirementWalk = retPhase;
 
@@ -2066,12 +2075,13 @@ export default function App() {
   // slice of horizonProps.
   const verdictLegend = useMemo(() => buildVerdictLegend(safeLifeExp), [safeLifeExp]);
 
-  // #30: gates the spouse-accounts UI surface — a screen shows the spouse account
-  // cards/inputs when there's a spouse to model at all (mirrors hasSpouse's
-  // "married OR has spouse income" condition, but doesn't include the spouse
-  // account balances/contributions themselves, so it stays true even if the user
-  // zeroes them back out mid-edit).
-  const spouseAccountsApplicable = isMarried || spouseIncome > 0;
+  // #30: gates the spouse-accounts UI surface — reuses hasSpouse directly (not a
+  // second near-duplicate condition) so the card can never disappear while spouse
+  // balances are still live in the household totals. A prior narrower version
+  // (isMarried || spouseIncome > 0) could hide the card while spouseBal* > 0 kept
+  // inflating totalAtRet/retVals/RMDs with no surface left to see or edit them —
+  // an audit-caught trust gap (hidden input moving a visible number).
+  const spouseAccountsApplicable = hasSpouse;
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
