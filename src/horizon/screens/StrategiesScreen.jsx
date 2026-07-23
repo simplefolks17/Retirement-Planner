@@ -29,6 +29,7 @@ import { HF, HM } from "../ThemeContext.jsx";
 // hardcode "73"/"67" in strings (the BUG-25 / WI-0.1 anti-pattern).
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 import { fmt } from "../../formatters.js";   // calm money — card headlines are derived summaries, not editable readouts
+import { signalToneKey, signalValueText } from "../../model/signals.js"; // one tone/value source, shared with Plan's SignalsStrip
 import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
 import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
 import ConversionPlannerFlow from "./strategies/ConversionPlannerFlow.jsx";
@@ -195,8 +196,8 @@ function ForYouStrip({ t, forYou, navigate, isMobile }) {
               background: t.surf2, border: `1px solid ${t.line2}`, borderRadius: 13,
               padding: "10px 14px", font: "inherit", display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ font: `600 16px ${HM}`, flexShrink: 0,
-              color: (sig.id === "deficit" || sig.id === "lowodds") ? t.warm : t.good }}>
-              {sig.pct != null ? `${sig.pct}%` : fmt(sig.dollars)}
+              color: t[signalToneKey(sig)] }}>
+              {signalValueText(sig, fmt)}
             </span>
             <span style={{ minWidth: 0 }}>
               <span style={{ display: "block", font: `600 13px ${HF}`, color: t.ink }}>{sig.title}</span>

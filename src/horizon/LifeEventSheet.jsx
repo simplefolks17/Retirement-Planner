@@ -361,7 +361,7 @@ export default function LifeEventSheet({
             <div style={{ marginBottom: 12 }}>
               <div style={fieldLabel}>Grows each year (optional)</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input type="number" min="0" step="1" value={growthPct}
+                <input type="number" min="0" step="0.5" value={growthPct}
                   onChange={e => setGrowthPct(Math.max(0, Number(e.target.value) || 0))}
                   aria-label="Annual growth percent"
                   style={{ ...numInput, width: 90 }} />
@@ -402,7 +402,9 @@ export default function LifeEventSheet({
                 Total: {fmt(result.grossCost)}
                 {mode === "monthly" && (
                   <span style={{ color: t.mut }}>
-                    {" "}({fmt(monthlyAmount)}/mo for {durationMonths} mos)
+                    {" "}({fmt(monthlyAmount)}/mo {durationMode === "until"
+                      ? `through age ${effUntilAge}`
+                      : `for ${durationMonths} mos`})
                   </span>
                 )}
               </li>

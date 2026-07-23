@@ -1475,6 +1475,62 @@ describe("calcWorkLongerBreakEven", () => {
     expect(result.headline.length).toBeGreaterThan(0);
   });
 
+  // Gemini PR #57 review: verify the "Portfolio lasts" sub-label invariant the
+  // WorkLongerFlow.jsx JSX depends on — a row that TRANSITIONS to sustainable
+  // must report longevityDeltaYears: null (never a stray finite/Infinity delta),
+  // so the screen's `row.longevityDeltaYears != null ? ... : (row.sustainable ?
+  // "still for life" : undefined)` fallback always resolves to "still for life"
+  // and never a nonsensical "+Infinity yrs".
+  it("a row that becomes sustainable reports longevityDeltaYears: null (never Infinity/NaN)", () => {
+    // depletingArgs' base plan is NOT sustainable (finite baseYearsSustained);
+    // working extra years re-sims with more contributions and a shorter
+    // drawdown, plausibly crossing into sustainable for at least one offset.
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    // Every row must carry either a finite delta or an explicit null — never
+    // Infinity or NaN, which would render as garbage ("+Infinity yrs").
+    for (const row of result.rows) {
+      expect(row.longevityDeltaYears === null
+        || Number.isFinite(row.longevityDeltaYears)).toBe(true);
+      if (row.sustainable) expect(row.longevityDeltaYears).toBeNull();
+    }
+  });
+
+  it("a bundle that crosses into sustainable within the offsets exercises the null-delta transition", () => {
+    // A near-perpetuity base (found by binary search against the 65+130 = 195
+    // horizon at $80k effectiveExpenses/0% SS: threshold ≈ $5.922M) — just under
+    // it, so the base itself is finite (~129 of the 130-year horizon, NOT
+    // Infinity), but 5 extra idle years of compounding at 5% nominal tips every
+    // +1/+3/+5 offset row over the line into literally sustainable.
+    const nearMissBase = 5_900_000;
+    const { yearsSustained: nearMissBaseYears } = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: nearMissBase, startAge: safeRetAge, endAge: safeRetAge + 130,
+    });
+    expect(nearMissBaseYears).not.toBe(Infinity); // base must NOT already be sustainable
+    const nearMissSimInputs = {
+      ...simInputs, bal401k: 0, balRoth: 0, balTaxable: nearMissBase, balHSA: 0,
+      contrib401k: 0, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+    };
+    const nearMissRetPhaseBase = {
+      ...depletingRetPhaseBase, tradGross: 0, roth: 0, taxable: nearMissBase, hsa: 0,
+    };
+    const nearMissArgs = {
+      simInputs: nearMissSimInputs, fedMarginal, retDrawShared: depletingRetDrawShared,
+      safeRetAge, safeLifeExp, baseTotalAtRet: nearMissBase, baseYearsSustained: nearMissBaseYears,
+      retPhaseBase: nearMissRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
+    };
+    const result = calcWorkLongerBreakEven({
+      bundle: nearMissArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    expect(result.rows.some(r => r.sustainable)).toBe(true); // the transition actually happens
+    for (const row of result.rows) {
+      if (row.sustainable) expect(row.longevityDeltaYears).toBeNull();
+    }
+  });
+
   it("SS companion: more working years never lowers the AIME-based benefit; includeSS=false zeroes every row", () => {
     const withSS = calcWorkLongerBreakEven({
       bundle: baseArgs, safeRetAge, currentAge, includeSS: true, ssInputs,

@@ -119,3 +119,24 @@ export function calcSignals({
   const pctSignals    = signals.filter(s => s.dollars == null);
   return [...dollarSignals, ...pctSignals].slice(0, Math.max(0, max));
 }
+
+// ── Signal render helpers (one source, two surfaces: Plan's strip + Strategies'
+// "For you" strip — CodeRabbit PR #57 dedup finding) ──────────────────────────
+// The warm-toned ids (severity signals, no positive-framing dollar figure) vs.
+// good-toned (an opportunity to capture). New signal ids default to "good"
+// unless added here — keeps future ids from silently drifting between the two
+// screens, which is exactly the class of bug this extraction closes.
+const SIGNAL_WARM_IDS = new Set(["deficit", "lowodds"]);
+
+// "good" | "warm" — a THEME KEY (t.good / t.good), never a literal color, so
+// screens stay theme-aware without re-deriving the map (rule 10).
+export function signalToneKey(sig) {
+  return SIGNAL_WARM_IDS.has(sig.id) ? "warm" : "good";
+}
+
+// Render-ready value text — a signal carries either `pct` (confidence signals)
+// or `dollars` (nudges), never both; the caller formats `dollars` (fmt is a
+// display concern, kept in the screen) and passes it in.
+export function signalValueText(sig, fmtDollars) {
+  return sig.pct != null ? `${sig.pct}%` : fmtDollars(sig.dollars);
+}

@@ -8,6 +8,7 @@ import LifeEventSheet from "../LifeEventSheet.jsx";
 import { VerdictTickRail } from "../fields.jsx";
 import { buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
 import { verdictDisplay } from "../../model/apply-preview.js";
+import { signalToneKey, signalValueText } from "../../model/signals.js";
 import ExploreTray from "../ExploreTray.jsx";
 import GoalsPanel from "../GoalsPanel.jsx";
 
@@ -45,8 +46,8 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
             }}>
             <span style={{
               font: `600 16px ${HM}`, flexShrink: 0,
-              color: (sig.id === "deficit" || sig.id === "lowodds") ? t.warm : t.good,
-            }}>{sig.pct != null ? `${sig.pct}%` : fmt(sig.dollars)}</span>
+              color: t[signalToneKey(sig)],
+            }}>{signalValueText(sig, fmt)}</span>
             <span style={{ minWidth: 0 }}>
               <span style={{ display: "block", font: `600 13px ${HF}`, color: t.ink }}>
                 {sig.title}
