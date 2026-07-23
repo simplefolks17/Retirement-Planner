@@ -2082,6 +2082,16 @@ export default function App() {
   // inflating totalAtRet/retVals/RMDs with no surface left to see or edit them —
   // an audit-caught trust gap (hidden input moving a visible number).
   const spouseAccountsApplicable = hasSpouse;
+  // BUG-81 fix: the #16 filing-status guardrail (Classic income section) only
+  // ever checked `spouseIncome > 0`, so a user who enters spouse ACCOUNT
+  // balances (#30's own entry point) with spouseIncome still 0 got no warning
+  // — yet the household RMD/tax math sums those balances under whichever
+  // single-filer bracket is selected (a real, measured overstatement; see
+  // BUG-81 in docs/BUGS.md). Widened to `hasSpouse` so either entry point
+  // triggers the same guardrail; a pre-gated flag (not a raw comparison) so
+  // Horizon's MyDetailsScreen can render the same note without doing the
+  // filingStatus !== "mfj" comparison itself (rule 10).
+  const spouseFilingMismatch = hasSpouse && filingStatus !== "mfj";
 
   // Props bundle for HorizonShell — display values only (plus the two write-back
   // hooks). Memoized (V9): every field is itself stable (state, memo, or scalar),
@@ -2207,6 +2217,8 @@ export default function App() {
     // above for V9 stability).
     spouseAccounts: spouseAccountsBundle,
     spouseAccountsApplicable,
+    // BUG-81: pre-gated (rule 10 — no filingStatus comparison in the screen).
+    spouseFilingMismatch,
     // WI-5.2 (#113): entitlements bundle ({isPremium, readOnly}) — see
     // readEntitlements/guardWrite above. Every write surface in this object has
     // already been guarded at its construction site (bundles, apply sites,
@@ -2252,7 +2264,7 @@ export default function App() {
        profileBundle, spendingBundle, accountsBundle, ssBundle, pensionBundle,
        conversionBundle, healthBundle, assumptionsBundle,
        // #30: spouse accounts bundle + applicability flag.
-       spouseAccountsBundle, spouseAccountsApplicable,
+       spouseAccountsBundle, spouseAccountsApplicable, spouseFilingMismatch,
        // WI-5.2 (#113): entitlements gate every write surface above.
        readOnly, entitlements]);
 
@@ -2438,7 +2450,7 @@ export default function App() {
                   </p>
                 </div>
               </div>
-              {(filingStatus === "mfj" || spouseIncome > 0) && (
+              {(filingStatus === "mfj" || spouseIncome > 0 || hasSpouse) && (
                 <div style={{ marginTop: 8, padding: "10px 12px", background: C.card, borderRadius: 8,
                   borderLeft: `2px solid ${C.purple}` }}>
                   <p style={{ margin: "0 0 8px", fontSize: 10, color: C.purple, textTransform: "uppercase",
@@ -2466,11 +2478,11 @@ export default function App() {
                       </p>
                     </div>
                   )}
-                  {spouseIncome > 0 && filingStatus !== "mfj" && (
+                  {spouseFilingMismatch && (
                     <div style={{ marginTop: 8, padding: "6px 10px", background: `${C.blue}12`,
                       borderRadius: 5, borderLeft: `2px solid ${C.blue}` }}>
                       <p style={{ margin: 0, fontSize: 10, color: C.blue, lineHeight: 1.5 }}>
-                        You've entered spouse income but your filing status is <span style={{ fontWeight: 700 }}>{TAX_DATA_2026[filingStatus].label}</span>.
+                        You've entered spouse {spouseIncome > 0 ? "income" : "account balances"} but your filing status is <span style={{ fontWeight: 700 }}>{TAX_DATA_2026[filingStatus].label}</span>.
                         {filingStatus === "mfs"
                           ? " MFS uses separate brackets — the tax breakdown above reflects only your income. Roth phase-out thresholds are much lower for MFS."
                           : " If you're married, switching to Married Filing Jointly usually produces a lower combined tax bill and higher Roth IRA phase-out thresholds."}

@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (927 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (929 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1406,8 +1406,28 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - **Second Opus audit — spousal-engine adversarial scenario testing (2026-07-20).** Owner request:
   the two prior spouse-engine audits (static code reading) found suspiciously few bugs for a
   feature this complex; requested a differently-angled pass that actually EXECUTES the model with
-  constructed edge-case numbers rather than reasoning about the code. Findings recorded here once
-  the audit completes.
+  constructed edge-case numbers rather than reasoning about the code. It paid off — found the
+  single largest gap in #30, missed by both prior static passes: **the spouse has no retirement
+  age of their own.** Contributions stop, and the account balance freezes, the moment the PRIMARY
+  retires — regardless of the spouse's actual age. Since the UI caps the spouse younger than the
+  primary, every household with an age gap (the common case, not an edge case) has its household
+  wealth understated. Measured in a constructed scenario (primary 55→65, spouse 40): **$2.38M**
+  understated in the spouse's Traditional 401k bucket alone, plus a second additive gap (no
+  spouse-earned-income floor during the primary-retired/spouse-still-working gap years). **Filed
+  as BUG-82 (open)** — a real feature addition (a `spouseRetirementAge` input + its own
+  contribution/income-floor wiring), not a quick patch, matching this codebase's convention of
+  documenting rather than rushing structurally significant model changes under review-fix
+  pressure. Also found and **fixed BUG-81**: the #16 filing-status guardrail only ever checked
+  `spouseIncome > 0`, so entering spouse ACCOUNT balances alone (#30's own entry point, spouseIncome
+  still 0) bypassed it entirely — measured $6,851/yr overstatement in a same-balances-different-
+  filing-status comparison. Widened to `hasSpouse`, exposed as a pre-gated App.jsx flag
+  (`spouseFilingMismatch`) so both Classic and the Horizon "Spouse & household" card show the same
+  warning. `docs/FINANCIAL-MODEL.md`'s stale "spouse accounts not modeled" and "Monte Carlo
+  planned" rows corrected to describe the actual shipped state + the real limitation. Everything
+  else the audit checked (joint RMD bracket stacking, the spouse's own-age RMD keying, the
+  zero-spouse boundary, the HSA family-ceiling split) verified correct by running it, not just
+  reading it. 927 → **929 tests**. Golden master untouched throughout (all inert at the default
+  state — no spouse data).
   New P1 work list (complex-first, dependency-honest): #113 entitlements →
   #30 spouse engine → #114 Monte Carlo lens → moneyEvents extension → #116/#85/#55/#56. Demotions:
   #82/#83 → P3 (Solvers surface retired by owner 2026-07-13), Advanced-Income #58/#59/#62/#63/#64/#65
@@ -1486,7 +1506,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (927 tests)
+- `npm test` — run model + formatter + render-smoke tests (929 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

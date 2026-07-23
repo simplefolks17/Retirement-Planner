@@ -7,6 +7,54 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-82 — The spouse has no retirement age of their own; contributions and RMD timing implicitly assume both spouses retire the same year (found 2026-07-20, adversarial spousal-scenario audit)
+
+**Owner:** me_theguy. **Found by:** a second, differently-angled Opus audit requested after the
+owner noted the first two spouse-engine audits (both static code reading) had found suspiciously
+few bugs for a feature this complex. This pass actually EXECUTED the model with constructed
+numeric scenarios rather than reading code and reasoning about it — and found the single largest
+gap in the spouse engine, one neither prior static audit surfaced.
+**What:** there is no `spouseRetirementAge` field anywhere in the codebase (grep-confirmed). The
+spouse is hard-assumed to retire in the exact same calendar year as the primary, in two
+compounding ways:
+1. `src/App.jsx:333` (`spouseContribEnd = spouseCurrentAge + (safeRetAge - currentAge)`) — the
+   spouse's accounts stop accepting contributions the moment the PRIMARY retires, regardless of
+   the spouse's own age.
+2. `src/App.jsx:358-360` (`spouseAtRet` read at `spouseSimData[phase2End - 1]`) — the spouse's
+   Traditional 401k balance is frozen at the primary's retirement-year snapshot and only compounds
+   (no further contributions) from there until the spouse's own RMD age.
+Because the UI caps `spouseCurrentAge` below `currentAge` (App.jsx:1474, :3632), the spouse is
+*always* modeled as retiring earlier than they realistically would for any household where the
+spouse is younger — the common case, not an edge case.
+**Measured impact:** primary 55 retiring at 65 (10 years), spouse currently 40, $120k income,
+$23.5k/yr 401k contribution, 7% nominal return. Model freezes the spouse's Traditional 401k at
+**$741,378** (spouse age 50, when the primary retires). If the spouse instead worked to their own
+age 65: **$3,124,069**. **Understatement: $2,382,691** of household retirement balance in this
+one bucket alone. A second, additive gap in the same scenario: `buildRetirementWalkByAccount`
+(`retirement-engine.js`) has only SS/pension as income floors — no spouse earned income — so from
+the primary's retirement through the spouse's real retirement, the household draws full
+`effectiveExpenses` from the portfolio with zero credit for the still-working spouse's salary.
+**Verified correct, not part of this bug** (so future work doesn't re-litigate): joint RMD bracket
+stacking is genuinely progressive and correct (both spouses' RMDs sum into one layer, taxed once);
+the zero-spouse boundary is byte-identical to the pre-#30 walk; the spouse's own RMD is correctly
+keyed to their own age via `spouseAgeFor`/Table III; the HSA family ceiling split is correct.
+**Not documented as a known simplification** — `docs/FINANCIAL-MODEL.md` (lines ~187, ~269, now
+corrected) still described spouse accounts as entirely "not modeled," stale text predating the
+shipped #30 engine, which actively misled about the actual (narrower, but real) limitation.
+**Fix shape (not applied here — this is a real feature addition, not a quick patch, matching this
+codebase's convention of not rushing structurally significant model changes under review-fix
+pressure):** add a `spouseRetirementAge` input (My-details "Spouse & household" card), thread it
+into `spouseContribEnd` (App.jsx, replacing the primary-anchored formula) so the spouse's
+accumulation sim runs to their OWN retirement, and add the spouse's earned income (net of taxes,
+already computed for the working-year tax basis) as a THIRD income-floor term in
+`buildRetirementWalkByAccount` for the gap years between the primary's retirement and the spouse's.
+**Where:** `src/App.jsx` (`spouseContribEnd`, `spouseAtRet`/`spouseSimData` construction, the
+"Spouse & household" MyDetailsScreen card), `src/model/retirement-engine.js`
+(`buildRetirementWalkByAccount`'s income-floor construction).
+**Inert at default state:** no spouse data → no effect. Golden master untouched. Affects real
+numbers only for a household with spouse account balances AND an age gap — which is most married
+households, so this is a real, not theoretical, limitation of the shipped #30 engine.
+
 ### BUG-77 — Spouse Traditional 401k isn't re-grown through a `calcWhatIfScenario` re-sim (found 2026-07-20, PR #57 pre-merge interoperability audit)
 
 **Owner:** me_theguy. **Found by:** an Opus interoperability audit requested before merging PR #57 (the reprioritized-backlog batch), specifically checking whether the spouse engine (#30) actually reaches every downstream consumer.
@@ -296,6 +344,33 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 ## Resolved Issues
 
 ---
+
+### BUG-81 — Entering spouse account balances alone bypassed the filing-status guardrail (found + fixed 2026-07-20, adversarial spousal-scenario audit)
+
+**Owner:** me_theguy. **Found by:** the same second-pass adversarial audit as BUG-82, by actually
+constructing two identical households differing only in filing status and diffing the output.
+**What:** the existing filing-status guardrail (feature #16, shipped standalone) only ever checked
+`spouseIncome > 0 && filingStatus !== "mfj"`. The #30 spouse-accounts card is a SECOND entry point
+for spouse data (account balances) that the guardrail's condition never accounted for — a user
+could enter spouse Traditional/Roth/Taxable/HSA balances with `spouseIncome` still 0 and
+`filingStatus` still "single" and get no warning at all, while the household RMD/tax math silently
+summed both accounts under single-filer brackets.
+**Measured impact:** two identical households (two $1.5M Traditional 401ks, both age 73) differing
+only in filing status — combined RMD ($113,208) taxed at single brackets ($16,076) vs. MFJ
+($9,225): a **$6,851/yr overstatement** for a household that entered spouse balances but never
+touched filing status.
+**Fix:** widened the guardrail's trigger from `spouseIncome > 0` to `hasSpouse` (App.jsx) — one
+flag covers both entry points. The check itself moved to a named, pre-gated App.jsx boolean
+(`spouseFilingMismatch`) rather than living only inline in Classic's JSX, so **Horizon's**
+"Spouse & household" My-details card can render the same warning without doing the
+`filingStatus !== "mfj"` comparison itself (rule 10) — the gap existed on both surfaces, not just
+Classic's.
+**Where:** `src/App.jsx` (`spouseFilingMismatch`, the widened Classic guardrail condition +
+copy), `src/horizon/screens/MyDetailsScreen.jsx` (the same warning, spouse card).
+**Tests:** `spouse-household.test.js` — entering spouse balances alone (no spouse income) trips
+the flag; MFJ filing status never trips it even with spouse balances present.
+**Inert at default state:** no spouse data → flag stays false. Golden master untouched (display
+guardrail only, no model math changed).
 
 ### BUG-79 — `calcWhatIfScenario`'s reported `scenarioTotalAtRet` excluded the spouse Traditional 401k bucket (found + fixed 2026-07-20, PR #57 pre-merge interoperability audit)
 

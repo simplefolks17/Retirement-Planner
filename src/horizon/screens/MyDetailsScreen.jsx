@@ -53,6 +53,9 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
   // premium gating comes from the entitlements bundle (LockedCard when locked).
   const spouseApplicable = props.spouseAccountsApplicable;
   const isPremium = props.entitlements?.isPremium !== false;
+  // BUG-81: pre-gated by App.jsx (hasSpouse && filingStatus !== "mfj") — no
+  // filingStatus comparison here (rule 10).
+  const spouseFilingMismatch = props.spouseFilingMismatch;
   const effLiving = props.budget?.effectiveLiving;
   const effExp    = props.effectiveExpenses;
 
@@ -156,6 +159,18 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
             <Card t={t} title="Spouse & household" open={openId === "spouse"} onToggle={() => toggle("spouse")}
               summary={`Spouse 401k ${money(spouseAccounts.trad401k.bal.value)} · match ${spouseAccounts.employerMatchPct.value}%`}
               note="Your spouse's accounts are simulated on their own income, age, and IRS limits, then combined with yours for the household portfolio and drawdown. Spouse income lives in the Income card.">
+              {spouseFilingMismatch && (
+                <div style={{
+                  marginBottom: 12, padding: "8px 12px", borderRadius: 8,
+                  background: `${t.warm}14`, borderLeft: `2px solid ${t.warm}`,
+                }}>
+                  <div style={{ font: `400 12px ${HF}`, color: t.warm, lineHeight: 1.5 }}>
+                    You've entered spouse accounts, but your filing status isn't Married Filing
+                    Jointly — household totals combine both accounts under your current filing
+                    status's tax brackets. Update filing status in the Income card if you're married.
+                  </div>
+                </div>
+              )}
               {[
                 ["Traditional 401k", spouseAccounts.trad401k],
                 ["Roth IRA",         spouseAccounts.roth],

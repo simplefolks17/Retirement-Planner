@@ -59,6 +59,29 @@ describe("household aggregation (#30)", () => {
     expect(app.latest().totalAtRet).toBe(before);
     app.unmount();
   });
+
+  // BUG-81 (found by adversarial spousal-scenario audit, 2026-07-20): entering
+  // spouse ACCOUNT balances (the #30 entry point) with filingStatus still
+  // "single" and no spouse income used to raise no guardrail at all — the
+  // household RMD/tax math still sums both accounts under single-filer
+  // brackets. The pre-existing #16 guardrail only checked spouseIncome > 0.
+  it("entering spouse account balances alone (no spouse income) surfaces the filing-status guardrail", () => {
+    const app = mount();
+    expect(app.latest().spouseFilingMismatch).toBe(false); // default: no spouse data
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(500_000));
+    // spouseIncome is still 0 and filingStatus is still "single" — the OLD
+    // guardrail condition (spouseIncome > 0) would stay false here.
+    expect(app.latest().spouseFilingMismatch).toBe(true);
+    app.unmount();
+  });
+
+  it("filing status MFJ never trips the guardrail even with spouse accounts entered", () => {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(500_000));
+    expect(app.latest().spouseFilingMismatch).toBe(false);
+    app.unmount();
+  });
 });
 
 describe("HSA family-HDHP shared ceiling (#30, rule 4)", () => {
