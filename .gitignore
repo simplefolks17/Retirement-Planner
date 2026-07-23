@@ -157,3 +157,4 @@ Thumbs.db
 # Editor settings (optional, personal preference)
 .vscode/
 .idea/
+src/model/__tests__/zz-*.test.js
