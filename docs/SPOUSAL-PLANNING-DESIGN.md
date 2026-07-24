@@ -114,11 +114,11 @@ file:line backing in the notes below; "Difficulty" ties to specific architecture
 |---|---|---|---|---|---|---|
 | 1 | **Staggered retirement** — spouses retire different years; who funds the gap, working spouse's paycheck offsets draws, continued saving for the still-working spouse | Only **11%** of couples retire simultaneously; **~62%** stagger by ≥1 yr (Phase 2 §1, Ameriprise) | Bogleheads ask: "model each individual… separately… combining for an overall view"; the Roth-conversion gap-years window shrinks if couple retires far apart (Phase 2b §1, §4) | **Not handled** — this *is* BUG-82 | **Medium** — the spouse sim already exists (`App.jsx:334`); it's just terminated at the wrong age. Fix = the `spouseRetirementAge` work in Section C | — |
 | 2 | **SS claiming coordination** — delay the higher earner (sets survivor floor), spousal cap, couple break-even ≠ single | Universal for married claimants; coordinated claiming adds **$150–250k** lifetime (Phase 2 §2, T. Rowe) | SSA reps get restricted-application *wrong*; 30% think no spousal benefit exists (Phase 2b §2) | **Partial** — model computes own vs spousal, caps spousal at 50%, nudges `spouseAltHigher` (`retirement-income.js:35-45`); does **not** search for the household-optimal claiming combination | **Medium** — formulas exist; a joint two-age optimizer is a small combinatorial search, analogous to the shipped conversion optimizer's search | — |
-| 3 | **Widow's/widower's penalty** — survivor flips to Single brackets (~½ width), keeps larger-of-two SS, inherits IRA onto Uniform Lifetime Table, tighter IRMAA | Universal *eventually*; **$5–20k+/yr** (up to $42k) tax rise; survivor loses **$25–40k/yr** of SS (Phase 2 §3) | **The single most-repeated gap** across all sources; dedicated Roth-hedge threads; real "protect my spouse if I die first" posts (Phase 2b §3, §5) | **Not handled** | **Medium (high-tractability)** — a deterministic scenario re-run, structurally like `calcWhatIfScenario` (swap scalars, re-walk). My **#NEW-1** | **YES — named in BOTH ProjectionLab and Boldin** (Phase 2b §5) |
+| 3 | **Widow's/widower's penalty** — survivor flips to Single brackets (~½ width), keeps larger-of-two SS, inherits IRA onto Uniform Lifetime Table, tighter IRMAA | Universal *eventually*; **$5–20k+/yr** (up to $42k) tax rise; survivor loses **$25–40k/yr** of SS (Phase 2 §3) | **The single most-repeated gap** across all sources; dedicated Roth-hedge threads; real "protect my spouse if I die first" posts (Phase 2b §3, §5) | **Not handled** | **Medium (high-tractability)** — a deterministic scenario re-run, structurally like `calcWhatIfScenario` (swap scalars, re-walk). Filed as **#126** | **YES — named in BOTH ProjectionLab and Boldin** (Phase 2b §5) |
 | 4 | **Two-account-set withdrawal sequencing / RMDs aren't poolable** — each spouse's RMD from their own accounts on their own age; Table II for >10-yr-younger sole-beneficiary spouse | Common for dual-earner couples; Table II ≈ **24% smaller RMD** at a 20-yr gap (Phase 2 §4) | RMDs *repeatedly* misunderstood as poolable — "NOT a shared pool" needs recurring forum correction (Phase 2b §4) | **Core math handled**; surfacing is the gap — per-spouse RMDs correct (`retirement-engine.js:147-152`), joint bracket stacking correct (`:200-207`), Table II modeled for the primary-owner direction. But strategy cards are primary-only (**BUG-84**) and the RMD schedule display is primary-only (**BUG-78**) | **Mixed** — the hard math is *done*; BUG-84 needs an owner tax-law call, BUG-78 has a cheap partial fix (Section C.4) | — |
-| 5 | **Risk / life-expectancy asymmetry + last-survivor horizon** — plan portfolio to the survivor's longer life, step income down at first death | **47%** of couples disagree on risk tolerance (Fidelity 2024); **53%** chance one of a 65-yo couple lives past 90 (Phase 2 §5) | Risk mismatch is dangerous in downturns; "one spouse handles everything, the other is unprepared" recurs unprompted (Phase 2b §7) | **Not handled** — single `lifeExpect`, single return assumption | **Medium / Large** — "portfolio to last-survivor age, income step-down" is medium and overlaps #NEW-1; true joint-life *probability* needs a mortality layer (large; must route through the real #114 lens, not fabricated odds — CLAUDE.md rule 6) | — |
+| 5 | **Risk / life-expectancy asymmetry + last-survivor horizon** — plan portfolio to the survivor's longer life, step income down at first death | **47%** of couples disagree on risk tolerance (Fidelity 2024); **53%** chance one of a 65-yo couple lives past 90 (Phase 2 §5) | Risk mismatch is dangerous in downturns; "one spouse handles everything, the other is unprepared" recurs unprompted (Phase 2b §7) | **Not handled** — single `lifeExpect`, single return assumption | **Medium / Large** — "portfolio to last-survivor age, income step-down" is medium and overlaps #126; true joint-life *probability* needs a mortality layer (large; must route through the real #114 lens, not fabricated odds — CLAUDE.md rule 6) | — |
 | 6 | **Employer coverage gap / COBRA / ACA cliff** — bridge to Medicare; MAGI-driven subsidy cliff; <20-employee Medicare-primary rule | Very common; ACA cliff loss **$10–25k/yr**; 400% FPL cliff back for 2026 (Phase 2 §6) | Age-gap Medicare bridge is *the* age-gap pain point (Phase 2b §6) | **Partial** — the app already models the ACA cliff + IRMAA per conversion year, MAGI-linked (features #7/#34); does **not** model a per-spouse bridge *cost* as a gap-years expense, nor the <20-employee rule | **Medium** — MAGI linkage exists; adding a gap-years bridge expense is small; a "cheapest plan" comparison is larger | — |
-| 7 | **Pension J&S vs. single-life election** — irrevocable survivor-benefit choice; "pension max" sales trap | Moderately common, shrinking population, high stakes (Phase 2 §7a) | (weak in informal sources) | **Partial** — pension is a flat stream (`pensionMonthly`/`pensionStartAge`); no survivor-election comparison | **Medium** — deterministic side-by-side, but needs a survivor phase (ties to #NEW-1) | — |
+| 7 | **Pension J&S vs. single-life election** — irrevocable survivor-benefit choice; "pension max" sales trap | Moderately common, shrinking population, high stakes (Phase 2 §7a) | (weak in informal sources) | **Partial** — pension is a flat stream (`pensionMonthly`/`pensionStartAge`); no survivor-election comparison | **Medium** — deterministic side-by-side, but needs a survivor phase (ties to #126) | — |
 | 8 | **Medicare timing with an age gap** — per-spouse Initial Enrollment Periods; older spouse on employer plan + <20-employee test | Common with any age gap (Phase 2 §7b) | Family "can Mom use Dad's work history?" confusion; in-person SSA required (Phase 2b §6) | **Not handled** | **High-tractability** — deterministic per-spouse windows; small if surfaced as informational | — |
 | 9 | **Divorced-spouse / remarriage SS + blended-family beneficiary** — ex-spouse claim rules; remarriage-before-60 cutoff; beneficiary conflict | **~2 in 5** marriages involve a previously-divorced partner (Phase 2 §7c) | Blended-family beneficiary litigation surfaced (Phase 2b §7) | **Not handled** — needs a marital-history data model | **Low tractability / niche** — the fair-division judgment isn't a calculation; new data model | — |
 | 10 | **"Plan legible to both spouses"** (cross-cutting UX, not a calc) — one spouse manages everything, the other is unprepared | Only **14%** of widows made financial decisions independently *before* loss (Phase 2b §7) | Surfaced unprompted across three unrelated searches (Phase 2b theme 5) | **N/A (design principle)** | **Design consideration** — frame survivor features as "protect [spouse]" in the language people already use | — |
@@ -140,7 +140,7 @@ file:line backing in the notes below; "Difficulty" ties to specific architecture
   community's "RMDs aren't poolable" confusion is answerable today with a display change, not new
   math.
 - **#5 / #6 / #7.** The survivor-phase step-down (income drops at first death) is a shared
-  primitive across #5, #7, and #NEW-1 — build it once.
+  primitive across #5, #7, and #126 — build it once.
 
 **On the competitor gap (#3):** that ProjectionLab *and* Boldin both fail the "survivor over 60,
 before FRA, reduced benefit" case (Phase 2b §5) is the strongest strategic signal in the research.
@@ -259,7 +259,8 @@ value must still reproduce today's pre-fix output exactly (strict generalization
 
 ### C.3 — Widow's-penalty filing-status cliff: in scope, or a separate feature?
 
-**Decision: out of scope for this fix pass; specified below as a clean new backlog item, #NEW-1.**
+**Decision: out of scope for this fix pass; specified below as a clean new backlog item, filed as
+feature #126 in `feature-tracker.html`.**
 
 **Why separate:** the `spouseRetirementAge` work is an *accumulation-phase* correctness fix
 (contributions, seed timing, gap-year income floor). The widow's penalty is a *retirement-phase
@@ -269,7 +270,7 @@ them would couple two unrelated risk areas into one oversized session. But separ
 mean low priority — the research makes it the highest-value *next* feature (Section B #3): the
 single most-repeated gap, high-tractability, and a named limitation in both leading competitors.
 
-**#NEW-1 — Survivor / widow(er) scenario modeling**
+**#126 — Survivor / widow(er) scenario modeling**
 
 > *Section: Spouse / Household. Status: planned. Candidate priority: P1 (highest-value spousal
 > follow-up). Premium (extends #30).*
@@ -299,11 +300,24 @@ single most-repeated gap, high-tractability, and a named limitation in both lead
 > §5); real user language is "protect [spouse] if I die first" (Phase 2b §3 — frame the UI that
 > way, not "survivor mode").
 >
-> **Dependencies.** Depends on **#30** (needs the two-person account model to know what rolls
-> over). **Independent of `spouseRetirementAge`** — can ship before or after — but *cleaner after*,
-> because a correct survivor balance depends on a correctly-accumulated spouse balance (a survivor
-> scenario built on a frozen, understated spouse 401k would inherit BUG-82's error). Natural
-> display surface is #31 (household dashboard). Synergizes with the shipped conversion optimizer.
+> **Dependencies and sequencing — a firm call, not a toss-up.** Depends on **#30** (needs the
+> two-person account model to know what rolls over). It is *independent* of the `spouseRetirementAge`
+> fix in the sense that neither one's code touches the other's files — but that does not make the
+> order a toss-up. **Build #126 in the same working session as the BUG-82 fix if convenient, but only
+> after Steps 1–4 of the C.5 plan are committed and passing tests — never concurrently, and never
+> before.** The reason is concrete, not process-conservatism: #126's whole mechanism is "roll the
+> deceased spouse's Traditional 401k into the survivor's own bucket." If that balance is still
+> frozen/understated (BUG-82, unfixed), #126 ships a feature whose headline number — the thing it
+> exists to show the user — is confidently wrong for exactly the age-gap households the research
+> says are the common case. Worse, the bug would then have to be fixed *twice*: once in the base
+> walk, once again inside #126's own re-walk, because #126 will have its own seed-balance logic to
+> patch. Building on the corrected foundation costs nothing (the fix is small — see C.5 Steps 1–4)
+> and avoids that double-patch. This mirrors this codebase's own established practice of shipping
+> multiple related pieces in one session/PR when they are built and tested *in sequence* (e.g. the
+> WI-3.4+WI-3.5 and WI-3.7+WI-3.8 batches) rather than as one undifferentiated diff — so "same
+> session" and "sequenced, not concurrent" are not in tension here. Natural display surface is #31
+> (household dashboard) — see C.4's BUG-78 discussion for why #31 itself should also wait.
+> Synergizes with the shipped conversion optimizer.
 
 ### C.4 — BUG-84 / 77 / 78 disposition
 
@@ -336,10 +350,20 @@ Ordered by what unblocks what, not by severity. Sizes: S = small, M = medium, L 
   between two fix shapes; ship the interim "You"-not-"Household" relabel now so the claim isn't
   misleading, and take the real decision separately. Deferring is right because it's orthogonal to
   accumulation correctness and blocks nothing.
-- **Full BUG-78 / spouse RMD sub-schedule display** — waits on #31's household dashboard; Step 0
-  already closes the practical tax-understatement seam without it.
-- **#NEW-1 survivor scenario** — the highest-value *next* feature, but its own session; cleaner
-  after this pass supplies a correctly-accumulated spouse balance to roll over.
+- **Full BUG-78 / spouse RMD sub-schedule display** — only this cosmetic half waits on #31's
+  household dashboard (a proper per-spouse schedule table needs a screen to live on); the tax-dollar
+  correctness half is Step 0, ships now, and does not depend on #31 at all. Don't conflate the two:
+  #31 is not a prerequisite for BUG-78's substance, only for its nicest possible display.
+- **#31 household dashboard itself** — deliberately NOT reprioritized ahead of Steps 0–5, and its
+  own value is separate from cleaning up BUG-84/77/78: #31 is a *display* screen and doesn't touch
+  the code paths BUG-84 (strategy-card scalars in App.jsx) or BUG-77 (the what-if re-sim pipeline)
+  live in, so building it first would not let those two be "cleaned up in one pass" regardless.
+  Building it before BUG-82 lands would also mean shipping a combined-portfolio dashboard on top of
+  a spouse balance already known to be wrong — the same foundation risk as #126. Build #31 after
+  Steps 0–5 (and ideally alongside or after #126, since #126 wants a display home there too).
+- **#126 survivor scenario** — the highest-value *next* feature; build it in the same session as
+  Steps 0–5 if convenient, but only after they're committed and tested (see C.3's Dependencies and
+  sequencing note above for why this is a firm call, not a preference).
 - **SS-claiming coordination optimizer** (Section B #2) — the tool already computes both bases and
   nudges; a *joint search* over two claiming ages is a separate, larger feature (Phase 2 §2: "a
   small combinatorial optimization, not a single formula"). Deferring keeps this pass focused on
@@ -347,7 +371,7 @@ Ordered by what unblocks what, not by severity. Sizes: S = small, M = medium, L 
 
 **What this plan achieves.** Steps 0–5 close BUG-82 (all three defects), BUG-77, and the practical
 half of BUG-78, and fully deliver Section B problem #1 (staggered retirement) — the entry that maps
-directly onto the shipped-but-broken #30 engine. It sets up #NEW-1 (the highest-value differentiator
+directly onto the shipped-but-broken #30 engine. It sets up #126 (the highest-value differentiator
 per the research) on a correct foundation, and it leaves BUG-84 and the SS optimizer as clean,
 well-scoped separate decisions rather than half-finished work entangled in a bug fix. Every step
 preserves the true (single-filer) golden master, consistent with the golden-master-safe patterns
