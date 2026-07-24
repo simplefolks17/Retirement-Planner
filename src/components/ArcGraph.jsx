@@ -32,7 +32,6 @@
 import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
 import { fmt as fmtMoney } from "../formatters.js";
-import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 const VW = 1200;
 const AGE_SPAN_FIXED_START = 30; // coordinate system always starts at 30 for consistent scale
@@ -572,11 +571,14 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null })
     const endAgeFromSeries = rangeBands.series[rangeBands.series.length - 1].age;
     const pct = rangeBands.successPct;
     // Tone comes from the model's own guideline test (successOk = successPct >=
-    // MONTE_CARLO_SUCCESS_GUIDELINE_PCT), so this caption's green/warm can never
-    // disagree with the Plan pill's confidence driver (principle 7). Falls back
-    // to a local threshold only for callers that don't pass successOk.
-    const pctColor = (rangeBands.successOk ?? (pct >= ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT))
-      ? t.good : t.warm;
+    // MONTE_CARLO_SUCCESS_GUIDELINE_PCT, App.jsx's rangeView bundle), so this
+    // caption's green/warm can never disagree with the Plan pill's confidence
+    // driver (principle 7). No local threshold fallback (CodeRabbit review fix,
+    // PR #57): the bundle's own contract makes successOk non-null whenever
+    // successPct is (guarded just above), so re-deriving the comparison here
+    // would be a second, unreachable source of financial classification in a
+    // render-only component (rule 10) — successOk is trusted directly.
+    const pctColor = rangeBands.successOk ? t.good : t.warm;
     return (
       <div style={{
         position: "absolute", left: px(s.pad.l + 6), top: 12,

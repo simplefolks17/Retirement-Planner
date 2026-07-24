@@ -1428,6 +1428,42 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   zero-spouse boundary, the HSA family-ceiling split) verified correct by running it, not just
   reading it. 927 → **929 tests**. Golden master untouched throughout (all inert at the default
   state — no spouse data).
+- **CodeRabbit + Gemini bot review of PR #57 (2026-07-20).** Both auto-triggered on push; no
+  manual review needed ("the bots," not human reviewers). CodeRabbit flagged 4 items, 2 already
+  fixed by the prior interop-audit commit (the `80`/`67` hardcodes); the other 2 verified real and
+  fixed: `LifeEventSheet`'s Total-summary parenthetical showed `"$X/mo for undefined mos"` in
+  "Until an age" mode (only ever branched on `mode === "monthly"`, never on `durationMode` —
+  now shows `"through age N"` for the until-mode case); a signal-chip tone-map/value-formatter
+  duplicated verbatim between `PlanScreen`'s `SignalsStrip` and `StrategiesScreen`'s
+  `ForYouStrip` (extracted to `signalToneKey`/`signalValueText` in `signals.js` — one source, so
+  a future signal id can't render different colors on the two surfaces). Gemini flagged 3 items:
+  a claimed missing `fmt` import in `StrategiesScreen.jsx` didn't reproduce (import is present;
+  false positive, likely a stale intermediate diff); a `growthPct` input step (cosmetic, widened
+  1 → 0.5 for fractional entry); and a suspected "Portfolio lasts" sub-label bug in
+  `WorkLongerFlow.jsx` when a plan transitions to sustainable — traced the model math and it
+  already null-guards correctly (`longevityDeltaYears` is `null` whenever either side is
+  sustainable), so the JSX fallback was already right; added 2 regression tests (one using the
+  existing `depletingArgs` fixture, one a binary-searched near-perpetuity balance that actually
+  forces the transition) to lock the invariant with evidence rather than leave it unverified.
+  921 → **927 tests**. (The commit that shipped this batch briefly recorded 935 —
+  a concurrent background audit agent's own scratch probe files were on disk in the shared working
+  tree at gate-check time and inflated the count; corrected here once they were untracked.)
+- **CodeRabbit + Gemini bot review, round 2 (2026-07-23, PR #57, reviewing commit 325eaad).** A
+  review round from before the spousal-audit fixes landed surfaced 4 more items, triaged
+  alongside the BUG-81/82 writeup — 2 folded into one **BUG-83 (fixed)**: (a) `ArcGraph.jsx`'s
+  Range-caption tone had re-derived the Monte Carlo success threshold locally (a rule-10
+  render-layer violation introduced by the PRIOR review-fix pass's own "named constant" patch —
+  the fallback was also provably dead code given the `rangeView` bundle's null-contract); now
+  trusts `rangeBands.successOk` directly. (b) the primary's own HSA slider bound stayed at the
+  self-only limit under family coverage even though the sim already allowed the full family
+  ceiling; now uses `primaryHsaLimit`, mirroring the spouse bundle's existing bound.
+  **BUG-84 filed, not fixed** — `retTrad`/`retRoth`/`retTaxable` (withdrawal-order +
+  conversion-sim scalars) stayed primary-only after #30; CodeRabbit itself tagged this "Heavy
+  lift," and it's a genuine design question (Roth conversions are legally per-account/per-person,
+  not poolable) needing an owner call between two candidate fix shapes — documented, not rushed.
+  A 4th finding (spouse Traditional bucket frozen through a what-if re-sim) was already tracked
+  as BUG-77 — no new action. Test suite unchanged in count (one new assertion added to an
+  existing test, not a new test) — still **929**.
   New P1 work list (complex-first, dependency-honest): #113 entitlements →
   #30 spouse engine → #114 Monte Carlo lens → moneyEvents extension → #116/#85/#55/#56. Demotions:
   #82/#83 → P3 (Solvers surface retired by owner 2026-07-13), Advanced-Income #58/#59/#62/#63/#64/#65

@@ -1397,7 +1397,13 @@ export default function App() {
       trad401k: acct(bal401k, setBal401k, contrib401k, setContrib401k, TRAD_401K_LIMIT_2026, contribEnd401k, setContribEnd401k),
       roth:     acct(balRoth, setBalRoth, contribRoth, setContribRoth, ROTH_IRA_LIMIT_2026, contribEndRoth, setContribEndRoth),
       taxable:  acct(balTaxable, setBalTaxable, contribTaxable, setContribTaxable, 100_000, contribEndTaxable, setContribEndTaxable),
-      hsa:      acct(balHSA, setBalHSA, contribHSA, setContribHSA, HSA_LIMIT_2026, contribEndHSA, setContribEndHSA),
+      // BUG-83 fix (CodeRabbit): under family HDHP coverage the primary can
+      // validly contribute up to the full family ceiling (primaryHsaLimit —
+      // the same un-split raw ceiling the spouse bundle below already uses
+      // for its own HSA bound), not just the self-only HSA_LIMIT_2026 — the
+      // sim already allows it (hsaLimit: primaryHsaLimit, above); the slider
+      // bound just hadn't caught up.
+      hsa:      acct(balHSA, setBalHSA, contribHSA, setContribHSA, primaryHsaLimit, contribEndHSA, setContribEndHSA),
       // Unbounded (no Classic max) — rendered as a stepper, so it carries a UI step
       // but no max; the set wrapper clamps at ≥ 0.
       addlPreTaxBal:    { value: addlPreTaxBal, set: guardWrite(v => setAddlPreTaxBal(Math.max(0, v || 0)), readOnly), min: 0, step: 10_000 },
@@ -1410,7 +1416,7 @@ export default function App() {
   }, [bal401k, contrib401k, contribEnd401k, balRoth, contribRoth, contribEndRoth,
       balTaxable, contribTaxable, contribEndTaxable, balHSA, contribHSA, contribEndHSA,
       addlPreTaxBal, matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap,
-      currentAge, safeLifeExp,
+      currentAge, safeLifeExp, primaryHsaLimit,
       setBal401k, setContrib401k, setContribEnd401k, setBalRoth, setContribRoth, setContribEndRoth,
       setBalTaxable, setContribTaxable, setContribEndTaxable, setBalHSA, setContribHSA, setContribEndHSA,
       setAddlPreTaxBal, setMatchMode, setEmployerMatchPct, setMatchFormulaRate, setMatchFormulaCap,

@@ -7,6 +7,34 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-84 — Withdrawal-order + conversion-sim scalars (`retTrad`/`retRoth`/`retTaxable`) stayed primary-only after #30 (found 2026-07-23, CodeRabbit review of PR #57 commit 325eaad)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit, flagged "🟠 Major / 🏗️ Heavy lift" — correctly not
+proposed as a quick fix.
+**What:** `retTrad`/`retRoth`/`retTaxable` (`src/App.jsx:463-465`, `= tradGrossAtRet / pRoth /
+pTaxable`) remained the PRIMARY-only balances even after #30 made `retVals`/`totalAtRet` household.
+They feed `calcWithdrawalOrderTax` (`src/App.jsx:961`, the Strategies "Withdrawal order" card's
+year-1 tax-optimal-vs-worst-case comparison), `conversionSim`'s inputs (`src/App.jsx:1033,1039`),
+and the Classic UI's withdrawal-order display ("$X available" per step, `src/App.jsx:4215-4217`).
+**Why this is a real design question, not a quick patch:** unlike BUG-79/80 (a scalar or a chart
+that should obviously have summed household balances), Roth conversions and withdrawal sequencing
+are legally **per-account, per-person** — you cannot convert a spouse's 401k into the primary's
+Roth IRA, and the IRS taxes each spouse's withdrawals against their own account, even though the
+household files one joint return. Two candidate fix shapes, needing an owner call:
+  1. **Pool for display, sequence per-person for real draws** — show household totals in the
+     "$X available" step cards (matching `retVals`), but keep `calcWithdrawalOrderTax`'s actual
+     recommended draw sequence and `conversionSim` scoped to the primary's own accounts (a
+     conversion event is inherently one person's).
+  2. **Model the spouse's own withdrawal order as a parallel, separate sequence** — a more complete
+     but larger change: the spouse gets their own tax-optimal-vs-worst-case comparison, since their
+     marginal bracket exposure during a shared MFJ return is genuinely different account-by-account.
+**Related:** sibling gap to BUG-77 (spouse Traditional bucket frozen through a what-if re-sim) —
+both are "the spouse engine didn't reach every downstream consumer" gaps found by review after the
+initial #30 ship, not new regressions from this review-fix batch.
+**Where:** `src/App.jsx:463-465` (the scalars), `:961` (`calcWithdrawalOrderTax` call), `:1033,1039`
+(`conversionSim`), `:4215-4217` (Classic display).
+**Inert at default state:** no spouse data → no effect. Golden master untouched.
+
 ### BUG-82 — The spouse has no retirement age of their own; contributions and RMD timing implicitly assume both spouses retire the same year (found 2026-07-20, adversarial spousal-scenario audit)
 
 **Owner:** me_theguy. **Found by:** a second, differently-angled Opus audit requested after the
@@ -344,6 +372,32 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 ## Resolved Issues
 
 ---
+
+### BUG-83 — ArcGraph re-derived the Monte Carlo success threshold in the render layer; primary HSA bound didn't widen under family coverage (found + fixed 2026-07-23, CodeRabbit review of PR #57 commit 325eaad)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit, two findings in the same review round.
+**What (1 — ArcGraph):** the prior review-fix batch (BUG-79/80's commit) had "fixed" a hardcoded
+`80` fallback in `ArcGraph.jsx`'s Range-caption tone by replacing it with
+`ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT` — but CodeRabbit correctly flagged that the
+comparison itself (`pct >= threshold`) shouldn't live in `src/components/**` at all (render-only,
+rule 10), regardless of whether the literal is named. The fallback was also provably dead: the
+`rangeView` bundle (App.jsx) sets `successOk` to null exactly when `successPct` is null, and the
+caption already early-returns on `successPct == null` above this line — so `successOk` is
+guaranteed non-null by the time the fallback would fire.
+**What (2 — HSA):** the PRIMARY's own `accountsBundle` HSA field (`src/App.jsx`) hardcoded
+`HSA_LIMIT_2026` (self-only) as its slider bound regardless of `hsaCoverageType`. Under family
+coverage the sim already lets the primary alone contribute up to the full family ceiling
+(`hsaLimit: primaryHsaLimit`, already wired) — but the UI bound never caught up, so a user
+couldn't actually enter a valid family-coverage contribution through the primary account editor.
+**Fix:** (1) `ArcGraph.jsx`'s `pctColor` now trusts `rangeBands.successOk` directly, no local
+threshold re-derivation (the now-unused `ASSUMPTIONS` import removed). (2) the primary
+`accountsBundle`'s HSA `contrib.max` now uses `primaryHsaLimit` (the same raw, un-split ceiling
+the spouse bundle already uses for its own HSA bound) instead of `HSA_LIMIT_2026`.
+**Where:** `src/components/ArcGraph.jsx`, `src/App.jsx` (`accountsBundle`).
+**Tests:** `setter-bundles.test.js` — primary `accounts.hsa.contrib.max` widens to 8,750 under
+family coverage, alongside the existing spouse-side assertion.
+**Inert at default state** (default coverage is self-only; Range view needs Monte Carlo data to
+render at all) — golden master untouched.
 
 ### BUG-81 — Entering spouse account balances alone bypassed the filing-status guardrail (found + fixed 2026-07-20, adversarial spousal-scenario audit)
 
