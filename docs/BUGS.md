@@ -35,50 +35,189 @@ initial #30 ship, not new regressions from this review-fix batch.
 (`conversionSim`), `:4215-4217` (Classic display).
 **Inert at default state:** no spouse data → no effect. Golden master untouched.
 
-### BUG-82 — The spouse has no retirement age of their own; contributions and RMD timing implicitly assume both spouses retire the same year (found 2026-07-20, adversarial spousal-scenario audit)
+### BUG-82 — The spouse has no retirement age of their own; contributions and RMD timing implicitly assume both spouses retire the same year (found 2026-07-20, adversarial spousal-scenario audit; write-up expanded 2026-07-23 for a dedicated follow-up session)
 
-**Owner:** me_theguy. **Found by:** a second, differently-angled Opus audit requested after the
-owner noted the first two spouse-engine audits (both static code reading) had found suspiciously
+**Owner:** me_theguy. **Severity: HIGH.** **Status: OPEN — scoped for a dedicated session, not a
+quick patch.** **Found by:** a second, differently-angled Opus audit requested after the owner
+noted the first two spouse-engine (#30) audits — both static code reading — had found suspiciously
 few bugs for a feature this complex. This pass actually EXECUTED the model with constructed
-numeric scenarios rather than reading code and reasoning about it — and found the single largest
-gap in the spouse engine, one neither prior static audit surfaced.
-**What:** there is no `spouseRetirementAge` field anywhere in the codebase (grep-confirmed). The
-spouse is hard-assumed to retire in the exact same calendar year as the primary, in two
-compounding ways:
-1. `src/App.jsx:333` (`spouseContribEnd = spouseCurrentAge + (safeRetAge - currentAge)`) — the
-   spouse's accounts stop accepting contributions the moment the PRIMARY retires, regardless of
-   the spouse's own age.
-2. `src/App.jsx:358-360` (`spouseAtRet` read at `spouseSimData[phase2End - 1]`) — the spouse's
-   Traditional 401k balance is frozen at the primary's retirement-year snapshot and only compounds
-   (no further contributions) from there until the spouse's own RMD age.
-Because the UI caps `spouseCurrentAge` below `currentAge` (App.jsx:1474, :3632), the spouse is
-*always* modeled as retiring earlier than they realistically would for any household where the
-spouse is younger — the common case, not an edge case.
-**Measured impact:** primary 55 retiring at 65 (10 years), spouse currently 40, $120k income,
-$23.5k/yr 401k contribution, 7% nominal return. Model freezes the spouse's Traditional 401k at
-**$741,378** (spouse age 50, when the primary retires). If the spouse instead worked to their own
-age 65: **$3,124,069**. **Understatement: $2,382,691** of household retirement balance in this
-one bucket alone. A second, additive gap in the same scenario: `buildRetirementWalkByAccount`
-(`retirement-engine.js`) has only SS/pension as income floors — no spouse earned income — so from
-the primary's retirement through the spouse's real retirement, the household draws full
-`effectiveExpenses` from the portfolio with zero credit for the still-working spouse's salary.
-**Verified correct, not part of this bug** (so future work doesn't re-litigate): joint RMD bracket
-stacking is genuinely progressive and correct (both spouses' RMDs sum into one layer, taxed once);
-the zero-spouse boundary is byte-identical to the pre-#30 walk; the spouse's own RMD is correctly
-keyed to their own age via `spouseAgeFor`/Table III; the HSA family ceiling split is correct.
-**Not documented as a known simplification** — `docs/FINANCIAL-MODEL.md` (lines ~187, ~269, now
-corrected) still described spouse accounts as entirely "not modeled," stale text predating the
-shipped #30 engine, which actively misled about the actual (narrower, but real) limitation.
-**Fix shape (not applied here — this is a real feature addition, not a quick patch, matching this
-codebase's convention of not rushing structurally significant model changes under review-fix
-pressure):** add a `spouseRetirementAge` input (My-details "Spouse & household" card), thread it
-into `spouseContribEnd` (App.jsx, replacing the primary-anchored formula) so the spouse's
-accumulation sim runs to their OWN retirement, and add the spouse's earned income (net of taxes,
-already computed for the working-year tax basis) as a THIRD income-floor term in
-`buildRetirementWalkByAccount` for the gap years between the primary's retirement and the spouse's.
-**Where:** `src/App.jsx` (`spouseContribEnd`, `spouseAtRet`/`spouseSimData` construction, the
-"Spouse & household" MyDetailsScreen card), `src/model/retirement-engine.js`
-(`buildRetirementWalkByAccount`'s income-floor construction).
+numeric scenarios rather than reading code and reasoning about it, and found the single largest
+gap in the spouse engine, missed by both prior static passes.
+
+#### One-paragraph summary
+The #30 spouse engine (shipped, `docs/BUGS.md` entries BUG-79/80/81/83 all build on it correctly)
+has no concept of the spouse's own retirement age. The spouse's accounts stop accepting
+contributions, and the balance handed to the retirement walk is frozen, the instant the **primary**
+retires — regardless of the spouse's actual age. Because the UI only allows a spouse *younger* than
+the primary, this silently understates household wealth for the majority of real two-income
+households (an age gap is the common case, not an edge case), by an amount that scales with the age
+gap and can reach the millions of dollars for a realistic 10–15 year gap.
+
+#### Root cause — two compounding defects, one root
+1. **Contribution cutoff anchored to the primary, not the spouse.**
+   `src/App.jsx:333` — `const spouseContribEnd = spouseCurrentAge + (safeRetAge - currentAge);`
+   This computes "the spouse's age when the PRIMARY retires" and uses it as the spouse's
+   contribution end-age for every one of their accounts (`src/App.jsx:343-344`, the
+   `contribEnd401k/Roth/Taxable/HSA: spouseContribEnd` args passed into the spouse's
+   `runSimulation` call at `src/App.jsx:336-347`). A 40-year-old spouse whose primary retires in 10
+   years gets `spouseContribEnd = 50` — they stop saving at 50, even though they might realistically
+   work another 15+ years.
+2. **Retirement seed balance snapshotted at the wrong calendar year.**
+   `src/App.jsx:358-360`:
+   ```js
+   const spouseAtRet = phase2End > 0
+     ? (spouseSimData[phase2End - 1] ?? spouseCurrentSnapshot)
+     : spouseCurrentSnapshot;
+   ```
+   `phase2End` is the number of years until the **primary's** retirement (defined earlier in
+   App.jsx from `safeRetAge - currentAge`). This reads the spouse's simulated balance at the
+   PRIMARY's retirement-year row — the spouse's balance is then frozen from that point: it feeds
+   `sTrad` (`src/App.jsx:469`, `= spouseAtRet.tradGross ?? 0`) and from there
+   `tradGrossSpouse: sTrad` into `retPhaseBase` (`src/App.jsx:619`), which seeds
+   `buildRetirementWalkByAccount` (`retirement-engine.js`). From that point on the spouse's
+   Traditional bucket only compounds via investment growth — no further contributions ever reach
+   it, because the walk has no concept of "the spouse is still working."
+3. **Additive gap — no spouse income floor during the primary-retired/spouse-working gap years.**
+   `src/model/retirement-engine.js:161` —
+   `const floor = (age >= ssClaimAge ? ssTaxable : 0) + (age >= pensionStartAge ? pension : 0);`
+   — the household income floor inside the retirement walk has exactly two terms, SS and pension.
+   There is no spouse-earned-income term. So even setting aside defects 1–2, for every year between
+   the primary's retirement and the spouse's *real* retirement, the walk draws the FULL
+   `effectiveExpenses` from the portfolio as if neither spouse were earning — when in reality the
+   spouse's paycheck should be covering some or all of household spending during those years.
+
+**UI constraint that makes this universal, not rare:** `spouseCurrentAge`'s slider bound is
+`max: currentAge - 1` (`src/App.jsx:1480`) — the spouse can only ever be entered as YOUNGER than the
+primary. Combined with defects 1–3, every household that enters a younger spouse's accounts gets
+an underrated household plan, by construction.
+
+#### Measured impact (reproducible)
+Scenario: primary currently 55, retires at 65 (10 years); spouse currently 40; household income
+$120k/yr each; spouse contributes $23,500/yr to their 401k; 7% nominal return; no spouse HSA/Roth
+for simplicity.
+- **What the model produces today:** spouse's Traditional 401k contributes for 10 years (age 40→50,
+  `spouseContribEnd = 40 + 10 = 50`), then freezes at **$741,378** (compounds with 0 more
+  contributions from spouse-age 50 to the spouse's actual RMD age).
+- **What a spouse retiring at their own age 65 would actually accumulate:** 25 years of
+  contributions (age 40→65) → **$3,124,069**.
+- **Understatement: $2,382,691** in this one account alone, before accounting for the additive
+  income-floor gap (defect 3), which is a further, separate understatement of the plan's actual
+  spending capacity during the primary-retired/spouse-working years.
+
+This is a `node`-reproducible scenario — run `runSimulation` twice (once with
+`contribEnd* = spouseContribEnd` per current code, once with `contribEnd* = 65`) and diff the
+`tradGross` at the respective final row; see the audit's methodology note below for the exact
+harness pattern used (a throwaway vitest file with `console.log`, deleted after — not committed;
+recreate similarly for verification).
+
+#### Verified CORRECT — not part of this bug, don't re-litigate
+The same audit ran (not just read) these adjacent paths and confirmed them right:
+- **Joint RMD bracket stacking** is genuinely progressive: both spouses' RMDs sum into one layer
+  (`totalRmd = rmd + rmdSp`) and are taxed once via `calcTax(floor+conv+totalRmd) −
+  calcTax(floor+conv)` — the second spouse's RMD is correctly pushed into higher brackets exactly
+  once, no double-application, no flattening.
+- **The spouse's own RMD timing** is correctly keyed to the spouse's own age (`spouseAgeFor`/
+  `spouseRmdStartAge`, always Table III) — RMD *timing* is right; it's contribution/seed timing
+  (this bug) that's wrong.
+- **The zero-spouse boundary** (`tradGrossSpouse: 0`) produces a walk `JSON.stringify`-identical to
+  the pre-#30 single-person walk — no regression risk from touching this code path.
+- **The HSA family-ceiling split** (`primaryHsaLimit`/`spouseHsaLimit`, `src/App.jsx:287-290`)
+  correctly caps combined contributions at `HSA_FAMILY_LIMIT_2026`.
+
+#### Not previously documented as a simplification (now corrected)
+`docs/FINANCIAL-MODEL.md`'s "Known Simplifications" table had a stale row claiming spouse accounts
+were entirely "not modeled" — text that predated the shipped #30 engine and actively misled about
+the actual (narrower, but real) limitation. Corrected 2026-07-20 to describe this bug specifically
+(see that file's spouse row) — that correction is already merged; this BUGS.md entry is the
+detailed version.
+
+#### Fix plan (for the dedicated follow-up session — not applied here)
+**Step 1 — add the input.** A `spouseRetirementAge` field, analogous to the primary's
+`retirementAge`/`safeRetAge`. Natural home: the "Spouse & household" card in
+`src/horizon/screens/MyDetailsScreen.jsx`, alongside the existing `spouseAccountsBundle` fields
+(`src/App.jsx`, `spouseAccountsBundle` useMemo, ~line 1426). Bounds: `min: spouseCurrentAge + 1`,
+`max` should probably match the primary's `safeLifeExp`-derived ceiling. Default value is the open
+design question below.
+
+**Step 2 — thread it into the spouse's accumulation sim.** Replace `spouseContribEnd`
+(`src/App.jsx:333`) with the spouse's own retirement offset:
+`spouseContribEnd = spouseRetirementAge` (no longer derived from the primary's age at all). This
+alone fixes defect 1.
+
+**Step 3 — fix the retirement-seed snapshot.** `spouseAtRet` (`src/App.jsx:358-360`) needs to read
+the spouse's simulated balance at the **spouse's own** retirement-year row, not
+`phase2End - 1` (the primary's). Since `spouseSimData` is indexed by calendar year (year 0 = both
+spouses' current age this year, year N = N years from now — see the file header comment above
+`spouseSimData`'s definition, `src/App.jsx:324-332`), the correct index is
+`spouseRetirementAge - spouseCurrentAge - 1`, mirroring how `atRetirement`
+(`src/App.jsx:383-385`) already indexes the primary's `simData` by `phase2End - 1` (which IS
+`safeRetAge - currentAge - 1`, the primary's own analogous index) — this is a straightforward
+copy-the-existing-pattern fix once the field exists, not new design.
+
+**Step 4 — add the spouse's earned-income floor for the gap years.** This is the harder half.
+`buildRetirementWalkByAccount` (`retirement-engine.js`) needs a THIRD income-floor term active only
+for ages between the primary's retirement and the spouse's own retirement — the spouse's after-tax
+earned income (their share of `grossAfterTax`/`takeHome`, already computed for the working-year tax
+basis — reuse, don't re-derive per rule 10's spirit applied to the model layer too). This requires:
+  (a) a new optional param on `buildRetirementWalkByAccount` (e.g. `spouseIncomeFloor`,
+      `spouseIncomeFloorEndAge`) — additive with the existing SS/pension floor at line 161, zero
+      by default (byte-identical when absent — the existing golden-master-safety pattern every
+      other #30 param already follows);
+  (b) App.jsx computing that spouse income floor and threading it into `retPhaseBase`
+      (`src/App.jsx:619` area, alongside `tradGrossSpouse`);
+  (c) a decision on whether this income is taxed as ordinary income stacked on the existing floor
+      (matching how the moneyEvents extension taxes retirement-phase event income, `BUG-72`'s
+      fix — the established precedent) or treated as already-net (simpler, less accurate).
+
+**Open design question the fix session must resolve (both are legitimate, pick one and document
+the choice):**
+- **Option A — accumulate to spouse's own age, then have their accounts sit idle (no draws) until
+  the spouse's own retirement, drawing household expenses only from the primary's accounts + the
+  spouse's income floor in the gap years.** Closer to real household cash-flow behavior (most
+  couples don't draw down the working spouse's 401k while they're still employed).
+  - **Option B — once ANY spending need exists (primary retired), the household draws from the
+  combined pool including the still-growing spouse balance**, same as how the engine already pools
+  Roth/Taxable/HSA across account TYPES today. Simpler to implement (no new "this bucket is
+  off-limits until age X" state) but less realistic for accounts still receiving contributions.
+  Recommend Option A for behavioral realism, but this is genuinely a product call, not just an
+  implementation detail — surface it to the owner before implementing.
+
+#### Test plan for the fix
+1. **Regression on the bug's own repro:** re-run the "primary 55→65, spouse 40, $120k, 7%" scenario
+   from Measured Impact above with `spouseRetirementAge: 65` — the spouse's Traditional 401k at
+   spouse-age-65 should land at/near $3,124,069 (the audit's independently-computed "what it should
+   be" figure), not $741,378.
+2. **Golden master / single-person safety:** no spouse data (defaults) → byte-identical output,
+   exactly like every other #30 param.
+3. **`spouseRetirementAge === primaryRetirementAge` (same-year retirement, the case #30 already
+   modeled correctly by accident):** must produce results identical to today's pre-fix behavior for
+   that specific case — i.e., the fix must be a strict generalization, not a behavior change for
+   the one case that was already right.
+4. **`spouseRetirementAge < primaryRetirementAge`** (spouse retires FIRST — a real, currently
+   entirely unhandled case in the other direction): spouse's contributions should stop at their own
+   earlier retirement; does the spouse then draw down while the primary still works? (Same Option
+   A/B question as above, mirrored.)
+5. **Income-floor gap-years test:** a scenario with a real gap (primary retires, spouse works 5 more
+   years) — assert the walk's portfolio draw is measurably LOWER during the gap years than an
+   otherwise-identical scenario with `spouseIncomeFloor: 0`, proving the floor is actually load-
+   bearing, not just plumbed and inert.
+
+#### Acceptance criteria
+- `spouseRetirementAge` input exists, editable, bounded sensibly, in the Spouse & household card.
+- The bug's own measured scenario (Section "Measured impact") no longer understates by anywhere
+  near $2.38M when `spouseRetirementAge` is set to the spouse's real intended retirement age.
+- All 5 test-plan cases above pass, including the two directional cases (spouse retires after /
+  before the primary).
+- Golden master untouched at defaults.
+- `docs/FINANCIAL-MODEL.md`'s spouse row updated again once this ships (it currently describes THIS
+  bug as the limitation — that description becomes stale the moment this is fixed).
+- This entry moved to Resolved with root cause + fix + files changed, per this file's own
+  Conventions section.
+
+**Where:** `src/App.jsx` (`spouseContribEnd` line 333, `spouseAtRet`/`spouseSimData` construction
+lines 324–360, `sTrad`/`retPhaseBase` wiring lines 469/619, the "Spouse & household"
+`MyDetailsScreen.jsx` card and its `spouseAccountsBundle` in App.jsx), `src/model/retirement-engine.js`
+(`buildRetirementWalkByAccount`'s income-floor construction, line 161).
 **Inert at default state:** no spouse data → no effect. Golden master untouched. Affects real
 numbers only for a household with spouse account balances AND an age gap — which is most married
 households, so this is a real, not theoretical, limitation of the shipped #30 engine.
