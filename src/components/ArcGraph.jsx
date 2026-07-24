@@ -16,6 +16,12 @@
 //   glow (bool), strokeWidth (number), activeView, onViewChange, showToggle,
 //   compact (bool — fewer pills/ticks for small viewports),
 //   scenarioData [{age,total}] (optional dotted overlay on the arc view),
+//   rangeBands (optional) — real Monte Carlo percentile data for the Range (band)
+//     view: { series: [{age,p10,p25,p50,p75,p90}], successPct (int|null),
+//     note (string), medianDepletionAge (int|null), p10DepletionAge (int|null) }.
+//     When present, the Range view renders REAL percentile bands + a success-%
+//     caption; when null it falls back to the decorative illustrative cone.
+//     Affects the "band" view ONLY — every other view renders pixel-identical.
 //   events [{age,label,isInflow,icon?}] (optional, WI-1.3/#90 upgraded) —
 //     committed moneyEvents shown as icon badges with a stem down to the curve;
 //     inflow = good token, outflow = warm. events=[] renders pixel-identical to
@@ -490,9 +496,53 @@ function bandModel({ chartData, currentAge, vmax, s }) {
   return { spread, midPts, upPts, loPts, leanFinalTotal };
 }
 
-function BandSvg({ t, chartData, currentAge, retirementAge, s, vmax }) {
+function BandSvg({ t, chartData, currentAge, retirementAge, s, vmax, rangeBands = null }) {
   const { midPts, upPts, loPts } = useMemo(() => bandModel({ chartData, currentAge, vmax, s }), [chartData, currentAge, vmax, s]);
+  // REAL Monte Carlo bands (WI-5.3 / #114). When percentile data is supplied we
+  // render actual p10/p25/p50/p75/p90 bands INSTEAD of the decorative cone below.
+  // Same clamp style as the scenario overlay (value → [0, vmax*1.02]) so an
+  // outsized p90 can't leave the plot. Falls back to the cone when data is
+  // absent or too short — that decorative code path is untouched.
+  const real = useMemo(() => {
+    const series = rangeBands?.series;
+    if (!series || series.length < 2) return null;
+    const clampV = (v) => Math.max(0, Math.min(v, vmax * 1.02));
+    const toPts = (key) => series.map(pt => [s.xOf(pt.age), +s.yOf(clampV(pt[key])).toFixed(1)]);
+    const firstSeriesAge = series[0].age;
+    // Accumulation portion: the SOLID chart line for ages up to where the band
+    // opens, so the rising line to retirement stays visible before the fan.
+    const accumPts = chartData
+      .filter(d => d.age <= firstSeriesAge)
+      .map(d => [s.xOf(d.age), +s.yOf(clampV(d.total)).toFixed(1)]);
+    return {
+      p10Pts: toPts("p10"), p25Pts: toPts("p25"), p50Pts: toPts("p50"),
+      p75Pts: toPts("p75"), p90Pts: toPts("p90"), accumPts,
+    };
+  }, [rangeBands, chartData, s, vmax]);
+
   if (midPts.length < 2) return null;
+
+  if (real) {
+    const outerArea = smoothPath(real.p90Pts) + " L " + real.p10Pts.slice().reverse().map(p => p.join(" ")).join(" L ") + " Z";
+    const innerArea = smoothPath(real.p75Pts) + " L " + real.p25Pts.slice().reverse().map(p => p.join(" ")).join(" L ") + " Z";
+    return (
+      <>
+        <GridLines t={t} s={s} vals={gridVals(vmax)} />
+        {real.accumPts.length >= 2 && (
+          <path d={smoothPath(real.accumPts)} fill="none" stroke={t.accent} strokeWidth="2"
+            strokeLinecap="round" opacity="0.7" vectorEffect="non-scaling-stroke" />
+        )}
+        <path d={outerArea} fill={t.accent} fillOpacity="0.10" />
+        <path d={innerArea} fill={t.accent} fillOpacity="0.18" />
+        <path d={smoothPath(real.p50Pts)} fill="none" stroke={t.accent} strokeWidth="3" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <line x1={s.xOf(retirementAge)} x2={s.xOf(retirementAge)} y1={s.top - 2} y2={s.bot}
+          stroke={t.accent} strokeWidth="1.5" strokeDasharray="4 4" opacity="0.42" vectorEffect="non-scaling-stroke" />
+        <circle cx={s.xOf(retirementAge)} cy={s.yOf(totalAtAge(chartData, retirementAge))} r="5.5" fill={t.accent} stroke={t.surf} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        <circle cx={s.xOf(currentAge)} cy={s.yOf(totalAtAge(chartData, currentAge))} r="4.5" fill={t.good} stroke={t.surf} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      </>
+    );
+  }
+
   const coneArea = smoothPath(upPts) + " L " + loPts.slice().reverse().map(p => p.join(" ")).join(" L ") + " Z";
   return (
     <>
@@ -509,8 +559,44 @@ function BandSvg({ t, chartData, currentAge, retirementAge, s, vmax }) {
   );
 }
 
-function BandLabels({ t, H, chartData, currentAge, s, vmax }) {
+function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null }) {
   const { spread, leanFinalTotal } = useMemo(() => bandModel({ chartData, currentAge, vmax, s }), [chartData, currentAge, vmax, s]);
+  // REAL Monte Carlo caption (WI-5.3 / #114): a success-% chip REPLACES the
+  // decorative strong/lean-market labels when percentile data is supplied. When
+  // successPct is null (data unavailable) render nothing extra — no fabricated
+  // caption (rule 10). When rangeBands is absent, the decorative labels below
+  // render unchanged.
+  if (rangeBands?.series?.length >= 2) {
+    if (rangeBands.successPct == null) return null;
+    const endAgeFromSeries = rangeBands.series[rangeBands.series.length - 1].age;
+    const pct = rangeBands.successPct;
+    // Tone comes from the model's own guideline test (successOk = successPct >=
+    // MONTE_CARLO_SUCCESS_GUIDELINE_PCT, App.jsx's rangeView bundle), so this
+    // caption's green/warm can never disagree with the Plan pill's confidence
+    // driver (principle 7). No local threshold fallback (CodeRabbit review fix,
+    // PR #57): the bundle's own contract makes successOk non-null whenever
+    // successPct is (guarded just above), so re-deriving the comparison here
+    // would be a second, unreachable source of financial classification in a
+    // render-only component (rule 10) — successOk is trusted directly.
+    const pctColor = rangeBands.successOk ? t.good : t.warm;
+    return (
+      <div style={{
+        position: "absolute", left: px(s.pad.l + 6), top: 12,
+        maxWidth: 260, pointerEvents: "none"
+      }}>
+        <div style={{ font: `700 26px ${HM}`, color: pctColor, lineHeight: 1 }}>{pct}%</div>
+        <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 3 }}>
+          of market paths fund your plan to {endAgeFromSeries}
+        </div>
+        {rangeBands.note && (
+          <div style={{
+            font: `400 9.5px ${HF}`, color: t.faint, marginTop: 6,
+            maxWidth: 260, whiteSpace: "normal"
+          }}>{rangeBands.note}</div>
+        )}
+      </div>
+    );
+  }
   const labelAge = Math.min(Math.round((currentAge + 90) * 0.72), 85);
   const labelData = chartData.find(d => d.age === labelAge) ?? chartData[chartData.length - 1];
   const last = chartData[chartData.length - 1];
@@ -598,7 +684,7 @@ const VIEWS = [
   { key: "arc", label: "Arc" },
   { key: "stacked", label: "Sources" },
   { key: "columns", label: "Decades" },
-  { key: "band", label: "Scenarios" },
+  { key: "band", label: "Range" },
 ];
 
 export default function ArcGraph({
@@ -619,6 +705,7 @@ export default function ArcGraph({
   showToggle = true,
   compact = false,
   scenarioData = null,
+  rangeBands = null,
   onEventTap = null,
 }) {
   // Per-instance id so multiple ArcGraphs on one page don't share SVG gradient/
@@ -697,7 +784,7 @@ export default function ArcGraph({
           retirementAge={retirementAge} s={s} />
       )}
       {activeView === "band" && validData.length >= 2 && (
-        <BandLabels t={t} H={vbH} chartData={validData} currentAge={currentAge} s={s} vmax={vmax} />
+        <BandLabels t={t} H={vbH} chartData={validData} currentAge={currentAge} s={s} vmax={vmax} rangeBands={rangeBands} />
       )}
     </div>
   );
@@ -741,7 +828,7 @@ export default function ArcGraph({
               retirementAge={retirementAge} s={s} vmax={vmax} />
           )}
           {activeView === "band" && (
-            <BandSvg t={t} chartData={validData} currentAge={currentAge} retirementAge={retirementAge} s={s} vmax={vmax} />
+            <BandSvg t={t} chartData={validData} currentAge={currentAge} retirementAge={retirementAge} s={s} vmax={vmax} rangeBands={rangeBands} />
           )}
           {activeView === "arc" && scenarioData?.length >= 2 && (() => {
             const sPts = trimScenarioOverlay(scenarioData, chartData)

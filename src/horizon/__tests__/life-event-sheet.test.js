@@ -413,6 +413,83 @@ describe("LifeEventSheet", () => {
   });
 });
 
+// ── LifeEventSheet — open-ended (untilAge) + growth authoring ─────────────────
+// moneyEvents extension: a duration event can run "until an age" (open-ended,
+// expense step-down) instead of a fixed month count, and can escalate annually.
+describe("LifeEventSheet — open-ended + growth authoring", () => {
+  const findAria = (root, aria) => root.findAll(n => n.props?.["aria-label"] === aria)[0];
+
+  it("an untilAge seed opens in until-age mode and saves untilAge (no durationMonths)", () => {
+    const onSave = vi.fn();
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Care costs", icon: "🩺", age: 45,
+          monthlyAmount: 2_000, untilAge: 60, isInflow: false },
+        onSave, onCancel: vi.fn(),
+      }));
+    });
+    expect(allText(tree)).toContain("Runs until age");
+    act(() => { findButton(tree.root, "Add to plan").props.onClick(); });
+    const saved = onSave.mock.calls[0][0];
+    expect(saved).toMatchObject({ monthlyAmount: 2_000, untilAge: 60, isInflow: false });
+    expect(saved.durationMonths).toBeUndefined();
+  });
+
+  it("switching a fixed-length event to 'Until an age' saves untilAge and drops durationMonths", () => {
+    const onSave = vi.fn();
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Travel", age: 40, monthlyAmount: 5_000,
+          durationMonths: 6, incomeAnnual: 0, isInflow: false },
+        onSave, onCancel: vi.fn(),
+      }));
+    });
+    act(() => { findButton(tree.root, "Until an age").props.onClick(); });
+    act(() => { findButton(tree.root, "Add to plan").props.onClick(); });
+    const saved = onSave.mock.calls[0][0];
+    // effUntilAge defaults to min(maxAge, age+10) = 50 for a not-yet-set untilAge.
+    expect(saved.untilAge).toBe(50);
+    expect(saved.durationMonths).toBeUndefined();
+  });
+
+  it("a growth value is saved as growthPct; the default (0) is omitted for byte-identity", () => {
+    // Default: no growth → growthPct absent from the saved event.
+    const onSaveFlat = vi.fn();
+    let treeFlat;
+    act(() => {
+      treeFlat = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Travel", age: 70, monthlyAmount: 6_000,
+          durationMonths: 6, incomeAnnual: 0, isInflow: false },
+        onSave: onSaveFlat, onCancel: vi.fn(),
+      }));
+    });
+    act(() => { findButton(treeFlat.root, "Add to plan").props.onClick(); });
+    expect(onSaveFlat.mock.calls[0][0].growthPct).toBeUndefined();
+
+    // Typing a growth percent → written onto the saved event.
+    const onSaveGrow = vi.fn();
+    let treeGrow;
+    act(() => {
+      treeGrow = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds,
+        initial: { label: "Travel", age: 70, monthlyAmount: 6_000,
+          durationMonths: 6, incomeAnnual: 0, isInflow: false },
+        onSave: onSaveGrow, onCancel: vi.fn(),
+      }));
+    });
+    act(() => {
+      findAria(treeGrow.root, "Annual growth percent").props.onChange({ target: { value: "3" } });
+    });
+    act(() => { findButton(treeGrow.root, "Add to plan").props.onClick(); });
+    expect(onSaveGrow.mock.calls[0][0].growthPct).toBe(3);
+  });
+});
+
 // ── LifeEventSheet — edit mode double-count regression (H1) ───────────────────
 // A real per-account-engine bundle (mirrors what-if.test.js's H1 fixture — the
 // all-taxable-seed trick the fixture above uses is NOT valid here: editing a

@@ -194,6 +194,66 @@ describe("buildRetirementWalkByAccount — income timing (rule 5b)", () => {
   });
 });
 
+describe("buildRetirementWalkByAccount — spouse traditional bucket (#30)", () => {
+  it("tradGrossSpouse: 0 explicitly produces rows byte-identical to omitting it (no-spouse path)", () => {
+    const withZero = base({ tradGrossSpouse: 0 });
+    const omitted  = base({});
+    expect(withZero.rows).toEqual(omitted.rows);
+    expect(withZero.depletionAge).toBe(omitted.depletionAge);
+    expect(withZero.yearsSustained).toBe(omitted.yearsSustained);
+    expect(withZero.endVal).toBe(omitted.endVal);
+  });
+
+  it("spouse RMD stays 0 until the SPOUSE's own age reaches spouseRmdStartAge (5yrs younger than primary)", () => {
+    // currentAge 40 / spouseCurrentAge 35 ⇒ spouseAge = age - 5 for the loop's
+    // primary `age`. Roth is large enough that spending never touches the trad
+    // buckets, isolating the RMD-timing gate from the draw order.
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 100, rReal: 0.03,
+      currentAge: 40, spouseCurrentAge: 35,
+      tradGross: 0, tradGrossSpouse: 1_000_000, roth: 2_000_000, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single",
+      rmdStartAge: 73, spouseRmdStartAge: 73,
+    });
+    // Primary is 73 here (spouse is 68) — spouse RMD must NOT have started yet.
+    const at73 = rows.find(r => r.age === 73);
+    expect(at73.rmdSpouse).toBe(0);
+    // Every row before the spouse turns 73 (primary age < 78) must be 0.
+    for (const r of rows.filter(r => r.age < 78)) {
+      expect(r.rmdSpouse).toBe(0);
+    }
+    // Primary 78 ⇒ spouse turns 73 — the spouse RMD switches on.
+    const at78 = rows.find(r => r.age === 78);
+    expect(at78.rmdSpouse).toBeGreaterThan(0);
+    const at80 = rows.find(r => r.age === 80);
+    expect(at80.rmdSpouse).toBeGreaterThan(0);
+  });
+
+  it("combined household RMD (primary + spouse) is stacked and taxed exactly once", () => {
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 90, rReal: 0.03,
+      currentAge: 60, spouseCurrentAge: 60,
+      tradGross: 1_000_000, tradGrossSpouse: 1_000_000, roth: 500_000, taxable: 500_000, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "mfj",
+      rmdStartAge: 73, spouseRmdStartAge: 73,
+    });
+    const at73 = rows.find(r => r.age === 73);
+    expect(at73.rmd).toBeGreaterThan(0);
+    expect(at73.rmdSpouse).toBeGreaterThan(0);
+    expect(Number.isFinite(at73.tax)).toBe(true);
+    expect(at73.tax).toBeGreaterThan(0);
+    // The taxed-once invariant (component taxes sum to the row's total tax)
+    // still holds with a spouse RMD bucket contributing to the stack.
+    for (const r of rows) {
+      expect(Math.round(r.inflowTax + r.convTax + r.rmdTax + r.drawTax)).toBe(r.tax);
+    }
+    // Per-account balances (now including tradSpouse) still sum to the row total.
+    for (const r of rows) {
+      expect(Math.abs((r.trad + r.tradSpouse + r.roth + r.taxable + r.hsa) - r.balEnd)).toBeLessThan(1e-6);
+    }
+  });
+});
+
 describe("buildRetirementWalkByAccount — depletion", () => {
   it("reports a depletion age when spending outruns the portfolio", () => {
     const { depletionAge, yearsSustained } = base({

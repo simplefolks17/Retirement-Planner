@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows } from "../accumulation.js";
+import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "../accumulation.js";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 
 describe("buildAccumulationRows (WI-2.5)", () => {
@@ -153,6 +153,51 @@ describe("buildAccumChart", () => {
       bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000 });
     expect(rows).toEqual([{ age: 60, total: 165_000 }]);
   });
+
+  // #30 interop fix: household chart. spouseSimData zips in BY INDEX (both
+  // arrays are generated over the same shared totalYears, one row per calendar
+  // year), not by age value — a spouse of a different age would never match a
+  // primary row by `age`. The merged row keeps the PRIMARY age.
+  it("omitting spouse args reproduces the single-person chart exactly (golden-master safety)", () => {
+    const simData = [mkRow(31, 100), mkRow(32, 200)];
+    const withoutSpouse = buildAccumChart({ simData, safeRetAge: 32, currentAge: 30,
+      bal401k: 40, balRoth: 10, balTaxable: 0, balHSA: 0 });
+    const withEmptySpouse = buildAccumChart({ simData, safeRetAge: 32, currentAge: 30,
+      bal401k: 40, balRoth: 10, balTaxable: 0, balHSA: 0, spouseSimData: [], spouseStartingBal: 0 });
+    expect(withEmptySpouse).toEqual(withoutSpouse);
+  });
+
+  it("sums spouse balances into the Today row and spouse sim totals index-aligned into each year", () => {
+    // Spouse is a DIFFERENT age (35 vs primary's 30) — their sim row `age` field
+    // (36, 37) must NOT be used to join; index 0 pairs with primary's index 0
+    // regardless of the age gap.
+    const simData = [mkRow(31, 100), mkRow(32, 200)];
+    const spouseSimData = [mkRow(36, 500), mkRow(37, 900)];
+    const rows = buildAccumChart({
+      simData, safeRetAge: 32, currentAge: 30, bal401k: 40, balRoth: 10, balTaxable: 0, balHSA: 0,
+      spouseSimData, spouseStartingBal: 1_000,
+    });
+    expect(rows).toEqual([
+      { age: 30, total: 50 + 1_000 },     // today: primary + spouse starting balances
+      { age: 31, total: 100 + 500 },      // primary's age, index-paired with spouse index 0
+      { age: 32, total: 200 + 900 },
+    ]);
+  });
+
+  it("a spouse sim shorter than primary's contributes 0 for the missing tail years", () => {
+    const simData = [mkRow(31, 100), mkRow(32, 200), mkRow(33, 300)];
+    const spouseSimData = [mkRow(50, 500)]; // spouse already retired — no further rows
+    const rows = buildAccumChart({
+      simData, safeRetAge: 33, currentAge: 30, bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0,
+      spouseSimData, spouseStartingBal: 0,
+    });
+    expect(rows).toEqual([
+      { age: 30, total: 0 },
+      { age: 31, total: 100 + 500 },
+      { age: 32, total: 200 },  // spouseSimData[1] is undefined -> 0
+      { age: 33, total: 300 },
+    ]);
+  });
 });
 
 describe("calcChartMilestones", () => {
@@ -250,5 +295,67 @@ describe("calcChartMilestones", () => {
     });
     const today = rows.find(r => r.tag === "Today");
     expect(today).toEqual({ age: 30, total: 225_000, tag: "Today", tc: "good" });
+  });
+});
+
+describe("calcTaxDiversification (#56)", () => {
+  it("returns null when totalAtRet <= 0", () => {
+    expect(calcTaxDiversification({
+      trad: 0, roth: 0, taxable: 0, hsa: 0, totalAtRet: 0,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    })).toBeNull();
+    expect(calcTaxDiversification({
+      trad: 10, roth: 10, taxable: 10, hsa: 0, totalAtRet: -5,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    })).toBeNull();
+  });
+
+  it("classifies a well-diversified split as low/good, not concentrated", () => {
+    const r = calcTaxDiversification({
+      trad: 30, roth: 30, taxable: 30, hsa: 10, totalAtRet: 100,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    });
+    expect(r.preTaxPct).toBe(30);
+    expect(r.taxFreePct).toBe(40); // roth 30 + hsa 10
+    expect(r.taxablePct).toBe(30);
+    expect(r.level).toBe("low");
+    expect(r.levelLabel).toBe("Well diversified");
+    expect(r.tone).toBe("good");
+    expect(r.concentrated).toBe(false);
+    // div-by-zero guard: effectiveRMDTaxRate 0 → rateRiseCost null
+    expect(r.rateRiseCost).toBeNull();
+  });
+
+  it("classifies a highly pre-tax-concentrated split as high/warm, with a rate-rise cost", () => {
+    const r = calcTaxDiversification({
+      trad: 90, roth: 5, taxable: 5, hsa: 0, totalAtRet: 100,
+      rmdTaxBite: 200_000, effectiveRMDTaxRate: 0.2,
+    });
+    expect(r.preTaxPct).toBe(90);
+    expect(r.level).toBe("high");
+    expect(r.levelLabel).toBe("Highly concentrated");
+    expect(r.tone).toBe("warm");
+    expect(r.concentrated).toBe(true);
+    expect(r.rateRiseCost).toBe(50_000); // round(200000 * 0.05 / 0.2)
+  });
+
+  it("classifies a moderate pre-tax-heavy split as moderate/warm, not concentrated", () => {
+    const r = calcTaxDiversification({
+      trad: 70, roth: 20, taxable: 10, hsa: 0, totalAtRet: 100,
+      rmdTaxBite: 0, effectiveRMDTaxRate: 0,
+    });
+    expect(r.preTaxPct).toBe(70);
+    expect(r.level).toBe("moderate");
+    expect(r.levelLabel).toBe("Pre-tax heavy");
+    expect(r.tone).toBe("warm");
+    expect(r.concentrated).toBe(false);
+  });
+
+  it("div-by-zero guard: rateRiseCost is null when effectiveRMDTaxRate is 0, even with a positive rmdTaxBite", () => {
+    const r = calcTaxDiversification({
+      trad: 90, roth: 5, taxable: 5, hsa: 0, totalAtRet: 100,
+      rmdTaxBite: 500_000, effectiveRMDTaxRate: 0,
+    });
+    expect(r.rateRiseCost).toBeNull();
   });
 });

@@ -3,7 +3,7 @@
 // used is RMD_START_AGE (for the lifetime-chart milestone gate); balances come
 // pre-computed on the rows.
 
-import { RMD_START_AGE } from "../config/irs-2026.js";
+import { RMD_START_AGE, ASSUMPTIONS } from "../config/irs-2026.js";
 
 // Sum the four account balances on a single chart/sim row. The rows consumed here
 // are App-augmented simData rows that carry a "Trad 401k" key (added after
@@ -169,11 +169,73 @@ export function buildAccumulationRows({ simData, fedMarginal, currentAge, curren
 // point, and calcChartMilestones' Today anchor had no row to read — the source of
 // the Accounts-tab "Today · $0" pill. Same basis as horizonProps.currentTotalSaved,
 // so the pill and the Accounts banner agree by construction.
-export function buildAccumChart({ simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA }) {
-  const rows = [{ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA }];
-  for (const d of simData) {
-    rows.push({ age: d.age, total: sumAccountRow(d) });
+// #30 interop fix: optional household terms. spouseSimData (default []) is
+// ZIPPED BY INDEX against `simData`, not joined by `age` — both are generated
+// over the same shared `totalYears` (App.jsx), one row per calendar year, but
+// carry each person's OWN age in their `age` field (a spouse of a different
+// age would never match by age value). The merged row keeps PRIMARY's age
+// (`d.age`) since the chart's x-axis is the primary user's age throughout the
+// app. Absent spouse args (spouseSimData=[], spouseStartingBal=0) reproduces
+// the pre-#30 single-person chart exactly — golden master safe.
+export function buildAccumChart({
+  simData, safeRetAge, currentAge, bal401k, balRoth, balTaxable, balHSA,
+  spouseSimData = [], spouseStartingBal = 0,
+}) {
+  const rows = [{ age: currentAge, total: bal401k + balRoth + balTaxable + balHSA + spouseStartingBal }];
+  for (let i = 0; i < simData.length; i++) {
+    const d = simData[i];
+    const spouseTotal = spouseSimData[i] ? sumAccountRow(spouseSimData[i]) : 0;
+    rows.push({ age: d.age, total: sumAccountRow(d) + spouseTotal });
     if (d.age >= safeRetAge) break;
   }
   return rows;
+}
+
+// ── Tax diversification score (#56) ──────────────────────────────────────────
+// The tax-character split of the portfolio AT RETIREMENT (same three buckets the
+// Accounts tab shows): pre-tax (Traditional 401k), tax-free (Roth + HSA), and
+// taxable. Returns integer percentages of totalAtRet, a threshold-classified
+// concentration level + render-ready label + tone (rule 10 — the screen maps a
+// STRING to a color, never compares a %), and the "if rates rise N pts" companion
+// cost against the projected lifetime RMD tax bill.
+//
+// Concentration keys off the PRE-TAX share (the rising-rate risk): below MODERATE
+// = "low" (well diversified, good tone); MODERATE..HIGH = "moderate" (pre-tax
+// heavy, warm); above HIGH = "high" (highly concentrated, warm — there is no red
+// tone in the Horizon palette, so "high" differs from "moderate" by COPY, not a
+// fabricated color).
+//
+// rateRiseCost = rmdTaxBite × (RATE_RISE_SCENARIO_PCT/100) / effectiveRMDTaxRate —
+// null when effectiveRMDTaxRate is 0 (div-by-zero guard) so the screen renders "—".
+// Returns null when totalAtRet ≤ 0 (nothing to classify) — screen shows nothing.
+export function calcTaxDiversification({ trad, roth, taxable, hsa, totalAtRet, rmdTaxBite, effectiveRMDTaxRate }) {
+  if (!(totalAtRet > 0)) return null;
+  const preTax  = Math.max(0, trad ?? 0);
+  const taxFree = Math.max(0, roth ?? 0) + Math.max(0, hsa ?? 0);
+  const taxableAmt = Math.max(0, taxable ?? 0);
+
+  const preTaxPct  = Math.round((preTax  / totalAtRet) * 100);
+  const taxFreePct = Math.round((taxFree / totalAtRet) * 100);
+  const taxablePct = Math.round((taxableAmt / totalAtRet) * 100);
+
+  const level = preTaxPct > ASSUMPTIONS.TAX_DIVERSIFICATION_HIGH_PCT ? "high"
+    : preTaxPct >= ASSUMPTIONS.TAX_DIVERSIFICATION_MODERATE_PCT ? "moderate" : "low";
+  const levelLabel = level === "high" ? "Highly concentrated"
+    : level === "moderate" ? "Pre-tax heavy" : "Well diversified";
+  const tone = level === "low" ? "good" : "warm";
+
+  const riseRatePct = ASSUMPTIONS.RATE_RISE_SCENARIO_PCT;
+  const rateRiseCost = effectiveRMDTaxRate > 0
+    ? Math.round((rmdTaxBite ?? 0) * (riseRatePct / 100) / effectiveRMDTaxRate)
+    : null;
+
+  return {
+    preTax, taxFree, taxable: taxableAmt,
+    preTaxPct, taxFreePct, taxablePct,
+    level, levelLabel, tone,
+    riseRatePct, rateRiseCost,
+    // The pre-tax share crossing the HIGH threshold is what the concentration
+    // signal fires on — the flag travels with the data (principle 8).
+    concentrated: level === "high",
+  };
 }

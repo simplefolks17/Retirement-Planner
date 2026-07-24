@@ -3,6 +3,7 @@ import {
   applyMoneyEvents, totalEventImpact,
   eventNetForYear, eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
   isDurationEvent, eventAmountForYear, eventIncomeForYear, eventsIncomeAdjustment,
+  monthsActiveInYear,
 } from "../money-events.js";
 
 describe("applyMoneyEvents", () => {
@@ -251,9 +252,17 @@ describe("duration events", () => {
     expect(applyMoneyEvents(events, 42).portfolioAdjustment).toBe(0);
   });
 
-  it("duration events never produce taxable income (documented simplification)", () => {
-    const flagged = { ...travel6mo, isInflow: true, isTaxable: true };
+  it("a duration event's own income term is now taxed via applyMoneyEvents (narrows BUG-36)", () => {
+    // The one-time isTaxable flag still doesn't apply to duration events (they
+    // don't carry isTaxable at all) — but the event's OWN prorated incomeAnnual
+    // now flows into taxableIncomeAdjustment unconditionally, whether the event
+    // is flagged isTaxable or not (duration events have no isTaxable concept).
+    const flagged = { ...travel6mo, isInflow: true, isTaxable: true }; // incomeAnnual: 0
     expect(applyMoneyEvents([flagged], 40).taxableIncomeAdjustment).toBe(0);
+
+    const withIncome = { ...travel6mo, incomeAnnual: 24_000 };
+    // 6 months active × (6/12 × 24,000) = 12,000
+    expect(applyMoneyEvents([withIncome], 40).taxableIncomeAdjustment).toBe(12_000);
   });
 
   it("totalEventImpact includes duration events", () => {
@@ -381,5 +390,73 @@ describe("eventsIncomeAdjustment", () => {
   it("a duration outflow with undefined incomeAnnual does not qualify (legacy event = no statement about income)", () => {
     const ev = { monthlyAmount: 1_500, durationMonths: 12, age: 50, isInflow: false };
     expect(eventsIncomeAdjustment([ev], 50)).toEqual({ pausedMonths: 0, workedFrac: 1, eventIncome: 0 });
+  });
+});
+
+// ── Slice A extension: per-event growth (growthPct) + open-ended events
+//    (untilAge) + retirement-phase duration-event income taxation ─────────────
+describe("growth + open-ended (moneyEvents extension)", () => {
+  it("growth compounding on a flat duration event's monthly term", () => {
+    const ev = { monthlyAmount: 1_000, durationMonths: 24, age: 40, isInflow: false, growthPct: 10 };
+    expect(eventNetForYear(ev, 40)).toBe(-12_000);          // k=0, factor 1
+    expect(eventNetForYear(ev, 41)).toBeCloseTo(-13_200, 6); // k=1, 1000*12*1.1
+    expect(eventGrossCost(ev)).toBeCloseTo(25_200, 6);       // 12,000 + 13,200
+    expect(eventNetTotal(ev)).toBeCloseTo(-25_200, 6);
+  });
+
+  it("growth compounding on the incomeAnnual term", () => {
+    const ev = {
+      monthlyAmount: 1_000, durationMonths: 24, age: 40, isInflow: false,
+      incomeAnnual: 20_000, growthPct: 10,
+    };
+    expect(eventIncomeForYear(ev, 41)).toBeCloseTo(22_000, 6); // 20,000 * 1.1
+  });
+
+  it("no growthPct is byte-identical (factor 1× at every age)", () => {
+    const ev = { monthlyAmount: 1_000, durationMonths: 24, age: 40, isInflow: false };
+    expect(eventNetForYear(ev, 41)).toBe(-12_000);
+  });
+
+  it("untilAge resolves an open-ended span with no durationMonths", () => {
+    const ev = { monthlyAmount: 5_000, age: 70, untilAge: 90, isInflow: false };
+    expect(isDurationEvent(ev)).toBe(true);
+    expect(eventLastAge(ev)).toBe(90);
+    expect(monthsActiveInYear(ev, 75)).toBe(12);
+    expect(eventNetForYear(ev, 90)).toBe(-60_000);
+    expect(eventNetForYear(ev, 91)).toBe(0);
+  });
+
+  it("untilAge wins over durationMonths when both are present", () => {
+    const ev = { monthlyAmount: 5_000, durationMonths: 6, untilAge: 80, age: 70, isInflow: false };
+    expect(eventLastAge(ev)).toBe(80);
+  });
+
+  it("untilAge before age degenerates to a zero span (not a duration event)", () => {
+    const ev = { monthlyAmount: 5_000, age: 70, untilAge: 65, isInflow: false };
+    expect(isDurationEvent(ev)).toBe(false);
+  });
+
+  it("applyMoneyEvents taxes a duration event's retirement-phase income", () => {
+    const ev = {
+      monthlyAmount: 6_000, durationMonths: 6, age: 70, isInflow: false, incomeAnnual: 24_000,
+    };
+    expect(applyMoneyEvents([ev], 70).taxableIncomeAdjustment).toBe(12_000);
+
+    const noIncome = { ...ev, incomeAnnual: 0 };
+    expect(applyMoneyEvents([noIncome], 70).taxableIncomeAdjustment).toBe(0);
+
+    const withGrowth = { ...ev, durationMonths: 24, growthPct: 10 };
+    // Year 2 (age 71): full 12 months active (24-month span), incomeAnnual scaled by 1.1
+    expect(applyMoneyEvents([withGrowth], 71).taxableIncomeAdjustment).toBeCloseTo(26_400, 6);
+  });
+
+  it("eventAmountForYear + eventIncomeForYear still sum to eventNetForYear with growth + untilAge", () => {
+    const ev = {
+      monthlyAmount: 4_000, age: 65, untilAge: 85, isInflow: false,
+      incomeAnnual: 10_000, growthPct: 5,
+    };
+    for (const age of [64, 65, 70, 75, 85, 86]) {
+      expect(eventAmountForYear(ev, age) + eventIncomeForYear(ev, age)).toBe(eventNetForYear(ev, age));
+    }
   });
 });

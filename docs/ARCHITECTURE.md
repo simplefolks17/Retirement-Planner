@@ -196,6 +196,27 @@ invariants Classic enforces.
 | `conversion` | conversionMode, conversionBracketTarget, annualConversionAmt, conversionTaxSource |
 | `health` | hasMarketplaceInsurance, householdSize, marketplaceMonthlyPremium, hasMedicare, personOnMedicare |
 | `assumptions` | currentAge, retirementAge, lifeExpect (coupled setters), returnRate, inflationRate, retirementState, savingsSurplusPct |
+| `spouseAccounts` (#30, premium) | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib }` — no per-account `contribEnd`; the spouse contributes until the household retirement), hsaCoverageType (`self`/`family`), matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
+
+**`spouseAccounts` (#30) — spouse account modeling.** Same self-describing field
+convention as `accounts`. The spouse's HSA contribution cap is `HSA_FAMILY_LIMIT_2026`
+(not the self-only limit) because the family HDHP limit is a **shared household
+ceiling** — App splits it between the two earners (primary draws first, spouse gets
+the remainder) and passes each `runSimulation` its own effective `hsaLimit` (rule 4).
+The card is gated on the model-provided `spouseAccountsApplicable` flag (`isMarried ||
+spouseIncome > 0`) and rendered behind `LockedCard` when `entitlements.isPremium`
+is false (the first premium-gated surface). **Household model:** a second
+`runSimulation` run projects the spouse's accounts to the household retirement year;
+`totalAtRet`, the drawdown chart, and `retVals` display cards are HOUSEHOLD (primary +
+spouse), while the conversion sim / optimizer / withdrawal card keep reading the
+**primary** per-account scalars (primary-modeled strategies). The retirement engine
+(`buildRetirementWalkByAccount`) carries a second Traditional 401k bucket
+(`tradGrossSpouse`) with its **own** RMD schedule keyed to the spouse's age
+(`spouseRmdStartAge`) — so a younger spouse's RMDs begin later — feeding the ONE joint
+tax walk (both RMDs stacked together for a single bracket-accurate tax; Roth/taxable/HSA
+stay merged household buckets — no per-person tax-timing difference). With no spouse
+data every value collapses to the primary total (golden master untouched). Combined
+per-account toggle + household budget view are deferred to #31/#32.
 
 The Roth-conversion **window** fields (`conversionStartAge`/`conversionEndAge`), the
 in-service toggle, and `conversionEvents` are intentionally **not** in the `conversion`
@@ -516,15 +537,31 @@ props bundle:
 | `removeEvent(id)` | filters `moneyEvents` to drop the matching id | `LifeEventSheet`'s `onRemove`, via Plan's + Ideas' edit-in-place "Remove from plan" |
 | `commitPlan({...})` | `retirementAge`, `annualExpenses` (or `monthlySpend`), optionally `currentAge`/`currentIncome`, and snapshots `committedPlan` | onboarding's done screen ("Save as my plan"); internally by `applyPlanLevers` after it writes the coupled setters, so every lever apply also refreshes the `committedPlan` snapshot |
 
-**Gating composition point (for WI-5.2):** all gating composes in the App memo that
-computes `available` — entitlements/`readOnly` flags will be AND-ed into `available` and
-into field `.set` wrappers App-side; flows and the modal never import or test entitlements.
-For a site with a `revert` sibling, the SAME composition applies to `revert` — it is not
-exempt just because it bypasses the modal; a future `readOnly` wrap must be able to disable
-`apply` and `revert` identically (not yet implemented — `surplusView.applyAllocation.revert`
-is unconditionally live today, which is harmless while nothing is `readOnly`, but is the
-named TODO for whichever WI adds the wrap). For a site-builder (above), the composition must
-live *inside* the builder function, since there's no static object to wrap at construction.
+**Gating composition point (SHIPPED WI-5.2 / #113):** all gating composes in the App
+memo that computes `available` — the entitlements `readOnly` flag is AND-ed into
+`available` and every field `.set` / callback is wrapped with the module-level
+`guardWrite(fn, readOnly)` helper (App.jsx) at construction; flows and the modal never
+import or test entitlements. `guardWrite` returns the original fn unchanged when
+`!readOnly` (identity-stable → V9 unaffected) or a shared no-op when `readOnly`, so
+`readOnly: true` makes every write surface inert with no screen restructuring. For a
+site with a `revert` sibling, the SAME composition applies to `revert` — it is **not**
+exempt because it bypasses the modal: `surplusView.applyAllocation.revert` is now
+`guardWrite(revertAllocation, readOnly)` in both the available and unavailable branches,
+identically to `apply` (this closes the former "revert unconditionally live" TODO). For
+a site-builder (above), the composition lives *inside* the builder function, since
+there's no static object to wrap at construction.
+
+**`entitlements` bundle (SHIPPED WI-5.2 / #113):** `horizonProps.entitlements =
+{ isPremium: boolean, readOnly: boolean }`, separately memoized-adjacent (a stable
+`useState` value; V9 auto-covered). Read at init by `readEntitlements()` — a browser
+`localStorage` flip (`hz-premium`/`hz-readonly` via `safeGet`) or a node-test
+`globalThis.__HZ_ENTITLEMENTS__` override; no user-facing toggle ships this batch.
+Defaults `{ isPremium: true, readOnly: false }` render byte-identical to pre-WI-5.2
+(nothing is premium-gated yet, so `isPremium` gates no surface; `readOnly:false` leaves
+every setter live). `readOnly` is the flag `guardWrite` and the Apply-site `available`
+composition consume. `LockedCard` (`src/horizon/LockedCard.jsx`) is the shared quiet-lock
+renderer (SP-1) a screen shows behind an `isPremium` gate — first consumers arrive with
+#30 / #116.
 Companion convention: **every writable thing on a view bundle is one of three shapes** —
 a `{ value, set }` field object, a registry-listed Apply callback, or a **list-mutation
 callback** (`add` / `remove` on a collection like `conversionView.events` or `eventsView.rows[].remove`).

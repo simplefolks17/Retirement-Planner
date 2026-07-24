@@ -324,6 +324,21 @@ describe("PlanScreen — Explore tray: Try a change facet", () => {
     expect(buttonsByText(renderer.root, "Apply changes").length).toBe(0);
     act(() => renderer.unmount());
   });
+
+  it("#85: Apply modal shows a real verdict badge from the lever preview", () => {
+    const { renderer } = mount();
+    openFacet(renderer, "Try a change");
+    const retireInput = rangeInputs(renderer.root).find(n => n.props["aria-label"] === "Retire at");
+    act(() => { retireInput.props.onChange({ target: { value: String(safeRetAge - 2) } }); });
+
+    act(() => { buttonsByText(renderer.root, "Apply changes")[0].props.onClick(); });
+    expect(allText(renderer.root)).toContain("Apply these changes?");
+
+    const text = allText(renderer.root);
+    expect(["Comfortable", "Tight", "Doesn't fit"].some(v => text.includes(v))).toBe(true);
+
+    act(() => renderer.unmount());
+  });
 });
 
 describe("PlanScreen — Explore tray: Goals facet", () => {

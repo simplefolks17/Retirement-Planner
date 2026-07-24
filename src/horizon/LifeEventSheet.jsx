@@ -43,11 +43,28 @@ function seedIncomeForAge(bounds, age) {
   return Number.isFinite(lookup) ? lookup : 0;
 }
 
+// Duration-length + escalation fields for the composed event (module-level so
+// the candidate/modelCandidate memos depend only on the primitives, not a
+// per-render object): "until" mode carries an open-ended untilAge (durationMonths
+// omitted); "months" mode carries the fixed durationMonths (untilAge omitted).
+// growthPct is added only when > 0, so a flat event's saved shape stays
+// byte-identical to a legacy event.
+function composeDurationFields(durationMode, monthlyAmount, durationMonths, effUntilAge, growthPct) {
+  const base = durationMode === "until"
+    ? { monthlyAmount, untilAge: effUntilAge }
+    : { monthlyAmount, durationMonths };
+  return growthPct > 0 ? { ...base, growthPct } : base;
+}
+
 export default function LifeEventSheet({
   t, whatIfBundle, bounds, initial, onSave, onRemove, onCancel,
 }) {
   const isEdit = initial?.id != null;
-  const seedIsDuration = (initial?.durationMonths ?? 0) > 0;
+  // A seed is a duration event if it carries a monthly amount AND a span — either
+  // a fixed durationMonths OR an open-ended untilAge (money-events extension: an
+  // untilAge-only preset like "Mortgage paid off" has no durationMonths).
+  const seedIsDuration = initial?.monthlyAmount != null
+    && ((initial?.durationMonths ?? 0) > 0 || initial?.untilAge != null);
 
   const [label, setLabel]                   = useState(initial?.label ?? "Life event");
   const [isInflow, setIsInflow]             = useState(initial?.isInflow ?? false);
@@ -56,6 +73,21 @@ export default function LifeEventSheet({
   const [monthlyAmount, setMonthlyAmount]   = useState(initial?.monthlyAmount ?? 5_000);
   const [durationMonths, setDurationMonths] = useState(initial?.durationMonths ?? 6);
   const [age, setAge]                       = useState(initial?.age ?? bounds.retirementAge);
+  // Duration length mechanism (money-events extension): "months" = a fixed
+  // durationMonths (the 36-month slider, unchanged); "until" = an open-ended
+  // untilAge ("runs through age X, then stops" — expense step-downs). Seeded to
+  // whichever the incoming event carries. `growthPct` is an optional annual
+  // escalation on the monthly + income terms (0 = flat = byte-identical to a
+  // legacy event; only written onto the saved event when > 0).
+  const [durationMode, setDurationMode]     = useState(initial?.untilAge != null ? "until" : "months");
+  const [untilAge, setUntilAge]             = useState(
+    initial?.untilAge ?? Math.min(bounds.maxAge, (initial?.age ?? bounds.retirementAge) + 10));
+  const [growthPct, setGrowthPct]           = useState(initial?.growthPct ?? 0);
+  // untilAge must always sit strictly after the start age and within the plan
+  // horizon — the slider min is age+1, so clamp the stored value the same way
+  // (age can move after untilAge was set). Used for both the slider and the
+  // saved candidate so they can't disagree.
+  const effUntilAge = Math.max(age + 1, Math.min(bounds.maxAge, untilAge));
 
   // "Your income during this time" seeding (owner decision: incomeAnnual means
   // "my total income during this period," not a bolt-on offset — money-events.js).
@@ -95,9 +127,12 @@ export default function LifeEventSheet({
     // typed earlier (while isInflow was false) stays in state — force it to 0
     // for money-in events so a stale field never gets saved or evaluated.
     return mode === "monthly"
-      ? { ...common, monthlyAmount, durationMonths, incomeAnnual: isInflow ? 0 : incomeAnnual }
+      ? { ...common,
+          ...composeDurationFields(durationMode, monthlyAmount, durationMonths, effUntilAge, growthPct),
+          incomeAnnual: isInflow ? 0 : incomeAnnual }
       : { ...common, amount };
-  }, [label, icon, age, isInflow, mode, amount, monthlyAmount, durationMonths, incomeAnnual, initial?.id]);
+  }, [label, icon, age, isInflow, mode, amount, monthlyAmount, durationMode,
+      durationMonths, effUntilAge, growthPct, incomeAnnual, initial?.id]);
 
   // L1: the MODEL-facing candidate — numeric/model fields only (no label/icon,
   // which the model never reads but which change on every keystroke in the
@@ -110,9 +145,12 @@ export default function LifeEventSheet({
     // model-facing candidate independently (the two memos intentionally don't
     // share a definition — see the comment above `modelCandidate`).
     return mode === "monthly"
-      ? { ...common, monthlyAmount, durationMonths, incomeAnnual: isInflow ? 0 : incomeAnnual }
+      ? { ...common,
+          ...composeDurationFields(durationMode, monthlyAmount, durationMonths, effUntilAge, growthPct),
+          incomeAnnual: isInflow ? 0 : incomeAnnual }
       : { ...common, amount };
-  }, [age, isInflow, mode, amount, monthlyAmount, durationMonths, incomeAnnual, initial?.id]);
+  }, [age, isInflow, mode, amount, monthlyAmount, durationMode, durationMonths,
+      effUntilAge, growthPct, incomeAnnual, initial?.id]);
 
   // ONE model run per model-candidate change — verdict, deltas, and (future)
   // overlay all come from this result, so they can never disagree (V1/principle 7).
@@ -126,10 +164,12 @@ export default function LifeEventSheet({
   // model candidate minus durationMonths (buildDurationRail's contract — it
   // sets durationMonths per step itself).
   const durationEventBase = useMemo(() => {
-    if (mode !== "monthly") return null;
+    // The rail sweeps durationMonths, so it applies to the fixed-length ("months")
+    // sub-mode only — an open-ended (untilAge) event has no month count to sweep.
+    if (mode !== "monthly" || durationMode !== "months") return null;
     const { durationMonths: _drop, ...base } = modelCandidate;
     return base;
-  }, [modelCandidate, mode]);
+  }, [modelCandidate, mode, durationMode]);
 
   const durationRail = useMemo(
     () => (whatIfBundle && durationEventBase
@@ -278,17 +318,55 @@ export default function LifeEventSheet({
                 </div>
               )}
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <div style={fieldLabel}>For how long</div>
-                <div style={{ font: `600 12px ${HM}`, color: t.accent }}>
-                  {durationMonths} month{durationMonths === 1 ? "" : "s"}
+            {/* duration length: fixed months vs open-ended until-age */}
+            <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
+              <button type="button" onClick={() => setDurationMode("months")}
+                aria-pressed={durationMode === "months"} style={seg(durationMode === "months")}>
+                For a set time
+              </button>
+              <button type="button" onClick={() => setDurationMode("until")}
+                aria-pressed={durationMode === "until"} style={seg(durationMode === "until")}>
+                Until an age
+              </button>
+            </div>
+            {durationMode === "months" ? (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div style={fieldLabel}>For how long</div>
+                  <div style={{ font: `600 12px ${HM}`, color: t.accent }}>
+                    {durationMonths} month{durationMonths === 1 ? "" : "s"}
+                  </div>
+                </div>
+                <input type="range" min="1" max={DURATION_MAX_MONTHS} step="1" value={durationMonths}
+                  onChange={e => setDurationMonths(Number(e.target.value))}
+                  aria-label="Duration in months" style={{ width: "100%", accentColor: t.accent }} />
+                <VerdictTickRail t={t} rail={durationRail} legend={result?.verdictInfo?.rangeLegend} />
+              </div>
+            ) : (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div style={fieldLabel}>Runs until age</div>
+                  <div style={{ font: `600 12px ${HM}`, color: t.accent }}>{effUntilAge}</div>
+                </div>
+                <input type="range" min={age + 1} max={bounds.maxAge} step="1" value={effUntilAge}
+                  onChange={e => setUntilAge(Number(e.target.value))}
+                  aria-label="Runs until age" style={{ width: "100%", accentColor: t.accent }} />
+                <div style={{ font: `400 10.5px ${HF}`, color: t.mut, marginTop: 4 }}>
+                  Runs from {age} through {effUntilAge}, then stops
+                  {effUntilAge >= bounds.maxAge ? " (rest of your plan)" : ""}.
                 </div>
               </div>
-              <input type="range" min="1" max={DURATION_MAX_MONTHS} step="1" value={durationMonths}
-                onChange={e => setDurationMonths(Number(e.target.value))}
-                aria-label="Duration in months" style={{ width: "100%", accentColor: t.accent }} />
-              <VerdictTickRail t={t} rail={durationRail} legend={result?.verdictInfo?.rangeLegend} />
+            )}
+            {/* optional annual escalation (money-events extension: growthPct) */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={fieldLabel}>Grows each year (optional)</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="number" min="0" step="0.5" value={growthPct}
+                  onChange={e => setGrowthPct(Math.max(0, Number(e.target.value) || 0))}
+                  aria-label="Annual growth percent"
+                  style={{ ...numInput, width: 90 }} />
+                <span style={{ font: `500 12px ${HF}`, color: t.mut }}>%/yr</span>
+              </div>
             </div>
           </>
         )}
@@ -324,7 +402,9 @@ export default function LifeEventSheet({
                 Total: {fmt(result.grossCost)}
                 {mode === "monthly" && (
                   <span style={{ color: t.mut }}>
-                    {" "}({fmt(monthlyAmount)}/mo for {durationMonths} mos)
+                    {" "}({fmt(monthlyAmount)}/mo {durationMode === "until"
+                      ? `through age ${effUntilAge}`
+                      : `for ${durationMonths} mos`})
                   </span>
                 )}
               </li>

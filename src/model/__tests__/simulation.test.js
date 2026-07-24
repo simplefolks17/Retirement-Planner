@@ -44,6 +44,25 @@ describe("runSimulation — IRS limits", () => {
     }
   });
 
+  it("optional hsaLimit param caps the realized HSA contribution at a lower ceiling (#30)", () => {
+    // App will pass a lower per-person effective limit when a spouse account
+    // shares the family HSA ceiling. A lower hsaLimit must actually bind.
+    const rows = defaultSim({ contribHSA: 99_999, hsaLimit: 2_000 });
+    for (const row of rows) {
+      if (row.cHSA > 0) expect(row.cHSA).toBeLessThanOrEqual(2_000);
+    }
+    expect(Math.max(...rows.map(r => r.cHSA))).toBeCloseTo(2_000, 5);
+  });
+
+  it("omitting hsaLimit reproduces the default $4,400 cap exactly (golden-master safety)", () => {
+    const withDefault = defaultSim({ contribHSA: 99_999 });
+    const withExplicitDefault = defaultSim({ contribHSA: 99_999, hsaLimit: undefined });
+    expect(withExplicitDefault).toEqual(withDefault);
+    for (const row of withDefault) {
+      if (row.cHSA > 0) expect(row.cHSA).toBeLessThanOrEqual(4_400);
+    }
+  });
+
   it("Roth contribution drops to 0 when MAGI crosses phase-out (single: $153K–$168K)", () => {
     // At $140K income + 3% growth, MAGI clears the $168K band top within ~15 years → Roth = 0
     const rows = defaultSim({ currentIncome: 140_000, contribRoth: 7_500 });

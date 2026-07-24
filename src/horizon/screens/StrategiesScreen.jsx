@@ -29,18 +29,22 @@ import { HF, HM } from "../ThemeContext.jsx";
 // hardcode "73"/"67" in strings (the BUG-25 / WI-0.1 anti-pattern).
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 import { fmt } from "../../formatters.js";   // calm money — card headlines are derived summaries, not editable readouts
+import { signalToneKey, signalValueText } from "../../model/signals.js"; // one tone/value source, shared with Plan's SignalsStrip
 import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
 import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
 import ConversionPlannerFlow from "./strategies/ConversionPlannerFlow.jsx";
 import WithdrawalOrderFlow from "./strategies/WithdrawalOrderFlow.jsx";
 import SurplusDeploymentFlow from "./strategies/SurplusDeploymentFlow.jsx";
 import MegaBackdoorFlow from "./strategies/MegaBackdoorFlow.jsx";
+import WorkLongerFlow from "./strategies/WorkLongerFlow.jsx";
+import LockedCard from "../LockedCard.jsx";
 
 // ── strategy catalogue ───────────────────────────────────────────────────────
 const SECTIONS = [
   { id: "taxes",    label: "Taxes" },
   { id: "income",   label: "Income timing" },
   { id: "accounts", label: "Accounts" },
+  { id: "assets",   label: "Assets" },
 ];
 
 // Flow: the interactive flow component, or null for a read-only stub (slot filled
@@ -51,6 +55,7 @@ const STRATEGIES = [
   { id: "conversion", section: "taxes",    title: "Roth conversion",        wi: "3.6", Flow: ConversionPlannerFlow },
   { id: "withdrawal", section: "taxes",    title: "Withdrawal order",       wi: "3.7", Flow: WithdrawalOrderFlow },
   { id: "ss",         section: "income",   title: "Social Security timing", wi: "3.4", Flow: SSTimingFlow },
+  { id: "worklonger", section: "income",   title: "Working longer",         wi: "5.5", Flow: WorkLongerFlow },
   { id: "rmd",        section: "accounts", title: "RMD outlook",            wi: "3.5", Flow: RMDOutlookFlow },
   { id: "surplus",    section: "accounts", title: "Surplus deployment",     wi: "3.7", Flow: SurplusDeploymentFlow },
   { id: "mega",       section: "accounts", title: "Mega backdoor",          wi: "3.7", Flow: MegaBackdoorFlow },
@@ -61,10 +66,19 @@ const BLURB = {
   conversion: "Move pre-tax savings to Roth in low-income years to cut lifetime tax.",
   withdrawal: "Draw accounts in the tax-smart order to keep more each year.",
   ss:         "When you claim sets your monthly benefit for life.",
+  worklonger: "Each extra working year adds savings, lifts Social Security, and shortens the conversion window.",
   rmd:        `Required withdrawals from your 401k start at age ${RMD_START_AGE}.`,
   surplus:    "Put money you're not yet investing to work, in IRS-priority order.",
   mega:       "Extra after-tax 401k space, converted to Roth.",
 };
+
+// Premium lock predicate (#116 / SP-1): a registry entry may declare `premium: true`
+// (NONE do today). A premium card locks only when the user is NOT premium. Exported
+// so the flag-flip mechanism is unit-testable without a real premium card in the
+// registry. Default entitlements.isPremium is true → nothing locks.
+export function isCardLocked(entry, entitlements) {
+  return !!entry?.premium && entitlements?.isPremium === false;
+}
 
 // Per-card face: { applicable, headline, sub, tone }. Reads model fields only;
 // the only branch is a display sign label (allowed — it's formatting, not math).
@@ -103,6 +117,15 @@ function faceFor(id, props) {
         headline: `${fmt(v.ssMonthly)}/mo`,
         sub: `claiming at age ${v.claimAge}`,
         tone: "accent",
+      };
+    }
+    case "worklonger": {
+      const v = props.workLongerView;
+      return {
+        applicable: sv.worklonger.applicable,
+        headline: v ? v.headline : "—",
+        sub: v ? v.sub : "",
+        tone: "good",
       };
     }
     case "rmd": {
@@ -153,6 +176,40 @@ function detailRows(id, props) {
     default:
       return [];
   }
+}
+
+// For-you strip (SP-1): the SAME calcSignals ranking Plan uses, capped at 3
+// (props.strategiesForYou = calcSignals(sameInputs, 3)). One brain, two surfaces.
+// Deep-links via navigate() exactly like Plan's SignalsStrip. Renders nothing when
+// empty or when no navigate is available (no empty chrome).
+function ForYouStrip({ t, forYou, navigate, isMobile }) {
+  const items = forYou ?? [];
+  if (items.length === 0 || !navigate) return null;
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ font: `600 12px ${HF}`, color: t.accent, letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 10 }}>For you</div>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10 }}>
+        {items.map(sig => (
+          <button key={sig.id} type="button"
+            onClick={() => navigate(sig.target.screen, sig.target.subView)}
+            style={{ flex: 1, textAlign: "left", minHeight: 44, cursor: "pointer",
+              background: t.surf2, border: `1px solid ${t.line2}`, borderRadius: 13,
+              padding: "10px 14px", font: "inherit", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ font: `600 16px ${HM}`, flexShrink: 0,
+              color: t[signalToneKey(sig)] }}>
+              {signalValueText(sig, fmt)}
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: "block", font: `600 13px ${HF}`, color: t.ink }}>{sig.title}</span>
+              <span style={{ display: "block", font: `400 12px ${HF}`, color: t.mut, marginTop: 1 }}>
+                {sig.body} <span style={{ color: t.accent }}>→</span>
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // ── card ─────────────────────────────────────────────────────────────────────
@@ -246,17 +303,22 @@ function StrategyDetail({ t, entry, props, isMobile, onBack }) {
 // initialStrategy (optional): a strategy id to open on arrival when another
 // screen deep-links here via navigate("strategies", id). Mirrors the
 // initialTab / initialMode pattern used by Numbers / Ideas.
-export default function StrategiesScreen({ t, props, isMobile = false, initialStrategy = null }) {
+export default function StrategiesScreen({ t, props, isMobile = false, initialStrategy = null, navigate = null }) {
   const [selected, setSelected] = useState(initialStrategy ?? null);
-  // Keep the open card in sync with the deep-link target BOTH ways: open it when a
-  // target arrives, and return to the grid when the tab is re-selected without one
-  // (navigate("strategies") clears subView → initialStrategy null).
+  // "Browse all strategies" reveal: non-applicable free cards are hidden by
+  // default (SP-1: typical visible 5–8) until the user opts to see everything.
+  const [showAll, setShowAll] = useState(false);
   useEffect(() => { setSelected(initialStrategy ?? null); }, [initialStrategy]);
 
   const entry = selected ? STRATEGIES.find(s => s.id === selected) : null;
   if (entry) {
     return <StrategyDetail t={t} entry={entry} props={props} isMobile={isMobile} onBack={() => setSelected(null)} />;
   }
+
+  // A card shows by default when it's applicable (active) OR premium-locked (the
+  // quiet upsell stays visible); non-applicable FREE cards hide until "Browse all".
+  const shownByDefault = (e) => isCardLocked(e, props.entitlements) || faceFor(e.id, props).applicable;
+  const hiddenCount = STRATEGIES.filter(e => !shownByDefault(e)).length;
 
   return (
     <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "20px 16px 40px" : "28px 36px 48px" }}>
@@ -266,10 +328,13 @@ export default function StrategiesScreen({ t, props, isMobile = false, initialSt
           Ways to keep more of what you've built. Tap any to see what it's worth.
         </div>
 
+        <ForYouStrip t={t} forYou={props.strategiesForYou} navigate={navigate} isMobile={isMobile} />
+
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {SECTIONS.map(section => {
-            const items = STRATEGIES.filter(s => s.section === section.id);
-            if (items.length === 0) return null;   // empty editorial sections don't render (SP-1)
+            const all = STRATEGIES.filter(s => s.section === section.id);
+            const items = showAll ? all : all.filter(shownByDefault);
+            if (items.length === 0) return null;   // empty / all-hidden sections don't render (SP-1)
             return (
               <div key={section.id}>
                 <div style={{
@@ -281,15 +346,25 @@ export default function StrategiesScreen({ t, props, isMobile = false, initialSt
                   gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
                   gap: 12,
                 }}>
-                  {items.map(e => (
-                    <StrategyCard key={e.id} t={t} entry={e}
-                      face={faceFor(e.id, props)} onOpen={() => setSelected(e.id)} />
-                  ))}
+                  {items.map(e => isCardLocked(e, props.entitlements)
+                    ? <LockedCard key={e.id} t={t} title={e.title} teaser={BLURB[e.id]} onClick={() => {}} />
+                    : <StrategyCard key={e.id} t={t} entry={e}
+                        face={faceFor(e.id, props)} onOpen={() => setSelected(e.id)} />)}
                 </div>
               </div>
             );
           })}
         </div>
+
+        {hiddenCount > 0 && (
+          <button type="button" onClick={() => setShowAll(v => !v)}
+            style={{
+              marginTop: 20, font: `500 13px ${HF}`, color: t.accent, background: "transparent",
+              border: "none", cursor: "pointer", padding: "8px 0", minHeight: 44,
+            }}>
+            {showAll ? "Show fewer" : `Browse all strategies (${hiddenCount} more)`}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import {
   calcWhatIfDelta, calcAffordabilityMax, calcWhatIfChart, calcWhatIfScenario, evaluateLifeEvent,
   buildLeverPreview, buildLeverRail, buildDurationRail, LEVERS, eventIncomeImpact,
   marginForScenario, verdictInfoForScenario, buildVerdictLegend, verdictForMargin,
-  verdictForScenarioResult,
+  verdictForScenarioResult, calcWorkLongerBreakEven,
 } from "../what-if.js";
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
 import { calcEmployerMatch } from "../employer-match.js";
@@ -292,6 +292,60 @@ describe("calcWhatIfDelta", () => {
   });
 });
 
+// ── BUG-75: committed events are bundle-carried; the param is additions-only ──
+// Committed events reach calcWhatIfDelta via simInputs.moneyEvents (sim) and
+// retDrawShared.moneyEvents (walk). Passing them AGAIN as the `moneyEvents`
+// param double-counted every committed retirement-phase event in the walk
+// (surplusApplySite did exactly that), and before the fix a forced re-sim
+// dropped committed accumulation events entirely (simInputs.moneyEvents was
+// overridden with the scenario additions).
+describe("calcWhatIfDelta — committed events contract (BUG-75)", () => {
+  const accumE = { label: "Roof", amount: 30_000, age: 45, isInflow: false, isTaxable: false };
+  const retE   = { label: "Trip", amount: 60_000, age: 70, isInflow: false, isTaxable: false };
+
+  // Baseline WITH the committed accumulation event, mirroring App.jsx's main path.
+  const simInputsC = { ...simInputs, moneyEvents: [accumE] };
+  const simC  = runSimulation(simInputsC);
+  const atC   = simC[safeRetAge - currentAge - 1];
+  const baseTotalC = (atC.tradGross ?? 0)
+    + (atC["Roth IRA"] ?? 0) + (atC["Taxable"] ?? 0) + (atC["HSA"] ?? 0);
+  // Depleting retirement shared (finite years) carrying the committed retirement event.
+  const retDrawC = { ...depletingRetDrawShared, moneyEvents: [retE] };
+  const walkC = buildRetirementDrawdown({
+    ...retDrawC, startBal: baseTotalC, startAge: safeRetAge, endAge: safeRetAge + 130,
+  });
+  const argsC = {
+    simInputs: simInputsC, fedMarginal, retDrawShared: retDrawC,
+    safeRetAge, safeLifeExp,
+    baseTotalAtRet: baseTotalC, baseYearsSustained: walkC.yearsSustained,
+  };
+
+  it("counts a committed retirement-phase event exactly once in the walk", () => {
+    // No scenario additions → the walk must equal a direct buildRetirementDrawdown
+    // with the committed event passed once. A double-count shifts yearsSustained.
+    const r = calcWhatIfDelta({ ...argsC, moneyEvents: [] });
+    expect(r.scenarioYears).toBe(walkC.yearsSustained);
+    expect(r.scenarioTotalAtRet).toBe(baseTotalC);
+  });
+
+  it("a no-change contribOverrides candidate matches the no-override current when committed events exist in both phases", () => {
+    // This is surplusApplySite's anti-divergence property: "current" (no resim,
+    // baseTotalAtRet includes the committed accum event) vs "candidate" (forced
+    // resim) must agree when the candidate changes nothing. Pre-fix the resim
+    // dropped the committed accum event → spurious basis delta.
+    const before = calcWhatIfDelta({ ...argsC, moneyEvents: [] });
+    const after  = calcWhatIfDelta({
+      ...argsC, moneyEvents: [],
+      contribOverrides: {
+        contrib401k: simInputs.contrib401k, contribRoth: simInputs.contribRoth,
+        contribTaxable: simInputs.contribTaxable, contribHSA: simInputs.contribHSA,
+      },
+    });
+    expect(after.scenarioTotalAtRet).toBeCloseTo(before.scenarioTotalAtRet, 6);
+    expect(after.scenarioYears).toBe(before.scenarioYears);
+  });
+});
+
 // ── calcAffordabilityMax ─────────────────────────────────────────────────────
 // 2026-07-11 (fix-pass-2): calcAffordabilityMax moved from the blended walk
 // (calcWhatIfDelta) onto the per-account engine (calcWhatIfScenario), matching
@@ -494,6 +548,21 @@ describe("calcWhatIfScenario", () => {
     const s = calcWhatIfScenario(baseArgs, { retireAdj: -2 });
     expect(s.scenarioRetAge).toBe(safeRetAge - 2);
     expect(s.scenarioTotalAtRet).toBeLessThan(realBaseTotalAtRet);
+  });
+
+  // #30 interop fix: scenarioTotalAtRet must include the spouse Traditional 401k
+  // bucket the walk is actually seeded with (retPhaseBase.tradGrossSpouse), or a
+  // household-with-spouse-401k scenario reports a phantom drop/rise equal to the
+  // entire spouse trad balance for a change that never touched it (e.g. a pure
+  // spend-lever preview).
+  it("includes the spouse Traditional 401k bucket in scenarioTotalAtRet (no false delta)", () => {
+    const spouseTrad = 600_000;
+    const householdRetPhaseBase = { ...baseRetPhaseBase, tradGrossSpouse: spouseTrad };
+    const householdBaseTotalAtRet = realBaseTotalAtRet + spouseTrad;
+    const s = calcWhatIfScenario({
+      ...baseArgs, retPhaseBase: householdRetPhaseBase, baseTotalAtRet: householdBaseTotalAtRet,
+    }, { annualExpenses: retDrawShared.effectiveExpenses + 1_000 }); // non-resim override — no accum/retirement-age change
+    expect(s.scenarioTotalAtRet).toBe(householdBaseTotalAtRet);
   });
 
   it("scenarioBalAt90 reads the safeLifeExp row of the SAME walk the chart shows", () => {
@@ -1370,5 +1439,121 @@ describe("buildDurationRail", () => {
     expect(buildDurationRail(depletingArgs, null, { maxMonths: 24, step: 6 })).toEqual([]);
     expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 0, step: 6 })).toEqual([]);
     expect(buildDurationRail(depletingArgs, durationEventBase, { maxMonths: 24, step: 0 })).toEqual([]);
+  });
+});
+
+// ── calcWorkLongerBreakEven (#55) ────────────────────────────────────────────
+describe("calcWorkLongerBreakEven", () => {
+  const ssInputs = { currentIncome: 100_000, incomeGrowth: 3, incomeGrowthEndAge: null, ssClaimingAge: 67 };
+
+  it("returns null when already retired (safeRetAge <= currentAge)", () => {
+    expect(calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge: currentAge, currentAge, includeSS: true, ssInputs,
+    })).toBeNull();
+  });
+
+  it("returns null for a missing bundle", () => {
+    expect(calcWorkLongerBreakEven({
+      bundle: null, safeRetAge, currentAge, includeSS: true, ssInputs,
+    })).toBeNull();
+  });
+
+  it("valid bundle: applicable, 3 offset rows (1/3/5), numeric portfolioAtRet, non-empty headline", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: true, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    expect(result.applicable).toBe(true);
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows.map(r => r.years).sort()).toEqual([1, 3, 5]);
+    for (const row of result.rows) {
+      expect(typeof row.portfolioAtRet).toBe("number");
+      expect(Number.isFinite(row.portfolioAtRet)).toBe(true);
+      expect([1, 3, 5]).toContain(row.years);
+    }
+    expect(typeof result.headline).toBe("string");
+    expect(result.headline.length).toBeGreaterThan(0);
+  });
+
+  // Gemini PR #57 review: verify the "Portfolio lasts" sub-label invariant the
+  // WorkLongerFlow.jsx JSX depends on — a row that TRANSITIONS to sustainable
+  // must report longevityDeltaYears: null (never a stray finite/Infinity delta),
+  // so the screen's `row.longevityDeltaYears != null ? ... : (row.sustainable ?
+  // "still for life" : undefined)` fallback always resolves to "still for life"
+  // and never a nonsensical "+Infinity yrs".
+  it("a row that becomes sustainable reports longevityDeltaYears: null (never Infinity/NaN)", () => {
+    // depletingArgs' base plan is NOT sustainable (finite baseYearsSustained);
+    // working extra years re-sims with more contributions and a shorter
+    // drawdown, plausibly crossing into sustainable for at least one offset.
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    // Every row must carry either a finite delta or an explicit null — never
+    // Infinity or NaN, which would render as garbage ("+Infinity yrs").
+    for (const row of result.rows) {
+      expect(row.longevityDeltaYears === null
+        || Number.isFinite(row.longevityDeltaYears)).toBe(true);
+      if (row.sustainable) expect(row.longevityDeltaYears).toBeNull();
+    }
+  });
+
+  it("a bundle that crosses into sustainable within the offsets exercises the null-delta transition", () => {
+    // A near-perpetuity base (found by binary search against the 65+130 = 195
+    // horizon at $80k effectiveExpenses/0% SS: threshold ≈ $5.922M) — just under
+    // it, so the base itself is finite (~129 of the 130-year horizon, NOT
+    // Infinity), but 5 extra idle years of compounding at 5% nominal tips every
+    // +1/+3/+5 offset row over the line into literally sustainable.
+    const nearMissBase = 5_900_000;
+    const { yearsSustained: nearMissBaseYears } = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: nearMissBase, startAge: safeRetAge, endAge: safeRetAge + 130,
+    });
+    expect(nearMissBaseYears).not.toBe(Infinity); // base must NOT already be sustainable
+    const nearMissSimInputs = {
+      ...simInputs, bal401k: 0, balRoth: 0, balTaxable: nearMissBase, balHSA: 0,
+      contrib401k: 0, contribRoth: 0, contribTaxable: 0, contribHSA: 0,
+    };
+    const nearMissRetPhaseBase = {
+      ...depletingRetPhaseBase, tradGross: 0, roth: 0, taxable: nearMissBase, hsa: 0,
+    };
+    const nearMissArgs = {
+      simInputs: nearMissSimInputs, fedMarginal, retDrawShared: depletingRetDrawShared,
+      safeRetAge, safeLifeExp, baseTotalAtRet: nearMissBase, baseYearsSustained: nearMissBaseYears,
+      retPhaseBase: nearMissRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
+    };
+    const result = calcWorkLongerBreakEven({
+      bundle: nearMissArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    expect(result.rows.some(r => r.sustainable)).toBe(true); // the transition actually happens
+    for (const row of result.rows) {
+      if (row.sustainable) expect(row.longevityDeltaYears).toBeNull();
+    }
+  });
+
+  it("SS companion: more working years never lowers the AIME-based benefit; includeSS=false zeroes every row", () => {
+    const withSS = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: true, ssInputs,
+    });
+    const row1 = withSS.rows.find(r => r.years === 1);
+    const row5 = withSS.rows.find(r => r.years === 5);
+    expect(row5.ssAnnual).toBeGreaterThanOrEqual(row1.ssAnnual);
+
+    const withoutSS = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    for (const row of withoutSS.rows) {
+      expect(row.ssAnnual).toBe(0);
+    }
+  });
+
+  it("Roth-conversion window shrinks (non-increasing) as the offset grows", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: baseArgs, safeRetAge, currentAge, includeSS: true, ssInputs,
+    });
+    const sorted = [...result.rows].sort((a, b) => a.years - b.years);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i].conversionWindowYrs).toBeLessThanOrEqual(sorted[i - 1].conversionWindowYrs);
+    }
   });
 });

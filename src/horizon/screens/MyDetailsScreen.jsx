@@ -14,6 +14,7 @@ import React, { useState } from "react";
 import { HF } from "../ThemeContext.jsx";
 // Editable-field primitives + formatters are shared with the Strategies flows.
 import { DetailField, money, ageFmt, pctYr, pct } from "../fields.jsx";
+import LockedCard from "../LockedCard.jsx";
 
 function Card({ t, title, summary, note, open, onToggle, children }) {
   return (
@@ -46,8 +47,15 @@ function Card({ t, title, summary, note, open, onToggle, children }) {
 }
 
 export default function MyDetailsScreen({ t, props, isMobile }) {
-  const { profile, spending, accounts, health, assumptions } = props;
+  const { profile, spending, accounts, health, assumptions, spouseAccounts } = props;
   const isMarried = props.isMarried;
+  // #30: the spouse & household card. Applicability is model-provided (principle 8);
+  // premium gating comes from the entitlements bundle (LockedCard when locked).
+  const spouseApplicable = props.spouseAccountsApplicable;
+  const isPremium = props.entitlements?.isPremium !== false;
+  // BUG-81: pre-gated by App.jsx (hasSpouse && filingStatus !== "mfj") — no
+  // filingStatus comparison here (rule 10).
+  const spouseFilingMismatch = props.spouseFilingMismatch;
   const effLiving = props.budget?.effectiveLiving;
   const effExp    = props.effectiveExpenses;
 
@@ -140,6 +148,51 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
               {accounts.matchMode.value === "formula" && F({ label: "On the first … of salary", field: accounts.matchFormulaCap, format: pct })}
             </div>
           </Card>
+
+          {/* ── Spouse & household (#30, premium) ── shown only when a spouse is modeled ── */}
+          {spouseApplicable && !isPremium && (
+            <LockedCard t={t}
+              title="Spouse & household"
+              teaser="Model your spouse's 401k, Roth, taxable, and HSA accounts for a true combined retirement picture, with per-spouse RMDs." />
+          )}
+          {spouseApplicable && isPremium && spouseAccounts && (
+            <Card t={t} title="Spouse & household" open={openId === "spouse"} onToggle={() => toggle("spouse")}
+              summary={`Spouse 401k ${money(spouseAccounts.trad401k.bal.value)} · match ${spouseAccounts.employerMatchPct.value}%`}
+              note="Your spouse's accounts are simulated on their own income, age, and IRS limits, then combined with yours for the household portfolio and drawdown. Spouse income lives in the Income card.">
+              {spouseFilingMismatch && (
+                <div style={{
+                  marginBottom: 12, padding: "8px 12px", borderRadius: 8,
+                  background: `${t.warm}14`, borderLeft: `2px solid ${t.warm}`,
+                }}>
+                  <div style={{ font: `400 12px ${HF}`, color: t.warm, lineHeight: 1.5 }}>
+                    You've entered spouse accounts, but your filing status isn't Married Filing
+                    Jointly — household totals combine both accounts under your current filing
+                    status's tax brackets. Update filing status in the Income card if you're married.
+                  </div>
+                </div>
+              )}
+              {[
+                ["Traditional 401k", spouseAccounts.trad401k],
+                ["Roth IRA",         spouseAccounts.roth],
+                ["Taxable",          spouseAccounts.taxable],
+                ["HSA",              spouseAccounts.hsa],
+              ].map(([name, a]) => (
+                <div key={name} style={{ marginTop: 10 }}>
+                  <div style={{ font: `600 12px ${HF}`, color: t.accent, letterSpacing: "0.04em", textTransform: "uppercase" }}>{name}</div>
+                  {F({ label: "Balance", field: a.bal, format: money })}
+                  {F({ label: "Annual contribution", field: a.contrib, format: money })}
+                </div>
+              ))}
+              <div style={{ marginTop: 14 }}>
+                <div style={{ font: `600 12px ${HF}`, color: t.accent, letterSpacing: "0.04em", textTransform: "uppercase" }}>HSA coverage & employer match</div>
+                {F({ label: "HSA coverage", hint: "family HDHP is a shared household limit", field: spouseAccounts.hsaCoverageType })}
+                {F({ label: "Match type", field: spouseAccounts.matchMode })}
+                {spouseAccounts.matchMode.value === "flat" && F({ label: "Employer match", field: spouseAccounts.employerMatchPct, format: pct })}
+                {spouseAccounts.matchMode.value === "formula" && F({ label: "Match rate", field: spouseAccounts.matchFormulaRate, format: pct })}
+                {spouseAccounts.matchMode.value === "formula" && F({ label: "On the first … of salary", field: spouseAccounts.matchFormulaCap, format: pct })}
+              </div>
+            </Card>
+          )}
 
           {/* ── Health & Medicare ── */}
           <Card t={t} title="Health & Medicare" open={openId === "health"} onToggle={() => toggle("health")}

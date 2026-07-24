@@ -45,6 +45,9 @@ export function buildConversionByAge({
 export function buildRetirementPhase({
   // per-account GROSS balances at retirement (the BUG-35 gross seed)
   tradGross = 0, roth = 0, taxable = 0, hsa = 0,
+  // OPTIONAL second (spouse) Traditional 401k bucket (#30). Defaults keep this
+  // byte-identical to the no-spouse case — see retirement-engine.js.
+  tradGrossSpouse = 0, spouseRmdStartAge = Infinity,
   startAge,                 // safeRetAge
   lifeExp,                  // safeLifeExp — display/chart horizon
   longevityHorizon,         // far cap (e.g. safeRetAge + 130) for "years sustained" + lifetime tax
@@ -61,6 +64,7 @@ export function buildRetirementPhase({
   const common = {
     startAge, endAge: longevityHorizon, rReal, effectiveExpenses,
     tradGross, roth, taxable, hsa,
+    tradGrossSpouse, spouseRmdStartAge,
     ssGross, ssTaxable, ssClaimAge,
     pension, pensionStartAge,
     filingStatus, retStateRate,
@@ -73,6 +77,10 @@ export function buildRetirementPhase({
 
   const sumRmdTax  = rows => rows.reduce((s, r) => s + (r.rmdTax  ?? 0), 0);
   const sumConvTax = rows => rows.reduce((s, r) => s + (r.convTax ?? 0), 0);
+  // drawTax is the engine's INCREMENTAL tax on extra 401k draws beyond
+  // RMDs/conversions (retirement-engine.js) — additive with rmdTax/convTax,
+  // never overlapping, so the three sum to the full retirement-phase tax (BUG-40).
+  const sumDrawTax = rows => rows.reduce((s, r) => s + (r.drawTax ?? 0), 0);
 
   // Chart/Flow-Down rows + all lifetime tax sums are bounded to the display life
   // expectancy: RMDs past the planning horizon (death) don't happen, and the prior
@@ -84,7 +92,9 @@ export function buildRetirementPhase({
   // RMD schedule (display) — 73+, withdrawal-aware, real $. Zero-RMD years dropped
   // (the section lists required ones only). Each row carries divisor + per-year RMD
   // tax so it feeds the RMD table directly (this IS rmdDataWithTax — one source, no
-  // separate calcRMDTaxSchedule pass).
+  // separate calcRMDTaxSchedule pass). PRIMARY-only — the spouse RMD sub-schedule
+  // display is a deferred household-dashboard follow-up (#31); the household TOTAL
+  // (totalRMDs, below) already includes it.
   const rmdSchedule = rows
     .filter(r => r.age >= rmdStartAge && r.rmd > 0)
     .map(r => ({
@@ -92,7 +102,9 @@ export function buildRetirementPhase({
       divisor: r.rmdDivisor, tax: Math.round(r.rmdTax),
     }));
   const firstRMD  = rmdSchedule[0]?.rmd ?? 0;
-  const totalRMDs = Math.round(rows.reduce((s, r) => s + r.rmd, 0));
+  // Household total — primary + spouse RMDs (rmdSpouse is 0 with no spouse bucket,
+  // so this is byte-identical to the pre-#30 sum in the default case).
+  const totalRMDs = Math.round(rows.reduce((s, r) => s + r.rmd + (r.rmdSpouse ?? 0), 0));
 
   // No-conversion RMD schedule (same shape) for the pre/post-conversion comparison
   // table — the counterfactual "what your RMDs would be without converting".
@@ -106,6 +118,7 @@ export function buildRetirementPhase({
   // rmdTaxBiteNoConv is the counterfactual that values the conversion's RMD-tax saving.
   const rmdTaxBite       = Math.round(sumRmdTax(rows));
   const conversionCost   = Math.round(sumConvTax(rows));
+  const totalDrawTax     = Math.round(sumDrawTax(rows));
   const rmdTaxBiteNoConv = Math.round(sumRmdTax(noConvRows));
   // Apples-to-apples saving: when conversions change longevity, the two walks can end at
   // different ages (one depletes earlier → fewer RMD years → its bite drops spuriously).
@@ -128,6 +141,9 @@ export function buildRetirementPhase({
     endVal: plan.endVal,
     // RMD display
     rmdSchedule, rmdScheduleNoConv, firstRMD, totalRMDs, rmdTaxBite,
+    // lifetime tax on extra 401k draws beyond RMDs/conversions (BUG-40) —
+    // bounded to lifeExp like rmdTaxBite/conversionCost so the three compose.
+    totalDrawTax,
     // conversion benefit (before IRMAA/ACA — those layer on in conversion-evaluation)
     conversionCost, rmdTaxBiteNoConv, rmdTaxSaved, grossNetBenefit,
     // full far-horizon walks for any consumer that needs the tail

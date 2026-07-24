@@ -212,6 +212,42 @@ describe("calcPlanDrivers (WI-1.1 — the on-track pill's 3 drivers)", () => {
       expect(d.ok).toBeNull();
     }
   });
+
+  // Optional 4th "confidence" row (Monte Carlo success rate).
+  it("omitting monteCarloSuccessPct → still exactly 3 rows, ids unchanged", () => {
+    const d = calcPlanDrivers(base);
+    expect(d).toHaveLength(3);
+    expect(d.map(r => r.id)).toEqual(["withdrawal", "longevity", "savings"]);
+  });
+
+  it("confidence driver: success ≥ guideline → 4 rows, ok true, successPct echoed", () => {
+    const pct = ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT;
+    const d = calcPlanDrivers({ ...base, monteCarloSuccessPct: pct });
+    expect(d).toHaveLength(4);
+    const conf = d[3];
+    expect(conf.id).toBe("confidence");
+    expect(conf.ok).toBe(true);
+    expect(conf.successPct).toBe(pct);
+    expect(conf.guidelinePct).toBe(ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT);
+  });
+
+  it("confidence driver: success < guideline → ok false", () => {
+    const conf = calcPlanDrivers({
+      ...base,
+      monteCarloSuccessPct: ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT - 1,
+    })[3];
+    expect(conf.id).toBe("confidence");
+    expect(conf.ok).toBe(false);
+  });
+
+  it("confidence driver: null successPct → 4th row present, ok null, successPct null (designed '—' edge)", () => {
+    const d = calcPlanDrivers({ ...base, monteCarloSuccessPct: null });
+    expect(d).toHaveLength(4);
+    const conf = d[3];
+    expect(conf.id).toBe("confidence");
+    expect(conf.ok).toBeNull();
+    expect(conf.successPct).toBeNull();
+  });
 });
 
 describe("buildYearlyRows", () => {

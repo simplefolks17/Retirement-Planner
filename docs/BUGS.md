@@ -7,44 +7,238 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-### BUG-75 — `surplusApplySite` double-applies committed retirement-phase events in both its previews (found 2026-07-13, Fable adversarial review of PR #53)
+### BUG-84 — Withdrawal-order + conversion-sim scalars (`retTrad`/`retRoth`/`retTaxable`) stayed primary-only after #30 (found 2026-07-23, CodeRabbit review of PR #57 commit 325eaad)
 
-**Owner:** me_theguy. **Found by:** a Fable adversarial review requested to hunt for correctness
-bugs in PR #53's BUG-72/73 work; this finding is **pre-existing** — present since `surplusApplySite`
-shipped (WI-3.7) and unrelated to the income-channel/verdict changes, but surfaced while tracing
-how `moneyEvents` reach `calcWhatIfDelta`.
-**What:** `src/App.jsx:1379-1389` (`surplusApplySite`'s "current" and "candidate" previews) passes
-the full committed `moneyEvents` array straight into `calcWhatIfDelta({ ...whatIfBundle,
-moneyEvents })`. Inside, `calcWhatIfScenario`'s retirement-phase merge
-(`src/model/what-if.js:263, 301` — shifted from :215/:253 by PR #54's unrelated additions earlier
-in the file; re-verified 2026-07-15, content unchanged) builds `mergedRetEvents =
-[...(retDrawShared.moneyEvents ?? []), ...retEvents]`, where `retEvents` is
-`moneyEvents.filter(ev => eventLastAge(ev) >= scenarioRetAge)`
-— but `retDrawShared.moneyEvents` **is already** the committed retirement-phase event list (set once
-in App.jsx). Passing `moneyEvents` again re-derives `retEvents` from the SAME committed list and
-concatenates it onto `retDrawShared.moneyEvents`, so every committed retirement-phase event is
-counted twice in the walk.
-**Impact:** symmetric between the "current" and "candidate" runs in the surplus modal, so the
-*delta* (and therefore the surplus-deployment recommendation) mostly survives — but the absolute
-`yearsSustained`/depletion figures the modal displays are wrong whenever the user has any committed
-retirement-phase money events. The BUG-72 income channel makes this worse for income-bearing
-duration events: the doubled event now also doubles the (portfolio-channel) income term.
-**Fix shape (not yet applied — needs an owner nod since it touches a shipped Apply-site's inputs):**
-`surplusApplySite`'s two `calcWhatIfDelta` calls should NOT pass `moneyEvents` at all — `whatIfBundle`
-already carries `retDrawShared.moneyEvents` internally, so the merge only needs the deliberate
-*scenario* additions (none, for this Apply-site) — or `calcWhatIfDelta` needs a documented contract
-for "committed events are already in the bundle, don't pass them again" so future Apply-sites don't
-repeat the mistake.
-**Where:** `src/App.jsx:1379, 1382` (the two `moneyEvents` call-sites); `src/model/what-if.js:263,
-301` (the merge that double-counts them).
-**Tests:** none yet — a regression test would run `surplusApplySite`'s preview against a bundle with
-a committed retirement-phase event and assert the walk sees it exactly once (e.g. compare against a
-direct `buildRetirementPhase` call with the event list passed once).
-**Re-verified 2026-07-17 (PR #56 close-out):** `calcWhatIfDelta({ ...whatIfBundle, moneyEvents })`
-still at `App.jsx:1379` (both preview calls). Still reproduces; PR #56 touched neither
-`surplusApplySite` nor `what-if.js`'s merge.
+**Owner:** me_theguy. **Found by:** CodeRabbit, flagged "🟠 Major / 🏗️ Heavy lift" — correctly not
+proposed as a quick fix.
+**What:** `retTrad`/`retRoth`/`retTaxable` (`src/App.jsx:463-465`, `= tradGrossAtRet / pRoth /
+pTaxable`) remained the PRIMARY-only balances even after #30 made `retVals`/`totalAtRet` household.
+They feed `calcWithdrawalOrderTax` (`src/App.jsx:961`, the Strategies "Withdrawal order" card's
+year-1 tax-optimal-vs-worst-case comparison), `conversionSim`'s inputs (`src/App.jsx:1033,1039`),
+and the Classic UI's withdrawal-order display ("$X available" per step, `src/App.jsx:4215-4217`).
+**Why this is a real design question, not a quick patch:** unlike BUG-79/80 (a scalar or a chart
+that should obviously have summed household balances), Roth conversions and withdrawal sequencing
+are legally **per-account, per-person** — you cannot convert a spouse's 401k into the primary's
+Roth IRA, and the IRS taxes each spouse's withdrawals against their own account, even though the
+household files one joint return. Two candidate fix shapes, needing an owner call:
+  1. **Pool for display, sequence per-person for real draws** — show household totals in the
+     "$X available" step cards (matching `retVals`), but keep `calcWithdrawalOrderTax`'s actual
+     recommended draw sequence and `conversionSim` scoped to the primary's own accounts (a
+     conversion event is inherently one person's).
+  2. **Model the spouse's own withdrawal order as a parallel, separate sequence** — a more complete
+     but larger change: the spouse gets their own tax-optimal-vs-worst-case comparison, since their
+     marginal bracket exposure during a shared MFJ return is genuinely different account-by-account.
+**Related:** sibling gap to BUG-77 (spouse Traditional bucket frozen through a what-if re-sim) —
+both are "the spouse engine didn't reach every downstream consumer" gaps found by review after the
+initial #30 ship, not new regressions from this review-fix batch.
+**Where:** `src/App.jsx:463-465` (the scalars), `:961` (`calcWithdrawalOrderTax` call), `:1033,1039`
+(`conversionSim`), `:4215-4217` (Classic display).
+**Inert at default state:** no spouse data → no effect. Golden master untouched.
 
----
+### BUG-82 — The spouse has no retirement age of their own; contributions and RMD timing implicitly assume both spouses retire the same year (found 2026-07-20, adversarial spousal-scenario audit; write-up expanded 2026-07-23 for a dedicated follow-up session)
+
+**Owner:** me_theguy. **Severity: HIGH.** **Status: OPEN — scoped for a dedicated session, not a
+quick patch.** **Found by:** a second, differently-angled Opus audit requested after the owner
+noted the first two spouse-engine (#30) audits — both static code reading — had found suspiciously
+few bugs for a feature this complex. This pass actually EXECUTED the model with constructed
+numeric scenarios rather than reading code and reasoning about it, and found the single largest
+gap in the spouse engine, missed by both prior static passes.
+
+#### One-paragraph summary
+The #30 spouse engine (shipped, `docs/BUGS.md` entries BUG-79/80/81/83 all build on it correctly)
+has no concept of the spouse's own retirement age. The spouse's accounts stop accepting
+contributions, and the balance handed to the retirement walk is frozen, the instant the **primary**
+retires — regardless of the spouse's actual age. Because the UI only allows a spouse *younger* than
+the primary, this silently understates household wealth for the majority of real two-income
+households (an age gap is the common case, not an edge case), by an amount that scales with the age
+gap and can reach the millions of dollars for a realistic 10–15 year gap.
+
+#### Root cause — two compounding defects, one root
+1. **Contribution cutoff anchored to the primary, not the spouse.**
+   `src/App.jsx:333` — `const spouseContribEnd = spouseCurrentAge + (safeRetAge - currentAge);`
+   This computes "the spouse's age when the PRIMARY retires" and uses it as the spouse's
+   contribution end-age for every one of their accounts (`src/App.jsx:343-344`, the
+   `contribEnd401k/Roth/Taxable/HSA: spouseContribEnd` args passed into the spouse's
+   `runSimulation` call at `src/App.jsx:336-347`). A 40-year-old spouse whose primary retires in 10
+   years gets `spouseContribEnd = 50` — they stop saving at 50, even though they might realistically
+   work another 15+ years.
+2. **Retirement seed balance snapshotted at the wrong calendar year.**
+   `src/App.jsx:358-360`:
+   ```js
+   const spouseAtRet = phase2End > 0
+     ? (spouseSimData[phase2End - 1] ?? spouseCurrentSnapshot)
+     : spouseCurrentSnapshot;
+   ```
+   `phase2End` is the number of years until the **primary's** retirement (defined earlier in
+   App.jsx from `safeRetAge - currentAge`). This reads the spouse's simulated balance at the
+   PRIMARY's retirement-year row — the spouse's balance is then frozen from that point: it feeds
+   `sTrad` (`src/App.jsx:469`, `= spouseAtRet.tradGross ?? 0`) and from there
+   `tradGrossSpouse: sTrad` into `retPhaseBase` (`src/App.jsx:619`), which seeds
+   `buildRetirementWalkByAccount` (`retirement-engine.js`). From that point on the spouse's
+   Traditional bucket only compounds via investment growth — no further contributions ever reach
+   it, because the walk has no concept of "the spouse is still working."
+3. **Additive gap — no spouse income floor during the primary-retired/spouse-working gap years.**
+   `src/model/retirement-engine.js:161` —
+   `const floor = (age >= ssClaimAge ? ssTaxable : 0) + (age >= pensionStartAge ? pension : 0);`
+   — the household income floor inside the retirement walk has exactly two terms, SS and pension.
+   There is no spouse-earned-income term. So even setting aside defects 1–2, for every year between
+   the primary's retirement and the spouse's *real* retirement, the walk draws the FULL
+   `effectiveExpenses` from the portfolio as if neither spouse were earning — when in reality the
+   spouse's paycheck should be covering some or all of household spending during those years.
+
+**UI constraint that makes this universal, not rare:** `spouseCurrentAge`'s slider bound is
+`max: currentAge - 1` (`src/App.jsx:1480`) — the spouse can only ever be entered as YOUNGER than the
+primary. Combined with defects 1–3, every household that enters a younger spouse's accounts gets
+an underrated household plan, by construction.
+
+#### Measured impact (reproducible)
+Scenario: primary currently 55, retires at 65 (10 years); spouse currently 40; household income
+$120k/yr each; spouse contributes $23,500/yr to their 401k; 7% nominal return; no spouse HSA/Roth
+for simplicity.
+- **What the model produces today:** spouse's Traditional 401k contributes for 10 years (age 40→50,
+  `spouseContribEnd = 40 + 10 = 50`), then freezes at **$741,378** (compounds with 0 more
+  contributions from spouse-age 50 to the spouse's actual RMD age).
+- **What a spouse retiring at their own age 65 would actually accumulate:** 25 years of
+  contributions (age 40→65) → **$3,124,069**.
+- **Understatement: $2,382,691** in this one account alone, before accounting for the additive
+  income-floor gap (defect 3), which is a further, separate understatement of the plan's actual
+  spending capacity during the primary-retired/spouse-working years.
+
+This is a `node`-reproducible scenario — run `runSimulation` twice (once with
+`contribEnd* = spouseContribEnd` per current code, once with `contribEnd* = 65`) and diff the
+`tradGross` at the respective final row; see the audit's methodology note below for the exact
+harness pattern used (a throwaway vitest file with `console.log`, deleted after — not committed;
+recreate similarly for verification).
+
+#### Verified CORRECT — not part of this bug, don't re-litigate
+The same audit ran (not just read) these adjacent paths and confirmed them right:
+- **Joint RMD bracket stacking** is genuinely progressive: both spouses' RMDs sum into one layer
+  (`totalRmd = rmd + rmdSp`) and are taxed once via `calcTax(floor+conv+totalRmd) −
+  calcTax(floor+conv)` — the second spouse's RMD is correctly pushed into higher brackets exactly
+  once, no double-application, no flattening.
+- **The spouse's own RMD timing** is correctly keyed to the spouse's own age (`spouseAgeFor`/
+  `spouseRmdStartAge`, always Table III) — RMD *timing* is right; it's contribution/seed timing
+  (this bug) that's wrong.
+- **The zero-spouse boundary** (`tradGrossSpouse: 0`) produces a walk `JSON.stringify`-identical to
+  the pre-#30 single-person walk — no regression risk from touching this code path.
+- **The HSA family-ceiling split** (`primaryHsaLimit`/`spouseHsaLimit`, `src/App.jsx:287-290`)
+  correctly caps combined contributions at `HSA_FAMILY_LIMIT_2026`.
+
+#### Not previously documented as a simplification (now corrected)
+`docs/FINANCIAL-MODEL.md`'s "Known Simplifications" table had a stale row claiming spouse accounts
+were entirely "not modeled" — text that predated the shipped #30 engine and actively misled about
+the actual (narrower, but real) limitation. Corrected 2026-07-20 to describe this bug specifically
+(see that file's spouse row) — that correction is already merged; this BUGS.md entry is the
+detailed version.
+
+#### Fix plan (for the dedicated follow-up session — not applied here)
+**Step 1 — add the input.** A `spouseRetirementAge` field, analogous to the primary's
+`retirementAge`/`safeRetAge`. Natural home: the "Spouse & household" card in
+`src/horizon/screens/MyDetailsScreen.jsx`, alongside the existing `spouseAccountsBundle` fields
+(`src/App.jsx`, `spouseAccountsBundle` useMemo, ~line 1426). Bounds: `min: spouseCurrentAge + 1`,
+`max` should probably match the primary's `safeLifeExp`-derived ceiling. Default value is the open
+design question below.
+
+**Step 2 — thread it into the spouse's accumulation sim.** Replace `spouseContribEnd`
+(`src/App.jsx:333`) with the spouse's own retirement offset:
+`spouseContribEnd = spouseRetirementAge` (no longer derived from the primary's age at all). This
+alone fixes defect 1.
+
+**Step 3 — fix the retirement-seed snapshot.** `spouseAtRet` (`src/App.jsx:358-360`) needs to read
+the spouse's simulated balance at the **spouse's own** retirement-year row, not
+`phase2End - 1` (the primary's). Since `spouseSimData` is indexed by calendar year (year 0 = both
+spouses' current age this year, year N = N years from now — see the file header comment above
+`spouseSimData`'s definition, `src/App.jsx:324-332`), the correct index is
+`spouseRetirementAge - spouseCurrentAge - 1`, mirroring how `atRetirement`
+(`src/App.jsx:383-385`) already indexes the primary's `simData` by `phase2End - 1` (which IS
+`safeRetAge - currentAge - 1`, the primary's own analogous index) — this is a straightforward
+copy-the-existing-pattern fix once the field exists, not new design.
+
+**Step 4 — add the spouse's earned-income floor for the gap years.** This is the harder half.
+`buildRetirementWalkByAccount` (`retirement-engine.js`) needs a THIRD income-floor term active only
+for ages between the primary's retirement and the spouse's own retirement — the spouse's after-tax
+earned income (their share of `grossAfterTax`/`takeHome`, already computed for the working-year tax
+basis — reuse, don't re-derive per rule 10's spirit applied to the model layer too). This requires:
+  (a) a new optional param on `buildRetirementWalkByAccount` (e.g. `spouseIncomeFloor`,
+      `spouseIncomeFloorEndAge`) — additive with the existing SS/pension floor at line 161, zero
+      by default (byte-identical when absent — the existing golden-master-safety pattern every
+      other #30 param already follows);
+  (b) App.jsx computing that spouse income floor and threading it into `retPhaseBase`
+      (`src/App.jsx:619` area, alongside `tradGrossSpouse`);
+  (c) a decision on whether this income is taxed as ordinary income stacked on the existing floor
+      (matching how the moneyEvents extension taxes retirement-phase event income, `BUG-72`'s
+      fix — the established precedent) or treated as already-net (simpler, less accurate).
+
+**Open design question the fix session must resolve (both are legitimate, pick one and document
+the choice):**
+- **Option A — accumulate to spouse's own age, then have their accounts sit idle (no draws) until
+  the spouse's own retirement, drawing household expenses only from the primary's accounts + the
+  spouse's income floor in the gap years.** Closer to real household cash-flow behavior (most
+  couples don't draw down the working spouse's 401k while they're still employed).
+  - **Option B — once ANY spending need exists (primary retired), the household draws from the
+  combined pool including the still-growing spouse balance**, same as how the engine already pools
+  Roth/Taxable/HSA across account TYPES today. Simpler to implement (no new "this bucket is
+  off-limits until age X" state) but less realistic for accounts still receiving contributions.
+  Recommend Option A for behavioral realism, but this is genuinely a product call, not just an
+  implementation detail — surface it to the owner before implementing.
+
+#### Test plan for the fix
+1. **Regression on the bug's own repro:** re-run the "primary 55→65, spouse 40, $120k, 7%" scenario
+   from Measured Impact above with `spouseRetirementAge: 65` — the spouse's Traditional 401k at
+   spouse-age-65 should land at/near $3,124,069 (the audit's independently-computed "what it should
+   be" figure), not $741,378.
+2. **Golden master / single-person safety:** no spouse data (defaults) → byte-identical output,
+   exactly like every other #30 param.
+3. **`spouseRetirementAge === primaryRetirementAge` (same-year retirement, the case #30 already
+   modeled correctly by accident):** must produce results identical to today's pre-fix behavior for
+   that specific case — i.e., the fix must be a strict generalization, not a behavior change for
+   the one case that was already right.
+4. **`spouseRetirementAge < primaryRetirementAge`** (spouse retires FIRST — a real, currently
+   entirely unhandled case in the other direction): spouse's contributions should stop at their own
+   earlier retirement; does the spouse then draw down while the primary still works? (Same Option
+   A/B question as above, mirrored.)
+5. **Income-floor gap-years test:** a scenario with a real gap (primary retires, spouse works 5 more
+   years) — assert the walk's portfolio draw is measurably LOWER during the gap years than an
+   otherwise-identical scenario with `spouseIncomeFloor: 0`, proving the floor is actually load-
+   bearing, not just plumbed and inert.
+
+#### Acceptance criteria
+- `spouseRetirementAge` input exists, editable, bounded sensibly, in the Spouse & household card.
+- The bug's own measured scenario (Section "Measured impact") no longer understates by anywhere
+  near $2.38M when `spouseRetirementAge` is set to the spouse's real intended retirement age.
+- All 5 test-plan cases above pass, including the two directional cases (spouse retires after /
+  before the primary).
+- Golden master untouched at defaults.
+- `docs/FINANCIAL-MODEL.md`'s spouse row updated again once this ships (it currently describes THIS
+  bug as the limitation — that description becomes stale the moment this is fixed).
+- This entry moved to Resolved with root cause + fix + files changed, per this file's own
+  Conventions section.
+
+**Where:** `src/App.jsx` (`spouseContribEnd` line 333, `spouseAtRet`/`spouseSimData` construction
+lines 324–360, `sTrad`/`retPhaseBase` wiring lines 469/619, the "Spouse & household"
+`MyDetailsScreen.jsx` card and its `spouseAccountsBundle` in App.jsx), `src/model/retirement-engine.js`
+(`buildRetirementWalkByAccount`'s income-floor construction, line 161).
+**Inert at default state:** no spouse data → no effect. Golden master untouched. Affects real
+numbers only for a household with spouse account balances AND an age gap — which is most married
+households, so this is a real, not theoretical, limitation of the shipped #30 engine.
+
+### BUG-77 — Spouse Traditional 401k isn't re-grown through a `calcWhatIfScenario` re-sim (found 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** an Opus interoperability audit requested before merging PR #57 (the reprioritized-backlog batch), specifically checking whether the spouse engine (#30) actually reaches every downstream consumer.
+**What:** `calcWhatIfScenario`'s per-account-engine path (`src/model/what-if.js`) seeds a scenario's spouse Traditional 401k bucket from `retPhaseBase.tradGrossSpouse` unconditionally — including on a forced re-sim (a retirement-age change, a contribution override, or a pre-retirement scenario event). The PRIMARY bucket is correctly recomputed from the re-sim row (`resimAt.tradGross`), but the spouse bucket stays frozen at its base-retirement-age value; it never compounds through the extra/fewer working years the scenario implies.
+**Impact:** for a household with spouse 401k balances, a "retire 3 years later" or "add $X/mo contribution" scenario preview shows the spouse's Traditional 401k as if retirement age never changed — understating the scenario's actual portfolio delta. The scalar-inclusion fix shipped in this same session (spouse trad is now counted at all — see the "Resolved" entry below) makes this THE remaining gap; before that fix the bucket was silently excluded entirely, which was strictly worse.
+**Fix shape (not yet applied — deferred, real scope, not a quick patch):** `calcWhatIfScenario` would need a spouse-sim re-run analogous to the primary's `runSimulation` call in the `needsResim` branch — i.e., the bundle needs a `spouseSimInputs` field (mirroring `simInputs`) so a resim can recompute both people's balances in lockstep, the same way `buildAccumChart`'s new household chart (BUG-77's sibling fix) zips two independently-generated sim arrays by index.
+**Where:** `src/model/what-if.js` — the `needsResim` branch (~line 456-478) and the `seeds.tradGross` construction (~line 522-534).
+**Inert at default state:** no spouse data → `retPhaseBase.tradGrossSpouse` is 0 or absent → no effect. Golden master untouched.
+
+### BUG-78 — `rmdTaxByAge` (Monte Carlo / what-if tax maps) has no entry for a year where only the spouse has an RMD (found 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** the same interoperability audit as BUG-77.
+**What:** `rmdTaxByAge` (`src/App.jsx`) is built by filtering `retPhase.rmdSchedule` to rows where the PRIMARY's RMD is positive — `rmdSchedule` is deliberately primary-only by design (`retirement-phase.js`'s documented scope: the spouse RMD sub-schedule display is a deferred household-dashboard follow-up, #31). In a year where the spouse has an RMD but the primary does not (spouse older, or primary's Traditional 401k already depleted), no row exists in the filtered map for that age, so `rmdTaxByAge` contributes nothing for that year even though real household RMD tax is due.
+**Impact:** the Monte Carlo lens (#114) and the blended what-if walk both consume `rmdTaxByAge` as a baseline tax estimate and would understate tax in a spouse-only-RMD year. This is within Monte Carlo's already-documented "reuses your baseline RMD tax estimates, does not re-derive them per iteration" limitation (see its module header), so it's a real but low-severity seam, not a new class of error.
+**Fix shape (deferred — needs the #31 household-dashboard RMD-schedule work first):** once a joint `rmdSchedule` (primary + spouse rows, keyed by the union of their RMD-active years) exists for #31, `rmdTaxByAge` should build from that instead of the primary-only schedule.
+**Where:** `src/App.jsx` (`rmdTaxByAge` construction), `src/model/retirement-phase.js` (`rmdSchedule`, primary-only by design).
+**Inert at default state:** no spouse data → no effect. Golden master untouched.
 
 ### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
 
@@ -96,6 +290,12 @@ construction). Every IdeasScreen reference in this entry is now historical. The 
 nav-shell portion **still reproduces**: `TabBar` `<div key={id} onClick>` confirmed at line 134
 (no `tabIndex`/`onKeyDown`); mobile bar / `MoreSheet` rows / onboarding controls unchanged (PR #56
 touched HorizonShell only for the Ideas removal, the `navigate` guard, and formatter imports).
+**Re-verified 2026-07-23 (PR #57 session close-out):** `TabBar` still `<div key={id} onClick={() =>
+onChange(id)}>` (now line 142, no `tabIndex`/`onKeyDown`); `OnTrackPill`'s clickable span still
+`role="button"` with no `tabIndex` (now line 83). This session's `HorizonShell.jsx` edits (Batch 3
+— the arc band-view rename to "Range" and a new confidence driver row rendered INSIDE the pill's
+existing popover content) added content to the popover without touching the pill's own
+keyboard-focusability. Still reproduces; scope unchanged.
 
 ### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
 
@@ -115,47 +315,10 @@ closes only via its own `✕` (line 102) — no outside-click or `Escape` handle
 **Re-verified 2026-07-17 (PR #56 close-out):** `✕`-only close confirmed at line 102. Still
 reproduces; PR #56's HorizonShell edits (Ideas removal, navigate guard, formatters) didn't touch
 the popover.
-
----
-
-### BUG-40 — `taxView.composition.total` misses `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review)
-
-**Owner:** me_theguy. **Found by:** CodeRabbit (PR #38 round 3).
-**What:** The Taxes tab's "Retirement-phase tax composition" bar uses `taxView.composition.total =
-rmdTaxBite + convTaxTotal` (`App.jsx`, `taxViewBundle`). This captures the RMD-schedule tax and
-the conversion-window tax, but misses `drawTax` — the incremental tax the per-account engine
-charges when the 401k is tapped for living expenses beyond RMDs/conversions (e.g. after the
-conversion window closes but before depletion). In scenarios with meaningful extra 401k draws, the
-displayed retirement-phase tax total is understated.
-**Root cause:** `rmdTaxBite` and `convTaxTotal` are scalar aggregates from the existing plan-level
-fields; `drawTax` is a per-row field inside `retirementWalk.rows` that has no existing scalar
-rollup. Adding it requires either (a) a new `totalDrawTax = Σ(row.drawTax)` field in
-`retirementWalk` (preferred — keeps the rollup in the model, rule 10) or (b) a `Σ` over the rows
-in App.jsx before the `taxViewBundle` memo.
-**Inert at the default state:** the default plan is trivially sustainable (Infinity longevity) and
-`drawTax` is near-zero at the default spending level; effect is visible for under-funded plans.
-**Fix path:** add `totalDrawTax: rows.reduce((s, r) => s + (r.drawTax ?? 0), 0)` to `buildRetirementPhase`
-return; include it in `taxView.composition.total` and as a third "draw" segment in `taxViewBundle`.
-**Where:** `src/model/retirement-phase.js` (add field), `src/App.jsx` `taxViewBundle` (consume it),
-`src/horizon/screens/NumbersScreen.jsx` (render third segment), `src/horizon/__tests__/numbers-tabs.test.js`
-(update composition mock).
-**Re-verified 2026-07-08 (L3c close-out):** `App.jsx`'s `taxViewBundle` still computes
-`total = rmdTax + convTax` with no `drawTax` term (line shifted to ~1272 by this session's
-unrelated additions elsewhere in the file); `retirement-phase.js`'s `buildRetirementPhase` return
-still has no `totalDrawTax` field. Still reproduces exactly as described; this session's build
-never touched either file's relevant code.
-**Re-verified 2026-07-09 (L3d close-out):** `taxViewBundle`'s `composition.total = rmdTax + convTax`
-confirmed unchanged (now at `App.jsx:1565`, shifted by this session's additions elsewhere in the
-file); `retirement-phase.js` still has no `totalDrawTax` field. Still reproduces; this session's
-WI-3.7/WI-3.8 build touched neither the composition memo nor `retirement-phase.js`.
-**Re-verified 2026-07-12 (session close-out, PR #52):** `composition.total = rmdTax + convTax` still
-present (now `App.jsx:1503`, shifted by this session's `retirementMoneyEvents` hoist + `commitPlan`
-reordering earlier in the file); `retirement-phase.js` still has no `totalDrawTax` field. Still
-reproduces; this session's CodeRabbit-fix work never touched the composition memo or
-`retirement-phase.js`.
-**Re-verified 2026-07-17 (PR #56 close-out):** composition memo (now ~`App.jsx:1473-1480`) still
-RMD + conversion only; `retirement-phase.js` still has no `totalDrawTax` (grep-confirmed). Still
-reproduces; PR #56 touched neither file's relevant code.
+**Re-verified 2026-07-23 (PR #57 session close-out):** confirmed no `addEventListener`/outside-click/
+`Escape` handling anywhere in `HorizonShell.jsx` (file-wide grep). This session's addition to the
+popover (Batch 3's confidence driver row) is new content rendered inside the existing `open && (…)`
+block — the dismissal mechanism itself is untouched. Still reproduces.
 
 ---
 
@@ -201,6 +364,19 @@ sites are internally consistent (their own "current" and "candidate" both use th
 mechanism, so no divergence *within* a site) — the gap is only the blended-vs-engine comparison
 this bug already tracks. `docs/ARCHITECTURE.md`'s `buildSurplusPreview` note now states this
 honestly in its `note` field, shown to the user in the preview itself.
+**Scope NARROWED 2026-07-20 (moneyEvents extension):** the "retirement-phase **duration-event
+income** is untaxed" strand of this bug is now **closed on the headline path**. `applyMoneyEvents`
+(`money-events.js`) adds every event's prorated `eventIncomeForYear` to `taxableIncomeAdjustment`,
+and the per-account engine (`buildRetirementWalkByAccount`) already taxes that as ordinary income
+stacked on the SS/pension floor (`inflowTax`). Since the engine is the source for the chart,
+longevity, Flow-Down, and RMD/conversion numbers, a duration event's retirement-phase side income
+(part-time work, etc.) is now taxed once there. The **remaining** BUG-36 residual is unchanged and
+purely the *blended-walk comparison* surfaces: `calcWhatIfDelta` / `calcOptimizedScenario` (and the
+blended `buildRetirementDrawdown` fallback) still don't charge the per-year spending-draw tax or the
+event-income tax — `buildRetirementDrawdown` consumes `eventNetForYear` directly and never calls
+`applyMoneyEvents`, so it is deliberately outside this fix. Inert at the default state (no events →
+golden master untouched); users WITH retirement event income now see honest (slightly lower)
+headline numbers.
 **Correction (2026-07-12):** `buildScenarioCommitSite` (Ideas' "make this scenario my plan") was
 retired the same day it merged into the arc-event-placement branch — it backed the locked
 "Scenarios" preset cards, which the owner had separately decided to retire that same day (see the
@@ -253,6 +429,12 @@ unchanged. This session's `what-if.js` changes (BUG-66 `surplusApplySite` moneyE
 `addlPreTaxBal` fallback-path fix, `deltaYearsFrom` dedup) all touched the blended-walk call sites'
 *correctness* (basis consistency, dropped inputs) without migrating them onto the engine — none of
 them close this gap, they just make the blended walk less wrong in isolation. Still reproduces.
+**Re-verified 2026-07-23 (PR #57 session close-out):** `calcWhatIfDelta` (now `what-if.js:227` on)
+still calls `buildRetirementDrawdown` at lines 316/326; `optimization.js:79` unchanged. This
+session's `what-if.js` edits (the BUG-75 additions-only `moneyEvents` contract, the BUG-79
+spouse-trad scalar fix, the new `calcWorkLongerBreakEven`) all touched call sites of the blended
+walk without migrating any of them onto the engine — same pattern as the 2026-07-12 note. Still
+reproduces, scope unchanged.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
@@ -280,6 +462,9 @@ and Horizon screens — not the engine).
 **Re-verified 2026-07-12 (session close-out, PR #52):** still zero matches for
 `conversionTaxSource` in `retirement-engine.js`/`retirement-phase.js`. Still reproduces; neither
 file was touched this session.
+**Re-verified 2026-07-23 (PR #57 session close-out):** still zero matches for `conversionTaxSource`
+in either file (grep-confirmed against current HEAD, after this session's #30 + moneyEvents-
+extension edits to `retirement-engine.js`). Still reproduces, scope unchanged.
 
 ### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
 
@@ -310,6 +495,18 @@ Still reproduces; `retirement-engine.js` was not touched by this session's build
 **Re-verified 2026-07-12 (session close-out, PR #52):** `tFloor` still at line 150, `needed` still
 at line 132 — unchanged since 2026-07-08. Still reproduces; `retirement-engine.js` was not touched
 this session.
+**Re-verified 2026-07-23 (PR #57 session close-out) — still reproduces, line numbers shifted, scope
+grew slightly.** This session's #30 (spouse) and moneyEvents-extension batches both touched this
+file substantially: `floor` is now at line 161, `needed` at line 178, `tFloor` at line 201 (still
+`calcTax(floor, filingStatus).tax`, still only used as a subtracted telescoping baseline —
+`inflowTax = (tInflow − tFloor) + …`, line 205 — never itself added to `tax`, confirmed by reading
+the full tax-assembly block through line 216). The floor itself is now `(SS if claimed) + (pension
+if started)` — unchanged shape — but the moneyEvents extension added `taxableIncomeAdjustment`
+(event/spousal-inflow ordinary income) stacked on TOP of `floor` via `incFloor = floor +
+taxableIncomeAdjustment` (line 197): that income is taxed as an increment above the floor as
+designed (correct — see BUG-36's 2026-07-20 narrowing note), but it means the untaxed base this bug
+describes is still exactly the SS/pension floor, now sitting under one more stacked layer than
+before. No change to this bug's scope or fix path.
 
 ### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
@@ -333,6 +530,9 @@ as described; this session's build never touched `flow-down.js`.
 Still reproduces; `flow-down.js` was not touched by this session's build.
 **Re-verified 2026-07-12 (session close-out, PR #52):** `totalGrowth` still the residual formula at
 line 34, unchanged. Still reproduces; `flow-down.js` was not touched this session.
+**Re-verified 2026-07-23 (PR #57 session close-out):** `totalGrowth` still the residual formula at
+line 34, unchanged. Still reproduces; `flow-down.js` was not touched by any of this session's six
+batches or the review-fix rounds.
 
 > **BUG-36 / BUG-37 / BUG-38 / BUG-39 — shared re-verification, 2026-07-17 (PR #56 close-out):**
 > all four are engine/model-scope deferrals, and PR #56's entire diff touches only
@@ -343,6 +543,135 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-83 — ArcGraph re-derived the Monte Carlo success threshold in the render layer; primary HSA bound didn't widen under family coverage (found + fixed 2026-07-23, CodeRabbit review of PR #57 commit 325eaad)
+
+**Owner:** me_theguy. **Found by:** CodeRabbit, two findings in the same review round.
+**What (1 — ArcGraph):** the prior review-fix batch (BUG-79/80's commit) had "fixed" a hardcoded
+`80` fallback in `ArcGraph.jsx`'s Range-caption tone by replacing it with
+`ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT` — but CodeRabbit correctly flagged that the
+comparison itself (`pct >= threshold`) shouldn't live in `src/components/**` at all (render-only,
+rule 10), regardless of whether the literal is named. The fallback was also provably dead: the
+`rangeView` bundle (App.jsx) sets `successOk` to null exactly when `successPct` is null, and the
+caption already early-returns on `successPct == null` above this line — so `successOk` is
+guaranteed non-null by the time the fallback would fire.
+**What (2 — HSA):** the PRIMARY's own `accountsBundle` HSA field (`src/App.jsx`) hardcoded
+`HSA_LIMIT_2026` (self-only) as its slider bound regardless of `hsaCoverageType`. Under family
+coverage the sim already lets the primary alone contribute up to the full family ceiling
+(`hsaLimit: primaryHsaLimit`, already wired) — but the UI bound never caught up, so a user
+couldn't actually enter a valid family-coverage contribution through the primary account editor.
+**Fix:** (1) `ArcGraph.jsx`'s `pctColor` now trusts `rangeBands.successOk` directly, no local
+threshold re-derivation (the now-unused `ASSUMPTIONS` import removed). (2) the primary
+`accountsBundle`'s HSA `contrib.max` now uses `primaryHsaLimit` (the same raw, un-split ceiling
+the spouse bundle already uses for its own HSA bound) instead of `HSA_LIMIT_2026`.
+**Where:** `src/components/ArcGraph.jsx`, `src/App.jsx` (`accountsBundle`).
+**Tests:** `setter-bundles.test.js` — primary `accounts.hsa.contrib.max` widens to 8,750 under
+family coverage, alongside the existing spouse-side assertion.
+**Inert at default state** (default coverage is self-only; Range view needs Monte Carlo data to
+render at all) — golden master untouched.
+
+### BUG-81 — Entering spouse account balances alone bypassed the filing-status guardrail (found + fixed 2026-07-20, adversarial spousal-scenario audit)
+
+**Owner:** me_theguy. **Found by:** the same second-pass adversarial audit as BUG-82, by actually
+constructing two identical households differing only in filing status and diffing the output.
+**What:** the existing filing-status guardrail (feature #16, shipped standalone) only ever checked
+`spouseIncome > 0 && filingStatus !== "mfj"`. The #30 spouse-accounts card is a SECOND entry point
+for spouse data (account balances) that the guardrail's condition never accounted for — a user
+could enter spouse Traditional/Roth/Taxable/HSA balances with `spouseIncome` still 0 and
+`filingStatus` still "single" and get no warning at all, while the household RMD/tax math silently
+summed both accounts under single-filer brackets.
+**Measured impact:** two identical households (two $1.5M Traditional 401ks, both age 73) differing
+only in filing status — combined RMD ($113,208) taxed at single brackets ($16,076) vs. MFJ
+($9,225): a **$6,851/yr overstatement** for a household that entered spouse balances but never
+touched filing status.
+**Fix:** widened the guardrail's trigger from `spouseIncome > 0` to `hasSpouse` (App.jsx) — one
+flag covers both entry points. The check itself moved to a named, pre-gated App.jsx boolean
+(`spouseFilingMismatch`) rather than living only inline in Classic's JSX, so **Horizon's**
+"Spouse & household" My-details card can render the same warning without doing the
+`filingStatus !== "mfj"` comparison itself (rule 10) — the gap existed on both surfaces, not just
+Classic's.
+**Where:** `src/App.jsx` (`spouseFilingMismatch`, the widened Classic guardrail condition +
+copy), `src/horizon/screens/MyDetailsScreen.jsx` (the same warning, spouse card).
+**Tests:** `spouse-household.test.js` — entering spouse balances alone (no spouse income) trips
+the flag; MFJ filing status never trips it even with spouse balances present.
+**Inert at default state:** no spouse data → flag stays false. Golden master untouched (display
+guardrail only, no model math changed).
+
+### BUG-79 — `calcWhatIfScenario`'s reported `scenarioTotalAtRet` excluded the spouse Traditional 401k bucket (found + fixed 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** an Opus interoperability audit requested before merging PR #57, tracing whether the spouse engine (#30) reaches every downstream consumer.
+**What:** `buildRetirementPhase` (the walk `calcWhatIfScenario` calls) is correctly seeded with the household's spouse Traditional 401k via `retPhaseBase.tradGrossSpouse`, but the SCALAR `scenarioTotalAtRet` the function *reports* alongside that walk was `seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa` — four fields, none of them the spouse bucket.
+**Impact:** for a household with spouse 401k dollars, every scenario preview built on `calcWhatIfScenario` — Plan's "Try a change" lever preview and the new #55 "Working longer" card both included — reported a scalar that omitted the entire spouse Traditional balance while `baseTotalAtRet` (household) included it. A pure spend-lever drag (which should show $0 change to the retirement balance) instead showed a phantom drop equal to the spouse's trad balance; #55's working-longer comparison could show a *negative* portfolio delta for working additional years.
+**Root cause:** the scalar was written before #30 existed and was never updated when the spouse bucket was added to the walk's inputs — an "accidental silo," not a documented deferral.
+**Fix:** `scenarioTotalAtRet` now adds `retPhaseBase.tradGrossSpouse ?? 0`, matching what the walk is actually seeded with. The bucket itself is NOT re-grown through a scenario re-sim (that's the separate, larger BUG-77, left open) — this fix only makes the reported number consistent with the walk's own (possibly frozen-at-base) basis.
+**Where:** `src/model/what-if.js` (`calcWhatIfScenario`'s per-account-engine branch).
+**Tests:** `what-if.test.js` — a household fixture (`tradGrossSpouse: 600_000`) asserts a non-resim override (`annualExpenses` change) reports `scenarioTotalAtRet` unchanged from the household `baseTotalAtRet`.
+**Inert at default state:** no spouse data → `tradGrossSpouse` is 0/absent → no effect. Golden master untouched.
+
+### BUG-80 — the portfolio arc's accumulation phase was primary-only while the retirement phase was household (found + fixed 2026-07-20, PR #57 pre-merge interoperability audit)
+
+**Owner:** me_theguy. **Found by:** the same interoperability audit as BUG-79.
+**What:** `docs/ARCHITECTURE.md` documented `totalAtRet`, the drawdown chart, and the `retVals` display cards as HOUSEHOLD once #30 shipped, but only the *retirement* half of that promise was true. `accumChart` (`src/App.jsx`, feeding `totalChartData` via `buildAccumChart`) was built from primary-only `simData` and primary-only starting balances; `retirementWalk` (from `retPhase`/`retPhaseBase`) was correctly household. The two were concatenated into one series (`totalChartData = [...accumChart, ...retirementWalk.rows]`).
+**Impact:** for any household with spouse account balances, the arc climbed through the working years at the primary-only total, then jumped up by the full spouse balance exactly at the retirement-age boundary — a visible, dishonest discontinuity, reintroducing the "no chart jump" defect class this codebase specifically fixed once already for the pre-#30 tax-basis case.
+**Fix:** `buildAccumChart` (`src/model/accumulation.js`) gained optional `spouseSimData` (default `[]`) and `spouseStartingBal` (default `0`) params. `spouseSimData` is zipped in **by array index**, not joined by the `age` field — both `simData` and `spouseSimData` are generated over the same shared `totalYears` (one row per calendar year), but each carries the respective person's OWN age, so a spouse of a different age would never match a primary row by age value; the merged row keeps the primary's age (the chart's x-axis throughout the app). Absent spouse args reproduce the pre-#30 chart exactly. `src/App.jsx`'s `accumChart` memo now passes `spouseSimData` + the four spouse starting balances.
+**Residual, not fixed here (documented separately):** `calcMilestones` (Classic "$1M crossing" milestone cards) and `buildAccumulationRows` (Year-by-year table's accumulation-phase Contrib/Growth columns) are two more primary-only consumers of raw `simData` found during the same audit. Both need a genuine per-row household reconciliation (contribution/growth split across two people's sim rows with different bases), which is more invasive than this session's review-fix scope — filed as a follow-up rather than rushed. Also see BUG-77 (spouse bucket frozen through a `calcWhatIfScenario` re-sim) and BUG-78 (RMD tax map gap in spouse-only-RMD years), found by the same audit.
+**Where:** `src/model/accumulation.js` (`buildAccumChart`), `src/App.jsx` (`accumChart` memo).
+**Tests:** `accumulation.test.js` — omitting spouse args reproduces the single-person chart byte-for-byte; index-alignment (not age-join) verified with a spouse at a different age; a spouse sim shorter than primary's contributes 0 for the missing tail years.
+**Inert at default state:** no spouse data → `spouseSimData` is `[]`, spouse balances are 0 → no effect. Golden master untouched.
+
+### BUG-75 — `surplusApplySite` double-applied committed retirement-phase events in both its previews (found 2026-07-13, Fable adversarial review of PR #53; FIXED 2026-07-19)
+
+**Owner:** me_theguy. **Fixed:** 2026-07-19 (Batch 0 of the reprioritized-backlog build, owner-approved plan).
+**Root cause:** `surplusApplySite`'s "current" and "candidate" previews passed the full committed
+`moneyEvents` array into `calcWhatIfDelta({ ...whatIfBundle, moneyEvents })`, but the walk-side
+merge (`what-if.js`) already concatenates `retDrawShared.moneyEvents` — the committed
+retirement-phase list — with the param-derived `retEvents`. Every committed retirement-phase event
+was therefore counted twice in both previews' walks (absolute `yearsSustained`/depletion figures
+wrong whenever committed retirement-phase events existed; deltas mostly survived by symmetry).
+**Fix (contract change, both halves):**
+1. `calcWhatIfDelta`'s `moneyEvents` param is now documented as **scenario ADDITIONS only** —
+   committed events travel inside the bundle (`simInputs.moneyEvents` for the sim,
+   `retDrawShared.moneyEvents` for the walk).
+2. The forced-re-sim path now merges `[...(simInputs.moneyEvents ?? []), ...accumEvents]` instead
+   of overriding with the additions alone — without this, dropping the param from callers would
+   have re-introduced the BUG-34/BUG-61 basis-mismatch class (a `contribOverrides` re-sim dropping
+   committed accumulation events while the no-resim baseline `baseTotalAtRet` includes them).
+   This also fixes the same latent asymmetry in Classic `WhatIfPanel`'s delta mode (its forced
+   re-sims previously dropped committed accumulation events).
+3. `surplusApplySite` no longer passes `moneyEvents` (and dropped it from its dep array).
+**Where:** `src/App.jsx` (`surplusApplySite`), `src/model/what-if.js` (param doc + re-sim merge).
+**Tests (+2):** `what-if.test.js` → "committed events contract (BUG-75)": (a) a committed
+retirement-phase event is counted exactly once (equals a direct `buildRetirementDrawdown` with the
+event passed once); (b) a no-change `contribOverrides` candidate matches the no-override current
+with committed events in BOTH phases — the anti-divergence property the Apply-site markets.
+Golden master untouched (defaults have no events).
+
+---
+
+### BUG-40 — `taxView.composition.total` missed `drawTax` on extra 401k draws (found 2026-06-24, PR #38 review; FIXED 2026-07-19)
+
+**Owner:** me_theguy. **Fixed:** 2026-07-19 (Batch 0 of the reprioritized-backlog build).
+**Root cause:** the Taxes tab's "Retirement-phase tax composition" total was `rmdTaxBite +
+convTaxTotal` only; `drawTax` (the engine's incremental tax on 401k draws beyond RMDs/conversions)
+existed only as a per-row field with no scalar rollup, so under-funded plans understated the
+displayed retirement-phase tax total.
+**Fix (the documented preferred path):** `buildRetirementPhase` now returns
+`totalDrawTax = Math.round(Σ row.drawTax)` over the display rows (bounded to `lifeExp`, same
+convention as `rmdTaxBite`/`conversionCost` so the three compose); `taxViewBundle` includes it in
+`composition.total` and as a third `{ key: "draw", label: "401k draw tax" }` segment; the
+NumbersScreen anchor copy now reads "(RMD, conversion & 401k draws)".
+**Conscious exclusion, recorded:** the engine's per-row `inflowTax` (tax on one-time *taxable
+inflow events*, e.g. an inherited pre-tax IRA) remains outside the composition bar — it is
+event-driven (zero unless such an event exists) and is a tax on external money entering the plan,
+not on the plan's own retirement drawdown; revisit if taxable-inflow events become prominent.
+**Where:** `src/model/retirement-phase.js` (rollup + return field), `src/App.jsx` (`taxViewBundle`),
+`src/horizon/screens/NumbersScreen.jsx` (copy), `src/horizon/__tests__/numbers-tabs.test.js`
+(mock gains the draw segment + segment assertion).
+**Tests (+1):** `retirement-phase.test.js` — `totalDrawTax` equals `Σ(row.drawTax)` over display
+rows, and is strictly positive in a trad-only fixture where every pre-RMD draw comes from the 401k.
+**Inert at the default state** (near-zero `drawTax` at the default spend) — golden master untouched.
 
 ---
 
@@ -1661,7 +1990,7 @@ DOM; 443 tests pass under `node`), the screen-`useState` / formatter-division "r
 **PR #32 review rounds (6, CodeRabbit + Gemini; merged 2026-06-15):** the engine drew heavy review. Resolved in-PR: (1) **RMD before conversion** (IRS sequencing — RMD on the full pre-tax balance, then convert the remainder); (2) **tax-on-tax gross-up** (when Taxable is exhausted and the 401k funds the income tax, that withdrawal is itself taxed — fixed-point solve); (3) **money events folded into `needed`** before the tax solve (a 401k-funded purchase is taxed + grossed up; depletion sees it via `spendShort`); (4) **stale "after-tax" display copy** → gross; (5) **taxable inflows taxed** (engine routes events through the shared `applyMoneyEvents`; flagged taxable inflow → `inflowTax` ordinary-income component); (6) **RMD-schedule `bal` = `r.trad`** not `r.total` ("Est. 401k Balance" column); (7) **conversion-benefit `rmdTaxSaved`** compared over the common active span (apples-to-apples when conversions change longevity); (8) **Flow-Down accumulation clamp removed** (negative real growth reconciles); (9) **per-account cards reconcile** to gross `totalAtRet` when `addlPreTaxBal>0`, and `retTrad` = `tradGrossAtRet` so the optimal/worst-case withdrawal pools match. +11 regression tests over the rounds (412 → **441**).
 
 **Follow-ups (documented, not blocking — open in this file):**
-- **BUG-36** — `what-if.js` (`calcWhatIfDelta`/`calcWhatIfScenario`) + `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` for *deltas* (don't charge the spending-draw tax); accumulation event income tax also not on the engine.
+- **BUG-36** — `what-if.js` (`calcWhatIfDelta`) + `calcOptimizedScenario` still use the blended `buildRetirementDrawdown` for *deltas* (don't charge the spending-draw tax). NARROWED 2026-07-20: retirement-phase **duration-event income** is now taxed on the headline path (engine via `applyMoneyEvents.taxableIncomeAdjustment`); only the blended-walk comparison surfaces remain.
 - **BUG-37** — engine ignores the `conversionTaxSource` toggle (always "taxable"-style); honoring "converted" would move the golden master (owner-deferred).
 - **BUG-38** — engine charges only *incremental* tax above the SS/pension floor, so SS/pension is effectively tax-free (`tFloor` never charged). Inert at default; needs income-surplus handling.
 - **BUG-39** — Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (rule 2b).

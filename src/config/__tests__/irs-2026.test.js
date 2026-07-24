@@ -9,6 +9,7 @@ import {
   ROTH_IRA_LIMIT_2026,
   CATCHUP_ROTH_2026,
   HSA_LIMIT_2026,
+  HSA_FAMILY_LIMIT_2026,
   LIMIT_415C_2026,
   LIMIT_415C_CATCHUP_2026,
   CATCHUP_AGE,
@@ -91,6 +92,7 @@ describe("irs-2026 — verified 2026 published values (audit 2026-06-17)", () =>
     expect(LIMIT_415C_2026).toBe(72_000);
     expect(LIMIT_415C_CATCHUP_2026).toBe(80_000); // 72,000 + 8,000 age-50 catch-up
     expect(HSA_LIMIT_2026).toBe(4_400);
+    expect(HSA_FAMILY_LIMIT_2026).toBe(8_750); // family-HDHP ceiling; tracker's 8,550 was the stale 2025 figure
     expect(ROTH_IRA_LIMIT_2026).toBe(7_500);
   });
 
@@ -207,6 +209,8 @@ describe("irs-2026 — contribution limits", () => {
     // catch-up variant must exceed the base.
     expect(LIMIT_415C_2026).toBeGreaterThanOrEqual(TRAD_401K_LIMIT_2026);
     expect(LIMIT_415C_CATCHUP_2026).toBeGreaterThan(LIMIT_415C_2026);
+    // Family HDHP ceiling must exceed the self-only limit.
+    expect(HSA_FAMILY_LIMIT_2026).toBeGreaterThan(HSA_LIMIT_2026);
   });
 });
 

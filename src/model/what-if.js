@@ -13,12 +13,14 @@ import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
-import { ASSUMPTIONS } from "../config/irs-2026.js";
+import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
   isIncomeReplacingEvent, monthsActiveInYear,
 } from "./money-events.js";
 import { buildPreviewMetric } from "./apply-preview.js";
+import { calcAIME, calcPIA, calcBenefit } from "./social-security.js";
+import { fmtSigned } from "../formatters.js";
 
 // Infinity-aware longevity delta: scenarioYears vs baseYearsSustained, with
 // the ±Infinity edges handled explicitly (plain subtraction gives NaN when
@@ -240,7 +242,11 @@ export function calcWhatIfDelta({
   baseTotalAtRet,
   baseYearsSustained,
   // ── scenario overrides ──
-  moneyEvents = [],             // { label, amount, age, isInflow, isTaxable }
+  moneyEvents = [],             // scenario ADDITIONS only ({ label, amount, age, isInflow, isTaxable }).
+                                // Committed events travel inside the bundle — simInputs.moneyEvents
+                                // for the sim, retDrawShared.moneyEvents for the walk — and are merged
+                                // below on BOTH phases. Passing committed events here double-counts
+                                // them in the retirement walk (BUG-75).
   annualExpensesOverride = null, // change annual retirement spending (number or null)
   retirementAgeOverride  = null, // shift retirement age (number or null — re-runs sim)
   contribOverrides = null,       // { contrib401k?, contribRoth?, contribTaxable?, contribHSA? } — re-runs sim
@@ -273,8 +279,15 @@ export function calcWhatIfDelta({
       && scenarioRetAge > simInputs.currentAge) {
     // contribOverrides spread AFTER simInputs so it takes precedence; moneyEvents
     // is written explicitly last so a stray key in contribOverrides (not part of
-    // its documented shape) can never silently override the real accumEvents.
-    const raw = runSimulation({ ...simInputs, ...(contribOverrides ?? {}), moneyEvents: accumEvents });
+    // its documented shape) can never silently override the real event list.
+    // Committed events (simInputs.moneyEvents) must ride along in the re-sim —
+    // the no-resim baseline (baseTotalAtRet) already includes them, so dropping
+    // them here would make a forced re-sim's basis asymmetric (BUG-75 fix; same
+    // class as the BUG-34/BUG-61 basis mismatches).
+    const raw = runSimulation({
+      ...simInputs, ...(contribOverrides ?? {}),
+      moneyEvents: [...(simInputs.moneyEvents ?? []), ...accumEvents],
+    });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
     const at = raw[retIdx];
@@ -559,7 +572,16 @@ export function calcWhatIfScenario({
     }
 
     const walkRows = rp.rows ?? [];
-    const scenarioTotalAtRet = seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa;
+    // #30 interop fix: the walk (buildRetirementPhase, just above) already
+    // includes the spouse Traditional bucket via the `...retPhaseBase` spread
+    // (tradGrossSpouse — frozen at its base-retirement-age value; re-growing it
+    // through a scenario resim is a documented follow-up, not this fix's scope).
+    // The reported SCALAR must include the same dollars the walk is seeded with,
+    // or every scenario preview (Plan's lever preview, #55 Working longer) shows
+    // a phantom ~spouse-trad-balance swing for a household with spouse 401k
+    // dollars, even when nothing about the spouse account changed.
+    const scenarioTotalAtRet = seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa
+      + (retPhaseBase.tradGrossSpouse ?? 0);
     const chart = [...accumChartRows, ...walkRows.map(r => ({ age: r.age, total: r.total }))];
 
     // Balance at safeLifeExp (the field keeps its historical "90" name — see
@@ -1244,4 +1266,82 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
     rail.push({ months, verdict: verdictForScenarioResult(scenario, safeLifeExp) });
   }
   return rail;
+}
+
+// ── calcWorkLongerBreakEven (#55) ────────────────────────────────────────────
+// "Is it worth working a few more years?" Built on the SAME scenario engine as
+// every other lever (calcWhatIfScenario — never a re-implemented walk), plus the
+// SS helpers for the AIME improvement more working years earn, plus a pure
+// conversion-window count. For each offset (default +1/+3/+5 years past the
+// current retirement age) it returns portfolio-at-retirement, longevity/depletion,
+// the SS-benefit companion, and the shrinking Roth-conversion window.
+//
+// ssInputs (all already derived in App): { currentIncome, incomeGrowth,
+// incomeGrowthEndAge, ssClaimingAge }. includeSS gates the SS companion.
+// Returns null when already retired (safeRetAge <= currentAge) or the bundle is
+// missing — strategiesView.worklonger.applicable mirrors this.
+//
+// Render-ready headline/sub (rule 10): when the base plan already lasts for life
+// the "runway" framing is dishonest (infinite runway), so it switches to a
+// portfolio framing. The card face reads headline/sub directly.
+export function calcWorkLongerBreakEven({
+  bundle, safeRetAge, currentAge, includeSS = true, ssInputs = {}, offsets = [1, 3, 5],
+}) {
+  if (!bundle || safeRetAge == null || currentAge == null || safeRetAge <= currentAge) return null;
+
+  const { baseTotalAtRet, baseYearsSustained, baseDepletionAge } = bundle;
+  const baseSustainable = baseYearsSustained === Infinity;
+
+  const { currentIncome = 0, incomeGrowth = 0, incomeGrowthEndAge = null, ssClaimingAge = SS_FRA } = ssInputs;
+  const ssAnnualAt = (retAge) => includeSS
+    ? calcBenefit(
+        calcPIA(calcAIME(currentIncome, incomeGrowth, retAge - currentAge, incomeGrowthEndAge, currentAge)),
+        ssClaimingAge,
+      ) * ASSUMPTIONS.MONTHS_PER_YEAR
+    : 0;
+  const windowAt = (retAge) => Math.max(0, RMD_START_AGE - 1 - retAge);
+
+  const baseSSAnnual = ssAnnualAt(safeRetAge);
+  const baseWindow = windowAt(safeRetAge);
+
+  const rows = offsets.map((k) => {
+    const retAge = safeRetAge + k;
+    const scenario = calcWhatIfScenario(bundle, { retirementAge: retAge });
+    if (!scenario) return null;
+    const portfolioAtRet = scenario.scenarioTotalAtRet;
+    const depletionAge = scenario.scenarioDepletionAge;
+    const scenSustainable = scenario.scenarioYears === Infinity;
+    const longevityDeltaYears =
+      (baseSustainable || scenSustainable || depletionAge == null || baseDepletionAge == null)
+        ? null
+        : depletionAge - baseDepletionAge;
+    const ssAnnual = ssAnnualAt(retAge);
+    const window = windowAt(retAge);
+    return {
+      years: k, retAge,
+      portfolioAtRet, portfolioDelta: portfolioAtRet - baseTotalAtRet,
+      depletionAge, sustainable: scenSustainable, longevityDeltaYears,
+      ssAnnual, ssDelta: ssAnnual - baseSSAnnual,
+      conversionWindowYrs: window, conversionWindowDelta: window - baseWindow,
+    };
+  }).filter(Boolean);
+
+  // Representative row for the card face — prefer +3, else the middle, else first.
+  const rep = rows.find(r => r.years === 3) ?? rows[Math.floor(rows.length / 2)] ?? rows[0] ?? null;
+  let headline = "—", sub = "";
+  if (rep) {
+    if (baseSustainable || rep.longevityDeltaYears == null) {
+      headline = `${fmtSigned(rep.portfolioDelta)} portfolio`;
+      sub = `working ${rep.years} more years · plan already lasts for life`;
+    } else {
+      headline = `+${rep.longevityDeltaYears} yrs of runway`;
+      sub = `working ${rep.years} more years · ${fmtSigned(rep.portfolioDelta)} portfolio`;
+    }
+  }
+
+  return {
+    applicable: true,
+    baseRetAge: safeRetAge, baseSustainable, baseSSAnnual, baseWindow, includeSS,
+    rows, headline, sub,
+  };
 }

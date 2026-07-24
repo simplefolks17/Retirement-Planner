@@ -7,6 +7,8 @@ import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
 import { VerdictTickRail } from "../fields.jsx";
 import { buildLeverPreview, buildLeverRail } from "../../model/what-if.js";
+import { verdictDisplay } from "../../model/apply-preview.js";
+import { signalToneKey, signalValueText } from "../../model/signals.js";
 import ExploreTray from "../ExploreTray.jsx";
 import GoalsPanel from "../GoalsPanel.jsx";
 
@@ -44,8 +46,8 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
             }}>
             <span style={{
               font: `600 16px ${HM}`, flexShrink: 0,
-              color: sig.id === "deficit" ? t.warm : t.good,
-            }}>{fmt(sig.dollars)}</span>
+              color: t[signalToneKey(sig)],
+            }}>{signalValueText(sig, fmt)}</span>
             <span style={{ minWidth: 0 }}>
               <span style={{ display: "block", font: `600 13px ${HF}`, color: t.ink }}>
                 {sig.title}
@@ -223,7 +225,7 @@ function TryAChangePanel({
     confirmLabel: "Apply changes",
     metrics: preview.metrics,
     note: "Preview uses the same model as your headline numbers.",
-    verdict: null, // reserved slot (WI-5.4) — not filled by a lever preview
+    verdict: verdictDisplay(preview.verdict), // #85: real verdict from the lever preview (years-gap based; comfortable/tight/unaffordable → label+tone). Shown ONLY in the Apply modal — the OnTrackPill remains Plan's glance verdict (SP-3).
   } : null;
 
   const handleConfirm = () => {
@@ -388,6 +390,8 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     contribSeries, activity,
     planView, signals, moneyEvents, retirementWalk,
     planHighlights, statementView,
+    // WI-5.3 (#114): Monte Carlo Range lens — passed straight through to the arc's Range view.
+    rangeView,
     // Try-a-change panel + life-event edit-in-place.
     whatIfSimInputs, monthlySpend, sliderBounds, applyPlanLevers,
     saveEvent, removeEvent, lifeEventBounds,
@@ -468,6 +472,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       walkRows={retirementWalk?.rows ?? []}
       onEventTap={openEventSheet}
       scenarioData={arcPreview?.changed ? arcPreview.chart : null}
+      rangeBands={rangeView}
     />
   );
 

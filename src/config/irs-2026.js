@@ -80,6 +80,9 @@ export const CATCHUP_401K_2026       =  8_000; // 401k catch-up addition, age 50
 export const ROTH_IRA_LIMIT_2026     =  7_500; // Roth IRA annual limit, under 50
 export const CATCHUP_ROTH_2026       =  1_000; // Roth IRA catch-up addition, age 50+
 export const HSA_LIMIT_2026          =  4_400; // HSA self-only annual limit (2026; Rev. Proc. 2025-19)
+// HSA family-HDHP annual limit (2026; Rev. Proc. 2025-19) — shared household ceiling.
+// The feature-tracker's $8,550 figure was the stale 2025 family limit; 2026 raised it to $8,750.
+export const HSA_FAMILY_LIMIT_2026   =  8_750; // HSA family-HDHP annual limit (2026; Rev. Proc. 2025-19)
 export const LIMIT_415C_2026         = 72_000; // 415(c) combined employer+employee, under 50 (2026)
 export const LIMIT_415C_CATCHUP_2026 = 80_000; // 415(c) 72,000 + 8,000 age-50 catch-up (2026; 60–63 super-catchup = 83,250)
 export const CATCHUP_AGE             =     50; // age at which catch-up contributions begin
@@ -373,4 +376,31 @@ export const ASSUMPTIONS = {
   // Goals shown by default on the Plan Goals panel before "add more goals"
   // reveals the rest (progressive disclosure — not an IRS rule).
   DEFAULT_VISIBLE_GOALS: 3,
+
+  // ── Monte Carlo "Range" lens (monte-carlo.js) ──────────────────────────────
+  // Modeling heuristics for the display-only confidence lens, NOT IRS rules and
+  // NOT a guarantee — they parameterize a return-risk-only simulation.
+  //
+  // Standard deviation of annual NOMINAL portfolio returns. ~12% is a common
+  // illustrative proxy for a broad-equity / 60-40 blend's yearly volatility.
+  MONTE_CARLO_STD_DEV:              0.12,
+  // Default number of simulated market paths per run.
+  MONTE_CARLO_ITERATIONS:           600,
+  // Success rate (%) at/above which the Plan confidence driver reads "ok" — a
+  // planning heuristic, roughly the common 80–90% success band.
+  MONTE_CARLO_SUCCESS_GUIDELINE_PCT: 80,
+  // Success rate (%) below which the low-odds Plan signal fires.
+  MONTE_CARLO_LOW_ODDS_PCT:          70,
+
+  // ── Tax diversification (#56) ──────────────────────────────────────────────
+  // Pre-tax (tax-deferred) share of the retirement portfolio, classified into
+  // a concentration level. Planning heuristics, not IRS rules: below MODERATE =
+  // well diversified; MODERATE..HIGH = pre-tax heavy; above HIGH = highly
+  // concentrated (a rising-rate risk). The colored score row + the concentration
+  // signal both key off these.
+  TAX_DIVERSIFICATION_MODERATE_PCT: 60,
+  TAX_DIVERSIFICATION_HIGH_PCT:     80,
+  // "If tax rates rise N points" companion scenario used to dollar-quantify the
+  // pre-tax concentration risk against the projected lifetime RMD tax bill.
+  RATE_RISE_SCENARIO_PCT:           5,
 };

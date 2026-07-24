@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (840 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (929 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -43,7 +43,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (124 items, 64 done, 60 planned)
+- Feature backlog: `feature-tracker.html` (125 items, 78 done, 47 planned)
 
 ## Status
 - Refactored from a 3,988-line monolith into a module structure: pure-function
@@ -1353,10 +1353,196 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   orders, mixed id minting, and the money-guard's JSX-text blind spot. 837 → **840 tests**;
   golden master untouched; lint clean; build OK.
 
+- **Backlog impact-reprioritization + Batch 0 (2026-07-19, branch
+  `claude/feature-prioritization-implementation-vesl3k`):** owner-approved re-ranking of the
+  planned backlog after a 3-agent code audit verified every top candidate against the CURRENT
+  source (several specs predated the duration-events system, the Ideas retirement, and the
+  per-account engine). Verdicts recorded as dated notes in `feature-tracker.html`: **#112/#48
+  timeline primitive OBSOLETE as specced** (moneyEvents already is the canonical store; rescoped
+  to a targeted extension — per-event growth, open-ended durations, taxed retirement-phase event
+  income, lifted UI bounds), #53/#10 rescoped onto that extension, #35 mostly done, #55/#85/#56
+  shrunk to thin layers over shipped lever-preview/verdict/composition machinery, #113/#30/#114/#116
+  confirmed as real builds. **PR #57 pre-merge audit batch (2026-07-20):** two Opus agents
+  (edge-case/hardcoding hygiene; cross-feature interoperability) reviewed the full 6-batch diff
+  before merge. Edge-case audit: clean — verdict "safe to merge as-is"; one real finding fixed
+  (`spouseAccountsApplicable` UI-visibility gate could go false while `hasSpouse`-gated spouse
+  balances were still live, hiding the card that edits numbers still moving household totals —
+  now reuses `hasSpouse` directly, no second near-duplicate condition) plus two cosmetic
+  hardcoded-fallback literals (`80`, `67`) now referencing
+  `ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT` / `SS_FRA`. Interoperability audit: found the
+  spouse engine (#30) was threaded carefully into the retirement half but not the
+  accumulation/scenario layer — **BUG-79 fixed** (`calcWhatIfScenario`'s reported
+  `scenarioTotalAtRet` omitted the spouse Traditional 401k the walk was actually seeded with,
+  producing a phantom balance swing on every scenario preview for a spouse-401k household) and
+  **BUG-80 fixed** (the arc's accumulation phase was primary-only while the retirement phase was
+  household, producing a visible jump at the retirement-age boundary; `buildAccumChart` gained
+  optional index-aligned `spouseSimData`/`spouseStartingBal` params — zipped by array position,
+  not joined by age, since a spouse of a different age never matches a primary row by age
+  value). Two smaller residuals documented rather than rushed: **BUG-77** (spouse Traditional
+  bucket frozen, not re-grown, through a `calcWhatIfScenario` re-sim) and **BUG-78** (RMD tax
+  map has no entry for a spouse-only-RMD year — within Monte Carlo's already-documented
+  baseline-tax-estimate limitation). All four inert at the default state; golden master
+  untouched throughout. 921 → **925 tests**.
+- **CodeRabbit + Gemini bot review of PR #57 (2026-07-20).** Both auto-triggered on push; no
+  manual review needed ("the bots," not human reviewers). CodeRabbit flagged 4 items, 2 already
+  fixed by the prior interop-audit commit (the `80`/`67` hardcodes); the other 2 verified real and
+  fixed: `LifeEventSheet`'s Total-summary parenthetical showed `"$X/mo for undefined mos"` in
+  "Until an age" mode (only ever branched on `mode === "monthly"`, never on `durationMode` —
+  now shows `"through age N"` for the until-mode case); a signal-chip tone-map/value-formatter
+  duplicated verbatim between `PlanScreen`'s `SignalsStrip` and `StrategiesScreen`'s
+  `ForYouStrip` (extracted to `signalToneKey`/`signalValueText` in `signals.js` — one source, so
+  a future signal id can't render different colors on the two surfaces). Gemini flagged 3 items:
+  a claimed missing `fmt` import in `StrategiesScreen.jsx` didn't reproduce (import is present;
+  false positive, likely a stale intermediate diff); a `growthPct` input step (cosmetic, widened
+  1 → 0.5 for fractional entry); and a suspected "Portfolio lasts" sub-label bug in
+  `WorkLongerFlow.jsx` when a plan transitions to sustainable — traced the model math and it
+  already null-guards correctly (`longevityDeltaYears` is `null` whenever either side is
+  sustainable), so the JSX fallback was already right; added 2 regression tests (one using the
+  existing `depletingArgs` fixture, one a binary-searched near-perpetuity balance that actually
+  forces the transition) to lock the invariant with evidence rather than leave it unverified.
+  921 → **927 tests**. (The commit that shipped this batch briefly recorded 935 —
+  a concurrent background audit agent's own scratch probe files were on disk in the shared working
+  tree at gate-check time and inflated the count; corrected here once they were untracked.)
+- **Second Opus audit — spousal-engine adversarial scenario testing (2026-07-20).** Owner request:
+  the two prior spouse-engine audits (static code reading) found suspiciously few bugs for a
+  feature this complex; requested a differently-angled pass that actually EXECUTES the model with
+  constructed edge-case numbers rather than reasoning about the code. It paid off — found the
+  single largest gap in #30, missed by both prior static passes: **the spouse has no retirement
+  age of their own.** Contributions stop, and the account balance freezes, the moment the PRIMARY
+  retires — regardless of the spouse's actual age. Since the UI caps the spouse younger than the
+  primary, every household with an age gap (the common case, not an edge case) has its household
+  wealth understated. Measured in a constructed scenario (primary 55→65, spouse 40): **$2.38M**
+  understated in the spouse's Traditional 401k bucket alone, plus a second additive gap (no
+  spouse-earned-income floor during the primary-retired/spouse-still-working gap years). **Filed
+  as BUG-82 (open)** — a real feature addition (a `spouseRetirementAge` input + its own
+  contribution/income-floor wiring), not a quick patch, matching this codebase's convention of
+  documenting rather than rushing structurally significant model changes under review-fix
+  pressure. Also found and **fixed BUG-81**: the #16 filing-status guardrail only ever checked
+  `spouseIncome > 0`, so entering spouse ACCOUNT balances alone (#30's own entry point, spouseIncome
+  still 0) bypassed it entirely — measured $6,851/yr overstatement in a same-balances-different-
+  filing-status comparison. Widened to `hasSpouse`, exposed as a pre-gated App.jsx flag
+  (`spouseFilingMismatch`) so both Classic and the Horizon "Spouse & household" card show the same
+  warning. `docs/FINANCIAL-MODEL.md`'s stale "spouse accounts not modeled" and "Monte Carlo
+  planned" rows corrected to describe the actual shipped state + the real limitation. Everything
+  else the audit checked (joint RMD bracket stacking, the spouse's own-age RMD keying, the
+  zero-spouse boundary, the HSA family-ceiling split) verified correct by running it, not just
+  reading it. 927 → **929 tests**. Golden master untouched throughout (all inert at the default
+  state — no spouse data).
+- **CodeRabbit + Gemini bot review of PR #57 (2026-07-20).** Both auto-triggered on push; no
+  manual review needed ("the bots," not human reviewers). CodeRabbit flagged 4 items, 2 already
+  fixed by the prior interop-audit commit (the `80`/`67` hardcodes); the other 2 verified real and
+  fixed: `LifeEventSheet`'s Total-summary parenthetical showed `"$X/mo for undefined mos"` in
+  "Until an age" mode (only ever branched on `mode === "monthly"`, never on `durationMode` —
+  now shows `"through age N"` for the until-mode case); a signal-chip tone-map/value-formatter
+  duplicated verbatim between `PlanScreen`'s `SignalsStrip` and `StrategiesScreen`'s
+  `ForYouStrip` (extracted to `signalToneKey`/`signalValueText` in `signals.js` — one source, so
+  a future signal id can't render different colors on the two surfaces). Gemini flagged 3 items:
+  a claimed missing `fmt` import in `StrategiesScreen.jsx` didn't reproduce (import is present;
+  false positive, likely a stale intermediate diff); a `growthPct` input step (cosmetic, widened
+  1 → 0.5 for fractional entry); and a suspected "Portfolio lasts" sub-label bug in
+  `WorkLongerFlow.jsx` when a plan transitions to sustainable — traced the model math and it
+  already null-guards correctly (`longevityDeltaYears` is `null` whenever either side is
+  sustainable), so the JSX fallback was already right; added 2 regression tests (one using the
+  existing `depletingArgs` fixture, one a binary-searched near-perpetuity balance that actually
+  forces the transition) to lock the invariant with evidence rather than leave it unverified.
+  921 → **927 tests**. (The commit that shipped this batch briefly recorded 935 —
+  a concurrent background audit agent's own scratch probe files were on disk in the shared working
+  tree at gate-check time and inflated the count; corrected here once they were untracked.)
+- **CodeRabbit + Gemini bot review, round 2 (2026-07-23, PR #57, reviewing commit 325eaad).** A
+  review round from before the spousal-audit fixes landed surfaced 4 more items, triaged
+  alongside the BUG-81/82 writeup — 2 folded into one **BUG-83 (fixed)**: (a) `ArcGraph.jsx`'s
+  Range-caption tone had re-derived the Monte Carlo success threshold locally (a rule-10
+  render-layer violation introduced by the PRIOR review-fix pass's own "named constant" patch —
+  the fallback was also provably dead code given the `rangeView` bundle's null-contract); now
+  trusts `rangeBands.successOk` directly. (b) the primary's own HSA slider bound stayed at the
+  self-only limit under family coverage even though the sim already allowed the full family
+  ceiling; now uses `primaryHsaLimit`, mirroring the spouse bundle's existing bound.
+  **BUG-84 filed, not fixed** — `retTrad`/`retRoth`/`retTaxable` (withdrawal-order +
+  conversion-sim scalars) stayed primary-only after #30; CodeRabbit itself tagged this "Heavy
+  lift," and it's a genuine design question (Roth conversions are legally per-account/per-person,
+  not poolable) needing an owner call between two candidate fix shapes — documented, not rushed.
+  A 4th finding (spouse Traditional bucket frozen through a what-if re-sim) was already tracked
+  as BUG-77 — no new action. Test suite unchanged in count (one new assertion added to an
+  existing test, not a new test) — still **929**.
+  New P1 work list (complex-first, dependency-honest): #113 entitlements →
+  #30 spouse engine → #114 Monte Carlo lens → moneyEvents extension → #116/#85/#55/#56. Demotions:
+  #82/#83 → P3 (Solvers surface retired by owner 2026-07-13), Advanced-Income #58/#59/#62/#63/#64/#65
+  → P2 (blocked on the P1 infra). **Batch 0 fixes shipped:** BUG-75 (calcWhatIfDelta's `moneyEvents`
+  param is now additions-only — committed events ride the bundle on BOTH phases; `surplusApplySite`
+  stops passing them; the re-sim merge also fixes Classic WhatIfPanel's latent committed-accum-event
+  drop) and BUG-40 (`totalDrawTax` rollup in `buildRetirementPhase`; composition bar gains the
+  "401k draw tax" segment; `inflowTax` consciously excluded, noted in BUGS.md). Both inert at the
+  default state — golden master untouched. 840 → **843 tests**.
+
+- **moneyEvents extension shipped (2026-07-20, branch `claude/feature-prioritization-implementation-vesl3k`;
+  closes rescoped #112/#48 and delivers #53 mortgage step-down, #35 residual, #10 variable spend):**
+  three model capabilities added by extending the ONE per-year helper family in
+  `src/model/money-events.js` (so every walk — sim, per-account engine, blended what-if — inherits
+  them via the shared helpers, never the callers). (1) **Per-event growth** — optional `growthPct`
+  (annual escalation %, factor `(1+growthPct/100)^k` over whole-year offset k from the event start,
+  via new module-internal `growthFactorForAge`) applied to a duration event's monthly-spend AND
+  incomeAnnual terms; `eventGrossCost` now sums per active year. Absent/0/non-finite = flat =
+  byte-identical to legacy events. (2) **Open-ended durations** — optional `untilAge` ("runs through
+  age X, inclusive", via new module-internal `spanMonths` that prefers untilAge over durationMonths
+  and wins when both are present); makes "until payoff age" and "rest of plan" (untilAge = plan
+  horizon) expressible. The walks stop at their own endAge, so an open-ended event is naturally
+  bounded by the plan horizon — no clamp in the module. (3) **Taxed retirement-phase event income**
+  (narrows BUG-36) — `applyMoneyEvents` now adds every event's prorated `eventIncomeForYear` to
+  `taxableIncomeAdjustment`, so a duration event's retirement-phase side income (part-time work,
+  etc.) is taxed once as ordinary income stacked on the SS/pension floor via the engine's
+  `inflowTax`. `applyMoneyEvents` is engine-only, so the blended `buildRetirementDrawdown` deliberately
+  still ignores it — the remaining BUG-36 residual. **Presets** (`src/horizon/presets.js`, value-lock
+  updated deliberately): "Mortgage paid off" (freed-up cash after payoff — inflow age 60 →
+  untilAge 90; the baseline already includes the payment, so a pre-payoff outflow would
+  double-count it — coordinator review fix) and "Higher early-retirement spend" (delta above
+  baseline age 65 → untilAge 75). **UI**
+  (`LifeEventSheet.jsx`): duration authoring gains a "For a set time / Until an age" sub-toggle (age
+  slider bounded age+1 → plan horizon, "rest of your plan" hint at the ceiling) plus an optional
+  "Grows __%/yr" field; `GoalsPanel.goalSummary` renders untilAge as "through age X" (never
+  "undefined mo"). **minAge decision:** kept at `currentAge + 1` (documented in App.jsx's
+  `lifeEventBounds`) — `runSimulation` accumulation rows start at `currentAge + 1`, so an event at
+  exactly `currentAge` would be silently dropped by the accumulation walk. Default state has no
+  events → **golden master byte-untouched**. 843 → **892 tests** (+8 money-events model, +3
+  LifeEventSheet authoring; existing "duration events never produce taxable income" test rewritten
+  to assert the new taxation). Tracker: #112/#48/#53/#35/#10 → done (69 → 74 done, 56 → 51 planned).
+- **Quick-win batch — #116 / #85 / #55 / #56 (2026-07-21, branch
+  `claude/feature-prioritization-implementation-vesl3k`):** four display/lens-layer features closing the
+  planned quick-win list. All additive display — **golden master byte-untouched**; 892 → **921 tests**;
+  lint clean; build OK. Implemented by Sonnet subagents (one per feature) from written specs, orchestrator
+  reviewing every diff against the plan and running the gates; no implementation code written by the
+  orchestrating session.
+  - **#56 — Tax diversification score.** New pure `calcTaxDiversification` (`accumulation.js`) → pre-tax /
+    tax-free / taxable percentages of `totalAtRet`, a threshold-classified concentration `level` +
+    render-ready `levelLabel`/`tone`, and the rate-rise companion (`rateRiseCost` = `rmdTaxBite × 5% /
+    effectiveRMDTaxRate`, div-by-zero-guarded → null). Thresholds are named ASSUMPTIONS
+    (`TAX_DIVERSIFICATION_MODERATE_PCT` 60 / `_HIGH_PCT` 80 / `RATE_RISE_SCENARIO_PCT` 5). Surfaced as a
+    colored composition + warning row on Numbers → Accounts (rule 10 — screen renders the model fields).
+    New `concentration` signal in `calcSignals` (dollar-quantified via the rate-rise figure; fires only
+    above the HIGH threshold). Default state classifies "low" (pre-tax ≈ 53%) → signal dormant → Plan
+    strip unchanged. No red tone (palette has none) — "high" differs from "moderate" by copy.
+  - **#55 — Working-longer break-even.** New pure `calcWorkLongerBreakEven` (`what-if.js`), built ON the
+    existing scenario engine (`calcWhatIfScenario`) + SS helpers (AIME improvement from more work years) +
+    a pure conversion-window count — never a re-implemented walk. New "Working longer" Strategies card
+    (Income timing) + read-only `WorkLongerFlow.jsx` showing +1/+3/+5-year comparison rows (portfolio at
+    retirement, longevity, SS-benefit delta, shrinking Roth window). Honest headline when the base plan is
+    already sustainable (portfolio framing, not infinite "runway"). The #114 Monte-Carlo low-odds signal's
+    deep-link retargeted `{screen:"plan"}` → `{screen:"strategies", subView:"worklonger"}`.
+  - **#116 — Strategies catalogue v2.** Added the empty "Assets" editorial section (declared-with-no-cards,
+    stays hidden until a card is added — data-only). True applicability RENDER-gating: non-applicable free
+    cards hide behind a quiet "Browse all strategies (N more)" disclosure. "For you" strip (≤3) driven by
+    the SAME `calcSignals` ranking Plan uses — one `signalInputs` object feeds `signals` (max 2) and
+    `strategiesForYou` (max 3); anti-divergence locked by a model test (`slice(0,2)` equality). Premium-lock
+    mechanism wired: exported `isCardLocked(entry, entitlements)` + `LockedCard` render path for a registry
+    entry declaring `premium: true` (NONE premium today; mechanism unit-tested via a flag flip).
+  - **#85 — Verdict badge.** Fed a real `verdictDisplay(preview.verdict)` into the reserved verdict slot of
+    Plan's "Try a change" `ApplyPreviewModal` (was `null`). Years-gap-based (Comfortable / Tight / Doesn't
+    fit); no invented red tone; the badge appears ONLY inside the Apply modal — the OnTrackPill stays Plan's
+    glance verdict (SP-3). Tracker: #116/#85/#55/#56 → done (74 → 78 done, 51 → 47 planned).
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (840 tests)
+- `npm test` — run model + formatter + render-smoke tests (929 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

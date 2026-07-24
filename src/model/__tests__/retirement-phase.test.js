@@ -56,6 +56,18 @@ describe("buildRetirementPhase — single source", () => {
     expect(withConv.grossNetBenefit).toBe(withConv.rmdTaxSaved - withConv.conversionCost);
   });
 
+  it("totalDrawTax is Σ(row.drawTax) over display rows, and positive when the 401k funds draws (BUG-40)", () => {
+    const sumDisplay = rs => Math.round(
+      rs.filter(r => r.age <= 90).reduce((s, r) => s + (r.drawTax ?? 0), 0));
+    const p = base();
+    expect(p.totalDrawTax).toBe(sumDisplay(p.planWalk.rows));
+    // With no taxable/Roth/HSA to draw from, every pre-RMD spending draw comes
+    // from the 401k → drawTax must be strictly positive and still equal the Σ.
+    const tradOnly = base({ taxable: 0, roth: 0, hsa: 0 });
+    expect(tradOnly.totalDrawTax).toBe(sumDisplay(tradOnly.planWalk.rows));
+    expect(tradOnly.totalDrawTax).toBeGreaterThan(0);
+  });
+
   it("no conversion → zero cost, rmdTaxBite equals the no-conversion baseline, zero savings", () => {
     const { conversionCost, rmdTaxBite, rmdTaxBiteNoConv, rmdTaxSaved, grossNetBenefit } =
       base({ conversionByAge: {} });

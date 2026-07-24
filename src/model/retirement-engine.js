@@ -42,6 +42,14 @@ export function buildRetirementWalkByAccount({
   roth = 0,
   taxable = 0,
   hsa = 0,
+  // OPTIONAL second (spouse) Traditional 401k bucket (#30, model-layer slice).
+  // Defaults to the no-spouse case: tradGrossSpouse=0 keeps every existing
+  // number byte-identical (tradSp stays 0 for the whole walk). Its RMD is
+  // keyed to the SPOUSE's age (spouseCurrentAge/currentAge, already engine
+  // params for Table II) against spouseRmdStartAge, which App resolves from
+  // RMD_START_AGE (rule 1 — the constant itself is never imported here).
+  tradGrossSpouse = 0,
+  spouseRmdStartAge = Infinity,
   effectiveExpenses,
   // Income that reduces the draw (cash received) vs. the taxable floor it stacks on.
   // ssGross = benefit actually received; ssTaxable = its taxable portion (≈85%).
@@ -61,6 +69,7 @@ export function buildRetirementWalkByAccount({
 }) {
   const rows = [];
   let trad = tradGross, rRoth = roth, rTax = taxable, rHsa = hsa;
+  let tradSp = tradGrossSpouse;
   let depletionAge = null;
   let yearsSustained = Infinity;
 
@@ -69,19 +78,38 @@ export function buildRetirementWalkByAccount({
       ? Math.round(spouseCurrentAge + (age - currentAge))
       : null;
 
+  // Spouse's own age each year — used for the spouse RMD gate, independent of
+  // useTable2 (which only governs whether the PRIMARY's RMD uses the joint
+  // Table II divisor). null when either age is unknown (no spouse configured).
+  const spouseAgeFor = (age) =>
+    (spouseCurrentAge != null && currentAge != null)
+      ? Math.round(spouseCurrentAge + (age - currentAge))
+      : null;
+
   // Draw `amount` from the accounts in a fixed order; returns the split actually
   // withdrawn and mutates the running balances. Used for both spending and tax.
+  // "trad" draws from the PRIMARY Traditional 401k first, then spills into the
+  // spouse's bucket (tradSp) — one combined pre-tax draw order (#30).
   const drawInOrder = (amount, order) => {
     let rem = amount;
     const taken = { trad: 0, roth: 0, taxable: 0, hsa: 0 };
     for (const acct of order) {
       if (rem <= 0) break;
-      const bal = acct === "trad" ? trad : acct === "roth" ? rRoth : acct === "taxable" ? rTax : rHsa;
+      if (acct === "trad") {
+        const bal = trad + tradSp;
+        const t = Math.min(rem, Math.max(0, bal));
+        taken.trad = t;
+        rem -= t;
+        const fromTrad = Math.min(t, Math.max(0, trad));
+        trad -= fromTrad;
+        tradSp -= (t - fromTrad);
+        continue;
+      }
+      const bal = acct === "roth" ? rRoth : acct === "taxable" ? rTax : rHsa;
       const t = Math.min(rem, Math.max(0, bal));
       taken[acct] = t;
       rem -= t;
-      if (acct === "trad") trad -= t;
-      else if (acct === "roth") rRoth -= t;
+      if (acct === "roth") rRoth -= t;
       else if (acct === "taxable") rTax -= t;
       else rHsa -= t;
     }
@@ -89,12 +117,13 @@ export function buildRetirementWalkByAccount({
   };
 
   for (let age = startAge + 1; age <= endAge; age++) {
-    const balStart = trad + rRoth + rTax + rHsa;
+    const balStart = trad + tradSp + rRoth + rTax + rHsa;
 
     // 1. Growth (real return) per account.
     const gTrad = trad * rReal, gRoth = rRoth * rReal, gTax = rTax * rReal, gHsa = rHsa * rReal;
-    trad += gTrad; rRoth += gRoth; rTax += gTax; rHsa += gHsa;
-    const growth = gTrad + gRoth + gTax + gHsa;
+    const gTradSp = tradSp * rReal;
+    trad += gTrad; rRoth += gRoth; rTax += gTax; rHsa += gHsa; tradSp += gTradSp;
+    const growth = gTrad + gRoth + gTax + gHsa + gTradSp;
 
     // 2. RMD (forced) BEFORE any conversion (IRS sequencing — review fix): the
     //    first dollars out of a pre-tax account in an RMD year satisfy the RMD, and
@@ -107,7 +136,24 @@ export function buildRetirementWalkByAccount({
       if (rmdDivisor) { rmd = trad / rmdDivisor; trad -= rmd; rTax += rmd; }
     }
 
+    // 2b. SPOUSE's own Traditional 401k RMD (#30) — a separate forced withdrawal
+    //   on the SPOUSE's age, computed after the primary's RMD (and its 401k→Taxable
+    //   move) but before the conversion step (conversions only ever touch the
+    //   primary's bucket, unchanged). Always Table III (spouse-as-owner Table II —
+    //   i.e. the spouse's OWN spouse being >10yrs younger — is out of scope; the
+    //   engine's `useTable2` already models the opposite direction, primary-owner
+    //   with spouse-as-beneficiary). Principal moves to the shared household
+    //   Taxable bucket and stays in the pool (rule 2b) — only the tax leaks below.
+    let rmdSp = 0;
+    const spouseAge = spouseAgeFor(age);
+    if (tradGrossSpouse > 0 && spouseAge != null && spouseAge >= spouseRmdStartAge) {
+      const divSp = getDivisor(spouseAge, false, null);
+      if (divSp) { rmdSp = tradSp / divSp; tradSp -= rmdSp; rTax += rmdSp; }
+    }
+
     // 3. Roth conversion (window): 401k → Roth principal, on the post-RMD balance.
+    //   Converts from the PRIMARY trad bucket only (unchanged — spouse conversions
+    //   are out of scope for this slice).
     const conversion = Math.min(Math.max(0, conversionByAge[age] ?? 0), Math.max(0, trad));
     trad -= conversion; rRoth += conversion;
 
@@ -132,7 +178,7 @@ export function buildRetirementWalkByAccount({
     const needed = Math.max(0, effectiveExpenses - ssCash - penCash) + eventOutflow;
 
     // Available to cover this year's outflow (spending + tax) before depletion check.
-    const availableBeforeDraw = trad + rRoth + rTax + rHsa;
+    const availableBeforeDraw = trad + tradSp + rRoth + rTax + rHsa;
 
     // 4–5. Fund net spending (incl. one-time outflows) AND the income tax it (plus
     //   conversion/RMD) triggers, both from the pool in order Taxable → 401k → Roth →
@@ -142,22 +188,27 @@ export function buildRetirementWalkByAccount({
     //   went untaxed. The breakdown stacks conversion → RMD → (401k-funded draw+tax) on
     //   the floor and telescopes to exactly calcTax(floor+ordinary) − calcTax(floor).
     const ORDER = ["taxable", "trad", "roth", "hsa"];
-    // 401k dollars consumed to fund an outflow X drawn in ORDER (Taxable absorbs first).
-    const tradPortionOf = (X) => Math.min(Math.max(0, X - rTax), Math.max(0, trad));
+    // 401k dollars consumed to fund an outflow X drawn in ORDER (Taxable absorbs
+    //   first). Combined trad availability spans BOTH buckets (#30) — drawInOrder's
+    //   "trad" case spills primary → spouse the same way.
+    const tradPortionOf = (X) => Math.min(Math.max(0, X - rTax), Math.max(0, trad + tradSp));
     // A taxable inflow is ordinary income this year — it stacks at the BOTTOM (it fills
     //   low brackets before conversion/RMD/draw) and is taxed once via inflowTax.
     const incFloor = floor + taxableIncomeAdjustment;
+    // Combined household RMD (primary + spouse) stacks as ONE bracket-accurate
+    //   layer on the floor — two separate RMDs are not taxed twice (#30).
+    const totalRmd = rmd + rmdSp;
     const tFloor  = calcTax(floor, filingStatus).tax;
     const tInflow = calcTax(incFloor, filingStatus).tax;
     const tConv   = calcTax(incFloor + conversion, filingStatus).tax;
-    const tRmd    = calcTax(incFloor + conversion + rmd, filingStatus).tax;
+    const tRmd    = calcTax(incFloor + conversion + totalRmd, filingStatus).tax;
     const inflowTax = (tInflow - tFloor) + taxableIncomeAdjustment * retStateRate;
     const convTax   = (tConv - tInflow)  + conversion * retStateRate;
-    const rmdTax    = (tRmd  - tConv)    + rmd        * retStateRate;
+    const rmdTax    = (tRmd  - tConv)    + totalRmd   * retStateRate;
     let tradDraw = 0, drawTax = 0, tax = Math.round(inflowTax + convTax + rmdTax);
     for (let i = 0; i < 8; i++) {
       tradDraw   = tradPortionOf(needed + tax);   // 401k funding spending + tax
-      const tDraw = calcTax(incFloor + conversion + rmd + tradDraw, filingStatus).tax;
+      const tDraw = calcTax(incFloor + conversion + totalRmd + tradDraw, filingStatus).tax;
       drawTax = (tDraw - tRmd) + tradDraw * retStateRate;
       const nt = Math.round(inflowTax + convTax + rmdTax + drawTax);
       if (nt === tax) break;
@@ -167,7 +218,7 @@ export function buildRetirementWalkByAccount({
     const { shortfall: spendShort } = drawInOrder(needed, ORDER);
     const { shortfall: taxShort }   = drawInOrder(tax, ORDER);
 
-    const balEnd = trad + rRoth + rTax + rHsa;
+    const balEnd = trad + tradSp + rRoth + rTax + rHsa;
     rows.push({
       age,
       balStart,
@@ -179,10 +230,12 @@ export function buildRetirementWalkByAccount({
       rmdTax,             // conversion-benefit calc; inflowTax is the ordinary-income
       drawTax,            // tax on a flagged taxable inflow — one walk, no second source.
       conversion,
-      rmd,
+      rmd,                // primary RMD only — unchanged shape for existing consumers
       rmdDivisor,         // IRS divisor used this year (null when no RMD) — for the RMD table
+      rmdSpouse: rmdSp,   // spouse's own RMD (0 when no spouse bucket) — #30
       tradDraw,
       trad, roth: rRoth, taxable: rTax, hsa: rHsa,
+      tradSpouse: tradSp, // spouse Traditional 401k balance after this year (0 when no spouse bucket)
       balEnd,
       total: Math.max(0, Math.round(balEnd)),
     });
@@ -197,6 +250,6 @@ export function buildRetirementWalkByAccount({
     }
   }
 
-  const endVal = rows.length ? rows[rows.length - 1].total : Math.max(0, Math.round(tradGross + roth + taxable + hsa));
+  const endVal = rows.length ? rows[rows.length - 1].total : Math.max(0, Math.round(tradGross + tradGrossSpouse + roth + taxable + hsa));
   return { rows, depletionAge, yearsSustained, endVal };
 }

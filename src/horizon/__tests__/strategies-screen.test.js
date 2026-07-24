@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
-import StrategiesScreen from "../screens/StrategiesScreen.jsx";
+import StrategiesScreen, { isCardLocked } from "../screens/StrategiesScreen.jsx";
 
 // ── WI-3.3 (#100) + WI-3.4/3.5 flows ─────────────────────────────────────────
 // The screen is pure layout over horizonProps. Card faces read the bundle that
@@ -95,9 +95,20 @@ function makeProps(overrides = {}) {
       conversion: { applicable: true },
       rmd:        { applicable: true },
       ss:         { applicable: true },
+      worklonger: { applicable: true },
       withdrawal: { applicable: true },
       surplus:    { applicable: true },
       mega:       { applicable: true },
+    },
+    // ── #55 workLongerView flow bundle ──
+    workLongerView: {
+      applicable: true, baseRetAge: 65, baseSustainable: true, includeSS: true,
+      headline: "+$180k portfolio", sub: "working 3 more years · plan already lasts for life",
+      rows: [
+        { years: 1, retAge: 66, portfolioAtRet: 4_100_000, portfolioDelta: 60_000, depletionAge: null, sustainable: true, longevityDeltaYears: null, ssAnnual: 49_000, ssDelta: 880, conversionWindowYrs: 6, conversionWindowDelta: -1 },
+        { years: 3, retAge: 68, portfolioAtRet: 4_220_000, portfolioDelta: 180_000, depletionAge: null, sustainable: true, longevityDeltaYears: null, ssAnnual: 50_000, ssDelta: 1_900, conversionWindowYrs: 4, conversionWindowDelta: -3 },
+        { years: 5, retAge: 70, portfolioAtRet: 4_360_000, portfolioDelta: 320_000, depletionAge: null, sustainable: true, longevityDeltaYears: null, ssAnnual: 51_000, ssDelta: 2_900, conversionWindowYrs: 2, conversionWindowDelta: -5 },
+      ],
     },
     // ── WI-3.6 conversionView flow bundle ──
     conversionView: {
@@ -209,6 +220,14 @@ function makeProps(overrides = {}) {
     assumptions: {
       savingsSurplusPct: num(50, 0, 100, 5),
     },
+    // ── #116: "For you" strip — the SAME calcSignals ranking as Plan's strip, ──
+    // capped at 3 (App.jsx: calcSignals(signalInputs, 3)).
+    strategiesForYou: [
+      { id: "conversion", title: "A Roth conversion window is open", body: "Convert now.", dollars: 12_000, target: { screen: "strategies", subView: "conversion" } },
+      { id: "lowodds", title: "Market swings could strain this plan", body: "Retire later.", pct: 62, target: { screen: "strategies", subView: "worklonger" } },
+    ],
+    // ── WI-5.2 (#113): entitlements bundle. Default isPremium true → nothing locks.
+    entitlements: { isPremium: true, readOnly: false },
     ...overrides,
   };
 }
@@ -230,15 +249,17 @@ function mount(props, extra = {}) {
 }
 
 describe("StrategiesScreen", () => {
-  it("renders the marker, the three editorial sections, and all six cards", () => {
+  it("renders the marker, the three editorial sections, and all seven cards", () => {
     const app = mount(makeProps());
     const txt = app.text();
     expect(txt).toContain("Ways to keep more of what you've built");   // smoke marker (card-grid root)
     for (const s of ["Taxes", "Income timing", "Accounts"]) {
       expect(txt, `missing section: ${s}`).toContain(s);
     }
+    // The "Assets" section (#116) declares no cards yet, so it stays hidden
+    // (the existing items.length === 0 guard) — not asserted present here.
     for (const c of ["Roth conversion", "Withdrawal order", "Social Security timing",
-                     "RMD outlook", "Surplus deployment", "Mega backdoor"]) {
+                     "Working longer", "RMD outlook", "Surplus deployment", "Mega backdoor"]) {
       expect(txt, `missing card: ${c}`).toContain(c);
     }
     act(() => app.r.unmount());
@@ -260,10 +281,14 @@ describe("StrategiesScreen", () => {
     act(() => app.r.unmount());
   });
 
-  it("shows the 'Not set up' state for an inapplicable card", () => {
+  it("shows the 'Not set up' state for an inapplicable card, once revealed via Browse all", () => {
+    // #116: an inapplicable free card is hidden by default (render-gating) —
+    // reveal it via the disclosure before asserting its face.
     const props = makeProps();
     props.strategiesView.mega = { applicable: false };
     const app = mount(props);
+    expect(app.text()).not.toContain("Not set up");            // hidden by default
+    app.click(n => textOf(n).startsWith("Browse all strategies"));
     expect(app.text()).toContain("Not set up");
     act(() => app.r.unmount());
   });
@@ -302,6 +327,17 @@ describe("StrategiesScreen", () => {
     // Toggle "Include Social Security" off via the No button.
     app.click(n => textOf(n) === "No");
     expect(props.ss.includeSS.set).toHaveBeenCalledWith(false);
+    act(() => app.r.unmount());
+  });
+
+  it("renders the Working longer card and opens its flow (#55)", () => {
+    const app = mount(makeProps());
+    expect(app.text()).toContain("Working longer");   // card title on the grid
+    app.click(n => textOf(n).startsWith("Working longer"));
+    const txt = app.text();
+    expect(txt).toContain("All strategies");           // back affordance present
+    expect(txt).toContain("each option is worth");     // WorkLongerFlow explainer copy
+    expect(txt).toContain("Work 3 more years");         // per-offset section header
     act(() => app.r.unmount());
   });
 
@@ -559,6 +595,88 @@ describe("StrategiesScreen", () => {
       expect(txt).toContain("Match rate");
       expect(txt).toContain("Of the first N% of salary");
       expect(txt).not.toContain("Employer match (% of salary)");
+      act(() => app.r.unmount());
+    });
+  });
+
+  // ── #116: Strategies catalogue v2 (Assets section, browse-all gating, ──
+  // For-you strip, premium-lock mechanism) ─────────────────────────────────
+  describe("isCardLocked (#116 premium-lock predicate)", () => {
+    it("locks a premium entry only when the user is NOT premium", () => {
+      expect(isCardLocked({ premium: true }, { isPremium: false })).toBe(true);
+      expect(isCardLocked({ premium: true }, { isPremium: true })).toBe(false);
+    });
+
+    it("never locks a non-premium entry, regardless of entitlements", () => {
+      expect(isCardLocked({}, { isPremium: false })).toBe(false);
+    });
+  });
+
+  describe("For-you strip (#116)", () => {
+    it("renders strategiesForYou titles in order and deep-links via navigate on click", () => {
+      const navigate = vi.fn();
+      const app = mount(makeProps(), { navigate });
+      const txt = app.text();
+      expect(txt).toContain("For you");
+      expect(txt).toContain("A Roth conversion window is open");
+      expect(txt).toContain("Market swings could strain this plan");
+      // Order: conversion strip entry appears before the lowodds entry.
+      expect(txt.indexOf("A Roth conversion window is open"))
+        .toBeLessThan(txt.indexOf("Market swings could strain this plan"));
+
+      app.click(n => textOf(n).includes("A Roth conversion window is open"));
+      expect(navigate).toHaveBeenCalledWith("strategies", "conversion");
+      act(() => app.r.unmount());
+    });
+
+    it("renders nothing when strategiesForYou is empty", () => {
+      const app = mount(makeProps({ strategiesForYou: [] }), { navigate: vi.fn() });
+      expect(app.text()).not.toContain("For you");
+      act(() => app.r.unmount());
+    });
+
+    it("renders nothing when navigate is not provided (no empty chrome)", () => {
+      const app = mount(makeProps());   // mount()'s default extra has no navigate
+      expect(app.text()).not.toContain("For you");
+      act(() => app.r.unmount());
+    });
+  });
+
+  describe("Render-gating + Browse all strategies disclosure (#116)", () => {
+    it("hides a non-applicable free card by default and reveals it via Browse all", () => {
+      const props = makeProps();
+      props.strategiesView.mega = { applicable: false };
+      const app = mount(props);
+      expect(app.text()).not.toContain("Mega backdoor");
+      expect(app.text()).toContain("Browse all strategies");
+      app.click(n => textOf(n).startsWith("Browse all strategies"));
+      expect(app.text()).toContain("Mega backdoor");
+      expect(app.text()).toContain("Not set up");
+      act(() => app.r.unmount());
+    });
+
+    it("does not show the Browse all button when every card is applicable", () => {
+      const app = mount(makeProps());   // default fixture: all seven applicable
+      expect(app.text()).not.toContain("Browse all strategies");
+      act(() => app.r.unmount());
+    });
+
+    it("Browse all toggles back to 'Show fewer' and re-hides the inapplicable card", () => {
+      const props = makeProps();
+      props.strategiesView.mega = { applicable: false };
+      const app = mount(props);
+      app.click(n => textOf(n).startsWith("Browse all strategies"));
+      expect(app.text()).toContain("Mega backdoor");
+      app.click(n => textOf(n) === "Show fewer");
+      expect(app.text()).not.toContain("Mega backdoor");
+      act(() => app.r.unmount());
+    });
+  });
+
+  describe("Assets section (#116)", () => {
+    it("does not render an 'Assets' section heading (declared-empty, no card uses it yet)", () => {
+      const app = mount(makeProps());
+      expect(app.text()).not.toContain("Assets");
       act(() => app.r.unmount());
     });
   });

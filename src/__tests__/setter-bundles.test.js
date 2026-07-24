@@ -64,6 +64,24 @@ describe("WI-3.1 setter bundles", () => {
     app.unmount();
   });
 
+  it("exposes and round-trips the spouseAccounts bundle (#30)", () => {
+    const app = mount();
+    expect(app.latest().spouseAccounts, "missing spouseAccounts bundle").toBeTruthy();
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(400_000));
+    expect(app.latest().spouseAccounts.trad401k.bal.value).toBe(400_000);
+    app.fire(() => app.latest().spouseAccounts.hsaCoverageType.set("family"));
+    expect(app.latest().spouseAccounts.hsaCoverageType.value).toBe("family");
+    // Spouse HSA contribution cap is the FAMILY limit (shared household ceiling, rule 4),
+    // not the self-only limit — a self-describing bound, so the screen never hardcodes it.
+    expect(app.latest().spouseAccounts.hsa.contrib.max).toBe(8_750);
+    // BUG-83 (CodeRabbit review): the PRIMARY's own HSA bound must also widen to the
+    // family ceiling under family coverage — the sim already allows it (hsaLimit:
+    // primaryHsaLimit); before this fix the slider bound stayed at the self-only
+    // limit, silently blocking a valid family-coverage contribution.
+    expect(app.latest().accounts.hsa.contrib.max).toBe(8_750);
+    app.unmount();
+  });
+
   it("round-trips a toggle and a select", () => {
     const app = mount();
 

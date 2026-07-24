@@ -221,6 +221,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
     // Session-4 additions:
     retirementRowByAge, // { [age]: engineRow } — per-account breakdown for expandable rows
     milestoneByAge,     // { [age]: tag } — inline milestone badge in portfolio cell
+    taxDiversification, // calcTaxDiversification (#56) — pre-tax/tax-free/taxable split + concentration
   } = props;
 
   const [tab, setTab] = useState(initialTab ?? "statement");
@@ -876,6 +877,64 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               </span>
               <span style={{ font: `700 18px ${HM}`, color: t.ink }}>{fmt(totalAtRet)}</span>
             </div>
+
+            {/* ── Tax diversification score (#56) ── */}
+            {taxDiversification != null && (
+              <div style={{ marginTop: 24 }}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                  <span style={{ font: `600 12px ${HF}`, color: t.ink, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                    Tax diversification
+                  </span>
+                  <span style={{
+                    font: `600 12px ${HF}`, color: t[taxDiversification.tone],
+                    background: `${t[taxDiversification.tone]}18`, borderRadius: 999, padding: "3px 11px",
+                  }}>
+                    {taxDiversification.levelLabel}
+                  </span>
+                </div>
+
+                {/* Three-bucket composition */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {[
+                    ["Pre-tax (tax-deferred)", taxDiversification.preTaxPct,  taxDiversification.preTax,  t.good],
+                    ["Tax-free (Roth · HSA)",  taxDiversification.taxFreePct, taxDiversification.taxFree, t.accent],
+                    ["Taxable",                taxDiversification.taxablePct, taxDiversification.taxable, t.mut],
+                  ].map(([label, pct, amt, color]) => (
+                    <div key={label}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+                        <span style={{ font: `400 14px ${SERIF}`, color: t.mut }}>{label}</span>
+                        <span style={{ font: `600 14px ${HM}`, color: t.ink, whiteSpace: "nowrap" }}>
+                          {pct}% · {fmt(amt)}
+                        </span>
+                      </div>
+                      <div style={{ height: 8, borderRadius: 8, background: t.line, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${Math.max(2, pct)}%`, background: color, opacity: 0.8, borderRadius: 8 }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Rate-rise companion warning row */}
+                <div style={{
+                  marginTop: 14, font: `400 12px/1.6 ${SERIF}`, color: t[taxDiversification.tone],
+                  background: `${t[taxDiversification.tone]}12`,
+                  border: `1px solid ${t[taxDiversification.tone]}44`,
+                  borderLeft: `3px solid ${t[taxDiversification.tone]}`,
+                  borderRadius: 9, padding: "10px 12px",
+                }}>
+                  {taxDiversification.level === "low"
+                    ? <span>Your savings are spread across tax types — flexible against future rate changes.</span>
+                    : <span>
+                        {taxDiversification.preTaxPct}% of your retirement savings is pre-tax.
+                        {taxDiversification.rateRiseCost != null && (
+                          <> If tax rates rise {taxDiversification.riseRatePct} points, your lifetime RMD tax bill increases by
+                          about <span style={{ font: `600 12px ${HM}` }}>{fmt(taxDiversification.rateRiseCost)}</span>.</>
+                        )}
+                        {netConversionBenefit > 0 && <span style={{ color: t.accent }}> Roth conversions diversify this.</span>}
+                      </span>}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -986,7 +1045,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       borderRadius: 9, padding: "9px 14px", marginBottom: 14,
                       font: `400 13px ${SERIF}`, color: t.ink,
                     }}>
-                      Retirement-phase income tax (RMD + conversion):{" "}
+                      Retirement-phase income tax (RMD, conversion &amp; 401k draws):{" "}
                       <span style={{ font: `700 14px ${HM}`, color: t.warm }}>
                         {fmt(taxView.composition.total)}
                       </span>
