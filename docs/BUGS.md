@@ -290,6 +290,12 @@ construction). Every IdeasScreen reference in this entry is now historical. The 
 nav-shell portion **still reproduces**: `TabBar` `<div key={id} onClick>` confirmed at line 134
 (no `tabIndex`/`onKeyDown`); mobile bar / `MoreSheet` rows / onboarding controls unchanged (PR #56
 touched HorizonShell only for the Ideas removal, the `navigate` guard, and formatter imports).
+**Re-verified 2026-07-23 (PR #57 session close-out):** `TabBar` still `<div key={id} onClick={() =>
+onChange(id)}>` (now line 142, no `tabIndex`/`onKeyDown`); `OnTrackPill`'s clickable span still
+`role="button"` with no `tabIndex` (now line 83). This session's `HorizonShell.jsx` edits (Batch 3
+— the arc band-view rename to "Range" and a new confidence driver row rendered INSIDE the pill's
+existing popover content) added content to the popover without touching the pill's own
+keyboard-focusability. Still reproduces; scope unchanged.
 
 ### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
 
@@ -309,6 +315,10 @@ closes only via its own `✕` (line 102) — no outside-click or `Escape` handle
 **Re-verified 2026-07-17 (PR #56 close-out):** `✕`-only close confirmed at line 102. Still
 reproduces; PR #56's HorizonShell edits (Ideas removal, navigate guard, formatters) didn't touch
 the popover.
+**Re-verified 2026-07-23 (PR #57 session close-out):** confirmed no `addEventListener`/outside-click/
+`Escape` handling anywhere in `HorizonShell.jsx` (file-wide grep). This session's addition to the
+popover (Batch 3's confidence driver row) is new content rendered inside the existing `open && (…)`
+block — the dismissal mechanism itself is untouched. Still reproduces.
 
 ---
 
@@ -419,6 +429,12 @@ unchanged. This session's `what-if.js` changes (BUG-66 `surplusApplySite` moneyE
 `addlPreTaxBal` fallback-path fix, `deltaYearsFrom` dedup) all touched the blended-walk call sites'
 *correctness* (basis consistency, dropped inputs) without migrating them onto the engine — none of
 them close this gap, they just make the blended walk less wrong in isolation. Still reproduces.
+**Re-verified 2026-07-23 (PR #57 session close-out):** `calcWhatIfDelta` (now `what-if.js:227` on)
+still calls `buildRetirementDrawdown` at lines 316/326; `optimization.js:79` unchanged. This
+session's `what-if.js` edits (the BUG-75 additions-only `moneyEvents` contract, the BUG-79
+spouse-trad scalar fix, the new `calcWorkLongerBreakEven`) all touched call sites of the blended
+walk without migrating any of them onto the engine — same pattern as the 2026-07-12 note. Still
+reproduces, scope unchanged.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
@@ -446,6 +462,9 @@ and Horizon screens — not the engine).
 **Re-verified 2026-07-12 (session close-out, PR #52):** still zero matches for
 `conversionTaxSource` in `retirement-engine.js`/`retirement-phase.js`. Still reproduces; neither
 file was touched this session.
+**Re-verified 2026-07-23 (PR #57 session close-out):** still zero matches for `conversionTaxSource`
+in either file (grep-confirmed against current HEAD, after this session's #30 + moneyEvents-
+extension edits to `retirement-engine.js`). Still reproduces, scope unchanged.
 
 ### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
 
@@ -476,6 +495,18 @@ Still reproduces; `retirement-engine.js` was not touched by this session's build
 **Re-verified 2026-07-12 (session close-out, PR #52):** `tFloor` still at line 150, `needed` still
 at line 132 — unchanged since 2026-07-08. Still reproduces; `retirement-engine.js` was not touched
 this session.
+**Re-verified 2026-07-23 (PR #57 session close-out) — still reproduces, line numbers shifted, scope
+grew slightly.** This session's #30 (spouse) and moneyEvents-extension batches both touched this
+file substantially: `floor` is now at line 161, `needed` at line 178, `tFloor` at line 201 (still
+`calcTax(floor, filingStatus).tax`, still only used as a subtracted telescoping baseline —
+`inflowTax = (tInflow − tFloor) + …`, line 205 — never itself added to `tax`, confirmed by reading
+the full tax-assembly block through line 216). The floor itself is now `(SS if claimed) + (pension
+if started)` — unchanged shape — but the moneyEvents extension added `taxableIncomeAdjustment`
+(event/spousal-inflow ordinary income) stacked on TOP of `floor` via `incFloor = floor +
+taxableIncomeAdjustment` (line 197): that income is taxed as an increment above the floor as
+designed (correct — see BUG-36's 2026-07-20 narrowing note), but it means the untaxed base this bug
+describes is still exactly the SS/pension floor, now sitting under one more stacked layer than
+before. No change to this bug's scope or fix path.
 
 ### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
@@ -499,6 +530,9 @@ as described; this session's build never touched `flow-down.js`.
 Still reproduces; `flow-down.js` was not touched by this session's build.
 **Re-verified 2026-07-12 (session close-out, PR #52):** `totalGrowth` still the residual formula at
 line 34, unchanged. Still reproduces; `flow-down.js` was not touched this session.
+**Re-verified 2026-07-23 (PR #57 session close-out):** `totalGrowth` still the residual formula at
+line 34, unchanged. Still reproduces; `flow-down.js` was not touched by any of this session's six
+batches or the review-fix rounds.
 
 > **BUG-36 / BUG-37 / BUG-38 / BUG-39 — shared re-verification, 2026-07-17 (PR #56 close-out):**
 > all four are engine/model-scope deferrals, and PR #56's entire diff touches only
