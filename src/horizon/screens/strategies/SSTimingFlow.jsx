@@ -10,7 +10,7 @@
 import React from "react";
 import { HF, HM } from "../../ThemeContext.jsx";
 import { DetailField, money } from "../../fields.jsx";
-import { fmt } from "../../../formatters.js";
+import { fmt, fmtPct } from "../../../formatters.js";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW } from "./flow-ui.jsx";
 import { SS_FRA, SS_MAX_CLAIM_AGE } from "../../../config/irs-2026.js";
 
@@ -74,7 +74,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
             <span>Portfolio draw drops</span>
-            <span style={{ font: `600 12px ${HM}`, color: t.good }}>{props.withdrawalRate.toFixed(1)}% → {sv.wr70.toFixed(1)}%</span>
+            <span style={{ font: `600 12px ${HM}`, color: t.good }}>{fmtPct(props.withdrawalRate)} → {fmtPct(sv.wr70)}</span>
           </div>
           {sv.delayGainYrs != null && sv.delayGainYrs > 0 && (
             <div style={{ display: "flex", justifyContent: "space-between" }}>

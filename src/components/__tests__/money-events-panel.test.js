@@ -65,18 +65,22 @@ describe("MoneyEventsPanel — duration + one-time mix", () => {
     expect(flat).toContain("/mo × ");
     expect(flat).toContain(" mo");
 
-    const numberInputs = root.root.findAll(
-      node => node.type === "input" && node.props.type === "number" && node.props.placeholder === "Amount"
+    // The amount field is now the shared DeferredInput (draft-then-commit,
+    // type="text") — identify it by its "Amount" placeholder, not the old
+    // native type="number" (that spinner was intentionally dropped in the
+    // input-consolidation pass).
+    const amountInputs = root.root.findAll(
+      node => node.type === "input" && node.props.placeholder === "Amount"
     );
-    expect(numberInputs).toHaveLength(0);
+    expect(amountInputs).toHaveLength(0);
   });
 
   it("a one-time row still shows the editable amount input", () => {
     const root = renderPanel([oneTime]);
-    const numberInputs = root.root.findAll(
-      node => node.type === "input" && node.props.type === "number" && node.props.placeholder === "Amount"
+    const amountInputs = root.root.findAll(
+      node => node.type === "input" && node.props.placeholder === "Amount"
     );
-    expect(numberInputs).toHaveLength(1);
+    expect(amountInputs).toHaveLength(1);
   });
 
   it("a duration row with a positive incomeAnnual appends the income annotation", () => {

@@ -10,7 +10,10 @@
 
 import React from "react";
 import { HF, HM } from "./ThemeContext.jsx";
-import { fmtFull } from "../formatters.js";
+import { fmtFull, fmtPct } from "../formatters.js";
+import { toneToken } from "./shared.jsx";
+import { verdictDisplay } from "../model/apply-preview.js";
+import { clamp } from "../model/finance-math.js";
 
 // ── display-only formatters (shared so screens format values identically) ──────
 // `money` is the editable-field readout — full precision (rule 10 tier), same
@@ -18,8 +21,10 @@ import { fmtFull } from "../formatters.js";
 // "$-9,854") — now delegating to the canonical fmtFull (src/formatters.js).
 export const money = v => fmtFull(v);
 export const ageFmt = v => (v == null ? "—" : `age ${v}`);
-export const pctYr  = v => (v == null ? "—" : `${v}%/yr`);
-export const pct    = v => (v == null ? "—" : `${v}%`);
+// Integer slider readouts — route the percent through the canonical fmtPct
+// (dp=0, since these are whole slider values) so there's one percent formatter.
+export const pctYr  = v => (v == null ? "—" : `${fmtPct(v, 0)}/yr`);
+export const pct    = v => (v == null ? "—" : fmtPct(v, 0));
 
 export function FieldRow({ t, label, hint, children }) {
   return (
@@ -52,8 +57,12 @@ export function seg(t, on) {
 // one tick per buildLeverRail/buildDurationRail entry. Rule 10: this component
 // maps a verdict STRING (comfortable/tight/unaffordable) to a theme token and
 // nothing else — it never computes or compares dollars; every verdict comes
-// straight from the model (what-if.js).
-export const VERDICT_TINT = { comfortable: "good", tight: "warm", unaffordable: "accent" };
+// straight from the model (what-if.js). The verdict → tone mapping is DERIVED
+// from the single source verdictDisplay (model/apply-preview.js) via the shared
+// toneToken helper, so the rail tint can never disagree with the ApplyPreview
+// badge or the LifeEventSheet card again (the old local VERDICT_TINT literal is
+// gone). Unknown verdict → the caller's fallback token.
+const tint = (t, verdict, fallback) => toneToken(t, verdictDisplay(verdict)?.tone, fallback);
 
 // `legend` (optional, BUG-73 fix): [{ verdict, label }] from
 // buildVerdictLegend/verdictInfoForScenario (what-if.js) — renders a small
@@ -70,7 +79,7 @@ export function VerdictTickRail({ t, rail, legend }) {
         {rail.map(entry => (
           <div key={entry.value ?? entry.months} style={{
             flex: 1, height: 4, borderRadius: 2,
-            background: t[VERDICT_TINT[entry.verdict]] ?? t.line,
+            background: tint(t, entry.verdict, t.line),
           }} />
         ))}
       </div>
@@ -78,7 +87,7 @@ export function VerdictTickRail({ t, rail, legend }) {
         <div style={{ display: "flex", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
           {legend.map(item => (
             <span key={item.verdict} style={{ font: `400 10px ${HF}` }}>
-              <span style={{ color: t[VERDICT_TINT[item.verdict]] ?? t.mut, fontWeight: 600 }}>
+              <span style={{ color: tint(t, item.verdict, t.mut), fontWeight: 600 }}>
                 {item.verdict}
               </span>
               <span style={{ color: t.faint }}> {item.label}</span>
@@ -164,13 +173,13 @@ export function DetailField({ t, label, hint, field, isMobile, format = String, 
   const canEdit   = typeof editVal === "number" && Number.isFinite(editVal);
   const display   = isNull ? (nullLabel ?? "Auto") : format(value);
   const hasMax    = typeof max === "number";
-  const clamp = v => {
-    let n = v;
-    if (typeof min === "number") n = Math.max(min, n);
-    if (hasMax) n = Math.min(max, n);
-    return n;
-  };
-  const bump = dir => set(clamp(editVal + dir * step));
+  // Shared clamp with open bounds where the field doesn't specify one (a nullable
+  // min/max means "no floor/ceiling" here, unlike the setter-bundle age fields).
+  const bump = dir => set(clamp(
+    editVal + dir * step,
+    typeof min === "number" ? min : -Infinity,
+    hasMax ? max : Infinity,
+  ));
 
   // Read-only edge state: the model gave neither a value nor a seed to edit from.
   if (!canEdit) {

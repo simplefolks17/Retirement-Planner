@@ -6,13 +6,15 @@
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
 import { MAX_CONVERSION_EVENTS } from "../model/conversion-events.js";
+import { clamp } from "../model/finance-math.js";
+import { DeferredInput } from "./DeferredInput.jsx";
 
 function emptyEvent(currentAge, safeRetAge) {
   // Default to a year mid-career, clamped inside the working window.
   const mid = Math.round((currentAge + safeRetAge) / 2);
   return {
     id: Date.now() + Math.random(),
-    age: Math.min(Math.max(currentAge + 1, mid), Math.max(currentAge + 1, safeRetAge - 1)),
+    age: clamp(mid, currentAge + 1, Math.max(currentAge + 1, safeRetAge - 1)),
     amount: 0,
   };
 }
@@ -39,7 +41,6 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
   const remove = (id) => onChange(events.filter(e => e.id !== id));
   const update = (id, field, value) =>
     onChange(events.map(e => e.id === id ? { ...e, [field]: value } : e));
-  const clampAge = (v) => Math.min(maxAge, Math.max(minAge, Number(v) || minAge));
 
   const inputStyle = {
     background: "#0d1117", border: `1px solid ${C.border}`, borderRadius: 6,
@@ -64,21 +65,19 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
             padding: "8px 10px", background: C.card, borderRadius: 8,
             border: `1px solid ${C.border}`,
           }}>
-            <input
-              style={inputStyle} type="number" min={minAge} max={maxAge}
-              aria-label="Conversion age"
+            <DeferredInput
+              value={ev.age} min={minAge} max={maxAge}
+              onChange={n => update(ev.id, "age", n)}
               placeholder="Age"
-              value={ev.age}
-              // Free typing on change (finite-guarded); clamp on blur so a transient low value doesn't snap.
-              onChange={e => { const n = Number(e.target.value); if (Number.isFinite(n)) update(ev.id, "age", n); }}
-              onBlur={e => update(ev.id, "age", clampAge(e.target.value))}
+              aria-label="Conversion age"
+              style={inputStyle}
             />
-            <input
-              style={inputStyle} type="number" min="0" step="5000"
-              aria-label="Conversion amount"
+            <DeferredInput
+              value={ev.amount} min={0}
+              onChange={n => update(ev.id, "amount", n)}
               placeholder="Convert $"
-              value={ev.amount || ""}
-              onChange={e => { const n = Number(e.target.value); update(ev.id, "amount", Number.isFinite(n) ? Math.max(0, n) : 0); }}
+              aria-label="Conversion amount"
+              style={inputStyle}
             />
             <span style={{ fontSize: 10, color: C.muted }}>
               {ev.amount > 0 && estTax != null

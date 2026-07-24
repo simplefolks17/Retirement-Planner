@@ -9,11 +9,12 @@
 
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
-import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS } from "../model/money-events.js";
+import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS, mintEventId } from "../model/money-events.js";
+import { DeferredInput } from "./DeferredInput.jsx";
 
 function emptyEvent(currentAge) {
   return {
-    id: Date.now() + Math.random(),
+    id: mintEventId(),
     label: "",
     amount: 0,
     age: currentAge + 10,
@@ -74,21 +75,18 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
               </span>
             </span>
           ) : (
-            <input
-              style={inputStyle} type="number" min="0" step="1000"
+            <DeferredInput
+              value={ev.amount} min={0}
+              onChange={n => update(ev.id, "amount", n)}
               placeholder="Amount"
-              value={ev.amount || ""}
-              onChange={e => update(ev.id, "amount", Math.max(0, Number(e.target.value)))}
+              style={inputStyle}
             />
           )}
-          <input
-            style={inputStyle} type="number" min={currentAge} max={120}
+          <DeferredInput
+            value={ev.age} min={currentAge} max={120}
+            onChange={n => update(ev.id, "age", n)}
             placeholder="Age"
-            value={ev.age}
-            // Free typing on change; clamp to [currentAge, …] on blur so passing through a
-            // transient low value (e.g. typing "6" before "65") doesn't snap the field.
-            onChange={e => update(ev.id, "age", Number(e.target.value))}
-            onBlur={e => update(ev.id, "age", Math.max(currentAge, Number(e.target.value) || currentAge))}
+            style={inputStyle}
           />
           {duration ? (
             <span style={{ fontSize: 11, color: C.muted }}>{ev.isInflow ? "Income" : "Expense"}</span>

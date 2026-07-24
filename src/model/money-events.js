@@ -1,5 +1,16 @@
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 
+// mintEventId() — the ONE money-event id minter. Both write paths (Classic's
+// MoneyEventsPanel and Horizon's LifeEventSheet) feed the SAME moneyEvents array
+// but used to mint ids two incompatible ways (numeric Date.now()+Math.random()
+// vs String(Date.now())) — mixed-type, collision-able ids compared with ===. A
+// module-level counter guarantees a unique STRING id even within one millisecond.
+let _eventSeq = 0;
+export function mintEventId() {
+  return `ev-${Date.now().toString(36)}-${(_eventSeq++).toString(36)}`;
+}
+
+
 // Money events: windfalls, large purchases, inheritances, travel years, sabbaticals.
 //
 // TWO kinds share one event shape (kind is inferred, never stored):

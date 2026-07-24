@@ -16,10 +16,14 @@
 import React from "react";
 import { HF, HM } from "./ThemeContext.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
+import { toneToken } from "./shared.jsx";
 
-// tone → theme token, shared by the delta chip and the verdict badge.
+// tone → theme token, shared by the delta chip and the verdict badge. Delegates
+// to the ONE toneToken map (shared.jsx) with t.mut as this surface's neutral
+// fallback; "accent" now resolves too, so an unaffordable verdict badge reads
+// accent-toned (the deliberate warm-downgrade is retired).
 function toneColor(t, tone) {
-  return tone === "good" ? t.good : tone === "warm" ? t.warm : t.mut;
+  return toneToken(t, tone, t.mut);
 }
 
 export function PreviewMetricRow({ t, metric }) {

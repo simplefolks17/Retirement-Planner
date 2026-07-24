@@ -89,3 +89,13 @@ export function fmtMo(annual) {
 export function fmtPct(n, dp = 1) {
   return Number.isFinite(n) ? `${n.toFixed(dp)}%` : "—";
 }
+
+// fmtRate(fraction, dp = 1) — a FRACTIONAL rate (0.237 → "23.7%"). Counterpart to
+// fmtPct for the OTHER unit convention: some scalars are fractions (0.24 = 24%),
+// others already whole percents (15.3 = 15.3%). Does the ×100 so no call site has
+// to remember which. Computed/blended rates render dp=1 (fmtRate(x)); statutory
+// brackets dp=0 (fmtRate(x, 0) → "24%"). "—" for non-finite. NOTE: fmtRate(0) is
+// "0.0%", so a site needing a bare "0%" keeps its own `x === 0 ? "0%"` case.
+export function fmtRate(fraction, dp = 1) {
+  return Number.isFinite(fraction) ? fmtPct(fraction * 100, dp) : "—";
+}

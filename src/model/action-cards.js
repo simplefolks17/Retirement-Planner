@@ -3,7 +3,7 @@
 // This keeps impactColor values consistent with the rest of the UI without
 // requiring a COLOR_MAP translation layer.
 
-import { fmt, fmtFull } from "../formatters.js";
+import { fmt, fmtFull, fmtPct, fmtRate } from "../formatters.js";
 import { TAX_DATA_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026, SS_MAX_CLAIM_AGE, SS_FRA, RMD_START_AGE } from "../config/irs-2026.js";
 import { C } from "../theme.js";
 
@@ -181,13 +181,13 @@ export function generatePhaseActions({
           label: `Claim at ${ssClaimingAge}`,
           value: effectiveSS,
           color: C.muted,
-          sub: `${withdrawalRate.toFixed(1)}% withdrawal`,
+          sub: `${fmtPct(withdrawalRate)} withdrawal`,
         },
         vsB: {
           label: `Claim at ${SS_MAX_CLAIM_AGE}`,
           value: ss70Annual,
           color: C.green,
-          sub: ssDelayGainYrs ? `+${ssDelayGainYrs} yrs portfolio life` : `${wr70.toFixed(1)}% withdrawal`,
+          sub: ssDelayGainYrs ? `+${ssDelayGainYrs} yrs portfolio life` : `${fmtPct(wr70)} withdrawal`,
         },
       });
     }
@@ -219,14 +219,14 @@ export function generatePhaseActions({
     phase3Actions.push({
       mode: "educational",
       title: "Moderate Withdrawal Rate",
-      body: `Your ${withdrawalRate.toFixed(1)}% withdrawal rate is above the traditional 4% "safe" rate. This doesn't mean you'll run out — it depends on market returns and how long you need coverage. But it does mean sequence-of-returns risk matters more: a bad market early in retirement has an outsized impact. Consider whether you can reduce first-year expenses or delay retirement 1–2 years.`,
+      body: `Your ${fmtPct(withdrawalRate)} withdrawal rate is above the traditional 4% "safe" rate. This doesn't mean you'll run out — it depends on market returns and how long you need coverage. But it does mean sequence-of-returns risk matters more: a bad market early in retirement has an outsized impact. Consider whether you can reduce first-year expenses or delay retirement 1–2 years.`,
     });
   } else if (withdrawalRate > 6) {
     phase3Actions.push({
       mode: "prescriptive",
       title: "High Withdrawal Rate — Adjust Plan",
-      body: `At ${withdrawalRate.toFixed(1)}%, you're drawing aggressively. Your portfolio depletes at age ${depletionAge ?? "?"}. The most impactful levers: reduce annual expenses, delay retirement to grow the portfolio, or increase contributions now. Even small changes compound over ${safeRetAge - currentAge} years.`,
-      impact: `${withdrawalRate.toFixed(1)}%`,
+      body: `At ${fmtPct(withdrawalRate)}, you're drawing aggressively. Your portfolio depletes at age ${depletionAge ?? "—"}. The most impactful levers: reduce annual expenses, delay retirement to grow the portfolio, or increase contributions now. Even small changes compound over ${safeRetAge - currentAge} years.`,
+      impact: fmtPct(withdrawalRate),
       impactColor: C.orange,
       impactLabel: "needs to be ≤ 4% for safety",
     });
@@ -236,7 +236,7 @@ export function generatePhaseActions({
     phase3Actions.push({
       mode: "educational",
       title: "RMDs Will Be a Major Tax Event",
-      body: `Starting at ${RMD_START_AGE}, the IRS forces ${fmt(firstRMD?.rmd ?? 0)}/yr out of your 401k (growing each year). Over your lifetime, you'll pay an estimated ${fmt(rmdTaxBite)} in tax on these mandatory withdrawals (~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective, bracket-accurate). This is exactly why Roth conversions before age ${RMD_START_AGE} are so valuable — every dollar converted is one fewer dollar the IRS can force out.`,
+      body: `Starting at ${RMD_START_AGE}, the IRS forces ${fmt(firstRMD?.rmd ?? 0)}/yr out of your 401k (growing each year). Over your lifetime, you'll pay an estimated ${fmt(rmdTaxBite)} in tax on these mandatory withdrawals (~${fmtRate(effectiveRMDTaxRate)} effective, bracket-accurate). This is exactly why Roth conversions before age ${RMD_START_AGE} are so valuable — every dollar converted is one fewer dollar the IRS can force out.`,
       impact: rmdTaxBite,
       impactColor: C.orange,
       impactLabel: "lifetime RMD tax",
@@ -247,18 +247,18 @@ export function generatePhaseActions({
     phase3Actions.push({
       mode: "comparative",
       title: `Consider Delaying SS to ${SS_MAX_CLAIM_AGE}`,
-      body: `Waiting earns +8%/yr in delayed credits. Your benefit increases from ${fmt(effectiveSS)} to ${fmt(ss70Annual)}/yr, reducing your portfolio draw from ${withdrawalRate.toFixed(1)}% to ${wr70.toFixed(1)}%.`,
+      body: `Waiting earns +8%/yr in delayed credits. Your benefit increases from ${fmt(effectiveSS)} to ${fmt(ss70Annual)}/yr, reducing your portfolio draw from ${fmtPct(withdrawalRate)} to ${fmtPct(wr70)}.`,
       vsA: {
         label: `Claim at ${ssClaimingAge}`,
         value: effectiveSS,
         color: C.muted,
-        sub: `${withdrawalRate.toFixed(1)}% withdrawal`,
+        sub: `${fmtPct(withdrawalRate)} withdrawal`,
       },
       vsB: {
         label: `Claim at ${SS_MAX_CLAIM_AGE}`,
         value: ss70Annual,
         color: C.green,
-        sub: ssDelayGainYrs ? `+${ssDelayGainYrs} yrs portfolio life` : `${wr70.toFixed(1)}% withdrawal`,
+        sub: ssDelayGainYrs ? `+${ssDelayGainYrs} yrs portfolio life` : `${fmtPct(wr70)} withdrawal`,
       },
     });
   }
@@ -313,12 +313,12 @@ export function generatePhaseSteps(flowData, {
     { label: flowData.distGrowth >= 0 ? "Portfolio Growth" : "Net Investment Loss",
       amount: Math.abs(flowData.distGrowth),
       type:   flowData.distGrowth >= 0 ? "add" : "loss",
-      sub: `${returnRate}% return (real ${(rReal * 100).toFixed(1)}%)` },
+      sub: `${returnRate}% return (real ${fmtRate(rReal)})` },
     { label: "Living Expenses", amount: flowData.distDraws, type: "subtract",
       sub: `${fmt(netPortfolioNeed)}/yr × ${flowData.actualSustainedYrs} yrs` },
     ...(flowData.distRMDTax > 0
       ? [{ label: "RMD Tax Bite", amount: flowData.distRMDTax, type: "subtract",
-           sub: `~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective (bracket-accurate)` }]
+           sub: `~${fmtRate(effectiveRMDTaxRate)} effective (bracket-accurate)` }]
       : []),
     { label: `Remaining at ${flowData.depletionAge ?? safeLifeExp}`, amount: flowData.distEndVal, type: "total" },
   ];
