@@ -15,3 +15,14 @@ export function fvAnnuity(annual, rate, years) {
     ? annual * ((Math.pow(1 + rate, years) - 1) / rate)
     : annual * years;
 }
+
+// clamp(v, min, max) — constrain `v` to the [min, max] range. ONE definition so
+// the ~20 inline `Math.min(hi, Math.max(lo, v))` / `Math.max(lo, Math.min(hi, v))`
+// sites stop disagreeing: the two operand orders diverge exactly when min > max
+// (a corner this repo has hit twice — the ssClaimingAge min>max review fix and
+// BUG-63), so this normalizes min > max to `min` winning (the lower bound is the
+// hard floor — matches what the age-bound sites intend).
+export function clamp(v, min, max) {
+  if (min > max) return min;
+  return Math.min(max, Math.max(min, v));
+}

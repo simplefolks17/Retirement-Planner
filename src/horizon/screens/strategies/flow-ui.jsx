@@ -5,6 +5,7 @@
 
 import React from "react";
 import { HF, HM } from "../../ThemeContext.jsx";
+import { toneToken } from "../../shared.jsx";
 
 export function SectionLabel({ t, children }) {
   return (
@@ -15,9 +16,10 @@ export function SectionLabel({ t, children }) {
   );
 }
 
-// tone: "warm" | "good" | undefined (neutral). A toned note gets a colored left rail.
+// tone: "warm" | "good" | "accent" | undefined (neutral). A toned note gets a
+// colored left rail; an unknown/neutral tone → null (no rail), this site's fallback.
 export function NoteBox({ t, tone, children }) {
-  const c = tone === "warm" ? t.warm : tone === "good" ? t.good : null;
+  const c = toneToken(t, tone, null);
   return (
     <div style={{
       font: `400 12px/1.6 ${HF}`, color: c ?? t.mut, background: t.bg,
@@ -28,7 +30,7 @@ export function NoteBox({ t, tone, children }) {
 }
 
 export function StatTile({ t, label, value, sub, tone, dim }) {
-  const c = tone === "good" ? t.good : tone === "warm" ? t.warm : t.ink;
+  const c = toneToken(t, tone, t.ink);
   return (
     <div style={{ flex: 1, minWidth: 120, background: t.surf, border: `1px solid ${t.line}`,
       borderRadius: 12, padding: "11px 13px", opacity: dim ? 0.45 : 1 }}>
@@ -47,7 +49,7 @@ export const STAT_ROW = { display: "flex", gap: 10, flexWrap: "wrap" };
 // optional leading ordinal (e.g. "1", "①"); `strong` bolds a total/summary row;
 // `tone` colors the value ("good" | "warm" | undefined = neutral ink).
 export function ListRow({ t, index, label, value, sub, strong, tone, first }) {
-  const valColor = tone === "good" ? t.good : tone === "warm" ? t.warm : t.ink;
+  const valColor = toneToken(t, tone, t.ink);
   return (
     <div style={{
       display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14,

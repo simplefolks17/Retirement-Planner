@@ -9,6 +9,7 @@ import {
   SS_AIME_YEARS,
   ASSUMPTIONS,
 } from "../config/irs-2026.js";
+import { clamp } from "./finance-math.js";
 
 // Returns the AIME (Average Indexed Monthly Earnings) from working-year earnings.
 // Sum income for each working year (capped at FICA wage base), divide by max(workYears, 35).
@@ -49,7 +50,7 @@ export function calcPIA(aime) {
 // The claiming-age sliders already stay within 62–70, so this changes no current output;
 // it makes the lookup correct-by-construction.
 export function claimFactor(claimingAge) {
-  const age = Math.max(SS_MIN_CLAIM_AGE, Math.min(SS_MAX_CLAIM_AGE, Math.round(claimingAge)));
+  const age = clamp(Math.round(claimingAge), SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE);
   return SS_FACTORS[age] ?? SS_FACTORS[SS_FRA];
 }
 

@@ -6,7 +6,7 @@ import {
   ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
-import { fmt, fmtPct, fmtFull } from "./formatters.js";
+import { fmt, fmtPct, fmtRate, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
@@ -70,7 +70,7 @@ const RETIREMENT_STATE_OPTIONS = Object.entries(RETIREMENT_STATE_TAX)
   .sort((a, b) => a[1].name.localeCompare(b[1].name))
   .map(([value, { name, rate }]) => ({
     value,
-    label: `${name} (${value}) — ${rate === 0 ? "0%" : `${(rate * 100).toFixed(1)}%`}`,
+    label: `${name} (${value}) — ${rate === 0 ? "0%" : fmtRate(rate)}`,
   }));
 const CONVERSION_BRACKET_OPTIONS = [
   { value: 12, label: "12%" }, { value: 22, label: "22%" }, { value: 24, label: "24%" },
@@ -795,7 +795,7 @@ export default function App() {
     netNeed: netPortfolioNeed,
     steps: [
       { key: "taxable", label: "Taxable brokerage", amount: yr1FromTaxable, note: "already-taxed principal" },
-      { key: "trad",    label: "Traditional 401k",  amount: yr1FromTrad,   note: `taxed at ~${(yr1TradRate * 100).toFixed(0)}%` },
+      { key: "trad",    label: "Traditional 401k",  amount: yr1FromTrad,   note: `taxed at ~${fmtRate(yr1TradRate)}` },
       { key: "roth",    label: "Roth IRA",          amount: yr1FromRoth,   note: "tax-free" },
     ].filter(s => s.amount > 0),
     yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings,
@@ -957,9 +957,15 @@ export default function App() {
   // remove-by-id. This is also where WI-5.2's entitlements/readOnly gating will
   // compose (App-side, at construction) once it exists.
   const saveEvent = useCallback((ev) => {
-    setMoneyEvents(prev => (prev.some(me => me.id === ev.id)
-      ? prev.map(me => (me.id === ev.id ? ev : me))
-      : [...prev, ev]));
+    setMoneyEvents(prev => {
+      // Editing an existing event: always allowed. Adding a new one: cap at
+      // MAX_MONEY_EVENTS here at the write surface, so the limit doesn't rest
+      // entirely on the per-screen UI gates (a new caller could otherwise
+      // over-fill the array).
+      if (prev.some(me => me.id === ev.id)) return prev.map(me => (me.id === ev.id ? ev : me));
+      if (prev.length >= ASSUMPTIONS.MAX_MONEY_EVENTS) return prev;
+      return [...prev, ev];
+    });
   }, [setMoneyEvents]);
   const removeEvent = useCallback((id) => {
     setMoneyEvents(prev => prev.filter(me => me.id !== id));
@@ -1629,7 +1635,7 @@ export default function App() {
     rmdTaxBite,
     effectiveRMDTaxRate,
     // Preformatted so the screen never multiplies a model rate by 100 (rule 10).
-    effectiveRMDTaxRateLabel: `${(effectiveRMDTaxRate * 100).toFixed(1)}%`,
+    effectiveRMDTaxRateLabel: fmtRate(effectiveRMDTaxRate),
     rows:        rmdData,                 // {age,rmd,bal,divisor,tax}[] — screen renders first 10
     rowCount:    rmdData.length,
     retAtOrAfterRMD: safeRetAge >= RMD_START_AGE,   // RMDs begin at retirement → no countdown stats
@@ -2210,7 +2216,7 @@ export default function App() {
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
                     <span style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.05em" }}>State</span>
                     <span style={{ fontSize: 10, color: noStateTax ? C.green : C.gold, ...mono }}>
-                      {noStateTax ? "No tax" : `${(stateRate * 100).toFixed(1)}%`}
+                      {noStateTax ? "No tax" : fmtRate(stateRate)}
                     </span>
                   </div>
                   <select value={selectedState} onChange={e => { setSelectedState(e.target.value); setStateRateOverride(null); }} style={selectStyle}>
@@ -2231,12 +2237,12 @@ export default function App() {
                           style={{ flex: 1, accentColor: C.purple, height: 4 }} />
                         <span style={{ fontSize: 11, color: stateRateOverride !== null ? C.purple : C.muted,
                           ...mono, minWidth: 38, textAlign: "right" }}>
-                          {(stateRate * 100).toFixed(1)}%
+                          {fmtRate(stateRate)}
                         </span>
                       </div>
                       <p style={{ margin: "2px 0 0", fontSize: 9, color: C.muted }}>
                         {stateRateOverride !== null
-                          ? <><span style={{ color: C.purple }}>Custom rate</span> · default {(stateRateDefault * 100).toFixed(1)}% ·{" "}
+                          ? <><span style={{ color: C.purple }}>Custom rate</span> · default {fmtRate(stateRateDefault)} ·{" "}
                               <button onClick={() => setStateRateOverride(null)} style={{
                                 fontSize: 9, color: C.blue, background: "transparent", border: "none",
                                 cursor: "pointer", padding: 0, textDecoration: "underline",
@@ -2273,9 +2279,9 @@ export default function App() {
             <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 8, paddingTop: 8,
               display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               {[
-                { label: "Fed Effective", val: fmtPct(fedEffRate * 100),             color: C.orange, sub: "fed tax ÷ AGI"           },
-                { label: "Marginal",      val: `${(fedMarginal * 100).toFixed(0)}%`, color: C.muted,  sub: "next $1 · ref only"     },
-                { label: "Combined",      val: fmtPct(combinedEffRate * 100),        color: C.muted,  sub: spouseIncome > 0 ? "all ÷ household · ref only" : "all ÷ gross · ref only" },
+                { label: "Fed Effective", val: fmtRate(fedEffRate),                  color: C.orange, sub: "fed tax ÷ AGI"           },
+                { label: "Marginal",      val: fmtRate(fedMarginal, 0),             color: C.muted,  sub: "next $1 · ref only"     },
+                { label: "Combined",      val: fmtRate(combinedEffRate),             color: C.muted,  sub: spouseIncome > 0 ? "all ÷ household · ref only" : "all ÷ gross · ref only" },
               ].map(({ label, val, color, sub }) => (
                 <div key={label}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>{label}</p>
@@ -2518,7 +2524,7 @@ export default function App() {
               <Slider label="Inflation Assumption" value={inflationRate} min={1} max={8} step={0.5}
                 format={v => `${v}%`} onChange={setInflationRate} valueColor={C.orange} />
               <p style={{ margin: "-10px 0 0", fontSize: 9, color: C.muted, fontStyle: "italic" }}>
-                Real return: {((rReal) * 100).toFixed(1)}% · affects drawdown &amp; years sustained
+                Real return: {fmtRate(rReal)} · affects drawdown &amp; years sustained
               </p>
             </div>
           </div>
@@ -2558,10 +2564,10 @@ export default function App() {
               Year {phase2End}+ / Age {safeRetAge}–{safeLifeExp}
             </p>
             <p style={{ margin: "0 0 2px", fontSize: 26, color: C.green, ...mono, fontWeight: 700 }}>
-              {(effectiveRMDTaxRate * 100).toFixed(1)}%
+              {fmtRate(effectiveRMDTaxRate)}
               {retStateRate > 0 && (
                 <span style={{ fontSize: 13, color: C.orange, marginLeft: 6 }}>
-                  +{(retStateRate * 100).toFixed(1)}% state
+                  +{fmtRate(retStateRate)} state
                 </span>
               )}
             </p>
@@ -2574,7 +2580,7 @@ export default function App() {
               <p style={{ margin: "0 0 4px", fontSize: 10, color: C.muted }}>
                 Retirement state
                 {retStateRate > 0
-                  ? <span style={{ color: C.orange }}> · +{(retStateRate * 100).toFixed(1)}% on 401k/IRA</span>
+                  ? <span style={{ color: C.orange }}> · +{fmtRate(retStateRate)} on 401k/IRA</span>
                   : <span style={{ color: C.green }}> · no tax on retirement income</span>}
               </p>
               <select value={retirementState} onChange={e => setRetirementState(e.target.value)}
@@ -2582,7 +2588,7 @@ export default function App() {
                 {Object.entries(RETIREMENT_STATE_TAX).sort((a, b) => a[1].name.localeCompare(b[1].name))
                   .map(([code, { name, rate }]) => (
                     <option key={code} value={code} style={{ background: C.surface }}>
-                      {name} ({code}) — {rate === 0 ? "0%" : `${(rate * 100).toFixed(1)}%`}
+                      {name} ({code}) — {rate === 0 ? "0%" : fmtRate(rate)}
                     </option>
                   ))}
               </select>
@@ -2794,7 +2800,7 @@ export default function App() {
                   </div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                     <span style={{ fontSize: 13, color, ...mono }}>{fmt(val)}</span>
-                    <span style={{ fontSize: 10, color: C.muted }}>{pctTotal.toFixed(1)}% of total</span>
+                    <span style={{ fontSize: 10, color: C.muted }}>{fmtPct(pctTotal)} of total</span>
                   </div>
                 </div>
                 <div style={{ height: 6, background: C.border, borderRadius: 3, overflow: "hidden" }}>
@@ -2883,7 +2889,7 @@ export default function App() {
               <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Withdrawal Rate</p>
               <p style={{ margin: "0 0 2px", fontSize: 20, ...mono,
                 color: withdrawalRate <= 4 ? C.green : withdrawalRate <= 6 ? C.gold : C.orange }}>
-                {withdrawalRate.toFixed(1)}%
+                {fmtPct(withdrawalRate)}
               </p>
               <p style={{ margin: 0, fontSize: 9, color: C.muted }}>
                 {withdrawalRate <= 4 ? "safe (≤4%)" : withdrawalRate <= 6 ? "moderate" : "aggressive"}
@@ -2902,7 +2908,7 @@ export default function App() {
         </div>
         <p style={{ margin: "12px 0 0", fontSize: 10, color: C.muted, lineHeight: 1.5 }}>
           Based on total gross portfolio at retirement ({fmt(totalAtRet)}) growing at {returnRate}% per year.
-          Years sustained uses an inflation-adjusted real return ({((rReal)*100).toFixed(1)}%) at your {inflationRate}% inflation assumption.
+          Years sustained uses an inflation-adjusted real return ({fmtRate(rReal)}) at your {inflationRate}% inflation assumption.
         </p>
         {ss70DrawReduction > 0 && includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE && (
           <div style={{ marginTop: 10, background: "#0a0e14", borderLeft: `3px solid ${C.green}`,
@@ -2918,7 +2924,7 @@ export default function App() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
                 <span style={{ color: C.muted }}>Portfolio draw drops</span>
-                <span style={{ color: C.green, ...mono }}>{withdrawalRate.toFixed(1)}% → {wr70.toFixed(1)}%</span>
+                <span style={{ color: C.green, ...mono }}>{fmtPct(withdrawalRate)} → {fmtPct(wr70)}</span>
               </div>
               {ssDelayGainYrs !== null && ssDelayGainYrs > 0 && (
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
@@ -3099,7 +3105,7 @@ export default function App() {
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Annual Benefit</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>{fmt(effectiveSS > 0 ? effectiveSS : ssAnnualBenefit)}</p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>
-                    {!includeSS ? "excluded from calcs" : effectiveExpenses > 0 ? `${((effectiveSS / effectiveExpenses) * 100).toFixed(0)}% of expenses` : "—"}
+                    {!includeSS ? "excluded from calcs" : effectiveExpenses > 0 ? `${fmtRate(effectiveSS / effectiveExpenses, 0)} of expenses` : "—"}
                   </p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
@@ -3198,7 +3204,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>SS Coverage</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>
-                    {effectiveExpenses > 0 ? `${Math.round((householdSS / effectiveExpenses) * 100)}%` : "—"}
+                    {effectiveExpenses > 0 ? fmtRate(householdSS / effectiveExpenses, 0) : "—"}
                   </p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>of annual expenses</p>
                 </div>
@@ -3399,7 +3405,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Est. Total Tax on RMDs</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(rmdTaxBite)}</p>
-                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {(effectiveRMDTaxRate*100).toFixed(1)}% effective rate (bracket-accurate)</p>
+                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {fmtRate(effectiveRMDTaxRate)} effective rate (bracket-accurate)</p>
                 </div>
               </div>
             )}
@@ -3411,7 +3417,7 @@ export default function App() {
             <div style={{ overflowX: "auto" }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, auto)", gap: "4px 20px",
                 fontSize: 11, minWidth: 440 }}>
-                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (~${(effectiveRMDTaxRate*100).toFixed(1)}% eff.)`].map(h => (
+                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (~${fmtRate(effectiveRMDTaxRate)} eff.)`].map(h => (
                   <span key={h} style={{ fontSize: 10, color: C.muted, textTransform: "uppercase",
                     letterSpacing: "0.06em", borderBottom: `1px solid ${C.border}`, paddingBottom: 4 }}>{h}</span>
                 ))}
@@ -3893,7 +3899,7 @@ export default function App() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[
                     { step: 1, label: "Taxable Brokerage", color: C.green,  detail: `LTCG rates · ${fmt(retTaxable)} available`,   tax: "0–20% on gains" },
-                    { step: 2, label: "Traditional 401k",  color: C.gold,   detail: `Ordinary income · ${fmt(retTrad)} available`,  tax: `${(yr1TradRate*100).toFixed(1)}% marginal` },
+                    { step: 2, label: "Traditional 401k",  color: C.gold,   detail: `Ordinary income · ${fmt(retTrad)} available`,  tax: `${fmtRate(yr1TradRate)} marginal` },
                     { step: 3, label: "Roth IRA",          color: C.blue,   detail: `Tax-free · ${fmt(retRoth)} available`,         tax: "0%" },
                     { step: 4, label: "HSA",               color: C.purple, detail: "Qualified medical only · triple tax-free",     tax: "0% (medical)" },
                   ].map(({ step, label, color, detail, tax }) => (
@@ -3921,7 +3927,7 @@ export default function App() {
                   <p style={{ margin: "0 0 4px", fontSize: 22, color: C.green, ...mono }}>{fmt(yr1TaxOptimal)}</p>
                   <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.7 }}>
                     {yr1FromTaxable > 0 && <p style={{ margin: 0 }}>Taxable: {fmt(yr1FromTaxable)} · LTCG rate</p>}
-                    {yr1FromTrad    > 0 && <p style={{ margin: 0 }}>401k: {fmt(yr1FromTrad)} · {(yr1TradRate*100).toFixed(1)}% marginal (fed+state)</p>}
+                    {yr1FromTrad    > 0 && <p style={{ margin: 0 }}>401k: {fmt(yr1FromTrad)} · {fmtRate(yr1TradRate)} marginal (fed+state)</p>}
                     {yr1FromRoth    > 0 && <p style={{ margin: 0 }}>Roth: {fmt(yr1FromRoth)} · tax-free</p>}
                   </div>
                 </div>
@@ -3985,8 +3991,8 @@ export default function App() {
                   },
                   {
                     label: "Withdrawal Rate",
-                    current: `${withdrawalRate.toFixed(1)}%`,
-                    opt: `${optimized.withdrawalRate.toFixed(1)}%`,
+                    current: fmtPct(withdrawalRate),
+                    opt: fmtPct(optimized.withdrawalRate),
                     improved: optimized.withdrawalRate < withdrawalRate - 0.2,
                     sub: optimized.withdrawalRate <= 4 && withdrawalRate > 4 ? "enters safe zone (≤ 4%)" : null,
                   },
@@ -4149,7 +4155,7 @@ export default function App() {
                         Portfolio Sustains Through Age {safeLifeExp}
                       </p>
                       <p style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}>
-                        At {withdrawalRate.toFixed(1)}% withdrawal rate, your portfolio
+                        At {fmtPct(withdrawalRate)} withdrawal rate, your portfolio
                         {yearsSustained === Infinity ? " is self-sustaining — growth exceeds spending." : ` lasts ~${Math.floor(yearsSustained)} years beyond retirement.`}
                       </p>
                     </>
@@ -4159,7 +4165,7 @@ export default function App() {
                         Portfolio Depletes at Age {Math.floor(safeRetAge + yearsSustained)}
                       </p>
                       <p style={{ margin: "0 0 12px", fontSize: 12, color: C.muted }}>
-                        At {withdrawalRate.toFixed(1)}% withdrawal rate, your portfolio lasts ~{Math.floor(yearsSustained)} years.
+                        At {fmtPct(withdrawalRate)} withdrawal rate, your portfolio lasts ~{Math.floor(yearsSustained)} years.
                         You need {safeLifeExp - safeRetAge} years of coverage.
                       </p>
                     </>

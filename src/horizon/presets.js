@@ -1,3 +1,5 @@
+import { clamp } from "../model/finance-math.js";
+
 // Shared Horizon preset tables + seed helper.
 //
 // These were originally defined in `screens/IdeasScreen.jsx`. When the Ideas
@@ -50,5 +52,5 @@ export const CUSTOM_GOAL_SEED = { label: "New goal", amount: 25_000, isInflow: f
 // resolves or clamps ages itself.
 export const resolveRetireJump = (jump, retirementAge, { retireMin, retireMax }) => {
   const target = jump.kind === "absolute" ? jump.targetAge : retirementAge + jump.retireAdj;
-  return Math.min(retireMax, Math.max(retireMin, target));
+  return clamp(target, retireMin, retireMax);
 };

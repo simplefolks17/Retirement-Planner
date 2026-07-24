@@ -14,13 +14,14 @@ describe("verdictDisplay", () => {
   it("maps tight → { label: 'Tight', tone: 'warm' }", () => {
     expect(verdictDisplay("tight")).toEqual({ label: "Tight", tone: "warm" });
   });
-  it("maps unaffordable → a supported tone (no 'bad' tone exists, so it uses 'warm')", () => {
+  it("maps unaffordable → { label: 'Doesn't fit', tone: 'accent' }", () => {
     const d = verdictDisplay("unaffordable");
     expect(d.label).toBe("Doesn't fit");
-    // VerdictBadge (ApplyPreviewModal.jsx) only special-cases "good"/"warm" and
-    // falls back to a neutral token for anything else — every verdictDisplay
-    // tone must be one VerdictBadge actually renders distinctly.
-    expect(["good", "warm"]).toContain(d.tone);
+    // VerdictBadge (ApplyPreviewModal.jsx) now renders "accent" via the shared
+    // toneToken helper, so unaffordable is accent-toned — the earlier
+    // warm-downgrade (a workaround for the badge lacking an accent branch) is
+    // retired. This is also the tone the tick rails + LifeEventSheet already used.
+    expect(d.tone).toBe("accent");
   });
   it("returns null for an unknown/unrecognized verdict string", () => {
     expect(verdictDisplay("nonsense")).toBeNull();

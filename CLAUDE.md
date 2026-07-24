@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (840 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (851 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1352,11 +1352,66 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   verdict→tone maps, 4 copies of the draft-commit input pattern, ~20 inline clamps in 2 operand
   orders, mixed id minting, and the money-guard's JSX-text blind spot. 837 → **840 tests**;
   golden master untouched; lint clean; build OK.
+- **Convention-drift consolidation — percent/rate, verdict→tone, inputs, clamp, ids (2026-07-18,
+  branch `claude/consolidate-formatting-inputs-hdcjfm`):** the follow-up filed alongside PR #56,
+  closing the same "one concept, many disagreeing implementations" disease in five more classes.
+  Display/plumbing only — **golden master untouched** throughout; 840 → **851 tests**; lint clean;
+  build OK. Binding precedent: the calm-money policy in `docs/HORIZON.md` (one canonical home +
+  migration + guard).
+  1. **Percent/rate formatting.** The same `effectiveRMDTaxRate` rendered "24%" on Numbers→Taxes
+     but "23.7%" in the RMD flow + Classic (a hidden fraction-vs-whole-percent unit fault line, ~27
+     hand-rolled sites). `src/formatters.js` gains `fmtRate(fraction, dp=1)` (does the ×100) beside
+     `fmtPct(wholePct, dp)`; the private duplicate `fmtPercent` in `apply-preview.js` is deleted
+     (→ `fmtPct`). Canonical precision decided per scalar so a value renders identically everywhere:
+     computed/blended rates 1-decimal via `fmtRate(x)` (effectiveRMDTaxRate, fedEffective,
+     combinedEffRate, stateRate, yr1TradRate, real return); statutory brackets whole via
+     `fmtRate(x, 0)` (fedMarginal, projectedRetBracket); already-whole percents via `fmtPct(x)`
+     (withdrawalRate, wr70). Numbers→Taxes `effectiveRMDTaxRate` now reads "24.0%" (1-dp), matching
+     the RMD flow — the deliberate visible move. Zero special-cases preserved (`rate === 0 ? "0%"`).
+     `fields.jsx` pct/pctYr delegate to `fmtPct`. New **percent guard** in `formatters.test.js`
+     fails on any `.toFixed(<digit>)}%` outside formatters.js (the unambiguous rate-format
+     signature; the `Math.round(x*100)}%` form + integer `${v}%` sliders are documented blind
+     spots, hand-migrated). Files: App.jsx, NumbersScreen, SSTimingFlow, TaxPhaseCard, TaxTimeline,
+     action-cards.js, apply-preview.js.
+  2. **Verdict→tone maps.** Three maps disagreed on the `unaffordable` tone (accent on the tick
+     rails + LifeEventSheet, but a deliberate warm-downgrade in `verdictDisplay`, which claimed to
+     be "the ONE place"). `verdictDisplay` (`apply-preview.js`) is now genuinely the single tone
+     source: unaffordable → "accent"; `VERDICT_TINT` (fields.jsx) is deleted and derived via a new
+     shared `toneToken` helper (`horizon/shared.jsx`), `VERDICT_COPY` (LifeEventSheet) keeps only
+     its surface copy and derives tone from `verdictDisplay`. `VerdictBadge` renders accent (via
+     toneToken), retiring the warm-downgrade. The 5 hand-rolled tone→token renderer fallbacks
+     (flow-ui NoteBox/StatTile/ListRow, StrategiesScreen, ApplyPreviewModal — null/ink/mut/accent)
+     now all call `toneToken(t, tone, fallback)`, each keeping its own neutral fallback. `"accent"`
+     added to `VERDICT_TONES` in `apply-site-contract.test.js`; the `apply-preview.test.js`
+     warm-downgrade assertion updated to accent.
+  3. **Draft-then-commit inputs.** `MoneyEventsPanel` + `ConversionEventsPanel` wrote UNCLAMPED
+     keystrokes straight into committed state (typing "65" pushed age=6 through every model memo
+     for a frame — a full model run on garbage per keystroke). Both migrated onto the shared
+     `DeferredInput` (draft locally, clamp+commit on blur/Enter), which gained optional
+     `placeholder` + `aria-label` passthrough. HorizonShell's ObInput already drafted safely — left
+     as-is except the clamp swap.
+  4. **Shared `clamp(v, min, max)`** in `finance-math.js` (normalizes min>max → min, the
+     ssClaimingAge / BUG-63 corner the two inline operand orders disagree on). ~10 inline
+     two-sided `Math.min/Math.max` clamps migrated (DeferredInput, HorizonShell, ConversionEventsPanel,
+     presets.js, social-security.js, fields.jsx's conditional-bound stepper). Deep model-engine
+     compound expressions deliberately left untouched (golden-master risk).
+  5. **Drive-bys:** one `mintEventId()` in `money-events.js` (Classic minted numeric
+     `Date.now()+Math.random()`, LifeEventSheet minted `String(Date.now())` → mixed-type,
+     collision-able ids in one array; now both mint one unique STRING id — **latent bug fixed**,
+     logged BUG-77); `action-cards.js` depletion "?" → em-dash (the app's only "?" missing-marker);
+     NumbersScreen + ArcGraph hand-rolled key handlers → shared `kbActivate`; `saveEvent`
+     (App.jsx) gained a `MAX_MONEY_EVENTS` length guard at the write surface.
+  New primitives (+11 tests): `fmtRate` (fmtRate ×4), `clamp` (×4), `mintEventId` (×2), plus the
+  percent guard. Explicitly out of scope (owner style decision needed): age/years phrasing house
+  style, filed not fixed. Execution note: the mechanical percent/clamp/input sweeps were delegated
+  to parallel Sonnet subagents (disjoint file sets), the verdict/tone design cluster done by the
+  orchestrator; one subagent's `git stash drop` transiently wiped the shared primitives mid-run
+  (caught + restored — non-isolated worktrees make `git stash` unsafe, noted for future).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (840 tests)
+- `npm test` — run model + formatter + render-smoke tests (851 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

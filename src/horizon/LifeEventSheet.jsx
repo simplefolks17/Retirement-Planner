@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
-import { fmt } from "./shared.jsx";
+import { fmt, toneToken } from "./shared.jsx";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
+import { verdictDisplay } from "../model/apply-preview.js";
+import { mintEventId } from "../model/money-events.js";
 import { VerdictTickRail } from "./fields.jsx";
 
 // LifeEventSheet — the sheet-first life-event placement flow (video-inspired):
@@ -25,10 +27,14 @@ import { VerdictTickRail } from "./fields.jsx";
 //   onCancel     — dismiss without changes
 const DURATION_MAX_MONTHS = 36; // UI slider ceiling, not a model rule
 
+// Surface-specific verdict COPY only. The tone is NOT stored here — it's derived
+// from the single source verdictDisplay (model/apply-preview.js) at the use site,
+// so this card's color can never disagree with the tick rails or the ApplyPreview
+// badge (they all resolve the same verdict → tone via toneToken).
 const VERDICT_COPY = {
-  comfortable:  { word: "is comfortable",        tone: "good"   },
-  tight:        { word: "is tight — watch it",   tone: "warm"   },
-  unaffordable: { word: "doesn't fit your plan", tone: "accent" },
+  comfortable:  { word: "is comfortable" },
+  tight:        { word: "is tight — watch it" },
+  unaffordable: { word: "doesn't fit your plan" },
 };
 
 // "Usual pay" seed for a given age — 0 once retired, else the model-projected
@@ -138,7 +144,7 @@ export default function LifeEventSheet({
     [whatIfBundle, durationEventBase]);
 
   const verdict = result ? VERDICT_COPY[result.verdict] : null;
-  const vColor  = verdict ? t[verdict.tone] : t.mut;
+  const vColor  = result ? toneToken(t, verdictDisplay(result.verdict)?.tone, t.mut) : t.mut;
 
   // "Usual pay at {age}" — the same lookup the seeding effect above uses, read
   // once here for the hint line + the "My usual pay" quick-set chip so all
@@ -148,7 +154,7 @@ export default function LifeEventSheet({
   const handleSave = () => {
     onSave({
       ...candidate,
-      id: initial?.id ?? String(Date.now()),
+      id: initial?.id ?? mintEventId(),
     });
   };
 

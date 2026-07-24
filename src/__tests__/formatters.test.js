@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fmt, fmtFull, fmtSigned, fmtMonthly, fmtMo, fmtPct } from "../formatters.js";
+import { fmt, fmtFull, fmtSigned, fmtMonthly, fmtMo, fmtPct, fmtRate } from "../formatters.js";
 
 describe("fmt — calm currency abbreviation", () => {
   it("formats values below $1,000 as plain integers", () => {
@@ -163,6 +163,28 @@ describe("fmtPct — percentage formatting", () => {
   });
 });
 
+describe("fmtRate — fractional-rate formatting (does the x100)", () => {
+  it("renders a fraction as a percent at 1 decimal by default", () => {
+    expect(fmtRate(0.237)).toBe("23.7%");
+    expect(fmtRate(0.1832)).toBe("18.3%");
+    expect(fmtRate(0)).toBe("0.0%");
+  });
+  it("renders a statutory bracket whole at dp=0", () => {
+    expect(fmtRate(0.24, 0)).toBe("24%");
+    expect(fmtRate(0.32, 0)).toBe("32%");
+  });
+  it("is the fraction-unit counterpart to fmtPct", () => {
+    expect(fmtRate(0.237)).toBe(fmtPct(23.7));
+    expect(fmtRate(0.05, 2)).toBe(fmtPct(5, 2));
+  });
+  it("renders an em dash for non-finite input", () => {
+    expect(fmtRate(NaN)).toBe("—");
+    expect(fmtRate(Infinity)).toBe("—");
+    expect(fmtRate(null)).toBe("—");
+    expect(fmtRate(undefined)).toBe("—");
+  });
+});
+
 // ── One-formatter guard (2026-07-16 "calm money" consolidation) ─────────────
 // Locks the convention this whole migration exists to establish: no file
 // outside src/formatters.js builds a `$${...}` template-literal dollar string
@@ -208,6 +230,37 @@ describe("one-formatter guard — no `$${` template literal outside formatters.j
       if (contents.includes("$${")) offenders.push(rel);
     }
 
+    expect(offenders).toEqual([]);
+  });
+});
+
+// Percent guard (2026-07-18 percent/rate consolidation): the rate counterpart to
+// the money guard. No file outside formatters.js hand-formats a percent with the
+// unambiguous `.toFixed(<digit>)}%` signature (always a value render, never a CSS
+// width). Blind spots (documented, hand-migrated): the `Math.round(x*100)}%` form
+// and integer `${v}%` slider formats.
+describe("percent guard — no hand-rolled `.toFixed(N)}%` outside formatters.js", () => {
+  const ALLOWLIST = new Set(["src/formatters.js"]);
+  const PATTERN = /\.toFixed\(\s*\d\s*\)\s*\}%/;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(here, "..", "..");
+  function walk(dir, out) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === "__tests__") continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full, out);
+      else if (/\.(js|jsx)$/.test(entry.name)) out.push(full);
+    }
+  }
+  it("no source file (outside the allowlist) hand-formats a percent with `.toFixed(N)}%`", () => {
+    const files = [];
+    walk(path.join(repoRoot, "src"), files);
+    const offenders = [];
+    for (const file of files) {
+      const rel = path.relative(repoRoot, file).split(path.sep).join("/");
+      if (ALLOWLIST.has(rel)) continue;
+      if (PATTERN.test(fs.readFileSync(file, "utf8"))) offenders.push(rel);
+    }
     expect(offenders).toEqual([]);
   });
 });

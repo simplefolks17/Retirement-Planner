@@ -1,5 +1,6 @@
 import { C } from "../theme.js";
 import { FED_BRACKETS_2026 } from "../config/irs-2026.js";
+import { fmtRate } from "../formatters.js";
 
 export function TaxPhaseCard({ phaseNum, label, color, yearRange, rate, setRate, combinedRate, children }) {
   return (
@@ -21,7 +22,7 @@ export function TaxPhaseCard({ phaseNum, label, color, yearRange, rate, setRate,
       </div>
       {combinedRate !== undefined && combinedRate !== rate && (
         <p style={{ margin: "0 0 4px", fontSize: 9, color: C.muted }}>
-          Combined (fed+state): <span style={{ color, fontWeight: 700 }}>{(combinedRate * 100).toFixed(1)}%</span>
+          Combined (fed+state): <span style={{ color, fontWeight: 700 }}>{fmtRate(combinedRate)}</span>
         </p>
       )}
       {children}

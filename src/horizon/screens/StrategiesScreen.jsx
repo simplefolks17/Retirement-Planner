@@ -29,6 +29,7 @@ import { HF, HM } from "../ThemeContext.jsx";
 // hardcode "73"/"67" in strings (the BUG-25 / WI-0.1 anti-pattern).
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 import { fmt } from "../../formatters.js";   // calm money — card headlines are derived summaries, not editable readouts
+import { toneToken } from "../shared.jsx";
 import SSTimingFlow from "./strategies/SSTimingFlow.jsx";
 import RMDOutlookFlow from "./strategies/RMDOutlookFlow.jsx";
 import ConversionPlannerFlow from "./strategies/ConversionPlannerFlow.jsx";
@@ -157,7 +158,7 @@ function detailRows(id, props) {
 
 // ── card ─────────────────────────────────────────────────────────────────────
 function StrategyCard({ t, entry, face, onOpen }) {
-  const toneColor = face.tone === "good" ? t.good : face.tone === "warm" ? t.warm : t.accent;
+  const toneColor = toneToken(t, face.tone, t.accent);
   return (
     <button type="button" onClick={onOpen}
       style={{

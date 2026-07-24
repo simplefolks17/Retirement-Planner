@@ -3,7 +3,18 @@ import {
   applyMoneyEvents, totalEventImpact,
   eventNetForYear, eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
   isDurationEvent, eventAmountForYear, eventIncomeForYear, eventsIncomeAdjustment,
+  mintEventId,
 } from "../money-events.js";
+
+describe("mintEventId", () => {
+  it("returns a string id", () => {
+    expect(typeof mintEventId()).toBe("string");
+  });
+  it("never collides, even within the same millisecond", () => {
+    const ids = Array.from({ length: 1000 }, () => mintEventId());
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
 
 describe("applyMoneyEvents", () => {
   it("returns zero adjustment when events array is empty", () => {

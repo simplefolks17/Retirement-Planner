@@ -65,7 +65,10 @@ const REGISTRY = [
 
 const DELTA_DIRS = ["up", "down", "none"];
 const TONES = ["good", "warm", "neutral"];
-const VERDICT_TONES = ["good", "warm", "neutral"];
+// Verdict tones include "accent" (unaffordable) — VerdictBadge renders it via the
+// shared toneToken helper. Delta metric tones stay good/warm/neutral (a delta is
+// never "unaffordable").
+const VERDICT_TONES = ["good", "warm", "neutral", "accent"];
 
 describe("Apply-site registry contract (generic payload well-formedness)", () => {
   for (const { site, buildSample } of REGISTRY) {

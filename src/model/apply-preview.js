@@ -24,7 +24,7 @@
 //                 codebase's existing convention, e.g. withdrawalRate). Delta
 //                 is in percentage points ("+2.1 pts" / "−2.1 pts").
 
-import { fmt, fmtFull, fmtSigned } from "../formatters.js";
+import { fmt, fmtFull, fmtSigned, fmtPct } from "../formatters.js";
 
 // `fmtMoney` — kept as a named export (aliased to the canonical fmtFull) for
 // existing importers (action-line copy below, and tests that check exact
@@ -127,17 +127,14 @@ function longevityMetric({ id, label, before, after, betterDir }) {
   return { id, label, before: beforeStr, after: afterStr, delta };
 }
 
-// Sign-aware whole-number-percent formatter — "15.3%" (one decimal place).
-// Matches this codebase's convention that percent fields are already
-// whole-number percents (15.3 means 15.3%, not 0.153).
-function fmtPercent(v) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toFixed(1)}%`;
-}
-
+// Percent metric before/after strings use the canonical fmtPct (src/formatters.js),
+// which takes an ALREADY-whole percent (15.3 → "15.3%") — matching this
+// codebase's convention that percent FIELDS are whole-number percents, not
+// fractions. (Byte-identical to the private fmtPercent this replaced, incl.
+// null/non-finite → "—".)
 function percentMetric({ id, label, before, after, betterDir }) {
-  const beforeStr = fmtPercent(before);
-  const afterStr = fmtPercent(after);
+  const beforeStr = fmtPct(before);
+  const afterStr = fmtPct(after);
 
   let delta;
   if (before == null || after == null || !Number.isFinite(before) || !Number.isFinite(after)) {
@@ -179,17 +176,19 @@ export function buildPreviewMetric({ id, label, before, after, betterDir = "up",
 // shows a verdict (the Strategies "For you" strip, a Range/Monte-Carlo lens)
 // use identical wording and tone.
 //
-// Tone values are constrained to what VerdictBadge (ApplyPreviewModal.jsx)
-// actually renders: it maps "good"/"warm" to their tokens and falls back to
-// `t.mut` for anything else — its accepted set is good/warm/neutral (also the
-// enum apply-site-contract.test.js checks). There is no "bad"/red tone today,
-// so "unaffordable" is deliberately mapped to "warm" — the closest supported
-// tone, not a new one invented here; revisit if a future design pass adds a
-// dedicated danger tone to VerdictBadge.
+// This is the ONE source of truth for the verdict → { label, tone } mapping.
+// The two Horizon maps that used to disagree with it — VERDICT_TINT (fields.jsx,
+// the tick rails) and VERDICT_COPY (LifeEventSheet, the verdict card) — now
+// DERIVE their tone from verdictDisplay(v).tone, so the three can never drift
+// again (they only carry their own surface-specific COPY). Tones map through the
+// shared toneToken helper (horizon/shared.jsx): good / warm / accent. VerdictBadge
+// now renders "accent" too, so "unaffordable" is accent-toned — the earlier
+// warm-downgrade (a workaround for VerdictBadge lacking an accent branch) is
+// retired. The tone enum is locked in apply-site-contract.test.js.
 const VERDICT_DISPLAY = {
   comfortable:  { label: "Comfortable", tone: "good" },
   tight:        { label: "Tight",       tone: "warm" },
-  unaffordable: { label: "Doesn't fit", tone: "warm" }, // closest supported tone — see note above
+  unaffordable: { label: "Doesn't fit", tone: "accent" },
 };
 
 export function verdictDisplay(verdict) {

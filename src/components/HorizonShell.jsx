@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
 import { fmt, fmtFull } from "../formatters.js";
+import { clamp } from "../model/finance-math.js";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
 import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
 import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
@@ -199,7 +200,7 @@ function ObInput({ t, field, vals, setVals }) {
       onChange={e => setDraft(e.target.value)}
       onBlur={() => {
         const n = parseInt(draft.replace(/[^0-9]/g, ""), 10);
-        if (!isNaN(n)) setVals(v => ({ ...v, [field]: Math.max(lo, Math.min(hi, n)) }));
+        if (!isNaN(n)) setVals(v => ({ ...v, [field]: clamp(n, lo, hi) }));
         setFocused(false);
       }}
       onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -235,7 +236,7 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
   const adjust = (field, dir) => {
     const inc = OB_STEP_SIZES[field];
     const [lo, hi] = OB_CLAMPS[field];
-    setVals(v => ({ ...v, [field]: Math.max(lo, Math.min(hi, v[field] + dir * inc)) }));
+    setVals(v => ({ ...v, [field]: clamp(v[field] + dir * inc, lo, hi) }));
   };
 
   // Write the key retirement parameters back to App.jsx state.

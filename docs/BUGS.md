@@ -346,6 +346,28 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 
 ---
 
+### BUG-77 — Mixed-type, collision-able money-event ids across the two write paths (latent; found + fixed 2026-07-18, convention-drift consolidation)
+
+**Root cause.** The single `moneyEvents` array is written by BOTH Classic's `MoneyEventsPanel`
+(minted `id: Date.now() + Math.random()` — a **number**) and Horizon's `LifeEventSheet` (minted
+`id: String(Date.now())` — a **string**). So one array held mixed-type ids, and every lookup
+compares with `===` (`saveEvent`/`removeEvent` in App.jsx, `committedByLabel`, etc.) — a number id
+never `===` its string form. Two events created in the same millisecond by the same path could also
+collide (`Date.now()` alone isn't unique; `Math.random()` can theoretically repeat). Latent because
+in practice the two paths rarely interleave within a session and `Math.random()` collisions are
+vanishingly rare — but it's a correctness landmine, especially ahead of any persistence (#48
+`sources[]` timeline) that would serialize these ids.
+
+**Fix.** One `mintEventId()` in `src/model/money-events.js` — a module-level counter guarantees a
+unique **string** id even within one millisecond (`ev-<base36 time>-<base36 seq>`). Both write
+paths (`MoneyEventsPanel`, `LifeEventSheet`) now call it. `conversionEvents` is a separate,
+internally-consistent array (only ConversionEventsPanel + App write it) and was left on its numeric
+ids. Also hardened `saveEvent` (App.jsx) with a `MAX_MONEY_EVENTS` length guard at the write
+surface, so the cap no longer rests entirely on per-screen UI gates. Golden master untouched
+(defaults have no events). +2 tests (`mintEventId` uniqueness).
+
+---
+
 ### PR #56 review-fix batch — multi-goal/Ideas-retirement/calm-money (found + fixed 2026-07-16/17, pre-merge)
 
 Bugs found by the PR's review battery (Gemini + CodeRabbit ×2 rounds + an internal Fable

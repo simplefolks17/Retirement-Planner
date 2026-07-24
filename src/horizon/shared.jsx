@@ -20,6 +20,21 @@ export const kbActivate = (fn) => (e) => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
 };
 
+// toneToken(t, tone, fallback) — the ONE verdict/delta tone → theme-token map.
+// Consolidates the five hand-rolled `tone === "good" ? t.good : …` renderer
+// fallbacks that each invented a different default for an unknown tone (null /
+// t.ink / t.mut / t.accent): known tones map to their token; an unknown or
+// undefined tone returns the caller's `fallback`, so every call site keeps the
+// neutral default it intends while the known-tone mapping lives in one place.
+// (There is deliberately no "danger" tone — no `t.danger` token exists;
+// "unaffordable" uses "accent", see verdictDisplay in model/apply-preview.js.)
+export function toneToken(t, tone, fallback) {
+  if (tone === "good") return t.good;
+  if (tone === "warm") return t.warm;
+  if (tone === "accent") return t.accent;
+  return fallback;
+}
+
 export function StatCard({ t, label, value, accent, warm, large, onClick, sub }) {
   return (
     <div
