@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildRetirementPhase, buildConversionByAge } from "../retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, buildRmdTaxByAge } from "../retirement-phase.js";
+import { buildRetirementWalkByAccount } from "../retirement-engine.js";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 
 // The orchestrator that makes the per-account engine the ONE source for the whole
@@ -140,5 +141,51 @@ describe("buildConversionByAge — flexible window", () => {
 
   it("empty window (endAge < startAge) yields no conversions", () => {
     expect(buildConversionByAge({ startAge: 66, endAge: 65, annualConversion: 50_000 })).toEqual({});
+  });
+});
+
+// ── buildRmdTaxByAge — union RMD-tax filter (BUG-78 partial) ───────────────────
+describe("buildRmdTaxByAge — union filter (BUG-78)", () => {
+  it("includes a spouse-only-RMD year", () => {
+    // Primary's own RMD hasn't started (rmdStartAge 73, primary walk ages 66..72
+    // below that), but the spouse is already 2+/72 years ahead and has her own
+    // Traditional bucket, so she has a required distribution while the primary
+    // does not — a year the OLD primary-only rmdSchedule filter would have dropped.
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 90, rReal: 0.03,
+      tradGross: 100_000, roth: 0, taxable: 0, hsa: 0,
+      tradGrossSpouse: 600_000, spouseRmdStartAge: 72,
+      effectiveExpenses: 40_000,
+      ssGross: 0, ssTaxable: 0, ssClaimAge: Infinity,
+      pension: 0, pensionStartAge: Infinity,
+      filingStatus: "single", retStateRate: 0,
+      conversionByAge: {}, rmdStartAge: 73,
+      useTable2: false, spouseCurrentAge: 70, currentAge: 65,
+    });
+    const spouseOnlyRow = rows.find(r => (r.rmd ?? 0) === 0 && (r.rmdSpouse ?? 0) > 0);
+    expect(spouseOnlyRow).toBeDefined();
+    expect(spouseOnlyRow.rmdTax).toBeGreaterThan(0);
+
+    const map = buildRmdTaxByAge(rows);
+    expect(map[spouseOnlyRow.age]).toBe(Math.round(spouseOnlyRow.rmdTax));
+  });
+
+  it("no spouse → identical to the primary-only rmdSchedule filter, incl. a zero-tax RMD year", () => {
+    // A tiny Traditional balance (and zero spending draw, so it isn't depleted
+    // before RMDs even start) keeps every RMD — and its tax — trivially small:
+    // every RMD year's tax rounds to exactly 0, exercising the fact that we
+    // deliberately do NOT add `&& r.rmdTax > 0` to the filter.
+    const retPhase = buildRetirementPhase({
+      tradGross: 50_000, roth: 0, taxable: 0, hsa: 0,
+      startAge: 65, lifeExp: 90, longevityHorizon: 65 + 130, rReal: 0.0096,
+      effectiveExpenses: 0,
+      ssGross: 0, ssTaxable: 0, ssClaimAge: Infinity,
+      filingStatus: "single", retStateRate: 0, rmdStartAge: 73,
+    });
+    const zeroTaxRow = retPhase.rmdSchedule.find(d => d.tax === 0);
+    expect(zeroTaxRow).toBeDefined();
+
+    const legacy = Object.fromEntries(retPhase.rmdSchedule.map(d => [d.age, d.tax]));
+    expect(buildRmdTaxByAge(retPhase.rows)).toEqual(legacy);
   });
 });

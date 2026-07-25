@@ -22,6 +22,11 @@ export default function WithdrawalOrderFlow({ t, props }) {
         bracket for no reason.
       </NoteBox>
 
+      {/* ── Household scope note (BUG-84 interim honesty relabel) ── */}
+      {wv.scopeNote && (
+        <NoteBox t={t}>{wv.scopeNote}</NoteBox>
+      )}
+
       {/* ── 2. Draw order ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <SectionLabel t={t}>Year-1 draw order</SectionLabel>

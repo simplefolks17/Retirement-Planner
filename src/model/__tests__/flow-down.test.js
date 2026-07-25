@@ -100,3 +100,59 @@ describe("calcFlowDown — accumulation bridge units (BUG-35: gross)", () => {
     expect(fd.totalGrowth).toBeGreaterThan(0);
   });
 });
+
+// ── calcFlowDown — household bridge (#30 / BUG-82) ──────────────────────────
+// Before this fix, calcFlowDown was called with primary-only starting balances
+// and contribution rows but a HOUSEHOLD totalAtRet, so the entire spouse balance
+// silently showed up as "Market growth" in the accumulation bridge. spouseStartBal
+// + spouseContribRows fold the spouse's own starting money and working-year
+// contributions into the same two nodes the primary already uses, so only the
+// TRUE investment return remains in totalGrowth.
+describe("calcFlowDown — household bridge (#30 / BUG-82)", () => {
+  const spouseContribRows = [
+    { age: 60, c401k: 8_000, cRoth: 5_000, cTaxable: 2_000, cHSA: 0 },
+    { age: 61, c401k: 8_000, cRoth: 5_000, cTaxable: 2_000, cHSA: 0 },
+  ];
+  const spouseStartBal = 120_000;
+
+  const baseArgs = {
+    bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
+    contribRows, totalAtRet: 3_400_000,
+    walkRows: walk.rows, depletionAge: walk.depletionAge,
+    accumChart: [{ age: 65, total: 3_400_000 }],
+    conversionWindowYrs: 7, totalConverted: 7 * 80_000,
+    safeRetAge, safeLifeExp, rmdStartAge,
+  };
+
+  it("reconciles: startPortfolio + totalContrib + totalGrowth === totalAtRet with spouse terms", () => {
+    const fdHH = calcFlowDown({ ...baseArgs, spouseStartBal, spouseContribRows });
+    expect(fdHH.startPortfolio + fdHH.totalContrib + fdHH.totalGrowth).toBe(fdHH.totalAtRet);
+  });
+
+  it("the spouse balance is NOT reported as growth (regression)", () => {
+    const withSpouse = calcFlowDown({ ...baseArgs, spouseStartBal, spouseContribRows });
+    const withoutSpouseArgs = calcFlowDown({ ...baseArgs });
+
+    const spouseContribTotal = spouseContribRows.reduce(
+      (s, d) => s + d.c401k + d.cRoth + d.cTaxable + d.cHSA, 0);
+
+    expect(withSpouse.startPortfolio).toBe(withoutSpouseArgs.startPortfolio + spouseStartBal);
+    expect(withSpouse.totalContrib).toBe(withoutSpouseArgs.totalContrib + spouseContribTotal);
+    expect(withSpouse.totalGrowth).toBeLessThan(withoutSpouseArgs.totalGrowth);
+    // The drop is exactly the spouse's starting balance + spouse contributions —
+    // the same dollars that used to be silently absorbed into "growth".
+    expect(withoutSpouseArgs.totalGrowth - withSpouse.totalGrowth).toBe(spouseStartBal + spouseContribTotal);
+  });
+
+  it("defaults reproduce the primary-only bridge (byte-identical to the existing fixture)", () => {
+    const noSpouseArgs = {
+      bal401k: 50_000, balRoth: 25_000, balTaxable: 80_000, balHSA: 10_000,
+      contribRows, totalAtRet: 3_000_000,
+      walkRows: walk.rows, depletionAge: walk.depletionAge,
+      accumChart: [{ age: 65, total: 3_000_000 }],
+      conversionWindowYrs: 7, totalConverted: 7 * 80_000,
+      safeRetAge, safeLifeExp, rmdStartAge,
+    };
+    expect(calcFlowDown(noSpouseArgs)).toEqual(fd);
+  });
+});

@@ -151,6 +151,21 @@ export function buildRetirementPhase({
   };
 }
 
+// Per-age household RMD tax map, keyed by every year with a required distribution
+// from EITHER spouse (union filter) — fixes BUG-78: a spouse-only-RMD year (spouse
+// older, or primary trad depleted) was dropped when the map was built from the
+// primary-only rmdSchedule. row.rmdTax is the JOINT (primary + spouse) tax already.
+// No spouse → rmdSpouse = 0 on every row → this reduces to the old `r.rmd > 0`
+// filter with identical values (Math.round(r.rmdTax) is exactly what rmdSchedule's
+// `tax` field already was) → golden-master safe.
+export function buildRmdTaxByAge(rows) {
+  const out = {};
+  for (const r of rows ?? []) {
+    if ((r.rmd ?? 0) > 0 || (r.rmdSpouse ?? 0) > 0) out[r.age] = Math.round(r.rmdTax ?? 0);
+  }
+  return out;
+}
+
 // Balance at a given age from a walk's `rows` — the accessor behind App's
 // "Left at {lifeExp}" stat card (formerly inlined as `balAt90`, App.jsx:584-592)
 // and now reused by the WI-3.9 Apply-preview builder so both read the exact

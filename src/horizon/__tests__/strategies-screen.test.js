@@ -506,6 +506,25 @@ describe("StrategiesScreen", () => {
       expect(app.text()).not.toContain("saved in year-1 tax");
       act(() => app.r.unmount());
     });
+
+    // BUG-84 interim honesty relabel: scopeNote is null (no spouse) by default in
+    // the fixture and only ever a string when App resolves hasSpouse === true.
+    it("shows the household scope note when scopeNote is a string (hasSpouse)", () => {
+      const props = makeProps();
+      props.withdrawalView = {
+        ...props.withdrawalView,
+        scopeNote: "These amounts are your own accounts; your spouse's accounts sequence separately.",
+      };
+      const app = mount(props, { initialStrategy: "withdrawal" });
+      expect(app.text()).toContain("your spouse's accounts sequence separately");
+      act(() => app.r.unmount());
+    });
+
+    it("does not render a scope note when scopeNote is null (no spouse)", () => {
+      const app = mount(makeProps(), { initialStrategy: "withdrawal" });
+      expect(app.text()).not.toContain("sequence separately");
+      act(() => app.r.unmount());
+    });
   });
 
   describe("SurplusDeploymentFlow (WI-3.7 + WI-3.9 Apply-with-preview)", () => {

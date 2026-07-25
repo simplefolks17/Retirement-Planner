@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -464,6 +464,13 @@ export default function App() {
   const retRoth    = pRoth;
   const retTaxable = pTaxable;
   const retHsa     = pHsa;
+  // BUG-84 interim honesty relabel (copy-only): retTrad/retRoth/retTaxable are
+  // PRIMARY-only (spouse accounts are a per-person, sequence-separately concern —
+  // see docs/BUGS.md BUG-84), so the withdrawal-order card's "$X available" figures
+  // could be misread as a household total in a spouse household. No calculation
+  // changes here — just gates a copy note in both the Classic card and the
+  // Horizon withdrawalView bundle.
+  const withdrawalScopeIsPrimaryOnly = hasSpouse;
 
   // Spouse per-account balances at retirement (0 when no spouse — byte-identical path).
   const sTrad    = spouseAtRet.tradGross ?? 0;
@@ -700,7 +707,7 @@ export default function App() {
   // slightly less tax-honest than the headline — acceptable for relative comparisons;
   // full migration of what-if/optimized to the engine is a documented follow-up.
   const rmdTaxByAge = useMemo(
-    () => Object.fromEntries(retPhase.rmdSchedule.map(d => [d.age, d.tax])),
+    () => buildRmdTaxByAge(retPhase.rows),
     [retPhase]);
   const conversionTaxByAge = useMemo(
     () => Object.fromEntries(retPhase.rows.filter(r => r.conversion > 0).map(r => [r.age, Math.round(r.convTax)])),
@@ -977,8 +984,13 @@ export default function App() {
     ].filter(s => s.amount > 0),
     yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings,
     hasSavings: yr1TaxSavings > 0,
+    // BUG-84 interim honesty note (copy-only) — the steps above are PRIMARY-only;
+    // in a spouse household the flow should say so rather than read as a household total.
+    scopeNote: withdrawalScopeIsPrimaryOnly
+      ? "These amounts are your own accounts; your spouse's accounts sequence separately."
+      : null,
   }), [netPortfolioNeed, yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate,
-       yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings]);
+       yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings, withdrawalScopeIsPrimaryOnly]);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
 
@@ -1019,9 +1031,16 @@ export default function App() {
     totalConverted: conversionWindowYrs > 0
       ? conversionSim.years.reduce((s, y) => s + y.conversion, 0) : 0,
     safeRetAge, safeLifeExp, rmdStartAge: RMD_START_AGE,
+    spouseStartBal: spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
+    // Index-based, NOT age-filtered: spouseSimData rows carry the SPOUSE's age, so
+    // `d.age <= safeRetAge` (the primary's age) would be wrong. phase2End is the primary's
+    // years-to-retirement, and spouseSimData[i] is calendar year i+1 for BOTH people — the
+    // same index basis buildAccumChart's zip already relies on.
+    spouseContribRows: spouseSimData.slice(0, Math.max(0, phase2End)),
   }), [
     bal401k, balRoth, balTaxable, balHSA, simData, safeRetAge, totalAtRet,
     conversionWindowYrs, conversionSim, retirementWalk, accumChart, safeLifeExp,
+    spouseSimData, phase2End, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
   ]);
 
   const optimized = useMemo(() => calcOptimizedScenario({
@@ -4210,6 +4229,11 @@ export default function App() {
                   Annual need from portfolio: <span style={{ color: C.gold, ...mono }}>{fmt(netPortfolioNeed)}</span>
                   <span style={{ fontSize: 10, color: C.muted }}> (expenses{ssAtRet > 0 ? " − SS" : ""}{effectivePension > 0 ? " − pension" : ""})</span>
                 </p>
+                {withdrawalScopeIsPrimaryOnly && (
+                  <p style={{ margin: "0 0 10px", fontSize: 10, color: C.muted, fontStyle: "italic" }}>
+                    Amounts below are your own accounts (your spouse's accounts sequence separately).
+                  </p>
+                )}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[
                     { step: 1, label: "Taxable Brokerage", color: C.green,  detail: `LTCG rates · ${fmt(retTaxable)} available`,   tax: "0–20% on gains" },

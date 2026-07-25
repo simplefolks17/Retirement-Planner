@@ -23,11 +23,20 @@ export function calcFlowDown({
   conversionWindowYrs,
   totalConverted = 0,
   safeRetAge, safeLifeExp, rmdStartAge,
+  // #30 / BUG-82 household bridge: the spouse's OWN starting balances and the spouse
+  // contribution rows inside the ACCUMULATION window (index 0 … phase2End-1 — i.e.
+  // strictly BELOW the retirement seed index). Gap-year spouse contributions live in the
+  // retirement walk instead and are reported separately (a later step), so the two are
+  // disjoint by construction and nothing is double-counted. Defaults ([],0) reproduce the
+  // pre-#30 primary-only bridge exactly — golden-master safe.
+  spouseStartBal = 0,
+  spouseContribRows = [],
 }) {
   // Accumulation bridge — all three nodes in GROSS units.
-  const startPortfolio = bal401k + balRoth + balTaxable + balHSA;
-  const totalContrib = contribRows.reduce((s, d) =>
+  const startPortfolio = bal401k + balRoth + balTaxable + balHSA + spouseStartBal;
+  const sumContrib = rs => (rs ?? []).reduce((s, d) =>
     s + (d.c401k || 0) + (d.cRoth || 0) + (d.cTaxable || 0) + (d.cHSA || 0), 0);
+  const totalContrib = sumContrib(contribRows) + sumContrib(spouseContribRows);
   // Accumulation growth = the gross residual (start + contributions → totalAtRet).
   // NOT clamped at 0: if real returns are negative (inflation > nominal) the portfolio
   // can lose real value, and clamping would break the bridge's reconciliation. [review fix]
