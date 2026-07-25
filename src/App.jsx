@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -267,6 +267,12 @@ export default function App() {
     selectedState, stateRateOverride,
   });
 
+  // Tax-only net rate for the spouse's gap-year paycheck. NOT takeHome/householdIncome:
+  // that nets out the PRIMARY's pre-tax deductions (double-counting the spouse's own
+  // deferral) and can go negative for a non-MFJ filer whose spouse out-earns them.
+  // Clamped either way.
+  const spouseNetRate = Math.max(0, Math.min(1, 1 - combinedEffRate));
+
   // The conversion events the MODEL actually sees: only when the in-service toggle is
   // on, and only valid working-year events (amount > 0, strictly before retirement).
   // Clamping here means lowering the retirement age can't strand an event inside the
@@ -370,9 +376,20 @@ export default function App() {
     age: currentAge, tradGross: spouseBal401k, "Roth IRA": spouseBalRoth,
     "Taxable": spouseBalTaxable, "HSA": spouseBalHSA,
   }), [currentAge, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
-  const spouseAtRet = phase2End > 0
-    ? (spouseSimData[phase2End - 1] ?? spouseCurrentSnapshot)
-    : spouseCurrentSnapshot;
+  // Spouse retirement seed + gap-year maps for the engine (#30 / BUG-82) — the ONE
+  // builder that both this main path and a later what-if re-seed will call, so the
+  // "auto" (same-calendar-year) case is guaranteed to reproduce the pre-fix pooled
+  // behavior (see buildSpouseRetirementSeed's own docs in retirement-phase.js).
+  // Replaces the old `spouseAtRet` local (phase2End-indexed lookup) — its job is now
+  // done inside buildSpouseRetirementSeed itself.
+  const spouseSeed = useMemo(() => {
+    if (!hasSpouse) return null;
+    return buildSpouseRetirementSeed({
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge,
+      primaryRetAge: safeRetAge, spouseRetAge: effectiveSpouseRetAge, spouseNetRate,
+    });
+  }, [hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge,
+      safeRetAge, effectiveSpouseRetAge, spouseNetRate]);
 
   // Per-age estimated tax (incl. any early-withdrawal penalty) for the working-year
   // conversions actually set — read straight off the engine-computed simData rows so
@@ -488,10 +505,13 @@ export default function App() {
   const withdrawalScopeIsPrimaryOnly = hasSpouse;
 
   // Spouse per-account balances at retirement (0 when no spouse — byte-identical path).
-  const sTrad    = spouseAtRet.tradGross ?? 0;
-  const sRoth    = spouseAtRet["Roth IRA"] ?? 0;
-  const sTaxable = spouseAtRet["Taxable"]  ?? 0;
-  const sHsa     = spouseAtRet["HSA"]       ?? 0;
+  // Sourced from spouseSeed (buildSpouseRetirementSeed), NOT spouseAtRet directly — the
+  // seed's tradSeed/rothSeed/taxableSeed/hsaSeed are defined to equal exactly what
+  // spouseAtRet's fields were, so these four scalars are unchanged by this wiring.
+  const sTrad    = spouseSeed?.tradSeed    ?? 0;
+  const sRoth    = spouseSeed?.rothSeed    ?? 0;
+  const sTaxable = spouseSeed?.taxableSeed ?? 0;
+  const sHsa     = spouseSeed?.hsaSeed     ?? 0;
 
   // Household per-account (primary + spouse) — the retirement WALK and the displayed
   // cards/headline are household; spouse=0 → household == primary (golden master safe).
@@ -649,11 +669,17 @@ export default function App() {
     filingStatus, retStateRate, rmdStartAge: RMD_START_AGE,
     useTable2, spouseCurrentAge, currentAge,
     moneyEvents: retirementMoneyEvents,
+    // Spouse's own retirement timing (#30 / BUG-82) — the gap-year gate + maps built
+    // by buildSpouseRetirementSeed above. null/{} when no spouse (inert, engine default).
+    spouseRetirementAge:      hasSpouse ? effectiveSpouseRetAge : null,
+    spouseContribByAge:       spouseSeed?.spouseContribByAge ?? {},
+    spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
+    spouseIncomeFloorByAge:   spouseSeed?.spouseIncomeFloorByAge ?? {},
   }), [tradGrossAtRet, sTrad, safeRetAge, safeLifeExp, rReal,
        effectiveExpenses, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
        pensionMonthly, pensionStartAge, filingStatus, retStateRate,
        useTable2, spouseCurrentAge, currentAge, retirementMoneyEvents,
-       hhRoth, hhTaxable, hhHsa]);
+       hhRoth, hhTaxable, hhHsa, spouseSeed, hasSpouse, effectiveSpouseRetAge]);
 
   const retPhase = useMemo(
     () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),

@@ -1,5 +1,15 @@
 import { buildRetirementWalkByAccount } from "./retirement-engine.js";
 
+// Convert between the primary's age and the spouse's age in the same calendar year.
+// Inverses of each other by construction — used anywhere a per-year map needs to be
+// keyed in one person's frame from data computed in the other's (the gap-year maps,
+// the RMD gate, income-tax gating). Extracting this once removes the risk of the two
+// frames drifting out of sync across files.
+export const spouseAgeAt  = (currentAge, spouseCurrentAge, primaryAge) =>
+  spouseCurrentAge + (primaryAge - currentAge);
+export const primaryAgeAt = (currentAge, spouseCurrentAge, spouseAge) =>
+  currentAge + (spouseAge - spouseCurrentAge);
+
 // Build the engine's { [age]: amount } Roth-conversion schedule from the plan's
 // per-year (bracket-fill) or flat conversion targets. Conversions occur at ages
 // startAge .. endAge (inclusive). At the default window (startAge = safeRetAge+1,
@@ -215,4 +225,66 @@ export function buildRmdComparison(rmdScheduleNoConv, rmdSchedule) {
       improved: withConv != null && withConv < rmd,
     };
   });
+}
+
+// Spouse retirement seed + gap-year maps for the per-account engine (#30 / BUG-82).
+//
+// The spouse's accounts are seeded at the PRIMARY's retirement year (the walk's
+// startAge). The spouse keeps contributing during the gap years until their OWN
+// retirement age, so those extra contributions are handed to the engine as a
+// per-(primary-age) MAP rather than baked into the seed — baking them in would be a
+// temporal double-count (a future-dated balance grown/drawn from an earlier start).
+// Traditional-only for v1 (BUG-85 tracks Roth/Taxable/HSA parity); the Roth/Taxable/
+// HSA seeds are returned for the shared pools exactly as today.
+//
+// Income split: spouseTaxableIncomeByAge is GROSS ordinary wages net of the spouse's
+// OWN pre-tax deductions (their 401k deferral + HSA) and stacks in the engine's
+// bracket floor; spouseIncomeFloorByAge is the NET cash that offsets the draw. The
+// deferral is excluded from BOTH because it is separately credited to the spouse 401k
+// bucket via spouseContribByAge — the same dollar must never be saved AND spent.
+export function buildSpouseRetirementSeed({
+  spouseSimData,          // the spouse's runSimulation rows
+  spouseCurrentSnapshot,  // fallback when there is no accumulation phase
+  spouseCurrentAge,
+  currentAge,
+  primaryRetAge,          // safeRetAge (main path) or a scenario's retirement age (a later batch)
+  spouseRetAge,           // effectiveSpouseRetAge
+  spouseNetRate,          // clamp01(1 − combinedEffRate) — tax-only rate, see below
+}) {
+  const phase2End = primaryRetAge - currentAge;
+  const spouseAgeAtPrimaryRet = spouseAgeAt(currentAge, spouseCurrentAge, primaryRetAge);
+  const rows = spouseSimData ?? [];
+  const seedRow = phase2End > 0
+    ? (rows[phase2End - 1] ?? spouseCurrentSnapshot)
+    : spouseCurrentSnapshot;
+
+  // Clamp defensively: a non-finite or out-of-range rate must never scale a draw offset.
+  const netRate = Math.max(0, Math.min(1, Number.isFinite(spouseNetRate) ? spouseNetRate : 0));
+
+  const spouseContribByAge = {};
+  const spouseTaxableIncomeByAge = {};
+  const spouseIncomeFloorByAge = {};
+  for (const row of rows) {
+    const sAge = row.age;
+    if (sAge <= spouseAgeAtPrimaryRet) continue;   // already inside the seed
+    if (sAge > spouseRetAge) break;                // spouse retired — no more contributions
+    const primaryAge = primaryAgeAt(currentAge, spouseCurrentAge, sAge);
+    const deferral = Math.min(row.c401kEmployee ?? 0, row.salary ?? 0);
+    const hsa      = row.cHSA ?? 0;
+    const wages    = Math.max(0, (row.salary ?? 0) - deferral - hsa);
+    spouseContribByAge[primaryAge]       = Math.round(row.c401k ?? 0);
+    spouseTaxableIncomeByAge[primaryAge] = Math.round(wages);
+    // v1: the spouse's Roth/Taxable/HSA gap contributions are treated as SPENT
+    // (BUG-85 tracks full parity), so cRoth/cTaxable stay inside the net wage figure
+    // and the pre-tax HSA dollars are added back untaxed. Dollar-conserving.
+    spouseIncomeFloorByAge[primaryAge]   = Math.round(wages * netRate) + Math.round(hsa);
+  }
+
+  return {
+    tradSeed:    seedRow.tradGross     ?? 0,
+    rothSeed:    seedRow["Roth IRA"]   ?? 0,   // v1: merged into the hh pools unchanged
+    taxableSeed: seedRow["Taxable"]    ?? 0,
+    hsaSeed:     seedRow["HSA"]        ?? 0,
+    spouseContribByAge, spouseTaxableIncomeByAge, spouseIncomeFloorByAge,
+  };
 }
