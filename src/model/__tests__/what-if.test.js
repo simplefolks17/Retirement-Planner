@@ -9,7 +9,7 @@ import { ASSUMPTIONS } from "../../config/irs-2026.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
-import { buildRetirementPhase } from "../retirement-phase.js";
+import { buildRetirementPhase, buildSpouseRetirementSeed } from "../retirement-phase.js";
 import { buildAccumChart } from "../accumulation.js";
 
 // ── Shared baseline setup ────────────────────────────────────────────────────
@@ -726,6 +726,188 @@ describe("calcWhatIfScenario — engine migration", () => {
     const actualAccum = s.chart.slice(0, expectedAccum.length);
     expect(actualAccum).toEqual(expectedAccum);
     expect(s.chart[expectedAccum.length].age).toBe(scenarioRetAge + 1);
+  });
+});
+
+// ── calcWhatIfScenario — spouse re-seed (BUG-77) ──────────────────────────────
+// Because spouseContribEnd (App.jsx) is the spouse's OWN retirement age —
+// independent of the primary's — spouseSimData never changes for a primary-
+// retirement-age scenario; only the SEED POINT (read at the scenario's own
+// retirement age) and the gap-year maps need to be rebuilt via the shared
+// buildSpouseRetirementSeed builder. Before this fix, a scenario that shifted
+// the primary's retirement age kept the spouse Traditional bucket FROZEN at
+// whatever it was at the BASE retirement age.
+describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
+  const spCurrentAge = 40, spSafeRetAge = 65, spSafeLifeExp = 90;
+  const spouseCurrentAge = 35;
+  const spouseRetAge = 75; // spouse retires well after any scenario retirement age tested below
+  const spouseNetRate = 0.65;
+
+  const primarySimInputs = {
+    totalYears: 60, currentAge: spCurrentAge, currentIncome: 120_000, incomeGrowth: 2,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 6,
+    bal401k: 100_000, balRoth: 40_000, balTaxable: 60_000, balHSA: 15_000,
+    contrib401k: 15_000, contribRoth: 6_000, contribTaxable: 5_000, contribHSA: 3_000,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: em, moneyEvents: [],
+  };
+  const primarySim = runSimulation(primarySimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const primaryAtBase = primarySim[spSafeRetAge - spCurrentAge - 1];
+  const primaryTradGrossAtRet = primaryAtBase.tradGross ?? 0;
+  const primaryRoth    = primaryAtBase["Roth IRA"] ?? 0;
+  const primaryTaxable = primaryAtBase["Taxable"]  ?? 0;
+  const primaryHsa     = primaryAtBase["HSA"]      ?? 0;
+
+  // Deterministic synthetic spouse accumulation rows (mirrors retirement-phase.test.js's
+  // buildRows helper): tradGross grows linearly with i so a seed point read at a LATER
+  // primary age is predictably larger — isolating the re-seed fix from real-engine noise.
+  const buildSpouseRows = (count) => Array.from({ length: count }, (_, i) => ({
+    age: spouseCurrentAge + i + 1,
+    c401k: 12_000, c401kEmployee: 10_000, cHSA: 1_000, salary: 90_000,
+    tradGross: 200_000 + i * 10_000,
+    "Roth IRA": 50_000, "Taxable": 30_000, "HSA": 5_000,
+  }));
+  const spouseSimData = buildSpouseRows(40); // spouse ages 36..75
+  const spouseCurrentSnapshot = {
+    age: spCurrentAge, tradGross: 190_000, "Roth IRA": 50_000, "Taxable": 30_000, "HSA": 5_000,
+  };
+  const spouseStartingBal = 190_000 + 50_000 + 30_000 + 5_000;
+
+  // Base retPhaseBase's frozen spouse seed — read at the BASE retirement age (65),
+  // exactly as App.jsx's own spouseSeed memo does (primaryRetAge: safeRetAge).
+  const baseSpouseSeed = buildSpouseRetirementSeed({
+    spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge: spCurrentAge,
+    primaryRetAge: spSafeRetAge, spouseRetAge, spouseNetRate,
+  });
+
+  const householdRetPhaseBase = {
+    tradGross: primaryTradGrossAtRet, tradGrossSpouse: baseSpouseSeed.tradSeed,
+    spouseRmdStartAge: Infinity,
+    roth: primaryRoth + baseSpouseSeed.rothSeed,
+    taxable: primaryTaxable + baseSpouseSeed.taxableSeed,
+    hsa: primaryHsa + baseSpouseSeed.hsaSeed,
+    startAge: spSafeRetAge, lifeExp: spSafeLifeExp, longevityHorizon: spSafeRetAge + 130,
+    rReal: 0.02, effectiveExpenses: 60_000,
+    ssGross: 24_000, ssTaxable: 20_000, ssClaimAge: 67,
+    pension: 0, pensionStartAge: Infinity,
+    filingStatus: "single", retStateRate: 0,
+    rmdStartAge: 73, useTable2: false, spouseCurrentAge, currentAge: spCurrentAge,
+    moneyEvents: [],
+    spouseRetirementAge: spouseRetAge,
+    spouseContribByAge: baseSpouseSeed.spouseContribByAge,
+    spouseTaxableIncomeByAge: baseSpouseSeed.spouseTaxableIncomeByAge,
+    spouseIncomeFloorByAge: baseSpouseSeed.spouseIncomeFloorByAge,
+  };
+  const householdRetPhase = buildRetirementPhase({ ...householdRetPhaseBase, conversionByAge: {} });
+
+  const householdAccumChart = buildAccumChart({
+    simData: primarySim, safeRetAge: spSafeRetAge, currentAge: spCurrentAge,
+    bal401k: primarySimInputs.bal401k, balRoth: primarySimInputs.balRoth,
+    balTaxable: primarySimInputs.balTaxable, balHSA: primarySimInputs.balHSA,
+    spouseSimData, spouseStartingBal,
+  });
+  const householdTotalChartData = [
+    ...householdAccumChart,
+    ...householdRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+
+  const householdRetDrawShared = {
+    rReal: householdRetPhaseBase.rReal, effectiveExpenses: householdRetPhaseBase.effectiveExpenses,
+    ssAmount: householdRetPhaseBase.ssGross, ssClaimAge: householdRetPhaseBase.ssClaimAge,
+    pensionAmount: 0, pensionStartAge: Infinity,
+    rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [],
+  };
+
+  // Household total: primary balances + ALL FOUR spouse buckets — householdRetPhaseBase's
+  // roth/taxable/hsa are already household-combined (primary + spouse, mirroring App.jsx's
+  // hhRoth/hhTaxable/hhHsa), so this must include the spouse's Roth/Taxable/HSA seeds too,
+  // not just tradSeed (which stays a separate bucket, tradGrossSpouse).
+  const householdBaseTotalAtRet = primaryTradGrossAtRet + primaryRoth + primaryTaxable + primaryHsa
+    + baseSpouseSeed.tradSeed + baseSpouseSeed.rothSeed + baseSpouseSeed.taxableSeed + baseSpouseSeed.hsaSeed;
+
+  const householdBundle = {
+    simInputs: primarySimInputs, fedMarginal: 0.22, retDrawShared: householdRetDrawShared,
+    safeRetAge: spSafeRetAge, safeLifeExp: spSafeLifeExp,
+    baseTotalAtRet: householdBaseTotalAtRet, baseYearsSustained: householdRetPhase.yearsSustained,
+    retPhaseBase: householdRetPhaseBase, conversionByAge: {},
+    baseChart: householdTotalChartData, addlPreTaxBal: 0,
+    spouseSeedInputs: {
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
+      spouseRetAge, spouseNetRate,
+    },
+    spouseChartInputs: { spouseSimData, spouseStartingBal },
+  };
+
+  it("a retire-later scenario re-seeds the spouse trad (no longer frozen at the base value)", () => {
+    const laterRetAge = spSafeRetAge + 5; // 70 — primary retires 5 yrs later than the base plan
+    const s = calcWhatIfScenario(householdBundle, { retirementAge: laterRetAge });
+
+    // Expected primary-only portion: re-sim the primary directly (same pattern the
+    // "retire-earlier" engine-migration test above uses) and read the row at the
+    // scenario's own retirement age.
+    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const primaryAtScenario = primaryResim[laterRetAge - primarySimInputs.currentAge - 1];
+    const primaryPortion = (primaryAtScenario.tradGross ?? 0)
+      + (primaryAtScenario["Roth IRA"] ?? 0) + (primaryAtScenario["Taxable"] ?? 0) + (primaryAtScenario["HSA"] ?? 0);
+
+    // Expected re-seeded spouse trad: buildSpouseRetirementSeed at the SCENARIO's
+    // own retirement age (70), not the base (65) — the spouse kept contributing
+    // (and growing) for 5 more years before this later seed point.
+    const expectedSpouseSeed = buildSpouseRetirementSeed({
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge: spCurrentAge,
+      primaryRetAge: laterRetAge, spouseRetAge, spouseNetRate,
+    });
+    // Sanity: the fixture actually exercises growth between the base and scenario seed points.
+    expect(expectedSpouseSeed.tradSeed).toBeGreaterThan(baseSpouseSeed.tradSeed);
+
+    const expectedScenarioTotalAtRet = primaryPortion + expectedSpouseSeed.tradSeed;
+    expect(s.scenarioTotalAtRet).toBeCloseTo(expectedScenarioTotalAtRet, 6);
+
+    // The bug this fixes: the OLD code kept the spouse trad FROZEN at the base-
+    // retirement-age value even 5 years later — the fixed result must be larger.
+    const frozenWouldBe = primaryPortion + baseSpouseSeed.tradSeed;
+    expect(s.scenarioTotalAtRet).toBeGreaterThan(frozenWouldBe);
+  });
+
+  it("the no-op scenario invariant still holds with a spouse", () => {
+    const s = calcWhatIfScenario(householdBundle, {});
+    expect(s.chart).toEqual(householdTotalChartData);
+    expect(s.scenarioTotalAtRet).toBe(householdBaseTotalAtRet);
+  });
+
+  it("a resim's accumulation chart is household, not primary-only (A8)", () => {
+    const laterRetAge = spSafeRetAge + 5;
+    const s = calcWhatIfScenario(householdBundle, { retirementAge: laterRetAge });
+
+    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const expectedAccum = buildAccumChart({
+      simData: primaryResim, safeRetAge: laterRetAge, currentAge: primarySimInputs.currentAge,
+      bal401k: primarySimInputs.bal401k, balRoth: primarySimInputs.balRoth,
+      balTaxable: primarySimInputs.balTaxable, balHSA: primarySimInputs.balHSA,
+      spouseSimData, spouseStartingBal,
+    });
+    const actualAccum = s.chart.slice(0, expectedAccum.length);
+    expect(actualAccum).toEqual(expectedAccum);
+
+    // Prove the fix is what makes it household: a primary-only rebuild (no spouse
+    // args) must NOT match — the spouse balance is really being included.
+    const primaryOnlyAccum = buildAccumChart({
+      simData: primaryResim, safeRetAge: laterRetAge, currentAge: primarySimInputs.currentAge,
+      bal401k: primarySimInputs.bal401k, balRoth: primarySimInputs.balRoth,
+      balTaxable: primarySimInputs.balTaxable, balHSA: primarySimInputs.balHSA,
+    });
+    expect(actualAccum).not.toEqual(primaryOnlyAccum);
+  });
+
+  it("no spouse (spouseSeedInputs/spouseChartInputs both null) is byte-identical to omitting them entirely", () => {
+    const overrides = { retireAdj: -2 };
+    const withoutFields    = calcWhatIfScenario(baseArgs, overrides);
+    const withExplicitNulls = calcWhatIfScenario(
+      { ...baseArgs, spouseSeedInputs: null, spouseChartInputs: null }, overrides);
+    expect(withExplicitNulls).toEqual(withoutFields);
   });
 });
 

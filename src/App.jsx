@@ -319,6 +319,10 @@ export default function App() {
       moneyEvents,
       conversionEvents: activeConversionEvents, stateRate,
       hsaLimit: primaryHsaLimit,
+      // The primary's age in the calendar year the SPOUSE retires. Inclusive (income
+      // counts THROUGH the retirement year), matching contribEnd*'s `age <= end`
+      // convention. null when there's no spouse — inert (byte-identical).
+      spouseIncomeEndAge: hasSpouse ? currentAge + (effectiveSpouseRetAge - spouseCurrentAge) : null,
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards
@@ -338,6 +342,7 @@ export default function App() {
     moneyEvents,
     activeConversionEvents, stateRate,
     primaryHsaLimit,
+    hasSpouse, effectiveSpouseRetAge, spouseCurrentAge,
   ]);
 
   // Spouse's own accumulation sim (#30) — mirrors the primary's runSimulation call
@@ -365,12 +370,16 @@ export default function App() {
       contribEndTaxable: spouseContribEnd, contribEndHSA: spouseContribEnd,
       calcEmployerMatchFn: spouseEmployerMatch,
       hsaLimit: spouseHsaLimit,
+      // = spouseAgeAtPrimaryRet. Without this the spouse's own sim counted the PRIMARY's
+      // salary in household MAGI forever, including years after the primary retired —
+      // wrongly suppressing the spouse's Roth contributions during the gap years.
+      spouseIncomeEndAge: spouseCurrentAge + (safeRetAge - currentAge),
     });
     return raw.map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
   }, [hasSpouse, totalYears, spouseCurrentAge, spouseIncome, spouseIncomeGrowth, incomeGrowthEndAge,
       filingStatus, currentIncome, incomeGrowth, returnRate, spouseBal401k, spouseBalRoth,
       spouseBalTaxable, spouseBalHSA, spouseContrib401k, spouseContribRoth, spouseContribTaxable,
-      spouseContribHSA, spouseContribEnd, spouseEmployerMatch, spouseHsaLimit]);
+      spouseContribHSA, spouseContribEnd, spouseEmployerMatch, spouseHsaLimit, safeRetAge, currentAge]);
 
   const spouseCurrentSnapshot = useMemo(() => ({
     age: currentAge, tradGross: spouseBal401k, "Roth IRA": spouseBalRoth,
@@ -1114,12 +1123,17 @@ export default function App() {
     // Permanent working-year conversions must travel with the re-sim so the what-if
     // BASELINE matches the main plan (same class as the BUG-34 money-events fix).
     conversionEvents: activeConversionEvents, stateRate,
+    // Permanent plan input (Step 7) — a what-if re-sim must apply the same
+    // spouse-retires-first MAGI cutoff the main plan uses, or a forced resim's
+    // baseline would silently diverge from the committed plan.
+    spouseIncomeEndAge: hasSpouse ? currentAge + (effectiveSpouseRetAge - spouseCurrentAge) : null,
   }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
        contrib401k, contribRoth, contribTaxable, contribHSA,
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-       employerMatch, moneyEvents, activeConversionEvents, stateRate]);
+       employerMatch, moneyEvents, activeConversionEvents, stateRate,
+       hasSpouse, effectiveSpouseRetAge, spouseCurrentAge]);
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.
@@ -1279,9 +1293,29 @@ export default function App() {
     // "before" longevity metric doesn't fall back to a round(retAge+years)
     // derivation that can land one year early.
     baseDepletionAge: depletionAge,
+    // BUG-77: scenario-invariant spouse re-seed inputs. spouseContribEnd is the
+    // spouse's OWN retirement age (independent of the primary's), so spouseSimData
+    // itself never changes for a primary-retirement-age scenario — only the seed
+    // point (read at the SCENARIO's retirement age) and the gap-year maps need to be
+    // rebuilt, via the SAME buildSpouseRetirementSeed builder the main path uses. null
+    // with no spouse (inert).
+    spouseSeedInputs: hasSpouse ? {
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
+      spouseRetAge: effectiveSpouseRetAge, spouseNetRate,
+    } : null,
+    // #30 interop: the same two args App's own buildAccumChart call passes, so a
+    // resim's accumulation chart is HOUSEHOLD like the main path's (a pre-existing
+    // gap on this specific branch, unfixed until now).
+    spouseChartInputs: hasSpouse ? {
+      spouseSimData,
+      spouseStartingBal: spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
+    } : null,
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
-       addlPreTaxBal, depletionAge]);
+       addlPreTaxBal, depletionAge,
+       hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
+       effectiveSpouseRetAge, spouseNetRate,
+       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
   // scenario engine as every lever (calcWhatIfScenario) + SS helpers + a pure

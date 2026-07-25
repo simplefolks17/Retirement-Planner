@@ -72,6 +72,11 @@ export function runSimulation({
   stateRate = 0,      // working-year state income-tax rate, applied only to conversion-event tax
   hsaLimit = HSA_LIMIT_2026, // per-run HSA cap (#30: App passes a lower shared-family-ceiling
                               // split when a spouse account competes for the same family HSA limit)
+  // The SUBJECT's age after which the OTHER earner ("spouseIncome") stops counting. null =
+  // never stops (every existing caller's default), so this is inert for every caller that
+  // doesn't pass it. Expressed in the subject's own frame because runSimulation is called for
+  // BOTH people and each run's `age` variable is its own subject's age.
+  spouseIncomeEndAge = null,
 }) {
   let trad    = bal401k;
   let roth    = balRoth;
@@ -149,8 +154,13 @@ export function runSimulation({
     const primaryMAGI = primaryIncomeYr;
     // Spouse income plateaus at incomeGrowthEndAge too (same growthYears cap as primary).
     // Income replacement is PRIMARY-ONLY (spouse modeling is premium feature #30) —
-    // spouseGrown is untouched by workedFrac/incomeFrac.
-    const spouseGrown = spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, growthYears);
+    // spouseGrown is untouched by workedFrac/incomeFrac. spouseIncomeEndAge (BUG-82
+    // follow-up) stops the OTHER earner's income counting once the SUBJECT passes that
+    // age — inclusive, so the cutoff year still counts in full (contribEnd*-style
+    // convention). null (every existing caller) never stops — byte-identical.
+    const spouseGrown = (spouseIncomeEndAge != null && age > spouseIncomeEndAge)
+      ? 0
+      : spouseIncome * Math.pow(1 + spouseIncomeGrowth / 100, growthYears);
     // MAGI ≈ AGI: net out this year's pre-tax deductions (401k deferral + HSA). Used for
     // BOTH the Roth phase-out and the LTCG bracket so the two can't diverge. MFJ adds spouse
     // gross (no spouse deductions tracked); non-MFJ is primary-only (BUG-12).
