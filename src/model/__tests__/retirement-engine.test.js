@@ -506,6 +506,33 @@ describe("buildRetirementWalkByAccount — spouse gap-year working/contributing 
     // not this one, is the assertion that actually isolates the banking behavior.
     expect(a.taxable).toBeGreaterThan(b.taxable);
   });
+
+  it("T2.12 — spouseContrib reports the 401k contribution AND a same-year banked surplus combined, and conservation still holds", () => {
+    // Found during the Flow-Down/ledger reconciliation work: the banked surplus
+    // (T2.11) is a real inflow to rTax that spouseContrib originally did NOT
+    // report — meaning it was an unlabeled inflow, exactly the class of bug this
+    // whole reconciliation effort exists to prevent. A working spouse commonly BOTH
+    // contributes to their 401k AND has net cash left over in the same gap year, so
+    // this locks the combined-in-one-row case, not just each piece in isolation.
+    const contribByAge = { 66: 23_500 };
+    const floorByAge   = { 66: 95_000 }; // exceeds the $57k spend need ⇒ $38k surplus
+    const { rows } = base({
+      tradGrossSpouse: 200_000, spouseCurrentAge: 60, currentAge: 65,
+      spouseContribByAge: contribByAge, spouseIncomeFloorByAge: floorByAge,
+      effectiveExpenses: 57_000, endAge: 66,
+    });
+    const r = rows.find(x => x.age === 66);
+    const expectedSurplus = 95_000 - 57_000;
+    // spouseContrib is now the SUM — the 401k deposit plus the banked cash surplus —
+    // not just the 401k piece alone.
+    expect(r.spouseContrib).toBe(23_500 + expectedSurplus);
+    // The full conservation identity holds even with BOTH terms active in the same
+    // row: balEnd == balStart*(1+rReal) − draw − tax + spouseContrib (draw is 0 here,
+    // the surplus more than covers the year's spending need).
+    expect(r.draw).toBe(0);
+    const expectedBalEnd = r.balStart * 1.03 - r.draw - r.tax + r.spouseContrib;
+    expect(Math.abs(r.balEnd - expectedBalEnd)).toBeLessThan(1e-6);
+  });
 });
 
 describe("buildRetirementWalkByAccount — depletion", () => {

@@ -28,9 +28,11 @@
 // of the walk (chart, longevity, Flow-Down, Year-by-year) reads the same
 // row shape — now with correct, gross-seeded, taxed-once numbers, plus per-account
 // detail. This keeps the BUG-31 single-walk guarantee intact.
-// `spouseContrib` is the still-working spouse's gap-year 401k contribution (0
-// without a spouse), reported per row so downstream reconciliation surfaces
-// (a later batch) can close their identities.
+// `spouseContrib` is the still-working spouse's gap-year inflow (0 without a
+// spouse) — their 401k contribution PLUS any banked income surplus (cash beyond
+// that year's spending need, which would otherwise be an unlabeled inflow to
+// `rTax`). Reported per row so downstream reconciliation surfaces (Flow-Down,
+// Year-by-year) can close their identities completely, not just partially.
 
 import { calcTax } from "./taxes.js";
 import { getDivisor } from "./rmd.js";
@@ -219,7 +221,14 @@ export function buildRetirementWalkByAccount({
     const spendNeed     = Math.max(0, effectiveExpenses - ssCash - penCash);
     const spouseApplied = Math.min(spouseIncomeFloor, spendNeed);
     const needed         = (spendNeed - spouseApplied) + eventOutflow;
-    rTax += Math.max(0, spouseIncomeFloor - spouseApplied);   // bank the surplus, don't drop it
+    // The banked surplus (spouse cash beyond this year's need) is, like the 401k
+    // contribution below, a real inflow that is neither growth, draw, nor tax — found
+    // during the Flow-Down/ledger reconciliation work: without folding it into
+    // spouseContrib's report, every downstream reconciliation surface would silently
+    // misattribute it (the exact BUG-31 residual-plug class this fix exists to avoid),
+    // in the common case of a working spouse earning more than the household spends.
+    const spouseSurplusBanked = Math.max(0, spouseIncomeFloor - spouseApplied);
+    rTax += spouseSurplusBanked;   // bank the surplus, don't drop it
 
     // Option A: hold the spouse Traditional bucket OUT of the drawable pool until the
     //   spouse's OWN retirement age (they are still working and still contributing to
@@ -292,10 +301,11 @@ export function buildRetirementWalkByAccount({
       tradDraw,
       trad, roth: rRoth, taxable: rTax, hsa: rHsa,
       tradSpouse: tradSp, // spouse Traditional 401k balance after this year (0 when no spouse bucket)
-      spouseContrib: Math.round(spouseContrib),  // gap-year spouse 401k contribution injected
-                                                 // THIS row (0 otherwise) — a real inflow that
-                                                 // is neither growth, draw, nor tax, so every
-                                                 // reconciliation surface needs it (a later batch).
+      // Gap-year spouse-attributable inflow THIS row (0 without a spouse): the 401k
+      // contribution PLUS any banked income surplus. Both are real inflows that are
+      // neither growth, draw, nor tax, so every reconciliation surface (Flow-Down,
+      // the Year-by-year ledger) needs the combined figure, not just the 401k piece.
+      spouseContrib: Math.round(spouseContrib + spouseSurplusBanked),
       balEnd,
       total: Math.max(0, Math.round(balEnd)),
     });
