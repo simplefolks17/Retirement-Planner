@@ -210,15 +210,18 @@ export function calcPlanDrivers({
 // `tax` on the walk row is the income tax that actually left the pool that year
 // (RMD tax + conversion tax); the rmd/conversion columns are the underlying
 // amounts and are informational — they are NOT part of the ledger identity
-//   prevTotal + growth − draw − tax = nextTotal
+//   prevTotal + contrib + growth − draw − tax = nextTotal
 // which the walk already satisfies. phase:"ret" tags these as retirement rows;
-// contrib is null (no contributions in retirement).
+// contrib is null on a normal retirement year (no contributions), but a still-
+// working spouse's gap-year 401k contribution (r.spouseContrib) IS a real
+// retirement-phase contribution — shown in this column (rounded) rather than a
+// synthesized 0, so the reconciliation identity above holds on those rows too.
 export function buildYearlyRows({ rows, currentAge, currentYear, rmdByAge = {}, conversionByAge = {} }) {
   return (rows ?? []).map(r => ({
     age: r.age,
     year: currentYear + (r.age - currentAge),
     total: r.total,
-    contrib: null,
+    contrib: (r.spouseContrib ?? 0) > 0 ? Math.round(r.spouseContrib) : null,
     growth: Math.round(r.growth ?? 0),
     draw: Math.round(r.draw ?? 0),
     tax: Math.round(r.tax ?? 0),

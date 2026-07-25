@@ -13,6 +13,14 @@
 // engine taxes withdrawals year-by-year), so the start balance, contributions, and
 // totalAtRet are all gross. "Investment Growth" = the true gross residual; no tax
 // haircut is applied to any node, so the bridge reconciles in one consistent unit.
+//
+// Retirement-phase bridges (#30 / BUG-82 gap-year spouse contribution): a still-
+// working spouse's 401k contribution during the retiree's gap years is a real
+// inflow into the walk — neither growth, draw, nor tax — so it must appear as its
+// own term in both phase identities or the phases would silently misattribute it
+// as growth:
+//   totalAtRet   + convWindowGrowth + convWindowSpouseContrib − convWindowDraws − convWindowTax = portPreRMD
+//   distStartVal + distGrowth       + distSpouseContrib       − distDraws       − distRMDTax     = distEndVal
 export function calcFlowDown({
   bal401k, balRoth, balTaxable, balHSA,
   contribRows,                  // simData rows with c401k/cRoth/cTaxable/cHSA (age <= safeRetAge)
@@ -47,13 +55,15 @@ export function calcFlowDown({
   const convRows = hasConvWindow ? walkRows.filter(r => r.age <  rmdStartAge) : [];
   const distRows = hasConvWindow ? walkRows.filter(r => r.age >= rmdStartAge) : walkRows;
 
-  const sumDraw   = rs => Math.round(rs.reduce((s, r) => s + r.draw,   0));
-  const sumTax    = rs => Math.round(rs.reduce((s, r) => s + r.tax,    0));
-  const sumGrowth = rs => Math.round(rs.reduce((s, r) => s + r.growth, 0));
+  const sumDraw          = rs => Math.round(rs.reduce((s, r) => s + r.draw,   0));
+  const sumTax           = rs => Math.round(rs.reduce((s, r) => s + r.tax,    0));
+  const sumGrowth        = rs => Math.round(rs.reduce((s, r) => s + r.growth, 0));
+  const sumSpouseContrib = rs => Math.round(rs.reduce((s, r) => s + (r.spouseContrib ?? 0), 0));
 
-  const convWindowDraws  = sumDraw(convRows);
-  const convWindowTax    = sumTax(convRows);    // conversion tax actually charged to the pool
-  const convWindowGrowth = sumGrowth(convRows); // TRUE investment return
+  const convWindowDraws          = sumDraw(convRows);
+  const convWindowTax            = sumTax(convRows);    // conversion tax actually charged to the pool
+  const convWindowGrowth         = sumGrowth(convRows); // TRUE investment return
+  const convWindowSpouseContrib  = sumSpouseContrib(convRows);
 
   const portPreRMD = hasConvWindow
     ? (convRows.length ? convRows[convRows.length - 1].total : totalAtRet)
@@ -65,6 +75,7 @@ export function calcFlowDown({
   const distDraws    = sumDraw(distRows);
   const distRMDTax   = sumTax(distRows);        // RMD tax actually charged in the dist phase
   const distGrowth   = sumGrowth(distRows);     // TRUE investment return
+  const distSpouseContrib = sumSpouseContrib(distRows);
   const actualSustainedYrs = distRows.length;
   const distYears    = Math.max(0, (depletionAge ?? safeLifeExp) - distStartAge);
 
@@ -78,8 +89,10 @@ export function calcFlowDown({
     startPortfolio, totalContrib, totalGrowth, totalAtRet,
     hasConvWindow, conversionWindowYrs, portPreRMD,
     convWindowDraws, convWindowTax, convWindowGrowth, totalConverted,
+    convWindowSpouseContrib, hasConvWindowSpouseContrib: convWindowSpouseContrib > 0,
     distStartAge, distStartVal, distEndVal, distYears,
     distDraws, distRMDTax, distGrowth, depletionAge, actualSustainedYrs,
+    distSpouseContrib, hasDistSpouseContrib: distSpouseContrib > 0,
     peakPortfolio,
   };
 }

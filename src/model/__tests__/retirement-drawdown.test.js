@@ -284,4 +284,25 @@ describe("buildYearlyRows", () => {
     expect(out[1].conversion).toBeNull();
     expect(out[1].tax).toBe(2);
   });
+
+  it("T5.3 — the Year-by-year ledger shows the gap contribution and reconciles (#30 / BUG-82)", () => {
+    // A still-working spouse's gap-year 401k contribution (engine field
+    // r.spouseContrib) is a real retirement-phase inflow — neither growth, draw,
+    // nor tax — so it belongs in the `contrib` column (never a synthesized 0 on
+    // the other rows) and the ledger identity gains a `+ contrib` term.
+    const rows = [
+      { age: 70, total: 100_000, growth: 0, draw: 0, tax: 0 },
+      { age: 71, total: 110_500, growth: 3_000, draw: 4_000, tax: 500, spouseContrib: 12_000 },
+      { age: 72, total: 108_700, growth: 2_000, draw: 3_500, tax: 300 },
+    ];
+    const out = buildYearlyRows({ rows, currentAge: 69, currentYear: 2026 });
+
+    expect(out[0].contrib).toBeNull();
+    expect(out[1].contrib).toBe(12_000);
+    expect(out[2].contrib).toBeNull();     // no synthesized 0 on a normal retirement year
+
+    // prevTotal + contrib + growth − draw − tax = nextTotal
+    const recon = out[0].total + out[1].contrib + out[1].growth - out[1].draw - out[1].tax;
+    expect(recon).toBeCloseTo(out[1].total, 4);
+  });
 });
