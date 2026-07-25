@@ -196,7 +196,7 @@ invariants Classic enforces.
 | `conversion` | conversionMode, conversionBracketTarget, annualConversionAmt, conversionTaxSource |
 | `health` | hasMarketplaceInsurance, householdSize, marketplaceMonthlyPremium, hasMedicare, personOnMedicare |
 | `assumptions` | currentAge, retirementAge, lifeExpect (coupled setters), returnRate, inflationRate, retirementState, savingsSurplusPct |
-| `spouseAccounts` (#30, premium) | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib }` — no per-account `contribEnd`; the spouse contributes until the household retirement), hsaCoverageType (`self`/`family`), matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
+| `spouseAccounts` (#30, premium) | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib }` — no per-account `contribEnd`; the spouse contributes until the household retirement), `spouseRetirementAge` (self-describing `{value,set,min,max,step}`, same shape as every other numeric field in this bundle — BUG-82 foundation step, see BUGS.md), hsaCoverageType (`self`/`family`), matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
 
 **`spouseAccounts` (#30) — spouse account modeling.** Same self-describing field
 convention as `accounts`. The spouse's HSA contribution cap is `HSA_FAMILY_LIMIT_2026`

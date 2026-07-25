@@ -171,6 +171,9 @@ export default function App() {
   const [isMarried,         setIsMarried]         = useState(false);
   const [spouseIsSoleBenef, setSpouseIsSoleBenef] = useState(false);
   const [spouseCurrentAge,  setSpouseCurrentAge]  = useState(18);
+  // null = "auto: the same NUMERIC age the primary retires at" (design doc C.2). Mirrors the
+  // livingExpenses / annualExpenses / conversionStartAge null-default pattern.
+  const [spouseRetirementAge, setSpouseRetirementAge] = useState(null);
   const [ssOverride,        setSsOverride]        = useState(null);
   const [includeSS,         setIncludeSS]         = useState(true);
 
@@ -280,6 +283,16 @@ export default function App() {
   const hasSpouse = isMarried || spouseIncome > 0 || spouseBal401k > 0 || spouseBalRoth > 0
     || spouseBalTaxable > 0 || spouseBalHSA > 0 || spouseContrib401k > 0 || spouseContribRoth > 0
     || spouseContribTaxable > 0 || spouseContribHSA > 0;
+  // The spouse's own retirement age (BUG-82 foundation step). null = auto: the same
+  // numeric age the primary retires at. Defensively double-clamped so a stale stored
+  // value can never escape its own bounds (the same pattern used for ssClaimingAge-
+  // style fields) — min/max are recomputed from live currentAge-family inputs every
+  // render, so a value valid when written can still fall outside a moved range.
+  const spouseRetAgeMin = spouseCurrentAge + 1;
+  const spouseRetAgeMax = Math.max(spouseRetAgeMin, lifeExpect - 1);
+  const effectiveSpouseRetAge = Math.min(
+    spouseRetAgeMax,
+    Math.max(spouseRetAgeMin, spouseRetirementAge ?? retirementAge));
   // HSA family HDHP limit is a SHARED household ceiling (rule 4). Under 'self' each
   // person keeps the self-only cap (runSimulation's default, HSA_LIMIT_2026 — the
   // existing behavior, byte-identical). Under 'family' the household shares
@@ -323,14 +336,16 @@ export default function App() {
 
   // Spouse's own accumulation sim (#30) — mirrors the primary's runSimulation call
   // but with the spouse's own age/income/accounts/match terms. The spouse contributes
-  // over the same CALENDAR window as the primary (spouseContribEnd), so the spouse's
-  // retirement-year row lands at the same array index (phase2End - 1) as the
-  // primary's. spouseIncome/incomeGrowth are swapped into the "other earner" slot so
-  // calcTaxBasis-equivalent MFJ combined-income math inside runSimulation sees the
-  // same household income the primary sim does (rule 9). Money events and Roth-
-  // conversion events are primary/household-modeled only — never run on the spouse
-  // sim (no double-count). hasSpouse=false → [] → every spouse scalar below is 0.
-  const spouseContribEnd = spouseCurrentAge + (safeRetAge - currentAge);
+  // to their OWN retirement age (effectiveSpouseRetAge); the retirement seed is still
+  // read at the PRIMARY's retirement index (phase2End - 1), because the walk starts
+  // there; the extra rows past that index carry the gap-year contributions a later
+  // step's retirement engine consumes as per-age maps. spouseIncome/incomeGrowth are
+  // swapped into the "other earner" slot so calcTaxBasis-equivalent MFJ combined-
+  // income math inside runSimulation sees the same household income the primary sim
+  // does (rule 9). Money events and Roth-conversion events are primary/household-
+  // modeled only — never run on the spouse sim (no double-count). hasSpouse=false →
+  // [] → every spouse scalar below is 0.
+  const spouseContribEnd = effectiveSpouseRetAge;
   const spouseSimData = useMemo(() => {
     if (!hasSpouse) return [];
     const raw = runSimulation({
@@ -1194,9 +1209,24 @@ export default function App() {
     if (contribEndRoth    > v) setContribEndRoth(v);
     if (contribEndTaxable > v) setContribEndTaxable(v);
     if (contribEndHSA     > v) setContribEndHSA(v);
+    // Lowering the horizon can push spouseRetAgeMax (lifeExpect - 1) below a stored
+    // spouseRetirementAge — clamp the STORED value at the source so neither the
+    // bundle nor a future slider ever holds an out-of-range spouse retirement age.
+    if (spouseRetirementAge != null && spouseRetirementAge > v - 1) setSpouseRetirementAge(v - 1);
   }, [setLifeExpect, setRetirementAge, retirementAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA,
+      spouseRetirementAge, setSpouseRetirementAge]);
+
+  // Spouse-current-age coupled update: mirrors setCurrentAgeCoupled/setLifeExpectCoupled
+  // above. The spouse must retire after their own current age; clamp the STORED value at
+  // the source so neither the bundle nor a slider ever holds an out-of-range age. Shared
+  // by both the ss bundle's spouseCurrentAge.set and the Classic "Spouse's current age"
+  // slider — one implementation, not duplicated clamp logic in two places.
+  const setSpouseCurrentAgeCoupled = useCallback(v => {
+    setSpouseCurrentAge(v);
+    if (spouseRetirementAge != null && spouseRetirementAge <= v) setSpouseRetirementAge(v + 1);
+  }, [setSpouseCurrentAge, setSpouseRetirementAge, spouseRetirementAge]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
   // need so the screens can call them directly. Memoized (V9 / principle 13) with the
@@ -1458,6 +1488,15 @@ export default function App() {
       roth:     acct(spouseBalRoth, setSpouseBalRoth, spouseContribRoth, setSpouseContribRoth, ROTH_IRA_LIMIT_2026),
       taxable:  acct(spouseBalTaxable, setSpouseBalTaxable, spouseContribTaxable, setSpouseContribTaxable, 100_000),
       hsa:      acct(spouseBalHSA, setSpouseBalHSA, spouseContribHSA, setSpouseContribHSA, HSA_FAMILY_LIMIT_2026),
+      spouseRetirementAge: {
+        value: effectiveSpouseRetAge,
+        // Snap to null when the user picks the primary's own retirement age — a clean
+        // "auto" state, mirroring ssOverride / incomeGrowthEndAge / stateRateOverride.
+        set: guardWrite(v => setSpouseRetirementAge(v === retirementAge ? null : v), readOnly),
+        min: spouseRetAgeMin,
+        max: spouseRetAgeMax,
+        step: 1,
+      },
       matchMode:        { value: spouseMatchMode, set: guardWrite(setSpouseMatchMode, readOnly),
         options: [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }] },
       employerMatchPct: { value: spouseEmployerMatchPct, set: guardWrite(setSpouseEmployerMatchPct, readOnly), min: 0, max: 10, step: 0.5 },
@@ -1470,10 +1509,11 @@ export default function App() {
       spouseBalTaxable, spouseContribTaxable, spouseBalHSA, spouseContribHSA,
       spouseMatchMode, spouseEmployerMatchPct, spouseMatchFormulaRate, spouseMatchFormulaCap,
       hsaCoverageType,
+      effectiveSpouseRetAge, spouseRetAgeMin, spouseRetAgeMax, retirementAge,
       setSpouseBal401k, setSpouseContrib401k, setSpouseBalRoth, setSpouseContribRoth,
       setSpouseBalTaxable, setSpouseContribTaxable, setSpouseBalHSA, setSpouseContribHSA,
       setSpouseMatchMode, setSpouseEmployerMatchPct, setSpouseMatchFormulaRate, setSpouseMatchFormulaCap,
-      setHsaCoverageType,
+      setHsaCoverageType, setSpouseRetirementAge,
       readOnly]);
 
   const ssBundle = useMemo(() => ({
@@ -1496,12 +1536,12 @@ export default function App() {
       min: SS_MIN_CLAIM_AGE, max: SS_MAX_CLAIM_AGE, step: 1 },
     spouseBenefitBasis:{ value: spouseBenefitBasis, set: guardWrite(setSpouseBenefitBasis, readOnly),
       options: [{ value: "own", label: "Own record" }, { value: "spousal", label: "Spousal (50%)" }] },
-    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAge, readOnly), min: 18, max: currentAge - 1, step: 1 },
+    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAgeCoupled, readOnly), min: 18, max: currentAge - 1, step: 1 },
     spouseIsSoleBenef:{ value: spouseIsSoleBenef, set: guardWrite(setSpouseIsSoleBenef, readOnly) },
   }), [includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge,
        spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef, currentAge, ssAnnualBenefit,
        setIncludeSS, setSsClaimingAge, setSsOverride, setIsMarried, setSpouseSsEstimate,
-       setSpouseClaimingAge, setSpouseBenefitBasis, setSpouseCurrentAge, setSpouseIsSoleBenef,
+       setSpouseClaimingAge, setSpouseBenefitBasis, setSpouseCurrentAgeCoupled, setSpouseIsSoleBenef,
        readOnly]);
 
   const pensionBundle = useMemo(() => ({
@@ -3667,7 +3707,7 @@ export default function App() {
                   <p style={{ margin: "0 0 5px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Spouse's current age</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <input type="range" min={18} max={currentAge - 1} step={1} value={spouseCurrentAge}
-                      onChange={e => setSpouseCurrentAge(Number(e.target.value))}
+                      onChange={e => setSpouseCurrentAgeCoupled(Number(e.target.value))}
                       style={{ flex: 1, accentColor: C.blue }} />
                     <span style={{ fontSize: 13, color: C.blue, ...mono, minWidth: 24 }}>{spouseCurrentAge}</span>
                   </div>
