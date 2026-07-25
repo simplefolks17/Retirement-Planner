@@ -248,6 +248,28 @@ describe("calcPlanDrivers (WI-1.1 — the on-track pill's 3 drivers)", () => {
     expect(conf.ok).toBeNull();
     expect(conf.successPct).toBeNull();
   });
+
+  // #30 / BUG-82: withdrawal driver carries temporaryIncomeBasis/basisEndsAtAge.
+  it("withdrawal driver: temporaryIncomeBasis/basisEndsAtAge default to false/null when omitted (byte-identical to the old 3-field shape)", () => {
+    const d = calcPlanDrivers(base)[0];
+    expect(d.temporaryIncomeBasis).toBe(false);
+    expect(d.basisEndsAtAge).toBeNull();
+  });
+
+  it("withdrawal driver: temporaryIncomeBasis/basisEndsAtAge pass through exactly when provided", () => {
+    const d = calcPlanDrivers({ ...base, temporaryIncomeBasis: true, basisEndsAtAge: 62 })[0];
+    expect(d.temporaryIncomeBasis).toBe(true);
+    expect(d.basisEndsAtAge).toBe(62);
+    // Other fields on the row are unaffected.
+    expect(d.id).toBe("withdrawal");
+    expect(d.ok).toBe(true);
+  });
+
+  it("withdrawal driver: temporaryIncomeBasis false with a non-null basisEndsAtAge still reports false (no implicit coercion)", () => {
+    const d = calcPlanDrivers({ ...base, temporaryIncomeBasis: false, basisEndsAtAge: 62 })[0];
+    expect(d.temporaryIncomeBasis).toBe(false);
+    expect(d.basisEndsAtAge).toBe(62);
+  });
 });
 
 describe("buildYearlyRows", () => {

@@ -525,6 +525,25 @@ describe("StrategiesScreen", () => {
       expect(app.text()).not.toContain("sequence separately");
       act(() => app.r.unmount());
     });
+
+    // #30 / BUG-82: gapYearNote explains an empty/short draw list when a
+    // spouse's gap-year income has driven netNeed toward 0.
+    it("does not render a gap-year note by default (gapYearNote null)", () => {
+      const app = mount(makeProps(), { initialStrategy: "withdrawal" });
+      expect(app.text()).not.toContain("spouse's income covers your expenses");
+      act(() => app.r.unmount());
+    });
+
+    it("shows the gap-year note when gapYearNote is a string", () => {
+      const props = makeProps();
+      props.withdrawalView = {
+        ...props.withdrawalView,
+        gapYearNote: "No portfolio draw needed this year — your spouse's income covers your expenses.",
+      };
+      const app = mount(props, { initialStrategy: "withdrawal" });
+      expect(app.text()).toContain("spouse's income covers your expenses");
+      act(() => app.r.unmount());
+    });
   });
 
   describe("SurplusDeploymentFlow (WI-3.7 + WI-3.9 Apply-with-preview)", () => {

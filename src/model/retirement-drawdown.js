@@ -119,8 +119,14 @@ export function calcPlanProgress({ yearsSustained, isSustainable, lifeExpect, re
 // Guideline thresholds come from ASSUMPTIONS (heuristics, documented there).
 //
 // Row shapes and edge states (documented per principle 10):
-//   { id: "withdrawal", ok, withdrawalRatePct, guidelinePct }
+//   { id: "withdrawal", ok, withdrawalRatePct, guidelinePct, temporaryIncomeBasis, basisEndsAtAge }
 //       withdrawalRatePct rounded to 1 decimal; ok = rate ≤ guideline.
+//       temporaryIncomeBasis (#30 / BUG-82, rule 5b) is true only when a
+//       spouse's gap-year income is part of the rate shown — the rate is then
+//       flattered by income that stops at basisEndsAtAge (the spouse's own
+//       retirement age), and must not be read as a permanent verdict.
+//       Both default to false / null (inert) when the caller omits them —
+//       byte-identical to the pre-#30 3-field shape for every existing caller.
 //   { id: "longevity",  ok, sustainedYears, horizonYears }
 //       sustainedYears is null when the portfolio never depletes
 //       (yearsSustained === Infinity) — "lasts beyond your plan", NOT a number;
@@ -146,6 +152,9 @@ export function calcPlanDrivers({
   takeHome,              // from calcTaxBasis
   monteCarloSuccessPct,  // OPTIONAL — Monte Carlo success rate (integer %), or
                          // null when the MC lens is unavailable; omit → no 4th row
+  temporaryIncomeBasis = false,  // #30 / BUG-82 — true while a spouse's gap-year
+                                  // income is part of withdrawalRate (rule 5b)
+  basisEndsAtAge = null,          // the age that income stops, or null
 }) {
   const wrGuideline   = ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT;
   const saveGuideline = ASSUMPTIONS.SAVINGS_RATE_GUIDELINE_PCT;
@@ -166,6 +175,8 @@ export function calcPlanDrivers({
       ok: withdrawalRate <= wrGuideline,
       withdrawalRatePct: Math.round(withdrawalRate * 10) / 10,
       guidelinePct: wrGuideline,
+      temporaryIncomeBasis,
+      basisEndsAtAge,
     },
     {
       id: "longevity",

@@ -154,6 +154,36 @@ describe("generatePhaseActions — phase3", () => {
     expect(phase3Actions.some(c => c.title.includes("Year Gap"))).toBe(true);
   });
 
+  // #30 / BUG-82: the gap-clarifying clause on the "Close the N-Year Gap" card.
+  it("gap card body omits the spouse-income clause when spouseIncomeAtRet is 0 (default)", () => {
+    const { phase3Actions } = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+    });
+    const gapCard = phase3Actions.find(c => c.title.includes("Year Gap"));
+    expect(gapCard.body).not.toContain("spouse is still earning");
+  });
+
+  it("gap card body is byte-identical whether spouseIncomeAtRet is omitted or explicitly 0", () => {
+    const withOmitted = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+    }).phase3Actions.find(c => c.title.includes("Year Gap"));
+    const withExplicitZero = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+      spouseIncomeAtRet: 0,
+    }).phase3Actions.find(c => c.title.includes("Year Gap"));
+    expect(withExplicitZero.body).toBe(withOmitted.body);
+  });
+
+  it("gap card body includes the spouse-income clause when spouseIncomeAtRet > 0", () => {
+    const { phase3Actions } = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+      spouseIncomeAtRet: 15_000,
+    });
+    const gapCard = phase3Actions.find(c => c.title.includes("Year Gap"));
+    expect(gapCard.body).toContain("spouse is still earning");
+    expect(gapCard.body).toContain("post-gap need");
+  });
+
   it("action objects include impactLabel when set", () => {
     const { phase3Actions } = generatePhaseActions(base);
     const taxCard = phase3Actions.find(c => c.title.includes("Tax-Optimal Order"));
@@ -227,5 +257,31 @@ describe("generatePhaseSteps", () => {
   it("phase1Steps last entry is type 'total'", () => {
     const { phase1Steps } = generatePhaseSteps(flowData, opts);
     expect(phase1Steps[phase1Steps.length - 1].type).toBe("total");
+  });
+
+  // #30 / BUG-82: the "Living Expenses" captions name the spouse-income offset.
+  it("Living Expenses captions omit the spouse-income clause when spouseIncomeAtRet is 0 (default)", () => {
+    const { phase2Steps, phase3Steps } = generatePhaseSteps(flowData, opts);
+    const p2Living = phase2Steps.find(s => s.label === "Living Expenses");
+    const p3Living = phase3Steps.find(s => s.label === "Living Expenses");
+    expect(p2Living.sub).not.toContain("spouse income");
+    expect(p3Living.sub).not.toContain("spouse income");
+  });
+
+  it("Living Expenses captions are byte-identical whether spouseIncomeAtRet is omitted or explicitly 0", () => {
+    const omitted = generatePhaseSteps(flowData, opts);
+    const explicitZero = generatePhaseSteps(flowData, { ...opts, spouseIncomeAtRet: 0 });
+    expect(explicitZero.phase2Steps.find(s => s.label === "Living Expenses").sub)
+      .toBe(omitted.phase2Steps.find(s => s.label === "Living Expenses").sub);
+    expect(explicitZero.phase3Steps.find(s => s.label === "Living Expenses").sub)
+      .toBe(omitted.phase3Steps.find(s => s.label === "Living Expenses").sub);
+  });
+
+  it("Living Expenses captions include the spouse-income clause when spouseIncomeAtRet > 0", () => {
+    const { phase2Steps, phase3Steps } = generatePhaseSteps(flowData, { ...opts, spouseIncomeAtRet: 12_000 });
+    const p2Living = phase2Steps.find(s => s.label === "Living Expenses");
+    const p3Living = phase3Steps.find(s => s.label === "Living Expenses");
+    expect(p2Living.sub).toContain("+ spouse income");
+    expect(p3Living.sub).toContain("+ spouse income");
   });
 });

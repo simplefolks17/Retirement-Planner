@@ -109,10 +109,14 @@ function PortfolioHero({ t, totalAtRet, planHighlights }) {
 // with per-source breakdown bars (SS, portfolio). Bar widths use model-provided
 // integer percentages (ssPct, portfolioPct) — no division in JSX (rule 10).
 function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
-  const { incomeReplacementPct, retIncomeFlow } = planHighlights ?? {};
+  const { incomeReplacementPct, retIncomeFlow, spouseIncomeScopeNote } = planHighlights ?? {};
   if (!retIncomeFlow) return null;
 
-  const { ss, pension, portfolioDraw, hasSS, hasPension, ssPct, pensionPct, portfolioPct } = retIncomeFlow;
+  const {
+    ss, pension, spouseIncome, portfolioDraw,
+    hasSS, hasPension, hasSpouseIncome,
+    ssPct, pensionPct, spouseIncomePct, portfolioPct,
+  } = retIncomeFlow;
 
   return (
     <div style={{
@@ -162,6 +166,19 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
             </span>
           </div>
         )}
+        {hasSpouseIncome && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ font: `400 11px ${HF}`, color: t.mut, width: 78, flexShrink: 0 }}>
+              Spouse income
+            </span>
+            <div style={{ flex: 1, height: 5, borderRadius: 3, background: t.line, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${spouseIncomePct}%`, borderRadius: 3, background: t.line2 }} />
+            </div>
+            <span style={{ font: `600 11px ${HM}`, color: t.line2, width: 60, textAlign: "right", flexShrink: 0 }}>
+              {fmtMo(spouseIncome)}/mo
+            </span>
+          </div>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ font: `400 11px ${HF}`, color: t.mut, width: 78, flexShrink: 0 }}>
             Portfolio
@@ -174,6 +191,11 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
           </span>
         </div>
       </div>
+      {spouseIncomeScopeNote && (
+        <p style={{ margin: "8px 0 0", font: `400 10px ${HF}`, color: t.mut, lineHeight: 1.4 }}>
+          {spouseIncomeScopeNote}
+        </p>
+      )}
     </div>
   );
 }

@@ -42,6 +42,9 @@ export function generatePhaseActions({
   depletionAge, hasConvWindow,
   // Taxable at retirement
   retTaxable,
+  // #30 / BUG-82: spouse's net gap-year income offsetting netPortfolioNeed.
+  // Defaults to 0 (inert for households without a spouse gap window).
+  spouseIncomeAtRet = 0,
 }) {
   // ── Phase 1 Actions ──────────────────────────────────────────────────────
   const phase1Actions = [];
@@ -265,10 +268,18 @@ export function generatePhaseActions({
 
   if (!isSustainable && yearsSustained !== Infinity) {
     const shortfall = Math.max(0, (safeLifeExp - safeRetAge) - Math.floor(yearsSustained));
+    // BUG-82: when a spouse's gap-year income is part of netPortfolioNeed, that
+    // figure is temporarily flattered — a 10% cut sized off it understates what's
+    // actually needed once the spouse retires and the income stops. The dollar
+    // suggestion itself is left alone (a bigger redesign, out of scope here);
+    // this just makes the caption honest about what it's based on (rule 5b spirit).
+    const gapIncomeNote = spouseIncomeAtRet > 0
+      ? ` (note: this year's portfolio need is temporarily lower because your spouse is still earning — the cut should be sized off your post-gap need instead.)`
+      : "";
     phase3Actions.push({
       mode: "prescriptive",
       title: `Close the ${shortfall}-Year Gap`,
-      body: `Your portfolio runs out ${shortfall} years before life expectancy. The highest-impact fixes: (1) reduce retirement expenses by ${fmt(Math.round(netPortfolioNeed * 0.1))}/yr (10% cut), (2) delay retirement by 2–3 years to add contributions + growth, or (3) increase current savings rate. Each year of delayed retirement improves both sides — more time to save and fewer years to fund.`,
+      body: `Your portfolio runs out ${shortfall} years before life expectancy. The highest-impact fixes: (1) reduce retirement expenses by ${fmt(Math.round(netPortfolioNeed * 0.1))}/yr (10% cut), (2) delay retirement by 2–3 years to add contributions + growth, or (3) increase current savings rate. Each year of delayed retirement improves both sides — more time to save and fewer years to fund.${gapIncomeNote}`,
       impact: `${shortfall} yrs`,
       impactColor: C.orange,
       impactLabel: "coverage shortfall",
@@ -283,6 +294,10 @@ export function generatePhaseActions({
 export function generatePhaseSteps(flowData, {
   returnRate, rReal, netPortfolioNeed, effectivePension,
   effectiveRMDTaxRate, safeRetAge, currentAge, safeLifeExp,
+  // #30 / BUG-82: spouse's net gap-year income offsetting netPortfolioNeed —
+  // named in the caption so it's clear what was actually subtracted. Defaults
+  // to 0 (inert for households without a spouse gap window).
+  spouseIncomeAtRet = 0,
 }) {
   const phase1Steps = [
     { label: "Starting Portfolio", amount: flowData.startPortfolio, type: "start" },
@@ -300,7 +315,7 @@ export function generatePhaseSteps(flowData, {
       type:   flowData.convWindowGrowth >= 0 ? "add" : "loss",
       sub: `${flowData.conversionWindowYrs} yrs at ${returnRate}% (real)` },
     { label: "Living Expenses", amount: flowData.convWindowDraws, type: "subtract",
-      sub: `${fmt(netPortfolioNeed)}/yr net of SS${effectivePension > 0 ? " + pension" : ""}` },
+      sub: `${fmt(netPortfolioNeed)}/yr net of SS${effectivePension > 0 ? " + pension" : ""}${spouseIncomeAtRet > 0 ? " + spouse income" : ""}` },
     ...(flowData.convWindowTax > 0
       ? [{ label: "Roth Conversion Tax", amount: flowData.convWindowTax, type: "subtract",
            sub: `on ${fmt(flowData.totalConverted)} converted` }]
@@ -315,7 +330,7 @@ export function generatePhaseSteps(flowData, {
       type:   flowData.distGrowth >= 0 ? "add" : "loss",
       sub: `${returnRate}% return (real ${(rReal * 100).toFixed(1)}%)` },
     { label: "Living Expenses", amount: flowData.distDraws, type: "subtract",
-      sub: `${fmt(netPortfolioNeed)}/yr × ${flowData.actualSustainedYrs} yrs` },
+      sub: `${fmt(netPortfolioNeed)}/yr${spouseIncomeAtRet > 0 ? " + spouse income" : ""} × ${flowData.actualSustainedYrs} yrs` },
     ...(flowData.distRMDTax > 0
       ? [{ label: "RMD Tax Bite", amount: flowData.distRMDTax, type: "subtract",
            sub: `~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective (bracket-accurate)` }]

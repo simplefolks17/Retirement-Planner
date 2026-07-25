@@ -48,7 +48,8 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
       ...d,
       name: "Withdrawal rate",
       value: `${d.withdrawalRatePct}%`,
-      note: `you draw ${d.withdrawalRatePct}% of savings a year · guideline ${d.guidelinePct}%`,
+      note: `you draw ${d.withdrawalRatePct}% of savings a year · guideline ${d.guidelinePct}%`
+        + (d.temporaryIncomeBasis ? ` · temporary — includes your spouse's income through age ${d.basisEndsAtAge}` : ""),
     };
     if (d.id === "longevity") return {
       ...d,

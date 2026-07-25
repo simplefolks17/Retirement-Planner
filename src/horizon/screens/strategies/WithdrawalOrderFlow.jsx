@@ -27,6 +27,11 @@ export default function WithdrawalOrderFlow({ t, props }) {
         <NoteBox t={t}>{wv.scopeNote}</NoteBox>
       )}
 
+      {/* ── Gap-year note (#30 / BUG-82): explains a $0/short draw list ── */}
+      {wv.gapYearNote && (
+        <NoteBox t={t}>{wv.gapYearNote}</NoteBox>
+      )}
+
       {/* ── 2. Draw order ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <SectionLabel t={t}>Year-1 draw order</SectionLabel>

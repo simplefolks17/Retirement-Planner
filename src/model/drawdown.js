@@ -1,9 +1,15 @@
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 
 // Returns the amount the portfolio must fund each year.
-// SS and pension are external income sources and reduce the draw.
-export function calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePension) {
-  return Math.max(0, effectiveExpenses - householdSS - effectivePension);
+// SS and pension are external income sources and reduce the draw. The 4th
+// (optional) term, spouseIncome, is the spouse's net GAP-YEAR income (#30 /
+// BUG-82) — active only while the spouse still works past the primary's
+// retirement but before their own (rule 5b: income timing is gated per-year,
+// never a stale scalar; the caller is responsible for passing the value for
+// the specific year in question). Defaults to 0 — every existing caller that
+// omits it is byte-identical to before this param existed.
+export function calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePension, spouseIncome = 0) {
+  return Math.max(0, effectiveExpenses - householdSS - effectivePension - spouseIncome);
 }
 
 // Retirement-phase money-flow bands (WI-2.6): where each dollar of retirement
@@ -12,19 +18,25 @@ export function calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePe
 // three bands are GUARANTEED to sum to effectiveExpenses (the screen asserts
 // nothing — the invariant lives here, locked by a test).
 //
-// Normal case (income < expenses): ss + pension + portfolioDraw = expenses with
-// portfolioDraw = netPortfolioNeed. Over-funded edge (ss + pension ≥ expenses):
-// netPortfolioNeed is 0, so the income bands are scaled down proportionally to
-// fill exactly expenses (the surplus isn't "funding expenses"); documented so the
-// rare scaled value isn't mistaken for a bug.
+// Normal case (income < expenses): ss + pension + spouseIncome + portfolioDraw =
+// expenses with portfolioDraw = netPortfolioNeed. Over-funded edge (income ≥
+// expenses): netPortfolioNeed is 0, so the income bands are scaled down
+// proportionally to fill exactly expenses (the surplus isn't "funding
+// expenses"); documented so the rare scaled value isn't mistaken for a bug.
 //
 // ss is the SS actually active at retirement (ssAtRet — already age-gated, rule
 // 5b), pension is effectivePension; both are explicit values from the model.
-export function calcRetIncomeFlow({ effectiveExpenses, ss, pension }) {
+// spouseIncome (optional, defaults to 0) is the spouse's net GAP-YEAR income
+// (#30 / BUG-82 — active only while the spouse still works past the primary's
+// retirement but before their own). Omitting it is byte-identical to before
+// this 4th band existed — the return shape gains a `spouseIncome` field but
+// every existing field keeps its old value.
+export function calcRetIncomeFlow({ effectiveExpenses, ss, pension, spouseIncome = 0 }) {
   const exp = Math.max(0, effectiveExpenses);
   const ssRaw = Math.max(0, ss);
   const penRaw = Math.max(0, pension);
-  const incomeTotal = ssRaw + penRaw;
+  const spRaw = Math.max(0, spouseIncome);
+  const incomeTotal = ssRaw + penRaw + spRaw;
   const portfolioDraw = Math.max(0, exp - incomeTotal);
   // Income covers whatever the portfolio doesn't (== min(incomeTotal, exp)).
   const covered = exp - portfolioDraw;
@@ -33,6 +45,7 @@ export function calcRetIncomeFlow({ effectiveExpenses, ss, pension }) {
     expenses: exp,
     ss: ssRaw * scale,
     pension: penRaw * scale,
+    spouseIncome: spRaw * scale,
     portfolioDraw,
   };
 }

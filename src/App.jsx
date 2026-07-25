@@ -571,7 +571,21 @@ export default function App() {
     isMarried, spouseClaimingAge, spouseBenefitBasis,
   });
 
-  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
+  // #30 / BUG-82 rule-5 wiring: the spouse's net gap-year income in the FIRST
+  // WALKED YEAR (safeRetAge + 1 — the engine's first row). Reading straight off
+  // spouseSeed's own map means this can never diverge from what the retirement-
+  // phase engine actually offsets that year. 0 when there's no spouse, or the
+  // spouse retires in/before the primary's own retirement year (empty gap
+  // window) — strict generalization, byte-identical then.
+  const spouseIncomeAtRet = spouseSeed?.spouseIncomeFloorByAge?.[safeRetAge + 1] ?? 0;
+  // Rendered beside withdrawal-rate / Income-Meter figures whenever a spouse's
+  // gap-year paycheck is part of them, so a rate that's only temporarily lower
+  // can't read as permanent. null = not applicable (the normal, no-gap case).
+  const spouseIncomeScopeNote = spouseIncomeAtRet > 0
+    ? `Includes your spouse's income through age ${effectiveSpouseRetAge}; the portfolio draw rises after that.`
+    : null;
+
+  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension, spouseIncomeAtRet);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
   // yearsSustained / isSustainable are defined below (after the per-year RMD &
   // conversion tax schedules), because the longevity walk now charges those
@@ -1039,8 +1053,15 @@ export default function App() {
     scopeNote: withdrawalScopeIsPrimaryOnly
       ? "These amounts are your own accounts; your spouse's accounts sequence separately."
       : null,
+    // #30 / BUG-82: when the spouse's gap-year income has driven netNeed to 0,
+    // the card must explain WHY the withdrawal list is empty rather than
+    // silently showing nothing.
+    gapYearNote: (spouseIncomeAtRet > 0 && netPortfolioNeed === 0)
+      ? "No portfolio draw needed this year — your spouse's income covers your expenses."
+      : null,
   }), [netPortfolioNeed, yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate,
-       yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings, withdrawalScopeIsPrimaryOnly]);
+       yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings, withdrawalScopeIsPrimaryOnly,
+       spouseIncomeAtRet]);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
 
@@ -1067,7 +1088,7 @@ export default function App() {
     monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
   });
   const wr70 = totalAtRet > 0
-    ? Math.max(0, effectiveExpenses - household70SS - effectivePension) / totalAtRet * 100
+    ? Math.max(0, effectiveExpenses - household70SS - effectivePension - spouseIncomeAtRet) / totalAtRet * 100
     : 0;
 
   const flowData = useMemo(() => calcFlowDown({
@@ -1100,12 +1121,16 @@ export default function App() {
     householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
+    // #30 / BUG-82: same gap-year offset the headline netPortfolioNeed uses, so
+    // optWR and withdrawalRate stay comparable.
+    spouseIncomeAtRet,
   }), [
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
     effectiveRMDTaxRate, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
     householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
+    spouseIncomeAtRet,
   ]);
 
 
@@ -1380,9 +1405,14 @@ export default function App() {
       lifeExpect: safeLifeExp, retirementAge: safeRetAge,
       currentContribTotal, takeHome,
       monteCarloSuccessPct: mcSuccessPct,
+      // #30 / BUG-82: the withdrawal driver must flag when the rate shown is
+      // flattered by a spouse's gap-year income that stops at a known age.
+      temporaryIncomeBasis: spouseIncomeAtRet > 0,
+      basisEndsAtAge: effectiveSpouseRetAge,
     }),
   }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge,
-       withdrawalRate, currentContribTotal, takeHome, mcSuccessPct]);
+       withdrawalRate, currentContribTotal, takeHome, mcSuccessPct,
+       spouseIncomeAtRet, effectiveSpouseRetAge]);
 
   // Pre-computed display scalars shared by sliderBounds and horizonProps directly.
   // monthlySpend: the QuickTune spend slider value (rule 10 — month↔year in the model).
@@ -1398,7 +1428,10 @@ export default function App() {
   // object on each call, so moving it outside would make it an unstable dep — V9).
   const currentSaved = bal401k + balRoth + balTaxable + balHSA;
   const planHighlights = useMemo(() => {
-    const flow = calcRetIncomeFlow({ effectiveExpenses, ss: ssAtRet, pension: effectivePension });
+    const flow = calcRetIncomeFlow({
+      effectiveExpenses, ss: ssAtRet, pension: effectivePension,
+      spouseIncome: spouseIncomeAtRet,
+    });
     const base = Math.max(1, effectiveExpenses);
     return {
       wealthMultiplier: currentSaved > 0
@@ -1411,16 +1444,21 @@ export default function App() {
         ...flow,
         hasSS:        flow.ss > 0,
         hasPension:   flow.pension > 0,
+        hasSpouseIncome: flow.spouseIncome > 0,
         ssPct:        Math.round(flow.ss           / base * 100),
         pensionPct:   Math.round(flow.pension       / base * 100),
+        spouseIncomePct: Math.round(flow.spouseIncome / base * 100),
         portfolioPct: Math.round(flow.portfolioDraw / base * 100),
       },
       lifetimeTaxBurden: (retPhase?.rmdTaxBite ?? 0) + (retPhase?.conversionCost ?? 0),
       yearsToRetirement:  Math.max(0, safeRetAge - currentAge),
       retirementDuration: Math.max(0, safeLifeExp - safeRetAge),
+      // #30 / BUG-82: passed through (not computed here) — see spouseIncomeScopeNote above.
+      spouseIncomeScopeNote,
     };
   }, [currentSaved, totalAtRet, takeHome, effectiveExpenses,
-      ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge]);
+      ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge,
+      spouseIncomeAtRet, spouseIncomeScopeNote]);
 
   // Plan screen "Try a change" slider bounds — age/financial math extracted from the screen (rule 10).
   // canTuneRothConversion: pre-gated eligibility boolean so the screen never does > 0 check.
@@ -3268,7 +3306,7 @@ export default function App() {
                 }}>reset to current spend</button>
               )}
             </p>
-            {(householdSS > 0 || effectivePension > 0) && (
+            {(householdSS > 0 || effectivePension > 0 || spouseIncomeAtRet > 0) && (
               <div style={{ marginTop: 10, background: C.card, borderRadius: 7,
                 padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -3307,6 +3345,12 @@ export default function App() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontSize: 10, color: C.blue }}>− Pension income</span>
                     <span style={{ fontSize: 11, color: C.blue, ...mono }}>− {fmt(effectivePension)}</span>
+                  </div>
+                )}
+                {spouseIncomeAtRet > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontSize: 10, color: C.purple }}>− Spouse income (through age {effectiveSpouseRetAge})</span>
+                    <span style={{ fontSize: 11, color: C.purple, ...mono }}>− {fmt(spouseIncomeAtRet)}</span>
                   </div>
                 )}
                 <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 4,
@@ -4327,8 +4371,13 @@ export default function App() {
               <div>
                 <p style={{ margin: "0 0 10px", fontSize: 12, color: C.text }}>
                   Annual need from portfolio: <span style={{ color: C.gold, ...mono }}>{fmt(netPortfolioNeed)}</span>
-                  <span style={{ fontSize: 10, color: C.muted }}> (expenses{ssAtRet > 0 ? " − SS" : ""}{effectivePension > 0 ? " − pension" : ""})</span>
+                  <span style={{ fontSize: 10, color: C.muted }}> (expenses{ssAtRet > 0 ? " − SS" : ""}{effectivePension > 0 ? " − pension" : ""}{spouseIncomeAtRet > 0 ? " − spouse income" : ""})</span>
                 </p>
+                {spouseIncomeScopeNote && (
+                  <p style={{ margin: "0 0 10px", fontSize: 10, color: C.muted, fontStyle: "italic" }}>
+                    {spouseIncomeScopeNote}
+                  </p>
+                )}
                 {withdrawalScopeIsPrimaryOnly && (
                   <p style={{ margin: "0 0 10px", fontSize: 10, color: C.muted, fontStyle: "italic" }}>
                     Amounts below are your own accounts (your spouse's accounts sequence separately).
@@ -4525,6 +4574,7 @@ export default function App() {
             const { phase1Steps, phase2Steps, phase3Steps } = generatePhaseSteps(flowData, {
               returnRate, rReal, netPortfolioNeed, effectivePension,
               effectiveRMDTaxRate, safeRetAge, currentAge, safeLifeExp,
+              spouseIncomeAtRet,
             });
             const { phase1Actions, phase2Actions, phase3Actions } = generatePhaseActions({
               totalAtRet, netPortfolioNeed, withdrawalRate, yearsSustained,
@@ -4546,6 +4596,7 @@ export default function App() {
               optimizedAllocation, optimized,
               depletionAge: flowData.depletionAge, hasConvWindow: flowData.hasConvWindow,
               retTaxable,
+              spouseIncomeAtRet,
             });
 
             return (
@@ -4619,6 +4670,12 @@ export default function App() {
                       <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>
                         <p style={{ margin: 0, fontSize: 9, color: C.muted }}>Pension</p>
                         <p style={{ margin: 0, fontSize: 13, color: C.blue, ...mono }}>{fmt(effectivePension)}/yr</p>
+                      </div>
+                    )}
+                    {spouseIncomeAtRet > 0 && (
+                      <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>
+                        <p style={{ margin: 0, fontSize: 9, color: C.muted }}>Spouse income</p>
+                        <p style={{ margin: 0, fontSize: 13, color: C.purple, ...mono }}>{fmt(spouseIncomeAtRet)}/yr</p>
                       </div>
                     )}
                     <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>
