@@ -594,6 +594,12 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null })
             maxWidth: 260, whiteSpace: "normal"
           }}>{rangeBands.note}</div>
         )}
+        {rangeBands.spouseGapCaveat && (
+          <div style={{
+            font: `400 9.5px ${HF}`, color: t.warm, marginTop: 4,
+            maxWidth: 260, whiteSpace: "normal"
+          }}>{rangeBands.spouseGapCaveat}</div>
+        )}
       </div>
     );
   }

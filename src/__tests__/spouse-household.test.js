@@ -116,3 +116,52 @@ describe("HSA family-HDHP shared ceiling (#30, rule 4)", () => {
     expect(realizedHSA(99_999, HSA_LIMIT_2026)).toBe(HSA_LIMIT_2026);
   });
 });
+
+// #30 / BUG-82 interim (Session A): the Monte Carlo "Range" lens still runs the
+// older blended walk (no spouse bucket at all), so it needs a caveat whenever the
+// spouse has a real gap window — until the MC engine is ported to the per-account
+// walk (Session B), which removes this caveat entirely.
+describe("Monte Carlo Range lens — spouse-gap caveat (#30 / BUG-82 interim)", () => {
+  it("no caveat at the default (single, no spouse) state", () => {
+    const app = mount();
+    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    app.unmount();
+  });
+
+  it("no caveat when the spouse's retirement lands in the same calendar year as the primary's (no gap)", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    // currentAge 30, retirementAge 65 (defaults): spouse age at the primary's own
+    // retirement is 20 + (65 - 30) = 55 — setting the spouse's own retirement age
+    // to exactly that opens a zero-length gap window (byte generalization case).
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(55));
+    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    app.unmount();
+  });
+
+  it("shows the caveat once the spouse's own retirement age opens a real gap window", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    // Same setup, but the spouse now retires 7 years after the primary (age 62 vs.
+    // the 55 no-gap value above) — a real gap window opens.
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
+    const caveat = app.latest().rangeView.spouseGapCaveat;
+    expect(caveat).not.toBeNull();
+    expect(caveat).toContain("spouse");
+    app.unmount();
+  });
+
+  it("married with no spouse retirement-age override still opens a gap for an age-gap couple (the default 'auto' case)", () => {
+    // effectiveSpouseRetAge defaults (null) to the PRIMARY's numeric retirement
+    // age (65) — for a 10-year-younger spouse that is 10 years AFTER the primary
+    // retires, so the gap is real even without the user touching the new slider.
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(65); // resolved "auto" value
+    expect(app.latest().rangeView.spouseGapCaveat).not.toBeNull();
+    app.unmount();
+  });
+});

@@ -584,6 +584,16 @@ export default function App() {
   const spouseIncomeScopeNote = spouseIncomeAtRet > 0
     ? `Includes your spouse's income through age ${effectiveSpouseRetAge}; the portfolio draw rises after that.`
     : null;
+  // #30 / BUG-82 interim (Session A, pending the Session B Monte Carlo engine
+  // port): true whenever the spouse has a real gap window (works past the
+  // primary's retirement, before their own) — read straight off the same map
+  // spouseIncomeAtRet uses, not re-derived from ages, so it can't disagree.
+  // The Range lens still runs the OLDER blended walk (buildRetirementDrawdown),
+  // which has no spouse bucket at all, so its shaded band can silently
+  // understate a spouse household's outlook during the gap. Surfaced as a
+  // caption rather than left unstated (rule 10: missing applicability is not
+  // silence) until the MC engine is ported to the per-account walk.
+  const hasActiveSpouseGap = hasSpouse && Object.keys(spouseSeed?.spouseContribByAge ?? {}).length > 0;
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension, spouseIncomeAtRet);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
@@ -827,10 +837,16 @@ export default function App() {
       successPct,
       successOk,
       note: mc.limitation,
+      // #30 / BUG-82 interim (Session A) — see hasActiveSpouseGap above. null
+      // (the normal case) renders nothing extra; the MC engine port (Session B)
+      // removes this caveat by giving the walk a real spouse bucket instead.
+      spouseGapCaveat: hasActiveSpouseGap
+        ? "Doesn't yet include your spouse's working years — the shaded range may understate your outlook until they retire."
+        : null,
       medianDepletionAge: mc.depletionAgePercentiles?.p50 ?? null,
       p10DepletionAge: mc.depletionAgePercentiles?.p10 ?? null,
     };
-  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retDrawShared]);
+  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retDrawShared, hasActiveSpouseGap]);
 
   // Scalar successPct extracted for V9 scalar-dep hygiene (fed to planView's
   // confidence driver + the low-odds signal; the whole rangeView object stays out
