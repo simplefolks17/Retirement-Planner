@@ -42,6 +42,14 @@ export function buildConversionByAge({
 // totals don't accumulate per-year rounding drift). Healthcare costs (IRMAA/ACA)
 // are orthogonal cost adders layered on in conversion-evaluation.js — they consume
 // the conversion AMOUNTS (conversionByAge), not anything the engine re-derives.
+//
+// spouseRetirementAge / spouseContribByAge / spouseTaxableIncomeByAge /
+// spouseIncomeFloorByAge (#30 / BUG-82) are new pass-through params: plain
+// pass-through into `common`, so BOTH the `plan` and `noConv` engine calls see
+// the spouse's gap-year contributions/wages/income identically — the
+// counterfactual must differ from the plan ONLY in Roth conversions, never in
+// whether the spouse kept working. All four default inert (see
+// retirement-engine.js for the no-spouse byte-identical guarantee).
 export function buildRetirementPhase({
   // per-account GROSS balances at retirement (the BUG-35 gross seed)
   tradGross = 0, roth = 0, taxable = 0, hsa = 0,
@@ -60,6 +68,10 @@ export function buildRetirementPhase({
   rmdStartAge = Infinity,
   useTable2 = false, spouseCurrentAge = null, currentAge = null,
   moneyEvents = [],
+  // Spouse's own retirement timing (#30 / BUG-82) — pass-through to the engine;
+  // see retirement-engine.js for the inert defaults and Option-A gating.
+  spouseRetirementAge = null, spouseContribByAge = {},
+  spouseTaxableIncomeByAge = {}, spouseIncomeFloorByAge = {},
 }) {
   const common = {
     startAge, endAge: longevityHorizon, rReal, effectiveExpenses,
@@ -70,6 +82,8 @@ export function buildRetirementPhase({
     filingStatus, retStateRate,
     rmdStartAge, useTable2, spouseCurrentAge, currentAge,
     moneyEvents,
+    spouseRetirementAge, spouseContribByAge,
+    spouseTaxableIncomeByAge, spouseIncomeFloorByAge,
   };
 
   const plan   = buildRetirementWalkByAccount({ ...common, conversionByAge });

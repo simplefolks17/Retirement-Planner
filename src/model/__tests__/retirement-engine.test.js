@@ -254,6 +254,260 @@ describe("buildRetirementWalkByAccount — spouse traditional bucket (#30)", () 
   });
 });
 
+describe("buildRetirementWalkByAccount — spouse gap-year working/contributing (#30 / BUG-82)", () => {
+  it("T2.1 — inert defaults are byte-identical (omitted vs explicit-default params)", () => {
+    const over = { tradGrossSpouse: 1_000_000, spouseCurrentAge: 60, currentAge: 65, spouseRmdStartAge: 73 };
+    const omitted = base({ ...over });
+    const explicitDefaults = base({
+      ...over,
+      spouseRetirementAge: null,
+      spouseContribByAge: {},
+      spouseTaxableIncomeByAge: {},
+      spouseIncomeFloorByAge: {},
+    });
+    expect(JSON.stringify(explicitDefaults.rows)).toBe(JSON.stringify(omitted.rows));
+    expect(explicitDefaults.depletionAge).toBe(omitted.depletionAge);
+    expect(explicitDefaults.yearsSustained).toBe(omitted.yearsSustained);
+    expect(explicitDefaults.endVal).toBe(omitted.endVal);
+  });
+
+  it("T2.2 — gap contributions grow the spouse bucket", () => {
+    const contribByAge = {};
+    for (let age = 66; age <= 75; age++) contribByAge[age] = 20_000;
+    const common = {
+      tradGrossSpouse: 100_000, spouseCurrentAge: 55, currentAge: 65,
+      roth: 5_000_000, taxable: 5_000_000, tradGross: 0, hsa: 0,
+      effectiveExpenses: 60_000, endAge: 75,
+    };
+    const withContrib = base({ ...common, spouseContribByAge: contribByAge });
+    const noContrib   = base({ ...common, spouseContribByAge: {} });
+    const rowWith    = withContrib.rows.find(r => r.age === 75);
+    const rowWithout = noContrib.rows.find(r => r.age === 75);
+    expect(rowWith.tradSpouse).toBeGreaterThan(rowWithout.tradSpouse);
+    const totalInjected = Object.values(contribByAge).reduce((s, v) => s + v, 0);
+    // Loose lower bound: growth only ADDS on top of the raw injected dollars.
+    expect(rowWith.tradSpouse - rowWithout.tradSpouse).toBeGreaterThanOrEqual(totalInjected - 1);
+  });
+
+  it("T2.3 — a 15-year gap materially grows the bucket, not frozen", () => {
+    // Small "frozen pre-fix" seed + 15 years of ~$23,500 contributions, held out
+    // through the whole gap (spouseRetirementAge is the spouse's own age, reached
+    // the year AFTER the last gap-year contribution).
+    const contribByAge = {};
+    for (let age = 66; age <= 80; age++) contribByAge[age] = 23_500; // 15 years
+    const seed = 5_000;
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 85, rReal: 0.03,
+      currentAge: 65, spouseCurrentAge: 50,
+      tradGross: 0, tradGrossSpouse: seed, roth: 5_000_000, taxable: 5_000_000, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single", rmdStartAge: 73,
+      spouseRetirementAge: 66, // spouse's own age; reached at primary age 65+(66-50)=81
+      spouseContribByAge: contribByAge,
+    });
+    const atSpouseRetirement = rows.find(r => r.age === 81);
+    expect(atSpouseRetirement.tradSpouse).toBeGreaterThan(seed * 2);
+  });
+
+  it("T2.4 — spouseRetirementAge equal to the spouse's age at walk start reproduces pooled/frozen (pre-fix) behavior", () => {
+    const common = {
+      startAge: 65, endAge: 95, rReal: 0.03,
+      currentAge: 65, spouseCurrentAge: 60,
+      tradGross: 300_000, tradGrossSpouse: 400_000, roth: 200_000, taxable: 300_000, hsa: 50_000,
+      effectiveExpenses: 70_000, filingStatus: "single", rmdStartAge: 73, spouseRmdStartAge: 73,
+    };
+    const spouseAgeAtFirstRow = 60 + (66 - 65); // 61 — the spouse's age in the walk's very first row
+    const withOptionA    = buildRetirementWalkByAccount({ ...common, spouseRetirementAge: spouseAgeAtFirstRow });
+    const optionAOff     = buildRetirementWalkByAccount({ ...common, spouseRetirementAge: null });
+    expect(JSON.stringify(withOptionA.rows)).toBe(JSON.stringify(optionAOff.rows));
+    expect(withOptionA.depletionAge).toBe(optionAOff.depletionAge);
+    expect(withOptionA.yearsSustained).toBe(optionAOff.yearsSustained);
+  });
+
+  it("T2.5 — spouse already retired at walk start ⇒ bucket pooled from year 1, no contributions", () => {
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 80, rReal: 0.03,
+      currentAge: 65, spouseCurrentAge: 68, // spouse older, already retired before the walk starts
+      tradGross: 0, tradGrossSpouse: 500_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single", rmdStartAge: 73, spouseRmdStartAge: 73,
+      spouseRetirementAge: 60, // spouse's age at walk start (69) is already past this
+      spouseContribByAge: {},  // not working — no contributions
+    });
+    const first = rows[0]; // age 66
+    expect(first.tradDraw).toBeGreaterThan(0);       // only tradSpouse can fund spending — must be drawable
+    expect(first.tradSpouse).toBeLessThan(500_000 * 1.03); // drawn down below pure growth
+    for (const r of rows) expect(r.spouseContrib).toBe(0);
+  });
+
+  it("T2.6 — income floor lowers the gap-year draw, converges once the spouse retires", () => {
+    const floorByAge = {};
+    for (let age = 66; age <= 70; age++) floorByAge[age] = 20_000;
+    const common = {
+      startAge: 65, endAge: 80, rReal: 0.03,
+      tradGross: 3_000_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single", rmdStartAge: 73,
+    };
+    const withFloor = buildRetirementWalkByAccount({ ...common, spouseIncomeFloorByAge: floorByAge });
+    const noFloor   = buildRetirementWalkByAccount({ ...common, spouseIncomeFloorByAge: {} });
+    for (let age = 66; age <= 70; age++) {
+      const a = withFloor.rows.find(r => r.age === age).draw;
+      const b = noFloor.rows.find(r => r.age === age).draw;
+      expect(a).toBeLessThan(b);
+      expect(a).toBeCloseTo(b - 20_000, 5);
+    }
+    for (let age = 71; age <= 80; age++) {
+      const a = withFloor.rows.find(r => r.age === age)?.draw;
+      const b = noFloor.rows.find(r => r.age === age)?.draw;
+      if (a != null && b != null) expect(a).toBeCloseTo(b, 5);
+    }
+  });
+
+  it("T2.7 — Option A holds the bucket out of the pool during gap years, then makes it available", () => {
+    const spouseCurrentAge = 60, currentAge = 65;
+    const spouseRetirementAge = 65; // spouse's own age; reached at primary age 70
+    const floorByAge = {};
+    // Fully offsets the (otherwise-crushing) spending need during the held-out
+    // years so the small primary pool never has to depend on the held-out bucket.
+    for (let age = 66; age <= 69; age++) floorByAge[age] = 80_000;
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 75, rReal: 0.03,
+      currentAge, spouseCurrentAge,
+      tradGross: 0, tradGrossSpouse: 1_000_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 80_000, filingStatus: "single",
+      spouseRetirementAge, spouseIncomeFloorByAge: floorByAge,
+    });
+    let prevTradSp = 1_000_000;
+    for (let age = 66; age <= 69; age++) {
+      const r = rows.find(x => x.age === age);
+      expect(r.draw).toBe(0);                                  // fully offset by the spouse floor
+      expect(r.tradSpouse).toBeCloseTo(prevTradSp * 1.03, 2);   // pure growth — never touched by a draw
+      prevTradSp = r.tradSpouse;
+    }
+    // Spouse retires at primary age 70 (spouseAge=65) — the income floor lapses,
+    // real spending resumes, and since primary/roth/taxable/hsa are all 0, the
+    // draw MUST come from the now-available tradSpouse.
+    const r70 = rows.find(x => x.age === 70);
+    expect(r70.draw).toBeGreaterThan(0);
+    expect(r70.tradDraw).toBeGreaterThan(0);
+    expect(r70.tradSpouse).toBeLessThan(prevTradSp * 1.03); // drawn down below pure growth
+  });
+
+  it("T2.7b — the spouse's final retirement-year contribution and first drawable year are the SAME year", () => {
+    // Locks the intentional one-year overlap (contributed during the year,
+    // retired at year end): the map convention is >= at the retirement age, not >.
+    const spouseCurrentAge = 60, currentAge = 65;
+    const spouseRetirementAge = 62; // spouse's own age; reached at primary age 67 — a true mid-walk transition
+    const contribByAge = { 66: 20_000, 67: 20_000 }; // includes the retirement-year age itself
+    const floorByAge = { 66: 80_000 }; // fully offsets the held-out year so it can't force a shortfall
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 70, rReal: 0.03,
+      currentAge, spouseCurrentAge,
+      tradGross: 0, tradGrossSpouse: 500_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 80_000, filingStatus: "single",
+      spouseRetirementAge, spouseContribByAge: contribByAge, spouseIncomeFloorByAge: floorByAge,
+    });
+    const r67 = rows.find(r => r.age === 67);
+    expect(r67.spouseContrib).toBe(20_000);   // contribution applied THIS retirement-year row
+    expect(r67.tradDraw).toBeGreaterThan(0);  // AND the bucket was already drawable this same row
+  });
+
+  it("T2.8 — a spouse with a ZERO seed still gets an RMD once gap contributions have built a balance", () => {
+    const contribByAge = {};
+    for (let age = 66; age <= 79; age++) contribByAge[age] = 23_500;
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 85, rReal: 0.03,
+      currentAge: 50, spouseCurrentAge: 50, // aligned ages ⇒ spouseAge === primary age exactly
+      tradGross: 0, tradGrossSpouse: 0, roth: 5_000_000, taxable: 5_000_000, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single",
+      spouseRetirementAge: 80, // spouse still working (held out) well past their own RMD start age
+      spouseContribByAge: contribByAge, spouseRmdStartAge: 73,
+    });
+    // Spouse turns 73 while still in the gap (73 < spouseRetirementAge 80) — the OLD guard
+    // (tradGrossSpouse > 0) would see a 0 seed and never fire; the LIVE-balance guard must.
+    const at73 = rows.find(r => r.age === 73);
+    expect(at73.rmdSpouse).toBeGreaterThan(0);
+  });
+
+  it("T2.9 — spouseContrib is reported per row and conservation holds", () => {
+    const contribByAge = { 66: 15_000, 68: 25_000 };
+    const { rows } = base({
+      tradGrossSpouse: 200_000, spouseCurrentAge: 60, currentAge: 65,
+      spouseContribByAge: contribByAge, endAge: 70,
+    });
+    for (const r of rows) {
+      const expectedContrib = contribByAge[r.age] ?? 0;
+      expect(r.spouseContrib).toBe(expectedContrib);
+      const expected = r.balStart * 1.03 - r.draw - r.tax + r.spouseContrib;
+      expect(Math.abs(r.balEnd - expected)).toBeLessThan(1e-6);
+    }
+    // The no-spouse base case still satisfies the ORIGINAL identity (spouseContrib
+    // is always 0, so no "+ spouseContrib" term is actually needed there).
+    const { rows: noSpouseRows } = base();
+    for (const r of noSpouseRows) {
+      expect(r.spouseContrib).toBe(0);
+    }
+  });
+
+  it("T2.10 — the spouse's wages raise the bracket conversions stack on (and are never themselves double-taxed)", () => {
+    const common = {
+      tradGross: 500_000, roth: 0, taxable: 300_000, hsa: 0,
+      effectiveExpenses: 0, filingStatus: "single", endAge: 66,
+      conversionByAge: { 66: 50_000 },
+    };
+    const noWages   = base({ ...common, spouseTaxableIncomeByAge: {} });
+    const withWages = base({ ...common, spouseTaxableIncomeByAge: { 66: 150_000 } });
+    const a = noWages.rows.find(r => r.age === 66);
+    const b = withWages.rows.find(r => r.age === 66);
+    expect(b.convTax).toBeGreaterThan(a.convTax);   // conversion stacks on the higher wage-inclusive floor
+    // The wages are never themselves withdrawn — confirm nothing double-taxes them:
+    // inflowTax/rmdTax/drawTax stay 0 (no money events, no RMD, tax fully covered by
+    // Taxable so no 401k gross-up draw), so the ENTIRE tax is the conversion's
+    // incremental (stacked-bracket) tax, not a separate charge on the wages.
+    expect(b.inflowTax).toBe(0);
+    expect(b.rmdTax).toBe(0);
+    expect(b.drawTax).toBe(0);
+    expect(Math.round(b.tax - a.tax)).toBe(Math.round(b.convTax - a.convTax));
+  });
+
+  it("T2.11 — a working spouse's income SURPLUS is banked, not discarded (the critical correction)", () => {
+    // Spouse net income ($95k) exceeds this gap year's expenses ($57k). The naive
+    // `Math.max(0, effectiveExpenses - ssCash - penCash - spouseIncomeFloor)` pattern
+    // this spec explicitly forbids ALSO floors `needed` at 0 here — so `needed` alone
+    // can't distinguish banked from discarded. The unambiguous signature is the
+    // taxable pool: nothing else touches it this row (no RMD/conversion/events,
+    // tradGross=0), so its growth is exactly predictable — the ONLY way it can end
+    // the year above pure growth of the starting balance is the banked surplus.
+    const surplus = 95_000 - 57_000;
+    const withSurplus = base({
+      tradGross: 0, roth: 0, taxable: 100_000, hsa: 0,
+      effectiveExpenses: 57_000, endAge: 66,
+      spouseIncomeFloorByAge: { 66: 95_000 },
+    });
+    const noFloor = base({
+      tradGross: 0, roth: 0, taxable: 100_000, hsa: 0,
+      effectiveExpenses: 57_000, endAge: 66,
+      spouseIncomeFloorByAge: {},
+    });
+    const a = withSurplus.rows.find(r => r.age === 66);
+    const b = noFloor.rows.find(r => r.age === 66);
+
+    expect(a.draw).toBe(0);        // floors at 0, never negative
+    expect(b.draw).toBe(57_000);   // baseline sanity: unaffected without the floor
+
+    const pureGrowth = 100_000 * 1.03;
+    // The bug-locking assertion: a silent-discard bug leaves a.taxable === pureGrowth
+    // exactly (the surplus vanishes). The fix banks it, so a.taxable is higher by
+    // precisely the surplus.
+    expect(a.taxable).toBeCloseTo(pureGrowth + surplus, 5);
+    expect(a.taxable).toBeGreaterThan(pureGrowth);
+    // And, for completeness: the with-surplus walk ends the year with strictly more
+    // in the pool than the no-floor walk (which had to draw $57k out to live on) —
+    // note this delta is NOT "the surplus" (it's confounded by b's own $57k draw,
+    // roughly $95k total), which is exactly why the pureGrowth comparison above,
+    // not this one, is the assertion that actually isolates the banking behavior.
+    expect(a.taxable).toBeGreaterThan(b.taxable);
+  });
+});
+
 describe("buildRetirementWalkByAccount — depletion", () => {
   it("reports a depletion age when spending outruns the portfolio", () => {
     const { depletionAge, yearsSustained } = base({

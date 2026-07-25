@@ -322,6 +322,13 @@ export function runSimulation({
       "HSA":       Math.round(hsa),
       tradGross:   Math.round(trad),
       c401k:    Math.round(c401k),
+      c401kEmployee: Math.round(employeeDeferral),  // employee elective deferral only —
+                                                    // c401k − c401kEmployee is the employer
+                                                    // match (after the 415(c) cap). Needed so a
+                                                    // spouse income floor can be computed net of
+                                                    // the SPOUSE's OWN deferral, which is
+                                                    // separately credited to the walk's spouse
+                                                    // 401k bucket (BUG-82).
       cRoth:    Math.round(cRoth),
       cTaxable: Math.round(cTaxable),
       cHSA:     Math.round(cHSA),

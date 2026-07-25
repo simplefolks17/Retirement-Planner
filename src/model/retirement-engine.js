@@ -22,12 +22,15 @@
 // and is then available to fund the draw, so it keeps compounding in the pool.
 //
 // IMPORTANT — the AGGREGATE recurrence still matches buildRetirementDrawdown:
-//   balEnd(total) = balStart(total)·(1 + rReal) − draw − tax (+ events)
+//   balEnd(total) = balStart(total)·(1 + rReal) − draw − tax (+ events + spouseContrib)
 // because conversions and RMDs are internal transfers that preserve the total;
 // only `draw` (net spending) and `tax` leave the pool. So every existing consumer
 // of the walk (chart, longevity, Flow-Down, Year-by-year) reads the same
 // row shape — now with correct, gross-seeded, taxed-once numbers, plus per-account
 // detail. This keeps the BUG-31 single-walk guarantee intact.
+// `spouseContrib` is the still-working spouse's gap-year 401k contribution (0
+// without a spouse), reported per row so downstream reconciliation surfaces
+// (a later batch) can close their identities.
 
 import { calcTax } from "./taxes.js";
 import { getDivisor } from "./rmd.js";
@@ -66,10 +69,20 @@ export function buildRetirementWalkByAccount({
   spouseCurrentAge = null,
   currentAge = null,
   moneyEvents = [],
+  // ── Spouse's own retirement timing (#30 / BUG-82) ──────────────────────────
+  // All four default INERT: a no-spouse (or pre-BUG-82) caller gets a
+  // byte-identical walk. spouseRetirementAge finite ⇒ Option-A gating active.
+  spouseRetirementAge = null,      // the SPOUSE's own retirement age (their age, not the primary's)
+  spouseContribByAge = {},         // { [primaryAge]: gross spouse Traditional 401k contribution that gap year }
+  spouseTaxableIncomeByAge = {},   // { [primaryAge]: spouse ORDINARY WAGES that gap year — stacks in the bracket floor }
+  spouseIncomeFloorByAge = {},     // { [primaryAge]: spouse NET cash offsetting the draw that gap year }
 }) {
   const rows = [];
   let trad = tradGross, rRoth = roth, rTax = taxable, rHsa = hsa;
   let tradSp = tradGrossSpouse;
+  // Drawable portion of tradSp THIS year — recomputed per iteration below and
+  // decremented by drawInOrder so the two draw calls (spending, then tax) share one cap.
+  let spouseDrawable = 0;
   let depletionAge = null;
   let yearsSustained = Infinity;
 
@@ -86,6 +99,8 @@ export function buildRetirementWalkByAccount({
       ? Math.round(spouseCurrentAge + (age - currentAge))
       : null;
 
+  const spouseOptionA = spouseRetirementAge != null && Number.isFinite(spouseRetirementAge);
+
   // Draw `amount` from the accounts in a fixed order; returns the split actually
   // withdrawn and mutates the running balances. Used for both spending and tax.
   // "trad" draws from the PRIMARY Traditional 401k first, then spills into the
@@ -96,14 +111,16 @@ export function buildRetirementWalkByAccount({
     for (const acct of order) {
       if (rem <= 0) break;
       if (acct === "trad") {
-        const bal = trad + tradSp;
+        const bal = trad + spouseDrawable;                 // was trad + tradSp
         const t = Math.min(rem, Math.max(0, bal));
         taken.trad = t;
         rem -= t;
         const fromTrad = Math.min(t, Math.max(0, trad));
         trad -= fromTrad;
-        tradSp -= (t - fromTrad);
-        continue;
+        const fromSpouse = t - fromTrad;                    // <= spouseDrawable by construction
+        tradSp -= fromSpouse;
+        spouseDrawable -= fromSpouse;                       // so the 2nd call (tax) can't over-draw
+        continue;                                           // the held-out portion
       }
       const bal = acct === "roth" ? rRoth : acct === "taxable" ? rTax : rHsa;
       const t = Math.min(rem, Math.max(0, bal));
@@ -146,10 +163,20 @@ export function buildRetirementWalkByAccount({
     //   Taxable bucket and stays in the pool (rule 2b) — only the tax leaks below.
     let rmdSp = 0;
     const spouseAge = spouseAgeFor(age);
-    if (tradGrossSpouse > 0 && spouseAge != null && spouseAge >= spouseRmdStartAge) {
+    if (tradSp > 0 && spouseAge != null && spouseAge >= spouseRmdStartAge) {
       const divSp = getDivisor(spouseAge, false, null);
       if (divSp) { rmdSp = tradSp / divSp; tradSp -= rmdSp; rTax += rmdSp; }
     }
+
+    // Spouse still working (Option A, #30 / BUG-82): add this gap-year's contribution to
+    // the held-out spouse bucket. Sourced from the accumulation sim's own per-year c401k
+    // (deferral + match + IRS caps + income growth) via spouseContribByAge — reuse, not
+    // re-derive. Placed AFTER growth so row.growth stays pure earnings (rule 2b), and
+    // AFTER the spouse RMD so this year's contribution does not inflate this year's own
+    // required distribution (the IRS divisor applies to the prior 31-Dec balance). It
+    // compounds starting next year. Inert with an empty map (golden-master safe).
+    const spouseContrib = spouseContribByAge[age] ?? 0;
+    if (spouseContrib > 0) tradSp += spouseContrib;
 
     // 3. Roth conversion (window): 401k → Roth principal, on the post-RMD balance.
     //   Converts from the PRIMARY trad bucket only (unchanged — spouse conversions
@@ -157,8 +184,15 @@ export function buildRetirementWalkByAccount({
     const conversion = Math.min(Math.max(0, conversionByAge[age] ?? 0), Math.max(0, trad));
     trad -= conversion; rRoth += conversion;
 
-    // Income floor + cash income for THIS year (age-gated, rule 5b).
-    const floor   = (age >= ssClaimAge ? ssTaxable : 0) + (age >= pensionStartAge ? pension : 0);
+    // Income floor + cash income for THIS year (age-gated, rule 5b). spouseWages
+    //   (Option A gap-year wages, #30 / BUG-82) stacks into the bracket floor like
+    //   SS/pension — it is never itself withdrawn, only used to determine which
+    //   bracket other withdrawals land in (see spouseIncomeFloor below for the
+    //   CASH offset). 0 by default (empty map) ⇒ inert.
+    const spouseWages = spouseTaxableIncomeByAge[age] ?? 0;
+    const floor   = (age >= ssClaimAge ? ssTaxable : 0)
+                  + (age >= pensionStartAge ? pension : 0)
+                  + spouseWages;
     const ssCash  = age >= ssClaimAge ? ssGross : 0;
     const penCash = age >= pensionStartAge ? pension : 0;
 
@@ -175,10 +209,30 @@ export function buildRetirementWalkByAccount({
     const eventInflow  = Math.max(0,  portfolioAdjustment);
     const eventOutflow = Math.max(0, -portfolioAdjustment);
     rTax += eventInflow;
-    const needed = Math.max(0, effectiveExpenses - ssCash - penCash) + eventOutflow;
+    // Spouse's NET cash (Option A gap-year income, #30 / BUG-82) offsets the draw
+    //   like SS/pension, but — UNLIKE SS/pension — any surplus beyond this year's
+    //   spending need is BANKED into the taxable pool rather than discarded (a
+    //   working spouse whose income exceeds expenses is common; silently dropping
+    //   the excess would vaporize a large share of this fix's own benefit). 0 by
+    //   default (empty map) ⇒ spendNeed === needed and the bank-line below adds 0.
+    const spouseIncomeFloor = spouseIncomeFloorByAge[age] ?? 0;
+    const spendNeed     = Math.max(0, effectiveExpenses - ssCash - penCash);
+    const spouseApplied = Math.min(spouseIncomeFloor, spendNeed);
+    const needed         = (spendNeed - spouseApplied) + eventOutflow;
+    rTax += Math.max(0, spouseIncomeFloor - spouseApplied);   // bank the surplus, don't drop it
+
+    // Option A: hold the spouse Traditional bucket OUT of the drawable pool until the
+    //   spouse's OWN retirement age (they are still working and still contributing to
+    //   it; it is also likely pre-59½). Fully pooled from the year the spouse retires.
+    //   Option A off (no spouse / no spouseRetirementAge) ⇒ pooled exactly as before.
+    //   `spouseAge` is already bound from the RMD block above — reuse it, do not
+    //   recompute/shadow it.
+    spouseDrawable = (spouseOptionA && spouseAge != null && spouseAge < spouseRetirementAge)
+      ? 0
+      : tradSp;
 
     // Available to cover this year's outflow (spending + tax) before depletion check.
-    const availableBeforeDraw = trad + tradSp + rRoth + rTax + rHsa;
+    const availableBeforeDraw = trad + spouseDrawable + rRoth + rTax + rHsa;
 
     // 4–5. Fund net spending (incl. one-time outflows) AND the income tax it (plus
     //   conversion/RMD) triggers, both from the pool in order Taxable → 401k → Roth →
@@ -190,8 +244,10 @@ export function buildRetirementWalkByAccount({
     const ORDER = ["taxable", "trad", "roth", "hsa"];
     // 401k dollars consumed to fund an outflow X drawn in ORDER (Taxable absorbs
     //   first). Combined trad availability spans BOTH buckets (#30) — drawInOrder's
-    //   "trad" case spills primary → spouse the same way.
-    const tradPortionOf = (X) => Math.min(Math.max(0, X - rTax), Math.max(0, trad + tradSp));
+    //   "trad" case spills primary → spouse the same way. Uses spouseDrawable (not
+    //   the raw tradSp) so a held-out gap-year bucket (Option A, BUG-82) is not
+    //   counted as fundable before the spouse actually retires.
+    const tradPortionOf = (X) => Math.min(Math.max(0, X - rTax), Math.max(0, trad + spouseDrawable));
     // A taxable inflow is ordinary income this year — it stacks at the BOTTOM (it fills
     //   low brackets before conversion/RMD/draw) and is taxed once via inflowTax.
     const incFloor = floor + taxableIncomeAdjustment;
@@ -236,6 +292,10 @@ export function buildRetirementWalkByAccount({
       tradDraw,
       trad, roth: rRoth, taxable: rTax, hsa: rHsa,
       tradSpouse: tradSp, // spouse Traditional 401k balance after this year (0 when no spouse bucket)
+      spouseContrib: Math.round(spouseContrib),  // gap-year spouse 401k contribution injected
+                                                 // THIS row (0 otherwise) — a real inflow that
+                                                 // is neither growth, draw, nor tax, so every
+                                                 // reconciliation surface needs it (a later batch).
       balEnd,
       total: Math.max(0, Math.round(balEnd)),
     });

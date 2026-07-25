@@ -113,6 +113,22 @@ describe("runSimulation — IRS limits", () => {
   });
 });
 
+describe("runSimulation — c401kEmployee (BUG-82)", () => {
+  it("c401kEmployee is the deferral only, and c401k − c401kEmployee is the match", () => {
+    // Flat 3% match mode (see defaultSim's matchConfig): match = salary × 3%,
+    // independent of the employee's own deferral amount.
+    const rows = defaultSim({ contrib401k: 10_000, incomeGrowth: 0, currentIncome: 100_000 });
+    for (const row of rows) {
+      expect(row.c401kEmployee).toBeGreaterThan(0);
+      expect(row.c401kEmployee).toBeLessThanOrEqual(row.c401k);
+      const match = row.c401k - row.c401kEmployee;
+      expect(match).toBeGreaterThanOrEqual(0);
+      // Flat 3% of the $100K salary (no growth) ≈ $3,000 match every year (415(c) cap not binding here).
+      expect(match).toBeCloseTo(3_000, -1);
+    }
+  });
+});
+
 describe("runSimulation — output structure", () => {
   it("returns correct number of rows", () => {
     const rows = defaultSim({ totalYears: 35 });
