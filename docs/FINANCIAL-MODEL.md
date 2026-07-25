@@ -192,34 +192,57 @@ This applies to: `totalChartData` drawdown loop, `convWindowDraws` in `flowData`
 rReal = (1 + nominalReturn) / (1 + inflation) − 1
 ```
 
-### Years Sustained — the one tax-honest walk (`buildRetirementDrawdown`)
-The retirement portfolio is walked in exactly **one** place, `buildRetirementDrawdown`
-(`src/model/retirement-drawdown.js`), consumed by the chart, the headline
-`yearsSustained`, the Flow-Down waterfall (`calcFlowDown`), `calcDrawdownYears`, and
-the optimizer. The per-year recurrence is:
+### Years Sustained — the ONE source: the per-account engine (`buildRetirementWalkByAccount`)
+**Corrected 2026-07-25 — this section previously described `buildRetirementDrawdown` as "the
+one tax-honest walk," which stopped being true when BUG-35 shipped the per-account engine.**
+The retirement portfolio is walked, per account, in exactly **one** place —
+`buildRetirementWalkByAccount` (`src/model/retirement-engine.js`), orchestrated by
+`buildRetirementPhase` (`src/model/retirement-phase.js`) — and it is the source for the
+chart (`totalChartData`), the headline `yearsSustained`, the displayed RMD schedule +
+`rmdTaxBite`, the Flow-Down waterfall (`calcFlowDown`), and the Roth-conversion benefit +
+optimizer. Balances are seeded GROSS (pre-tax) and taxed exactly once, per dollar, as it
+leaves a pre-tax account — never a second nominal-growth projection, never a residual-plug
+"growth" figure. The per-row identity (rule 2b):
 ```
-draw    = max(0, effectiveExpenses − yearSS − yearPension)   // SS/pension gated per-year
-tax     = rmdTaxByAge[age] + conversionTaxByAge[age]         // 0 where absent
-balEnd  = balStart*(1 + rReal) − draw − tax
+balEnd(total) = balStart(total) × (1 + rReal) − draw − tax + events + spouseContrib
 ```
-`yearsSustained` = years until `balEnd ≤ 0` (fractional in the depletion year), or
-Infinity if the portfolio survives the horizon.
+`draw` is net of SS/pension (age-gated per-year, rule 5b) AND — since the #30/BUG-82 spouse
+engine — the spouse's own gap-year income (see "Spouse gap-year mechanism" below); `tax` is
+the bracket-accurate RMD/conversion/event tax charged that year; `events` is any money-event
+inflow/outflow; `spouseContrib` is the spouse's gap-year 401k contribution PLUS any banked
+income surplus (BUG-82's fix — see `docs/BUGS.md`). `growth` is always the independent sum
+`Σ(row.growth)`, never a plug. `yearsSustained` = years until the walk depletes (fractional
+in the depletion year), or Infinity if the portfolio survives the horizon.
+
+**Spouse gap-year mechanism (#30/BUG-82, `retirement-engine.js`).** When a spouse has their
+own retirement age (`spouseRetirementAge`, independent of the primary's), the years between
+the primary's retirement and the spouse's own are "gap years": the spouse's Traditional 401k
+bucket (`tradSp`) keeps receiving contributions (injected AFTER that year's growth and AFTER
+the spouse's own RMD block — a contribution never inflates its own year's required
+distribution), the spouse's gross wages stack in the bracket floor (so conversions/RMDs/draws
+remain bracket-accurate above them), and the spouse's net cash offsets that year's portfolio
+draw — with any surplus beyond the year's spending need banked into the taxable pool (never
+silently discarded). The spouse's bucket is held OUT of the drawable pool until they actually
+retire (Option A — closer to real household cash-flow behavior than pooling a still-growing,
+still-employed account). v1 scope: Traditional 401k only; Roth/Taxable/HSA gap-year
+contributions are treated as spent (dollar-conserving, not lost) — see BUG-85 in
+`docs/BUGS.md` for the full-parity follow-up.
+
+**`buildRetirementDrawdown` survives as the SECONDARY, blended walk** — one combined pool
+grown at one real rate (no per-account split), still used for `calcWhatIfDelta` and
+`calcOptimizedScenario`'s deltas (documented BUG-36 scope: those consumers don't charge tax on
+the spending draw the way the engine does, and — pending Session B — don't yet see the
+spouse's per-account bucket at all; see the Monte Carlo row in Known Simplifications below).
+The Monte Carlo "Range" lens (`monte-carlo.js`) also still runs this blended walk via its
+`rRealByYear` override — porting it to the per-account engine is a separate, larger future
+session (Session B); until then an interim `rangeView.spouseGapCaveat` warns the user when a
+spouse's active gap window means the shaded range may understate their outlook.
 
 **Why tax is subtracted (the gross-up).** To *spend* `draw` net, the retiree must
 withdraw enough to also pay that year's income tax, so the tax is a real leak out of
 the pool. The closed-form `calcYearsSustained` (kept only as a tax-free reference)
 cannot represent a time-varying per-year tax and netted SS for every year regardless
 of claiming age, so it overstated longevity — see BUG-31.
-
-**Single-pool assumptions (documented):**
-- One combined pool grown at one real rate; no per-account tax-treatment split during
-  drawdown (Roth/taxable/trad growth all at `rReal`).
-- Only the **tax** leaks. The RMD/conversion *principal* is not a separate outflow —
-  whether spent or reinvested it stays in the pool and keeps compounding (so it is
-  never double-charged).
-- RMD tax is computed in nominal dollars (matching the displayed `rmdTaxBite` and the
-  waterfall's RMD-tax bar) so the chart, longevity, and waterfall reconcile to the
-  same tax figure.
 
 The old closed form (kept for reference / the tax-free estimate):
 ```
@@ -266,10 +289,10 @@ These are intentional modeling choices, not bugs. Document them so users and rev
 | Inflation applied to returns but not to brackets/limits | Subtle asymmetry | IRS adjusts limits annually. Sim uses 2026 limits with inflation-adjusted returns. |
 | SS benefit assumes continuous work to retirement | Overstates SS for anyone with career gaps | Retiring at 45 leaves fewer high-earning years in the 35-year average. Work-gap input planned: feature #11. |
 | Income growth compounds indefinitely without a user-set plateau | Overstates contribution capacity and SS AIME for long projections | A $100k earner at 3%/yr reaches $289k by 65. Users can cap this with the "Income plateau age" slider; `incomeGrowthEndAge` passed to both `runSimulation` and `calcAIME`. Default null = no cap. |
-| Spouse has no retirement age of their own (BUG-82, open) | Understates household retirement balance for any household where the spouse is younger than the primary — the common case | Spouse 401k/Roth/Taxable/HSA accounts (#30, shipped) ARE modeled — with per-spouse IRS limits, a shared HSA family ceiling, and per-spouse RMD timing. But the spouse is hard-assumed to retire the SAME calendar year as the primary: contributions stop and the account freezes at the primary's retirement-year snapshot, regardless of the spouse's actual age. Measured understatement in one tested scenario (10-year age gap): $2.38M. See BUG-82 in `docs/BUGS.md` for the fix shape (a `spouseRetirementAge` input + a spouse-earned-income floor for the gap years). |
+| Spouse Roth/Taxable/HSA gap-year contributions treated as spent, not tracked (BUG-85, open) | Understates the spouse's non-401k account balances during their own working years, once the primary has retired | **BUG-82 fixed 2026-07-25** — the spouse now has their own `spouseRetirementAge`; gap-year Traditional 401k contributions, gross-wage bracket floor stacking, and a net-cash draw offset (with any surplus banked, not discarded) are all modeled, with the spouse's account held out of the drawable pool until they actually retire (Option A). **Remaining gap (v1 scope, BUG-85):** only the Traditional 401k gets this treatment — Roth/Taxable/HSA gap-year contributions are dollar-conserving (money isn't lost) but not credited to the household's future balance the way the 401k now is. Other documented residual simplifications: the spouse's net-cash draw offset uses a single household-average tax-only rate held constant across the gap (not a per-year recompute); the still-working-past-73 RMD-deferral exception is not modeled (a working spouse over 73 still gets an RMD in this model); SS AIME is unaffected by gap-year spouse earnings. See BUG-85/BUG-82 in `docs/BUGS.md`. |
 | Working-year conversion benefit not shown in the window headline | The `netConversionBenefit` figure ignores pre-retirement (working-year) conversions | These conversions lower the retirement *seed*, so the `noConv` counterfactual seeds from the already-lowered balance. Their real benefit appears in longevity / lower `rmdTaxBite`, not the conversion-window figure. Quantifying it would need a third counterfactual — deferred. UI states this; optimizer is scoped to window conversions. |
 | Duration-event income during the event is taxed on the **engine** path but not in the blended what-if delta walk | Slightly understates tax in *comparative* overlays only | **Resolved on the headline path (2026-07-20).** `applyMoneyEvents` adds `eventIncomeForYear` to `taxableIncomeAdjustment`, and the per-account engine (`buildRetirementWalkByAccount`) taxes it as ordinary income stacked on the SS/pension floor (`inflowTax`) — so chart / longevity / Flow-Down / RMD numbers are tax-honest for retirement-phase event income. The blended `buildRetirementDrawdown` (used only by `calcWhatIfDelta` / `calcOptimizedScenario`) consumes `eventNetForYear` directly and still doesn't charge it — the remaining BUG-36 residual. |
-| Single fixed return rate for the deterministic headline projection | Ignores sequence-of-returns risk on the primary chart | The headline arc/chart still uses one fixed return rate. Sequence-of-returns risk IS modeled separately in the Monte Carlo "Range" lens (#38/#114, shipped) — a deterministic seeded percentile engine showing p10–p90 balance bands and a success rate, one lens under the arc's Range view. It reuses baseline RMD/conversion tax estimates rather than re-deriving them per iteration (see BUG-78) and doesn't yet model withdrawal-order risk (pre-#47). |
+| Single fixed return rate for the deterministic headline projection | Ignores sequence-of-returns risk on the primary chart | The headline arc/chart still uses one fixed return rate. Sequence-of-returns risk IS modeled separately in the Monte Carlo "Range" lens (#38/#114, shipped) — a deterministic seeded percentile engine showing p10–p90 balance bands and a success rate, one lens under the arc's Range view. It reuses baseline RMD/conversion tax estimates rather than re-deriving them per iteration (see BUG-78) and doesn't yet model withdrawal-order risk (pre-#47). **It also doesn't yet see the #30/BUG-82 spouse engine** — it still runs the older blended walk (`buildRetirementDrawdown`), which has no spouse bucket at all, so its shaded band can understate a spouse household's outlook during an active gap window; an interim `rangeView.spouseGapCaveat` surfaces this to the user until a future session ports the lens onto the per-account engine. |
 
 ## IRS Annual Update Procedure
 
@@ -312,6 +335,12 @@ A record of bugs found and fixed in the financial model (not feature additions �
 | Jul 13 2026 | Accumulation event spend beyond the taxable balance was silently forgiven — `Math.max(0, …)` clamp meant a $540k trip against a small brokerage charged only the brokerage; tripling a trip's spend barely moved the impact (BUG-74, user-reported) | Funding cascade, all on PRE-growth balances (one timing convention): taxable → Roth (grossed up for the 10% early-withdrawal penalty under 59½; basis untracked, no ordinary tax on the Roth portion) → Traditional 401k grossed up (stacked ordinary tax + 10% early-withdrawal penalty under 59½, fixed-point solve); 401k draw joins the LTCG-bracket stack; HSA never touched. Residual = `eventShortfall` per row → `eventFundingShortfall` on what-if scenarios → shared `verdictForScenarioResult` forces "unaffordable" ("$X can't be funded from savings") and caps at "tight" whenever ANY early retirement-account withdrawal was needed (`eventRetirementDraw`), even if the walk still looks healthy afterward. Cushion labels cap at `CUSHION_LABEL_CAP_YEARS` (50) for SS-covered plans; balance-delta bullets phrase the change ("decreases/increases by $X") instead of a signed number. | Every accumulation-phase event's true cost (spend + funding taxes/penalties now actually leave the portfolio), life-event verdicts, Year-by-year ledger draw/tax columns, at-65/at-90 impact bullets |
 | Jul 13 2026 | Sabbatical/leave income restart used the UNPAUSED age clock — a $100k salary paused 3 years resumed at ~$120k instead of the ~$103k it left off at (owner spec, PR #54 review) | `runSimulation`'s salary now advances a pause-aware growth CLOCK by `incomeFrac` per year (frozen during a full pause, unaffected by the seeded full-pay default) instead of the raw `age − currentAge` offset; `projectedIncomeAtAge` (UI seed / `eventIncomeImpact` baseline) stays the no-event closed form, identical to the clock when no events exist | Post-sabbatical salary trajectory, working-year contributions/MAGI in the years after a pause, new `salary` sim-row field |
 | Jul 20 2026 | Retirement-phase duration-event income (part-time work etc.) was received tax-free in the headline walk (BUG-36 strand) | `applyMoneyEvents` now folds every event's prorated `eventIncomeForYear` into `taxableIncomeAdjustment`; the per-account engine taxes it once as ordinary income stacked on the SS/pension floor (`inflowTax`). Engine-only, so the blended what-if delta walk is unaffected (remaining BUG-36 residual). Inert with no events → golden master untouched | Retirement-phase tax, longevity, chart, Flow-Down for users with retirement event income |
+| Jul 25 2026 | BUG-82: spouse had no retirement age of their own — contributions stopped and the account froze the instant the PRIMARY retired, regardless of the spouse's actual age ($2.38M understatement in the audit's repro scenario) | New `spouseRetirementAge` input; gap-year 401k contributions injected into a held-out `tradSp` bucket (`retirement-engine.js`), sourced from the accumulation sim's own per-year figures via `buildSpouseRetirementSeed` (`retirement-phase.js`); Option-A draw gate (spouse's bucket drawable only once they retire); the spouse's gross wages stack in the bracket floor and net cash offsets the draw, with any surplus banked (not discarded — a defect found and fixed during implementation, not in the original bug report). v1: Traditional 401k only (BUG-85 tracks Roth/Taxable/HSA parity) | Household `totalAtRet`/longevity/RMDs for any age-gap spouse household — the majority of real two-income households |
+| Jul 25 2026 | BUG-82 follow-on: the live-balance spouse RMD guard keyed on the frozen seed (`tradGrossSpouse`), so a spouse accumulating purely from gap contributions never got a required distribution | Guard now keys on the live `tradSp` balance | Spouse RMD timing for a household relying entirely on gap-year contributions |
+| Jul 25 2026 | Rule-5 wiring (Step 6): `netPortfolioNeed`/`withdrawalRate`/the optimizer/Plan's Income Meter acted as if the portfolio funded every dollar even after the spouse's gap-year income was offsetting the engine's own draw internally | `calcNetPortfolioNeed`/`calcRetIncomeFlow` (`drawdown.js`) and `calcOptimizedScenario` (`optimization.js`) gained an optional spouse-income term read from the SAME map the engine consumes; `calcPlanDrivers` gained `temporaryIncomeBasis` so a gap-year-flattered rate can't render as an unqualified "on track" verdict | Headline `netPortfolioNeed`, `withdrawalRate`, the optimizer's `optWR`, Plan's Income Meter, the OnTrackPill verdict |
+| Jul 25 2026 | BUG-77: `calcWhatIfScenario`'s forced-resim path kept the spouse Traditional bucket frozen at the BASE retirement age even when the scenario changed the primary's own retirement age | Re-seeds the spouse via the SAME shared `buildSpouseRetirementSeed` builder the live path uses (no spouse re-sim needed, since gap contribution end-age is now the spouse's own, scenario-invariant); also fixed the resim's accumulation chart being primary-only (A8) | What-if scenario previews for a household with spouse 401k balances |
+| Jul 25 2026 | BUG-86: Flow-Down's accumulation bridge (`calcFlowDown`) computed `startPortfolio`/`totalContrib` from PRIMARY-only inputs while `totalAtRet` was household — the entire spouse balance fell out as a residual and was mis-attributed as "Investment Growth" | `spouseStartBal`/`spouseContribRows` params fold the spouse's starting balance and accumulation-phase contribution rows into the waterfall | Journey Chapter 2's "Market growth" and "Your contributions" for spouse households |
+| Jul 25 2026 | BUG-87: household MAGI (Roth phase-out, LTCG bracket) counted an already-retired earner's income forever, past their own retirement age — mirror defects on both the primary's and the spouse's own sim | `runSimulation` gained `spouseIncomeEndAge` (an inclusive age cutoff in the subject's own frame, following the `contribEnd*` precedent); wired symmetrically on both sim calls | Roth phase-out and LTCG-bracket accuracy in the years after either earner's retirement, in a household with an age gap |
 
 ## Money Events — duration escalation & open-ended spans (2026-07-20 extension)
 

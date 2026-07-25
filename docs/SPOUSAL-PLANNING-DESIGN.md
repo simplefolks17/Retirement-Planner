@@ -376,3 +376,19 @@ per the research) on a correct foundation, and it leaves BUG-84 and the SS optim
 well-scoped separate decisions rather than half-finished work entangled in a bug fix. Every step
 preserves the true (single-filer) golden master, consistent with the golden-master-safe patterns
 Section A identified as the codebase's load-bearing convention.
+
+> **Amendment (2026-07-25) — Steps 2 and 3 above were REFUTED during implementation planning; the
+> actual fix does not reindex the seed.** A dedicated Opus implementation-planning pass (before any
+> code was written) re-derived the mechanism from the live code and found that `spouseSimData`
+> already spans far past the primary's retirement, and the existing seed (`spouseAtRet`, read at
+> the calendar year the PRIMARY retires) is already CORRECT for a walk that starts at the primary's
+> retirement. Step 2's proposal — re-index the seed to
+> `spouseSimData[spouseRetirementAge − spouseCurrentAge − 1]` (a LATER date) and then grow/draw it
+> from the EARLIER start point — would have double-counted investment growth over the gap years.
+> The real, narrower defect: the walk never modeled the spouse's ongoing gap-year CONTRIBUTIONS,
+> income, or draw-timing once it started. The shipped fix keeps the seed exactly where Steps 2–3
+> above would have left it and instead injects gap-year contributions/income INSIDE the
+> retirement-phase engine via per-(primary-age) maps (`buildSpouseRetirementSeed`,
+> `retirement-phase.js`) — Option A (this doc's C.1) draw-gated as originally proposed. Steps 0, 1,
+> 4, and 5 above shipped close to as designed. Full derivation, root cause, and fix mechanism:
+> `docs/BUGS.md` → BUG-82 (Resolved) and `docs/FINANCIAL-MODEL.md`'s "Years Sustained" section.

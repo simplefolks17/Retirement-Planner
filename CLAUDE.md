@@ -10,9 +10,9 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 3. **No double-counting.** `grossAfterTax` (household income − all taxes) is the budget basis. Pre-tax deductions are auto-derived from contributions. For MFJ filers, `grossAfterTax` uses `householdIncome` (primary + spouse); for all other filing statuses it uses primary income only.
 4. **Sim-level IRS guards required.** Every contribution in the simulation loop must be independently capped at its IRS limit, regardless of UI constraints.
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
-   - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop.
+   - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (929 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (998 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1538,11 +1538,61 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
     Plan's "Try a change" `ApplyPreviewModal` (was `null`). Years-gap-based (Comfortable / Tight / Doesn't
     fit); no invented red tone; the badge appears ONLY inside the Apply modal — the OnTrackPill stays Plan's
     glance verdict (SP-3). Tracker: #116/#85/#55/#56 → done (74 → 78 done, 51 → 47 planned).
+- **BUG-82 fixed — the spouse's own retirement age + gap-year modeling (2026-07-25, branch
+  `claude/spousal-planning-design-cjxl0i`, Session A of a two-session plan).** A second,
+  differently-angled adversarial audit (execute-the-model, not just read-the-code) had found the
+  #30 spouse engine assumed both spouses retire the same calendar year — a younger spouse's
+  contributions stopped and their account froze the instant the PRIMARY retired, understating
+  household wealth by $2.38M in the audit's own repro (a 10-year age gap). Research → an
+  Opus-authored implementation plan → a fresh Opus audit of that plan → a third Opus pass focused
+  specifically on cross-variable systemic coherence (which found the highest-severity issue: a
+  naive surplus-discard formula that would have erased 25–40% of the fix's own benefit) → 8
+  sequential, independently gated batches (implement → review the diff → re-run the full suite +
+  lint + golden master + build → commit → push), per an explicit owner request for early,
+  per-batch review gates rather than one large end-of-session review.
+  1. **The design-doc's original approach (re-index the accumulation seed to the spouse's own
+     retirement age) was REFUTED during implementation planning** — the seed was already correct
+     for a walk starting at the primary's retirement; re-indexing it to a later date would have
+     double-counted investment growth. The real fix: keep the seed where it is and inject the
+     spouse's gap-year contributions/income INSIDE the retirement-phase engine via per-(primary-age)
+     maps (new `buildSpouseRetirementSeed`, `retirement-phase.js`).
+  2. **The engine fix (Batch 3):** the spouse's Traditional 401k (`tradSp`) keeps receiving
+     contributions during the gap, their gross wages stack in the bracket floor, their net cash
+     offsets the draw (surplus BANKED, not discarded — a defect found and fixed during
+     implementation), and their bucket is held out of the drawable pool until they actually retire
+     (Option A). The spouse RMD guard was also fixed to key on the live balance, not the frozen seed.
+  3. **Integration (Batch 4):** new `spouseRetirementAge` input (My Details → "Spouse & household");
+     `spouseSeed` memo wires the builder's output into `retPhaseBase`.
+  4. **Conservation (Batch 5):** the gap-year inflow is neither growth, draw, nor tax — Flow-Down,
+     the Year-by-year ledger, and Journey all now carry it so their reconciliation identities close.
+  5. **MAGI gate + what-if resim (Batch 6):** a `spouseIncomeEndAge` cutoff stops an already-retired
+     earner's income from counting in the OTHER earner's household MAGI forever (BUG-87); BUG-77
+     fixed (the spouse balance re-seeds through a what-if scenario resim instead of staying frozen).
+  6. **Rule-5 wiring (Batch 7, CLAUDE.md rule 5/5b):** `netPortfolioNeed`/`withdrawalRate`/the
+     optimizer/Plan's Income Meter/`calcPlanDrivers`' verdict all now read the spouse's gap-year
+     income from the same map the engine itself offsets — closing what would otherwise have been a
+     brand-new BUG-31-class divergence between the engine and the headline.
+  7. **Interim Monte Carlo caveat:** the Range lens still runs the older blended walk (no spouse
+     bucket at all) — `rangeView.spouseGapCaveat` warns the user rather than silently disagreeing
+     with the solid arc line, until a future session (**Session B**, deliberately out of scope here —
+     independently sized "comparable to the rest of this fix combined," with its own stop-and-surface
+     abort clause and a since-corrected false performance premise) ports the lens onto the engine.
+  8. **v1 scope:** Traditional 401k only — Roth/Taxable/HSA gap-year contributions are
+     dollar-conserving but not separately tracked (**BUG-85**, filed, Open). **BUG-84**
+     (withdrawal-order/conversion scalars stay primary-only) remains Open — a genuine owner tax-law
+     call between two fix shapes, with an interim "your accounts" relabel already shipped. **BUG-86**
+     (Flow-Down accumulation bridge) and **BUG-87** (the MAGI gate) were two more genuinely separate,
+     pre-existing bugs found during planning and fixed in the same session.
+  929 → **998 tests** across the 8 batches. Golden master untouched throughout — every new
+  parameter defaults to its zero/null/false value. Full root cause, fix mechanism, and file list:
+  `docs/BUGS.md` → BUG-82 (Resolved). `docs/FINANCIAL-MODEL.md`'s "Years Sustained" section
+  corrected in the same pass (had gone stale describing `buildRetirementDrawdown` as "the one
+  tax-honest walk," untrue since BUG-35).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (929 tests)
+- `npm test` — run model + formatter + render-smoke tests (998 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
