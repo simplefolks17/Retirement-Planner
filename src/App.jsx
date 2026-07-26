@@ -586,14 +586,21 @@ export default function App() {
     : null;
   // #30 / BUG-82 interim (Session A, pending the Session B Monte Carlo engine
   // port): true whenever the spouse has a real gap window (works past the
-  // primary's retirement, before their own) — read straight off the same map
+  // primary's retirement, before their own) — read straight off the same maps
   // spouseIncomeAtRet uses, not re-derived from ages, so it can't disagree.
   // The Range lens still runs the OLDER blended walk (buildRetirementDrawdown),
   // which has no spouse bucket at all, so its shaded band can silently
   // understate a spouse household's outlook during the gap. Surfaced as a
   // caption rather than left unstated (rule 10: missing applicability is not
   // silence) until the MC engine is ported to the per-account walk.
-  const hasActiveSpouseGap = hasSpouse && Object.keys(spouseSeed?.spouseContribByAge ?? {}).length > 0;
+  // Checks for an actual nonzero VALUE, not just key presence (adversarial-
+  // review fix): buildSpouseRetirementSeed writes a key for every gap year
+  // regardless of amount, so a married household with $0 spouse income/
+  // balances got a spurious caveat for a gap that offsets nothing.
+  const hasActiveSpouseGap = hasSpouse && (
+    Object.values(spouseSeed?.spouseContribByAge ?? {}).some(v => v > 0)
+    || Object.values(spouseSeed?.spouseIncomeFloorByAge ?? {}).some(v => v > 0)
+  );
 
   const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension, spouseIncomeAtRet);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);

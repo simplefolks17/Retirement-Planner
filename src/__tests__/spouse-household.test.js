@@ -140,10 +140,12 @@ describe("Monte Carlo Range lens — spouse-gap caveat (#30 / BUG-82 interim)", 
     app.unmount();
   });
 
-  it("shows the caveat once the spouse's own retirement age opens a real gap window", () => {
+  it("shows the caveat once the spouse's own retirement age opens a real gap window WITH real income/contributions", () => {
     const app = mount();
     app.fire(() => app.latest().ss.isMarried.set(true));
     app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
     // Same setup, but the spouse now retires 7 years after the primary (age 62 vs.
     // the 55 no-gap value above) — a real gap window opens.
     app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
@@ -153,15 +155,31 @@ describe("Monte Carlo Range lens — spouse-gap caveat (#30 / BUG-82 interim)", 
     app.unmount();
   });
 
-  it("married with no spouse retirement-age override still opens a gap for an age-gap couple (the default 'auto' case)", () => {
+  it("married with no spouse retirement-age override still opens a gap for an age-gap couple WITH real income (the default 'auto' case)", () => {
     // effectiveSpouseRetAge defaults (null) to the PRIMARY's numeric retirement
     // age (65) — for a 10-year-younger spouse that is 10 years AFTER the primary
     // retires, so the gap is real even without the user touching the new slider.
     const app = mount();
     app.fire(() => app.latest().ss.isMarried.set(true));
     app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
     expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(65); // resolved "auto" value
     expect(app.latest().rangeView.spouseGapCaveat).not.toBeNull();
+    app.unmount();
+  });
+
+  // Adversarial-review finding (finding 4): buildSpouseRetirementSeed writes a
+  // map KEY for every gap year regardless of the dollar amount, so checking
+  // key presence alone (the pre-fix formula) produced a false-positive caveat
+  // for a married household with an age gap but $0 spouse income/contributions
+  // — a real, if inert-looking, household (e.g. a non-working spouse).
+  it("no caveat for a married age-gap household with $0 spouse income/contributions (false-positive fix)", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    // No spouseIncome, no spouseAccounts contributions set — gap window opens
+    // by age math alone, but nothing flows through it.
+    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
     app.unmount();
   });
 });
