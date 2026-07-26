@@ -255,6 +255,89 @@ describe("calcWhatIfDelta", () => {
     expect(explicitZero).toEqual(omitted);
   });
 
+  // ── spouseSeedInputs basis-symmetry lock (roadmap-review finding, 2026-07-26) ──
+  // Same class as the addlPreTaxBal lock above: baseTotalAtRet (App.jsx) is
+  // HOUSEHOLD (includes the spouse's seeded balance), but calcWhatIfDelta's
+  // forced-resim path only ever re-simulated the PRIMARY — unlike its sibling
+  // calcWhatIfScenario, which got this fix under BUG-77. A forced resim
+  // silently dropped the spouse's entire balance, producing a phantom delta
+  // on surplusApplySite's live Apply-with-preview button.
+  describe("calcWhatIfDelta — spouse basis symmetry on a forced re-sim", () => {
+    // currentAge (30) -> safeRetAge (65) is a 35-year accumulation window, so
+    // the seed row read at buildSpouseRetirementSeed's `rows[phase2End - 1]`
+    // (phase2End = safeRetAge - currentAge = 35) needs at least 35 rows.
+    const spouseCurrentAgeFixture = 25;
+    const spouseSimDataFixture = Array.from({ length: 35 }, (_, i) => ({
+      age: spouseCurrentAgeFixture + i + 1,
+      c401k: 12_000, c401kEmployee: 10_000, cHSA: 0, salary: 60_000,
+      tradGross: 200_000 + i * 15_000,
+      "Roth IRA": 40_000, "Taxable": 20_000, "HSA": 0,
+    }));
+    const spouseCurrentSnapshotFixture = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    const spouseSeedInputsFixture = {
+      spouseSimData: spouseSimDataFixture, spouseCurrentSnapshot: spouseCurrentSnapshotFixture,
+      spouseCurrentAge: spouseCurrentAgeFixture, spouseRetAge: safeRetAge, spouseNetRate: 0.7,
+    };
+    const baseSpouseSeed = buildSpouseRetirementSeed({
+      ...spouseSeedInputsFixture, currentAge, primaryRetAge: safeRetAge,
+    });
+    const spouseBaseTotal = baseSpouseSeed.tradSeed + baseSpouseSeed.rothSeed
+      + baseSpouseSeed.taxableSeed + baseSpouseSeed.hsaSeed;
+
+    // Household basis (mirrors App.jsx's totalAtRet — primary + spouse), the
+    // exact shape that exposes the bug: baseTotalAtRet already includes the
+    // spouse, so a resim that drops it diverges from the non-resim baseline.
+    const householdArgs = {
+      ...baseArgs, baseTotalAtRet: realBaseTotalAtRet + spouseBaseTotal,
+      spouseSeedInputs: spouseSeedInputsFixture,
+    };
+
+    it("a forced re-sim adds the spouse's re-seeded total, not silently dropping it", () => {
+      // Sanity: the fixture actually has a nonzero spouse balance to lose.
+      expect(spouseBaseTotal).toBeGreaterThan(0);
+      const forceResimEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+      const withoutSpouse = calcWhatIfDelta({ ...baseArgs, moneyEvents: [forceResimEvent] });
+      const withSpouse = calcWhatIfDelta({ ...householdArgs, moneyEvents: [forceResimEvent] });
+      // Primary side is identical in both calls (spouse data never touches the
+      // primary's own runSimulation) — the whole delta must be the spouse total.
+      expect(withSpouse.scenarioTotalAtRet - withoutSpouse.scenarioTotalAtRet)
+        .toBeCloseTo(spouseBaseTotal, 6);
+    });
+
+    it("the phantom-delta bug this fixes: a no-op candidate (matching contribOverrides) no longer shows a spurious spouse-sized delta", () => {
+      // Mirrors surplusApplySite's exact shape: "current" has no override (no
+      // resim -> baseTotalAtRet passthrough, household); "candidate" sets
+      // contribOverrides matching the existing contributions exactly (forces a
+      // resim, but should be a true no-op on the total). Before this fix, the
+      // candidate's resim dropped the entire spouse balance, showing a phantom
+      // six-figure "regression" on an unchanged scenario.
+      const current = calcWhatIfDelta({ ...householdArgs });
+      const candidate = calcWhatIfDelta({
+        ...householdArgs,
+        contribOverrides: {
+          contrib401k: simInputs.contrib401k,
+          contribRoth: simInputs.contribRoth,
+          contribTaxable: simInputs.contribTaxable,
+          contribHSA: simInputs.contribHSA,
+        },
+      });
+      // Loose tolerance (0.1% of the household total) absorbs ordinary
+      // sim-vs-baseline float noise, not a systematic basis drop the size of
+      // the entire spouse balance (which would be roughly 10-20% here).
+      expect(Math.abs(candidate.scenarioTotalAtRet - current.scenarioTotalAtRet))
+        .toBeLessThan(Math.abs(current.scenarioTotalAtRet) * 0.001);
+    });
+
+    it("spouseSeedInputs defaults to null (no-op) when omitted — no spouse, no effect", () => {
+      const forceResimEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+      const omitted = calcWhatIfDelta({ ...baseArgs, moneyEvents: [forceResimEvent] });
+      const explicitNull = calcWhatIfDelta({
+        ...baseArgs, moneyEvents: [forceResimEvent], spouseSeedInputs: null,
+      });
+      expect(explicitNull).toEqual(omitted);
+    });
+  });
+
   // ── contribOverrides no-op lock (WI-3.7 extension) ─────────────────────────
   // The param must be a true no-op when omitted/null — nothing on the golden
   // path should move now that this param exists.

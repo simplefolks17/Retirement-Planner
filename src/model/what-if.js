@@ -253,6 +253,13 @@ export function calcWhatIfDelta({
   addlPreTaxBal = 0,             // outside pre-tax balance (App.jsx) — baseTotalAtRet already
                                   // includes it; the re-sim below must add it too or a forced
                                   // resim's scenarioTotalAtRet silently drops it (basis mismatch).
+  // Same basis-mismatch class as addlPreTaxBal above, and the same fix already
+  // shipped for the sibling calcWhatIfScenario (BUG-77 + its CodeRabbit
+  // follow-up): baseTotalAtRet (App.jsx) is HOUSEHOLD (includes the spouse's
+  // seeded balance), but this function's forced-resim path only ever
+  // re-simulated the PRIMARY — so a forced resim silently dropped the spouse's
+  // entire balance from scenarioTotalAtRet. null with no spouse (inert).
+  spouseSeedInputs = null,
 }) {
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
   const scenarioExpenses  = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
@@ -292,6 +299,19 @@ export function calcWhatIfDelta({
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
     const at = raw[retIdx];
     if (at) {
+      // Re-seed the spouse at the SCENARIO's retirement age (mirrors
+      // calcWhatIfScenario's BUG-77 fix exactly — same builder, so the two
+      // functions can never diverge on what the spouse's re-seeded balance is).
+      const spouseSeed = spouseSeedInputs
+        ? buildSpouseRetirementSeed({
+            ...spouseSeedInputs,
+            currentAge: simInputs.currentAge,
+            primaryRetAge: scenarioRetAge,
+          })
+        : null;
+      const spouseTotal = spouseSeed
+        ? spouseSeed.tradSeed + spouseSeed.rothSeed + spouseSeed.taxableSeed + spouseSeed.hsaSeed
+        : 0;
       // BUG-35: gross basis (the 401k is no longer haircut) — matches the gross
       // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples. Also
       // add addlPreTaxBal — baseTotalAtRet already includes it (App.jsx), and
@@ -300,7 +320,8 @@ export function calcWhatIfDelta({
         + (at["Roth IRA"] ?? 0)
         + (at["Taxable"]  ?? 0)
         + (at["HSA"]      ?? 0)
-        + addlPreTaxBal;
+        + addlPreTaxBal
+        + spouseTotal;
     } else {
       scenarioTotalAtRet = 0;
     }
