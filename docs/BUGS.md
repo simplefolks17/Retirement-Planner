@@ -7,6 +7,63 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-91 — Model-wide real/nominal dollar-basis mismatch: `effectiveExpenses` is today's dollars, the retirement walk is retirement-year dollars (found 2026-07-26, adversarial review of BUG-82's PR #59, surfaced during Finding 3's planning pass)
+
+**Owner:** me_theguy. **Severity: HIGH — larger in magnitude than BUG-88/89/90 combined; would move
+the golden master.** **Found by:** the Opus planning-and-audit pass commissioned to design BUG-90's
+fix (Finding 3), as a NEW discovery beyond the three findings it was scoped to address.
+**What:** establishing BUG-90's fix required first pinning down the retirement engine's own dollar
+unit — proven rigorously (see BUG-90): a balance growing at `rReal` for `k` years is expressed in the
+PRIMARY's RETIREMENT-YEAR purchasing power. But `effectiveExpenses` (`annualExpenses ??
+effectiveLiving`, `App.jsx`) is a TODAY's-dollar figure, applied flat against that retirement-year-
+dollar balance every year of the walk. So a 40-year-old retiring at 65 with 4% inflation has their
+$60k CURRENT spend charged against a portfolio measured in dollars worth ~38% LESS than today's — a
+systematic, compounding UNDERSTATEMENT of the real required spend, growing with the years-to-
+retirement and the inflation assumption. `pensionMonthly` has the identical shape (today's dollars,
+applied flat) — SS does not (nominal at the claim date, then held flat in the walk, matching the
+engine's own convention). The accumulation sim compounds the same issue from the other direction:
+`contrib401k` is entered as a flat NOMINAL contribution, i.e. a shrinking REAL one, understating the
+saved amount by retirement.
+**Why not fixed alongside BUG-90:** this is pre-existing, model-wide, and pre-dates BUG-82/the spouse
+engine entirely — it affects every household, not just spouse-gap ones. `docs/FINANCIAL-MODEL.md` →
+Known Simplifications already has an adjacent-but-DIFFERENT note ("inflation applied to returns but
+not to brackets/limits") which does NOT cover this. Fixing it would move the golden master
+substantially in the conservative direction (spend requirements rise) — exactly the class of
+cross-variable, headline-moving issue this codebase's gated-batch process exists to isolate into its
+own dedicated session, not fold into an unrelated PR under review-fix pressure.
+**Recommendation (from the planning pass):** file as its own bug with the derivation above, take it
+as a dedicated session with its own plan, audit, and gated-batch implementation — the same process
+BUG-82 and BUG-88/89/90 themselves used.
+**Where:** `src/App.jsx` (`effectiveExpenses`, `pensionMonthly`), `src/model/simulation.js`
+(`contrib401k` and other flat-nominal contribution inputs), `src/model/retirement-engine.js` (the
+`rReal` walk that establishes the retirement-year-dollar unit).
+**Not fixed here.** No code change; filed for its own future session.
+
+### BUG-92 — No verdict signal when a plan leans on the spillover escape hatch (found 2026-07-26, BUG-88's planning pass; deliberately not folded into that fix)
+
+**Owner:** me_theguy. **Severity: MEDIUM.** **Found by:** the same Opus planning-and-audit pass that
+designed BUG-88's fix, as an explicit "surfacing" follow-up question it answered by recommending
+deferral.
+**What:** after BUG-88's fix, a household can be "sustainable" ONLY BECAUSE it repeatedly raids a
+still-working spouse's 401k at a 10% early-withdrawal penalty — and today's verdict machinery (the
+shared `verdictForScenarioResult` resolver in `what-if.js`) would still call that plan "comfortable."
+A precedent for capping such a plan at "tight" already exists in the same file:
+`eventRetirementDraw`/`eventRetirementDrawTax` already cap a scenario's verdict when a money event
+forces an early retirement-account withdrawal (BUG-74's fix). The same treatment should logically
+apply here.
+**Why deferred rather than folded into BUG-88:** the fix touches the SHARED verdict resolver
+consumed by `evaluateLifeEvent`, both tick rails (`buildLeverRail`/`buildDurationRail`), and the
+lever previews — a fourth surface area, in a PR that already changed the engine, the seed builder, and
+(in the same session) the conversion planner. BUG-88 already ships the model rollups
+(`totalSpouseSpillover`/`totalSpouseSpilloverTax`/`firstSpouseSpilloverAge`) a future fix here would
+consume — nothing about this deferral re-litigates or blocks that follow-up.
+**Fix shape (sketched, not implemented):** extend `verdictForScenarioResult` (or a sibling check
+alongside the `eventRetirementDraw` cap) to also cap at "tight" whenever
+`retPhase.totalSpouseSpillover > 0` for the scenario being evaluated.
+**Where:** `src/model/what-if.js` (`verdictForScenarioResult`), consumed by `evaluateLifeEvent` and
+both tick rails.
+**Not fixed here.** No code change; filed as a follow-up.
+
 ### BUG-85 — Spouse Roth/Taxable/HSA gap-year contributions treated as spent, not tracked (filed 2026-07-25, BUG-82 fix session — v1 scope decision)
 
 **Owner:** me_theguy. **Severity: LOW-MEDIUM (smaller, weaker-rationale dollar impact than BUG-82).**
@@ -71,6 +128,14 @@ stays open. Copy-only — the underlying per-person-vs-pooled question above is 
 **Where:** `src/App.jsx:463-465` (the scalars), `:961` (`calcWithdrawalOrderTax` call), `:1033,1039`
 (`conversionSim`), `:4215-4217` (Classic display).
 **Inert at default state:** no spouse data → no effect. Golden master untouched.
+**Addendum (2026-07-26, adversarial-review three-findings pass, ND-3):** `calcRMDIncomeFloor`
+(`retirement-tax.js:23`, `rmdIncomeFloor` at `App.jsx:667`) is also spouse-blind, and is *reachable*
+while a spouse still works — `spouseRetAgeMax = lifeExpect − 1`, so a younger spouse can still be
+mid-gap at the primary's own RMD age (e.g. a spouse 10 years younger retiring at 67 while the primary
+is 73). Its only consumer is `calcWithdrawalOrderTax` (`App.jsx:1055`), already scoped "your accounts"
+by this entry's interim relabel above — the retirement ENGINE computes the actual RMD tax itself and
+does not use this floor. Documented here rather than patched, so the two primary-only surfaces are
+resolved together whichever fix shape (1 or 2, above) the owner picks. No code change.
 
 ### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
 
@@ -386,6 +451,165 @@ batches or the review-fix rounds.
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-90 — Nominal spouse gap-year flows in a real-dollar retirement walk (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH (compounds over long gaps — up to 34% at the fixture's
+final gap year).** **Found by:** an Opus adversarial review of the just-merged BUG-82 spouse-engine
+work (PR #59), independently corroborated by a follow-on Opus planning-and-audit pass that also
+corrected the review's own suggested fix.
+**What:** `buildSpouseRetirementSeed` (`retirement-phase.js`) copied `runSimulation`'s per-year
+`c401k`/`salary`/`cHSA` figures verbatim into the retirement engine's gap-year maps
+(`spouseContribByAge`/`spouseTaxableIncomeByAge`/`spouseIncomeFloorByAge`). But `runSimulation`
+compounds NOMINALLY (`returnRate`, `incomeGrowth`), while the retirement engine walks in REAL dollars
+(`rReal = (1+returnRate/100)/(1+inflationRate/100)−1` against a flat `effectiveExpenses`) — its
+balance unit is the purchasing power of the PRIMARY's retirement year. A spouse's gap-year paycheck
+was therefore the only income stream in the entire walk whose purchasing power silently grew year
+over year, inflating both the spouse's banked contributions and the cash that offsets the household's
+portfolio draw the longer the gap ran.
+**Root cause (established rigorously):** a balance `B` growing at `rReal` for `k` years equals
+`B(1+r)^k/(1+i)^k` — i.e. the nominal balance expressed in the RETIREMENT year's purchasing power. The
+seed (`tradSeed` etc.) is already in that unit by construction (it IS the nominal balance in that
+calendar year); only the per-year MAPS were wrong.
+**The reviewer's own suggested fix was itself refuted and corrected during planning:** the review
+proposed deflating to TODAY's dollars (`currentAge` as the base year). A follow-up numeric probe
+proved this wrong on two independent grounds: (a) it creates a ~22% discontinuity exactly at the
+seed/map seam — the spouse's contribution in the primary's retirement year is already inside the seed
+at full nominal value, so any base other than the retirement year puts a cliff right at the handoff;
+(b) it does not reproduce the reviewer's own cited ratio (1.1495), which is only reproducible with a
+retirement-year base.
+**Fix:** an optional `inflationRate` param on `buildSpouseRetirementSeed` deflates each gap year's
+map entries by `(1+inflationRate/100)^k`, `k = primaryAge − primaryRetAge` (the primary's RETIREMENT
+year, not today). Seeds are untouched — already correct. Wired into both call sites that build the
+seed (`App.jsx`'s main-path `spouseSeed` memo and the what-if forced-resim's `spouseSeedInputs`
+bundle) so the solid arc and a what-if preview can never disagree about the deflator.
+**Measured impact (10-year gap, 2.5% inflation):** gap-year cash and contributions fall ~15%; at a
+17-year gap the final gap-year figure falls 34% from the shipped (nominal) value.
+**Where:** `src/model/retirement-phase.js` (`buildSpouseRetirementSeed`), `src/App.jsx` (both call
+sites: the `spouseSeed` memo and `spouseSeedInputs`).
+**Tests:** T-F3.1 (the bug verbatim — ~13% real-terms deflation over a 10-year gap, last year deflated
+by exactly `1.025^10`), T-F3.2 (seam continuity — locks the retirement-year base choice, would fail by
+~22% under a today's-dollar base), T-F3.3 (inertness), T-F3.4 (App-level wiring gate — both call sites
+carry a live `inflationRate`, and it actually reaches the main-path walk, not just the what-if
+bundle), T-F3.5 (monotonicity), T-F3.6 (seeds provably untouched).
+**Inert at default state:** `inflationRate` defaults to `0` ⇒ deflator `1` ⇒ every existing caller and
+test byte-identical; no spouse data ⇒ the builder is never called. Golden master untouched.
+
+### BUG-89 — The Roth-conversion window's income floors never got the spouse's gap-year wages (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
+
+**Owner:** me_theguy. **Severity: HIGH (real converted dollars, not display — see impact below).**
+**Found by:** the same Opus adversarial review as BUG-90, verified against the actual codebase by a
+follow-up planning-and-audit pass.
+**What:** `buildIncomeFloors` (`conversion-planning.js`) returned `yearSS + yearPension` per
+conversion-window year. The retirement ENGINE builds its own per-year bracket floor as
+`ssTaxable + pension + spouseWages` (`retirement-engine.js`). Since BUG-82 shipped, the conversion
+planner and the engine modeled DIFFERENT households for any spouse-gap window. CLAUDE.md rule 5b
+names `retIncomeFloors[]` explicitly as a per-year loop that must gate every income source — the
+rule-5 wiring done in the original BUG-82 session (Batch 7) reached `netPortfolioNeed`/
+`withdrawalRate`/`calcOptimizedScenario`/the Income Meter, but not this array.
+**Impact, worst first (verified with a $120k/yr spouse-wages, MFJ, 22%-bracket-fill fixture):**
+1. **Bracket-fill targets overshoot — real converted dollars, not a display bug.** A plan labeled
+   "fill to 22%" converted $243,600 while $120k of spouse wages sat underneath it unaccounted for, so
+   total taxable income actually landed at $363,600 — well into the 24% bracket. The engine taxes the
+   conversion correctly at the bracket it actually lands in; the user's *strategy* was mislabeled, not
+   the tax miscomputed. The honest target is $123,600.
+2. **ACA cliff misdetected and IRMAA understated** — both read the same `convMAGIFloors` (100%-gross
+   SS + spouse wages), evaluated at a MAGI far below the household's actual exposure.
+3. **Displayed per-year conversion tax and "Roth advantage" understated** for the same reason,
+   inherited for free by the fix since `evaluateConversionPlan` consumes the same floor arrays.
+**Fix:** `buildIncomeFloors` gains an optional `spouseTaxableIncomeByAge` param — the SAME map the
+engine already stacks in its own floor, read here rather than re-derived, so the planner and the
+engine can never model different households for the same window year again. The same value enters
+BOTH `convFloors` (85%-taxable SS) and `convMAGIFloors` (100%-gross SS): the map is already net of the
+spouse's own 401k deferral + HSA, so it's simultaneously the exact taxable-income and AGI/MAGI
+contribution — only SS has a taxable-fraction asymmetry, wages don't. Wired into all three App.jsx
+call sites: `convFloors`, `convMAGIFloors`, and — the one that matters most — the conversion
+optimizer's `floorArgs` (missing it would let the optimizer search a spouse-blind model and hand the
+user an "optimal" amount the display prices differently, the BUG-31 "two implementations of one
+quantity" class).
+**Investigated and deliberately left unchanged (not a bug):** `retIncomeFloor` (the steady-state
+scalar) correctly excludes spouse wages — they're temporary by definition, and the per-year bracket
+targets already pick up the fix via their own per-year floors. `calcRMDIncomeFloor` has a narrower,
+real gap — see the addendum on BUG-84, above. `calcOptimizedScenario`'s `optWR` was already wired in
+the original BUG-82 session.
+**Where:** `src/model/conversion-planning.js` (`buildIncomeFloors`), `src/App.jsx` (`convFloors`,
+`convMAGIFloors`, the optimizer's `floorArgs`).
+**Tests:** T-F2.1 (the bug verbatim — $123,600 not $243,600), T-F2.2 (still fills exactly to the
+bracket top with spouse wages present), T-F2.3 (inertness), T-F2.4 (both floor arrays get the
+identical wage term — only the SS fraction differs), T-F2.7 (anti-divergence — the planner's floor
+equals the engine's own internal formula, verbatim; the test that would have prevented this finding
+existing at all), T-F2.8 (App-level: the optimizer's suggested amount moves when spouse wages are
+introduced).
+**Inert at default state:** `spouseTaxableIncomeByAge` defaults to `{}`, every lookup `?? 0`; no
+spouse data ⇒ every floor array byte-identical. Golden master untouched.
+
+### BUG-88 — False depletion reported beside a rising, held-out spouse 401k balance (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
+
+**Owner:** me_theguy. **Severity: HIGH (the highest-severity of the three — headline surfaces
+actively contradicted each other for the target demographic).** **Found by:** the same Opus
+adversarial review as BUG-89/BUG-90.
+**What:** BUG-82's Option A holds the spouse's Traditional 401k bucket (`tradSp`) OUT of the drawable
+pool (`spouseDrawable = 0`) until the spouse actually retires — by design, since it's their still-
+working, likely-pre-59½ account. But a shortfall caused PURELY by that hold-out (the money exists in
+`tradSp`, it's just walled off) was reported as genuine depletion: `depletionAge` got set and the walk
+broke, while `balEnd`/`total` — computed from the FULL household balance including the untouched
+`tradSp` — kept climbing. Three headline surfaces then disagreed off the exact same walk object:
+`depletionAge` said "broke," the chart's last plotted point kept rising, and "Left at {lifeExp}"
+showed the pre-break balance because the walk had stopped early. Verified repro: `depletionAge: 63`
+beside a rising $1.23M household balance.
+**Why this wasn't caught at BUG-82 ship time:** the mechanism (a last-resort penalized draw from the
+held-out bucket) was explicitly NAMED in `docs/SPOUSAL-PLANNING-DESIGN.md` as
+"shortfall-spillover-with-penalty" and deliberately deferred as "the rare case… the income floor
+removes most of the pressure." The adversarial review's repro showed the deferral premise fails for
+exactly the population BUG-82 exists to help: a long gap + an early primary retirement + modest
+primary balances — not a rare edge case for that demographic, a common one.
+**A first fix draft (written before this session's plan-first detour) was itself broken** — a
+sub-dollar fixed-point residual still tripped the strict `> 0` depletion check, so the naive version
+still reported `depletionAge: 63`, `yearsSustained: 4.999998`. Caught and corrected by a dedicated
+Opus planning-and-audit pass before any of the three findings were implemented, per an explicit owner
+instruction to plan all three together rather than implement piecemeal.
+**Fix:** a gated, last-resort draw from `tradSp`, firing only when the ordinary pool (`drawInOrder`,
+capped at `spouseDrawable = 0` during hold-out) genuinely can't cover the year. Draws only up to what's
+actually in `tradSp`; grossed up via a 12-iteration fixed point for BOTH the ordinary income tax the
+draw itself triggers (stacked on everything else taxed that year) and the 10% early-withdrawal penalty
+under 59½ — the same statutory constants and pattern `simulation.js`'s money-events funding cascade
+already uses. Charges the penalty when the spouse's age is unknown (conservative) rather than skipping
+the hatch, which would leave the bucket walled off AND the contradiction unfixed. A `spillCapped` flag
+(the fix for the broken first draft) makes the residual EXACTLY zero whenever the bucket covers the
+full grossed-up need — never a spurious sub-dollar remainder. The depletion predicate now uses
+`residualShort` (what the spillover couldn't close) instead of the raw shortfall, and the
+fractional-year calc is reformulated to `(outflow − residualShort) / outflow` — proven algebraically
+identical to the old `availableBeforeDraw / outflow` whenever there's no spillover, and regression-
+tested bit-for-bit unchanged against a depleting no-spouse fixture.
+**Surfaced, not silent:** `totalSpouseSpillover`/`totalSpouseSpilloverTax`/`firstSpouseSpilloverAge`
+lifetime rollups (`buildRetirementPhase`) feed a pre-gated caption in both Classic and Horizon's Plan
+Income Meter whenever a plan actually needed the hatch: "Your plan works, but it needs about $X
+withdrawn early from your spouse's 401k (from age N), costing $Y in taxes and early-withdrawal
+penalties." Capping the what-if VERDICT at "tight" when a scenario forces a spillover was deliberately
+NOT folded in here — filed as ND-2 below, since it touches the shared verdict resolver used by three
+other surfaces.
+**Verified outcome on the repro:** `depletionAge` 63 → null, `yearsSustained` 4.6 → Infinity (37 rows
+run to the horizon vs. 5 before), `endVal` — a real age-95 balance of $580,551 (down from the shipped
+$1.23M, which the point of the fix — that balance was money the household could never actually touch
+while simultaneously being called broke).
+**Where:** `src/model/retirement-engine.js` (`buildRetirementWalkByAccount`), `src/model/retirement-
+phase.js` (the rollups), `src/App.jsx` (the caption), `src/horizon/screens/PlanScreen.jsx`.
+**Tests:** T-F1.1 (the bug verbatim, plus a monotonic-total invariant across the whole walk), T-F1.2
+(structural no-contradiction invariant — you can never be declared broke in a year that still holds a
+positive spouse balance), T-F1.3 (inertness), T-F1.4 (depleting no-spouse fixture bit-matched pre/post
+— locks the `frac` reformulation), T-F1.5 (the penalty gate — strictly higher tax+penalty under 59½),
+T-F1.6 (conservation), T-F1.7 (no double-dip with money events — a one-time outflow larger than the
+drawable pool reaches `tradSp` only via the reported spillover, net of that year's contribution and
+growth), T-F1.8 (genuine depletion still reported when the bucket is too small to close the gap),
+T-F1.9 (the lifetime rollups are the lifeExp-bounded row sums, 0/0/null with no spouse). Also updated
+the existing T2.7a (a prior CodeRabbit fail-closed fix's regression test) to reflect that a shortfall
+with an unknown spouse age now correctly reaches the penalized escape hatch instead of reporting
+immediate depletion — the two fixes compose as designed.
+**Inert at default state:** no spouse data ⇒ `spouseHoldout` is always `false` ⇒ the whole block is
+skipped ⇒ `residualShort ≡ spendShort + taxShort` exactly ⇒ the depletion predicate is provably
+equivalent to the pre-fix formula. Golden master untouched.
 
 ---
 

@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (998 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1027 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1588,11 +1588,55 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   `docs/BUGS.md` → BUG-82 (Resolved). `docs/FINANCIAL-MODEL.md`'s "Years Sustained" section
   corrected in the same pass (had gone stale describing `buildRetirementDrawdown` as "the one
   tax-honest walk," untrue since BUG-35).
+- **BUG-88/89/90 fixed — three findings from an adversarial review of BUG-82's own PR (2026-07-26,
+  same branch, PR #59):** an Opus adversarial review of the just-merged spouse-engine work surfaced
+  three real, non-overlapping bugs. Rather than implementing them piecemeal, the owner asked for a
+  plan first — a dedicated Opus planning-and-audit pass wrote a detailed implementation plan,
+  re-verified every claim in the original review against the actual code (correcting the review's own
+  numbers in two places), and caught that my own first-draft fix for one finding was itself broken
+  (a sub-dollar fixed-point residual still tripped the depletion check). All three then shipped in
+  gated batches (implement → review → full gate → commit), per this codebase's established process:
+  1. **BUG-88 (highest severity)** — Option A's spouse hold-out could produce a genuine contradiction:
+     a shortfall caused purely by the hold-out was reported as depletion while the household's total
+     (still counting the untouched spouse bucket) kept climbing. Fixed with a gated, penalized
+     last-resort draw from the held-out bucket (a mechanism named and deliberately deferred in the
+     original spousal-planning design doc as "the rare case" — the adversarial review's repro showed
+     the deferral premise fails for exactly the target demographic). Surfaced via new
+     `totalSpouseSpillover`/`totalSpouseSpilloverTax`/`firstSpouseSpilloverAge` rollups and a caption
+     in both UIs.
+  2. **BUG-89** — the conversion window's income floors never got the spouse's gap-year wages, so the
+     conversion planner and the retirement engine modeled different households — real converted
+     dollars overshot the intended bracket (verified: $243,600 vs. the honest $123,600 in an MFJ/$120k-
+     spouse-wages fixture). Fixed by wiring the engine's own spouse-wage map into `buildIncomeFloors`
+     and all three App.jsx call sites, including the conversion optimizer (missing that one would have
+     let the optimizer search a spouse-blind model — the BUG-31 "two implementations" class again).
+  3. **BUG-90** — the spouse's gap-year maps carried nominal dollars into a walk that measures
+     everything in retirement-year purchasing power, so a spouse's paycheck was the only income stream
+     whose real value silently grew inside the walk. The adversarial review's own suggested fix
+     (deflate to today's dollars) was independently refuted during planning — it creates a ~22% cliff
+     at the seed/map seam and doesn't reproduce the review's own cited ratio. Fixed by deflating to the
+     *primary's retirement year* instead.
+  Two new findings surfaced *by the planning pass itself* (beyond the three it was scoped to fix) were
+  deliberately NOT folded in and filed instead: **BUG-91** (Open, high severity) — a much larger,
+  pre-existing, model-wide real/nominal dollar mismatch (`effectiveExpenses`/`pensionMonthly` are
+  today's-dollars applied flat against a retirement-year-dollar walk) that predates BUG-82 entirely and
+  would move the golden master — recommended as its own dedicated session; **BUG-92** (Open) — no
+  verdict signal when a plan leans on the new spillover hatch, deferred because it touches the shared
+  verdict resolver used by three other surfaces. A third finding (ND-3) was folded into BUG-84's
+  existing entry as a documented addendum rather than a new bug number, and a fourth (ND-4, the
+  escape hatch's contribute-then-raid-the-same-bucket behavior) was recorded as an accepted, conservative
+  simplification in `docs/FINANCIAL-MODEL.md` rather than filed as a bug.
+  Also added T-X.2, a composed end-to-end test reproducing the plan's target-demographic household
+  (primary retires at 58 on modest balances, spouse is 48 and works to 65 — a 17-year gap) to prove
+  all three fixes work together in the same household without contradiction, not just individually.
+  1002 → **1027 tests**. Golden master untouched throughout — every new parameter defaults to its
+  zero/null/false value. Full root cause, fix mechanism, and file list: `docs/BUGS.md` →
+  BUG-88/BUG-89/BUG-90 (Resolved), BUG-91/BUG-92 (Open), BUG-84 (addendum).
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (998 tests)
+- `npm test` — run model + formatter + render-smoke tests (1027 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
