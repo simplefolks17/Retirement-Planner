@@ -183,3 +183,70 @@ describe("Monte Carlo Range lens — spouse-gap caveat (#30 / BUG-82 interim)", 
     app.unmount();
   });
 });
+
+// Finding 3 (adversarial review, 2026-07-26) — wiring gate (T-F3.4). The model-only
+// fix (retirement-phase.test.js) proves the deflator works in isolation; this proves
+// BOTH App.jsx call sites actually hand it a live inflationRate, not a stale default,
+// so a future caller can't silently forget it (principle 13, "tests gate the wiring").
+describe("inflationRate wiring into the spouse gap-year deflator (Finding 3, T-F3.4)", () => {
+  it("the what-if re-seed bundle carries the live inflationRate at the default assumption", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    const infl = app.latest().assumptions.inflationRate.value;
+    expect(infl).toBeGreaterThan(0);
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs.inflationRate).toBe(infl);
+    app.unmount();
+  });
+
+  it("the bundle tracks a live change to inflationRate, not a stale snapshot", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    app.fire(() => app.latest().assumptions.inflationRate.set(6));
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs.inflationRate).toBe(6);
+    app.unmount();
+  });
+
+  it("end-to-end: raising inflationRate lowers the retirement walk's ending balance for a spouse-gap household (proves the main-path spouseSeed, not just the what-if bundle, actually consumes it)", () => {
+    // NOTE: totalAtRet is the balance AT retirement (sTrad = spouseSeed.tradSeed,
+    // T-F3.6-proven inflation-invariant) — the gap-year maps only apply INSIDE the
+    // retirement walk, after that point. So the observable here is the walk's
+    // own endVal, not totalAtRet.
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
+    const lowInfl = app.latest().retirementWalk.endVal;
+
+    app.fire(() => app.latest().assumptions.inflationRate.set(7));
+    const highInfl = app.latest().retirementWalk.endVal;
+
+    // More inflation deflates every gap-year contribution and income-floor offset
+    // more, so the walk ends with a strictly lower balance — this can only move if
+    // the main-path spouseSeed memo (not just the what-if resim bundle) actually
+    // received the new inflationRate.
+    expect(highInfl).toBeLessThan(lowInfl);
+    app.unmount();
+  });
+
+  it("no spouse data ⇒ inert: the spouse-seed deflator path is never constructed regardless of inflationRate (golden master is guarded separately)", () => {
+    // NOTE: endVal/totalAtRet are NOT asserted invariant here — rReal already
+    // depends on inflationRate for everyone (spouse or not), pre-existing and
+    // unrelated to this fix. What IS specific to this fix, and must stay inert
+    // with no spouse, is that buildSpouseRetirementSeed (and its deflator) is
+    // never invoked at all — spouseSeedInputs stays null no matter what
+    // inflationRate is set to.
+    const app = mount();
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs).toBeNull();
+    app.fire(() => app.latest().assumptions.inflationRate.set(7));
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs).toBeNull();
+    app.unmount();
+  });
+});

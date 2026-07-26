@@ -396,9 +396,10 @@ export default function App() {
     return buildSpouseRetirementSeed({
       spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge,
       primaryRetAge: safeRetAge, spouseRetAge: effectiveSpouseRetAge, spouseNetRate,
+      inflationRate,
     });
   }, [hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge,
-      safeRetAge, effectiveSpouseRetAge, spouseNetRate]);
+      safeRetAge, effectiveSpouseRetAge, spouseNetRate, inflationRate]);
 
   // Per-age estimated tax (incl. any early-withdrawal penalty) for the working-year
   // conversions actually set — read straight off the engine-computed simData rows so
@@ -1349,7 +1350,7 @@ export default function App() {
     // with no spouse (inert).
     spouseSeedInputs: hasSpouse ? {
       spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-      spouseRetAge: effectiveSpouseRetAge, spouseNetRate,
+      spouseRetAge: effectiveSpouseRetAge, spouseNetRate, inflationRate,
     } : null,
     // #30 interop: the same two args App's own buildAccumChart call passes, so a
     // resim's accumulation chart is HOUSEHOLD like the main path's (a pre-existing
@@ -1362,7 +1363,7 @@ export default function App() {
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
        addlPreTaxBal, depletionAge,
        hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-       effectiveSpouseRetAge, spouseNetRate,
+       effectiveSpouseRetAge, spouseNetRate, inflationRate,
        spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
