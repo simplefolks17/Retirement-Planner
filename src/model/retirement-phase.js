@@ -250,6 +250,10 @@ export function buildSpouseRetirementSeed({
   primaryRetAge,          // safeRetAge (main path) or a scenario's retirement age (a later batch)
   spouseRetAge,           // effectiveSpouseRetAge
   spouseNetRate,          // clamp01(1 − combinedEffRate) — tax-only rate, see below
+  // Annual inflation %, used ONLY to deflate the gap-year flows below into the
+  // engine's own dollar unit (BUG-82 follow-up). 0 (the default) ⇒ deflator 1 ⇒
+  // byte-identical to the pre-fix maps, so every existing caller/test is inert.
+  inflationRate = 0,
 }) {
   const phase2End = primaryRetAge - currentAge;
   const spouseAgeAtPrimaryRet = spouseAgeAt(currentAge, spouseCurrentAge, primaryRetAge);
@@ -261,6 +265,25 @@ export function buildSpouseRetirementSeed({
   // Clamp defensively: a non-finite or out-of-range rate must never scale a draw offset.
   const netRate = Math.max(0, Math.min(1, Number.isFinite(spouseNetRate) ? spouseNetRate : 0));
 
+  // ── Unit correction (#30 / BUG-82 follow-up) ──────────────────────────────
+  // runSimulation compounds NOMINALLY (returnRate, incomeGrowth), but the retirement
+  // engine walks at rReal against a flat effectiveExpenses — its balance unit is the
+  // purchasing power of the primary's RETIREMENT year (a seed B grown at rReal for k
+  // years is exactly B(1+r)^k deflated by (1+i)^k). The seed above is already in that
+  // unit by construction (it IS the nominal balance in that calendar year). The
+  // per-year maps below were not: they carried each LATER year's nominal dollars into
+  // a walk that never re-inflates anything, so a spouse's gap-year paycheck was the
+  // only stream whose purchasing power silently grew inside the walk. Deflate each gap
+  // year back to the retirement year. Base = primaryRetAge (NOT currentAge): the
+  // spouse's contribution in the primary's retirement year is already inside the seed
+  // at full nominal value, so any other base puts a discontinuity right at the seam.
+  const infl = Number.isFinite(inflationRate) ? inflationRate / 100 : 0;
+  const deflatorFor = (primaryAge) => {
+    const k = primaryAge - primaryRetAge;               // 1, 2, 3 … over the gap window
+    if (!(k > 0) || !(1 + infl > 0)) return 1;           // guards k<=0 and a pathological rate
+    return Math.pow(1 + infl, k);
+  };
+
   const spouseContribByAge = {};
   const spouseTaxableIncomeByAge = {};
   const spouseIncomeFloorByAge = {};
@@ -269,10 +292,11 @@ export function buildSpouseRetirementSeed({
     if (sAge <= spouseAgeAtPrimaryRet) continue;   // already inside the seed
     if (sAge > spouseRetAge) break;                // spouse retired — no more contributions
     const primaryAge = primaryAgeAt(currentAge, spouseCurrentAge, sAge);
+    const defl     = deflatorFor(primaryAge);
     const deferral = Math.min(row.c401kEmployee ?? 0, row.salary ?? 0);
-    const hsa      = row.cHSA ?? 0;
-    const wages    = Math.max(0, (row.salary ?? 0) - deferral - hsa);
-    spouseContribByAge[primaryAge]       = Math.round(row.c401k ?? 0);
+    const hsa      = (row.cHSA ?? 0) / defl;
+    const wages    = Math.max(0, (row.salary ?? 0) - deferral - (row.cHSA ?? 0)) / defl;
+    spouseContribByAge[primaryAge]       = Math.round((row.c401k ?? 0) / defl);
     spouseTaxableIncomeByAge[primaryAge] = Math.round(wages);
     // v1: the spouse's Roth/Taxable/HSA gap contributions are treated as SPENT
     // (BUG-85 tracks full parity), so cRoth/cTaxable stay inside the net wage figure

@@ -383,4 +383,105 @@ describe("buildSpouseRetirementSeed", () => {
     expect(withDefaultSpouseParams.yearsSustained).toBe(withoutSpouseParams.yearsSustained);
     expect(withDefaultSpouseParams.rmdSchedule).toEqual(withoutSpouseParams.rmdSchedule);
   });
+
+  // ── Finding 3 (adversarial review, 2026-07-26): nominal spouse gap-year flows
+  // in a real-dollar walk. runSimulation compounds nominally; the retirement
+  // engine walks at rReal against a flat effectiveExpenses — its balance unit is
+  // the purchasing power of the primary's RETIREMENT year. The gap-year maps
+  // above were copying each later year's nominal dollars verbatim, so a spouse's
+  // paycheck was the only stream whose purchasing power silently grew inside a
+  // walk that never re-inflates anything. inflationRate deflates the three maps
+  // back to the retirement year; the seeds are untouched (already correct).
+  it("T-F3.1 — the bug, verbatim: a 10-year gap deflates the income floor by ~13%, the last year by exactly (1+infl)^10", () => {
+    const currentAge = 50, spouseCurrentAge = 40, primaryRetAge = 60, spouseRetAge = 60;
+    const rows = buildRows(spouseCurrentAge, 20); // spouse ages 41..60
+    const snapshot = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    const common = {
+      spouseSimData: rows, spouseCurrentSnapshot: snapshot,
+      spouseCurrentAge, currentAge, primaryRetAge, spouseRetAge, spouseNetRate: 0.7,
+    };
+    const nominal = buildSpouseRetirementSeed(common);
+    const real = buildSpouseRetirementSeed({ ...common, inflationRate: 2.5 });
+
+    const sumNominal = Object.values(nominal.spouseIncomeFloorByAge).reduce((a, b) => a + b, 0);
+    const sumReal = Object.values(real.spouseIncomeFloorByAge).reduce((a, b) => a + b, 0);
+    const pctBelow = 1 - sumReal / sumNominal;
+    expect(pctBelow).toBeGreaterThan(0.10);
+    expect(pctBelow).toBeLessThan(0.16);
+
+    const lastAge = primaryRetAge + 10; // k = 10, the final gap year
+    const expectedDeflator = Math.pow(1.025, 10);
+    expect(real.spouseContribByAge[lastAge])
+      .toBe(Math.round(nominal.spouseContribByAge[lastAge] / expectedDeflator));
+  });
+
+  it("T-F3.2 — seam continuity: the first gap-year contribution stays close to the in-seed contribution (locks the deflation base to primaryRetAge)", () => {
+    const currentAge = 50, spouseCurrentAge = 40, primaryRetAge = 60, spouseRetAge = 70;
+    const rows = buildRows(spouseCurrentAge, 30); // spouse ages 41..70
+    const snapshot = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    const inSeedContrib = rows[9].c401k; // spouse age 50 — the seed row itself (phase2End-1 = 9)
+
+    const seed = buildSpouseRetirementSeed({
+      spouseSimData: rows, spouseCurrentSnapshot: snapshot,
+      spouseCurrentAge, currentAge, primaryRetAge, spouseRetAge, spouseNetRate: 0.7,
+      inflationRate: 2.5,
+    });
+    const firstGapContrib = seed.spouseContribByAge[primaryRetAge + 1]; // k = 1
+    // Deflating to the retirement year keeps the seam smooth — within a few percent
+    // of the in-seed value. A today's-dollar base (k = age - currentAge = 11 here)
+    // would put a ~22% cliff at this exact seam instead — the bug this test locks against.
+    expect(Math.abs(firstGapContrib - inSeedContrib) / inSeedContrib).toBeLessThan(0.05);
+  });
+
+  it("T-F3.3 — inertness: inflationRate omitted / 0 / non-finite all reduce to the pre-fix (undeflated) maps", () => {
+    const currentAge = 55, spouseCurrentAge = 45, primaryRetAge = 62, spouseRetAge = 68;
+    const rows = buildRows(spouseCurrentAge, 25);
+    const snapshot = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    const common = {
+      spouseSimData: rows, spouseCurrentSnapshot: snapshot,
+      spouseCurrentAge, currentAge, primaryRetAge, spouseRetAge, spouseNetRate: 0.6,
+    };
+    const omitted = buildSpouseRetirementSeed(common);
+    const zero = buildSpouseRetirementSeed({ ...common, inflationRate: 0 });
+    const nonFinite = buildSpouseRetirementSeed({ ...common, inflationRate: NaN });
+    expect(zero.spouseContribByAge).toEqual(omitted.spouseContribByAge);
+    expect(nonFinite.spouseContribByAge).toEqual(omitted.spouseContribByAge);
+    expect(zero.spouseIncomeFloorByAge).toEqual(omitted.spouseIncomeFloorByAge);
+    expect(nonFinite.spouseIncomeFloorByAge).toEqual(omitted.spouseIncomeFloorByAge);
+  });
+
+  it("T-F3.5 — monotonicity: a higher inflationRate strictly lowers every gap-year map value", () => {
+    const currentAge = 52, spouseCurrentAge = 42, primaryRetAge = 63, spouseRetAge = 71;
+    const rows = buildRows(spouseCurrentAge, 30);
+    const snapshot = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    const common = {
+      spouseSimData: rows, spouseCurrentSnapshot: snapshot,
+      spouseCurrentAge, currentAge, primaryRetAge, spouseRetAge, spouseNetRate: 0.7,
+    };
+    const low = buildSpouseRetirementSeed({ ...common, inflationRate: 1.5 });
+    const high = buildSpouseRetirementSeed({ ...common, inflationRate: 4.5 });
+    const ages = Object.keys(low.spouseContribByAge).map(Number);
+    expect(ages.length).toBeGreaterThan(0);
+    for (const age of ages) {
+      expect(high.spouseContribByAge[age]).toBeLessThan(low.spouseContribByAge[age]);
+      expect(high.spouseTaxableIncomeByAge[age]).toBeLessThan(low.spouseTaxableIncomeByAge[age]);
+      expect(high.spouseIncomeFloorByAge[age]).toBeLessThan(low.spouseIncomeFloorByAge[age]);
+    }
+  });
+
+  it("T-F3.6 — seeds unchanged: tradSeed/rothSeed/taxableSeed/hsaSeed never depend on inflationRate (proves the fix touches maps only)", () => {
+    const currentAge = 58, spouseCurrentAge = 48, primaryRetAge = 64, spouseRetAge = 69;
+    const rows = buildRows(spouseCurrentAge, 20);
+    const snapshot = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    const common = {
+      spouseSimData: rows, spouseCurrentSnapshot: snapshot,
+      spouseCurrentAge, currentAge, primaryRetAge, spouseRetAge, spouseNetRate: 0.65,
+    };
+    const noInfl = buildSpouseRetirementSeed(common);
+    const withInfl = buildSpouseRetirementSeed({ ...common, inflationRate: 6 });
+    expect(withInfl.tradSeed).toBe(noInfl.tradSeed);
+    expect(withInfl.rothSeed).toBe(noInfl.rothSeed);
+    expect(withInfl.taxableSeed).toBe(noInfl.taxableSeed);
+    expect(withInfl.hsaSeed).toBe(noInfl.hsaSeed);
+  });
 });
