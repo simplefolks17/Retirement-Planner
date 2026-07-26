@@ -157,6 +157,15 @@ export function buildRetirementPhase({
     Math.round(sumRmdTaxTo(noConvRows, commonMaxAge) - sumRmdTaxTo(rows, commonMaxAge)));
   const grossNetBenefit  = rmdTaxSaved - conversionCost;
 
+  // Finding 1 (#30 / BUG-82 follow-up): lifetime rollups of the escape-hatch
+  // spillover, bounded to lifeExp like the other lifetime tax sums above (0/0/null
+  // with no spouse, or whenever the hatch never fires — inert by construction).
+  const sumSpill    = rs => rs.reduce((s, r) => s + (r.spouseSpillover    ?? 0), 0);
+  const sumSpillTax = rs => rs.reduce((s, r) => s + (r.spouseSpilloverTax ?? 0), 0);
+  const totalSpouseSpillover    = Math.round(sumSpill(rows));
+  const totalSpouseSpilloverTax = Math.round(sumSpillTax(rows));
+  const firstSpouseSpilloverAge = rows.find(r => (r.spouseSpillover ?? 0) > 0)?.age ?? null;
+
   return {
     // chart / longevity
     rows,
@@ -170,6 +179,10 @@ export function buildRetirementPhase({
     totalDrawTax,
     // conversion benefit (before IRMAA/ACA — those layer on in conversion-evaluation)
     conversionCost, rmdTaxBiteNoConv, rmdTaxSaved, grossNetBenefit,
+    // spouse hold-out escape-hatch rollups (Finding 1) — already included in
+    // totalDrawTax/tax above (a breakdown, not an addend); reported separately so
+    // a UI surface can flag "this plan needed early spouse-401k withdrawals."
+    totalSpouseSpillover, totalSpouseSpilloverTax, firstSpouseSpilloverAge,
     // full far-horizon walks for any consumer that needs the tail
     planWalk: plan, noConvWalk: noConv,
   };

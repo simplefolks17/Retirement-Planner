@@ -109,7 +109,7 @@ function PortfolioHero({ t, totalAtRet, planHighlights }) {
 // with per-source breakdown bars (SS, portfolio). Bar widths use model-provided
 // integer percentages (ssPct, portfolioPct) — no division in JSX (rule 10).
 function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
-  const { incomeReplacementPct, retIncomeFlow, spouseIncomeScopeNote } = planHighlights ?? {};
+  const { incomeReplacementPct, retIncomeFlow, spouseIncomeScopeNote, spouseSpilloverNote } = planHighlights ?? {};
   if (!retIncomeFlow) return null;
 
   const {
@@ -194,6 +194,11 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
       {spouseIncomeScopeNote && (
         <p style={{ margin: "8px 0 0", font: `400 10px ${HF}`, color: t.mut, lineHeight: 1.4 }}>
           {spouseIncomeScopeNote}
+        </p>
+      )}
+      {spouseSpilloverNote && (
+        <p style={{ margin: "8px 0 0", font: `400 10px ${HF}`, color: t.warm, lineHeight: 1.4 }}>
+          {spouseSpilloverNote}
         </p>
       )}
     </div>

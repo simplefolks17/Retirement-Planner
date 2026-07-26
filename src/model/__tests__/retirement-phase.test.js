@@ -94,6 +94,33 @@ describe("buildRetirementPhase — single source", () => {
     expect(rows[rows.length - 1].age).toBeLessThanOrEqual(90);
     expect(planWalk.rows.length).toBeGreaterThanOrEqual(rows.length);
   });
+
+  // T-F1.9 (Finding 1, adversarial review, 2026-07-26): the lifetime spillover
+  // rollups are the lifeExp-bounded sums of the display rows — same bounding
+  // convention as rmdTaxBite/conversionCost/totalDrawTax above.
+  it("T-F1.9 — totalSpouseSpillover/totalSpouseSpilloverTax/firstSpouseSpilloverAge are the lifeExp-bounded sums, and 0/0/null with no spouse", () => {
+    const noSpouse = base();
+    expect(noSpouse.totalSpouseSpillover).toBe(0);
+    expect(noSpouse.totalSpouseSpilloverTax).toBe(0);
+    expect(noSpouse.firstSpouseSpilloverAge).toBeNull();
+
+    const spouseIncomeFloorByAge = {};
+    const spouseContribByAge = {};
+    for (let a = 61; a <= 75; a++) { spouseIncomeFloorByAge[a] = 15_000; spouseContribByAge[a] = 12_000; }
+    const withSpouse = base({
+      tradGross: 50_000, tradGrossSpouse: 3_000_000, roth: 0, taxable: 0, hsa: 0,
+      startAge: 60, lifeExp: 90, longevityHorizon: 60 + 130, effectiveExpenses: 60_000,
+      currentAge: 60, spouseCurrentAge: 45,
+      spouseRetirementAge: 75, spouseContribByAge, spouseIncomeFloorByAge,
+    });
+    expect(withSpouse.totalSpouseSpillover).toBeGreaterThan(0);
+    const sumSpill    = Math.round(withSpouse.rows.reduce((s, r) => s + (r.spouseSpillover    ?? 0), 0));
+    const sumSpillTax = Math.round(withSpouse.rows.reduce((s, r) => s + (r.spouseSpilloverTax ?? 0), 0));
+    expect(withSpouse.totalSpouseSpillover).toBe(sumSpill);
+    expect(withSpouse.totalSpouseSpilloverTax).toBe(sumSpillTax);
+    expect(withSpouse.firstSpouseSpilloverAge)
+      .toBe(withSpouse.rows.find(r => (r.spouseSpillover ?? 0) > 0)?.age ?? null);
+  });
 });
 
 // ── buildConversionByAge — window decoupling (B1) ──────────────────────────────

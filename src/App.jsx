@@ -726,6 +726,18 @@ export default function App() {
     () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),
     [retPhaseBase, conversionByAge]);
 
+  // Finding 1 (#30 / BUG-82 follow-up): whenever the plan needed the shortfall-
+  // spillover escape hatch (the primary pool couldn't cover a gap year on its
+  // own, and the spouse's held-out 401k covered the rest at a penalty), say so —
+  // rendered beside spouseIncomeScopeNote below (rule 10: the string is built
+  // here, the screen only renders it). null = the hatch never fired (the common
+  // case — inert with no spouse, since totalSpouseSpillover is 0 by construction).
+  const spouseSpilloverNote = (retPhase?.totalSpouseSpillover ?? 0) > 0
+    ? `Your plan works, but it needs about ${fmt(retPhase.totalSpouseSpillover)} withdrawn early `
+    + `from your spouse's 401k (from age ${retPhase.firstSpouseSpilloverAge}), costing `
+    + `${fmt(retPhase.totalSpouseSpilloverTax)} in taxes and early-withdrawal penalties.`
+    : null;
+
   // RMD display + lifetime tax, all derived from the ONE walk (no second projection).
   // rmdData rows already carry { age, rmd, bal, divisor, tax } — they ARE rmdDataWithTax.
   const rmdData         = retPhase.rmdSchedule;
@@ -1477,12 +1489,14 @@ export default function App() {
       lifetimeTaxBurden: (retPhase?.rmdTaxBite ?? 0) + (retPhase?.conversionCost ?? 0),
       yearsToRetirement:  Math.max(0, safeRetAge - currentAge),
       retirementDuration: Math.max(0, safeLifeExp - safeRetAge),
-      // #30 / BUG-82: passed through (not computed here) — see spouseIncomeScopeNote above.
+      // #30 / BUG-82: passed through (not computed here) — see spouseIncomeScopeNote
+      // and spouseSpilloverNote (Finding 1) above.
       spouseIncomeScopeNote,
+      spouseSpilloverNote,
     };
   }, [currentSaved, totalAtRet, takeHome, effectiveExpenses,
       ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge,
-      spouseIncomeAtRet, spouseIncomeScopeNote]);
+      spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote]);
 
   // Plan screen "Try a change" slider bounds — age/financial math extracted from the screen (rule 10).
   // canTuneRothConversion: pre-gated eligibility boolean so the screen never does > 0 check.
@@ -4400,6 +4414,11 @@ export default function App() {
                 {spouseIncomeScopeNote && (
                   <p style={{ margin: "0 0 10px", fontSize: 10, color: C.muted, fontStyle: "italic" }}>
                     {spouseIncomeScopeNote}
+                  </p>
+                )}
+                {spouseSpilloverNote && (
+                  <p style={{ margin: "0 0 10px", fontSize: 10, color: C.orange, fontStyle: "italic" }}>
+                    {spouseSpilloverNote}
                   </p>
                 )}
                 {withdrawalScopeIsPrimaryOnly && (
