@@ -277,41 +277,6 @@ already does internally, for defense-in-depth parity with `spouseHoldout`.
 convenient, otherwise fine to leave for a future hardening pass —
 see `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`.
 
-### BUG-97 — `calcWhatIfDelta` silently dropped the spouse balance on a forced re-sim (found + fixed 2026-07-26, roadmap-alignment review agent)
-
-**Owner:** me_theguy. **Severity: MEDIUM (live on a shipped Apply-with-preview button; fixed same
-day).**
-**Found by:** the roadmap-alignment review agent, as a new finding beyond its assigned scope — a
-concrete, reproducible bug rather than a strategic observation.
-**What:** `calcWhatIfDelta`'s forced-resim branch (`what-if.js`) reconstructed `scenarioTotalAtRet`
-from the PRIMARY's re-simulated balance only, while `baseTotalAtRet` (passed in from `App.jsx`) is the
-HOUSEHOLD total (primary + spouse). The sibling function `calcWhatIfScenario` received the equivalent
-fix under BUG-77 (plus a CodeRabbit follow-up extending it from just `tradSeed` to all four spouse
-buckets); `calcWhatIfDelta` never did — it didn't even accept a `spouseSeedInputs` parameter. Third
-occurrence of this exact class ("fixed in one place, not a sibling place"), after BUG-61
-(`addlPreTaxBal`) and BUG-79 (`calcWhatIfScenario`'s own version of this gap).
-**Measured (roadmap-alignment agent, a no-change candidate against `surplusApplySite`'s live Apply
-button):**
-```
-preview 'current'   : 4,725,318
-preview 'candidate'  : 3,825,318      <- identical contributions
-phantom delta shown  : -900,000       <- exactly the spouse bucket
-```
-**Fix:** `calcWhatIfDelta` gains an optional `spouseSeedInputs` param; on a forced resim it re-seeds
-the spouse via the SAME `buildSpouseRetirementSeed` builder `calcWhatIfScenario` already uses (so the
-two functions can never diverge on what the spouse's re-seeded balance is), and adds all four
-re-seeded buckets into `scenarioTotalAtRet`. App.jsx's two call sites (`surplusApplySite`'s
-before/after) already spread the whole `whatIfBundle`, which already carried `spouseSeedInputs` from
-the earlier BUG-77 wiring — no App.jsx change needed. Classic's `WhatIfPanel` built its own narrower
-args object with the identical gap; its `sharedArgs` now reads `spouseSeedInputs` off the same
-`whatIfBundle` prop it already receives for Max Affordable mode.
-**Where:** `src/model/what-if.js` (`calcWhatIfDelta`), `src/components/WhatIfPanel.jsx` (`sharedArgs`).
-**Tests:** a forced resim adds exactly the spouse's re-seeded total (not silently dropping it); the
-phantom-delta reproduction itself (a no-op `contribOverrides` candidate no longer diverges from its
-`baseTotalAtRet`-passthrough "current" counterpart); the inert-when-omitted guard. 1027 → 1030 tests.
-**Golden master untouched** (`spouseSeedInputs` defaults `null`), lint clean, build OK. **Resolved
-same day** — commit `cbdfd23`.
-
 ### BUG-85 — Spouse Roth/Taxable/HSA gap-year contributions treated as spent, not tracked (filed 2026-07-25, BUG-82 fix session — v1 scope decision)
 
 **Owner:** me_theguy. **Severity: LOW-MEDIUM (smaller, weaker-rationale dollar impact than BUG-82).**
@@ -343,6 +308,13 @@ the new buckets too.
 **Where:** `src/model/retirement-phase.js` (`buildSpouseRetirementSeed`), `src/model/retirement-engine.js`
 (`buildRetirementWalkByAccount`).
 **Inert at default state:** no spouse data → no effect. Golden master untouched.
+**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** `buildSpouseRetirementSeed`
+(`retirement-phase.js`) still returns only `rothSeed`/`taxableSeed`/`hsaSeed` as one-time seed values
+(the `"v1: merged into the hh pools unchanged"` comment is still literally there) with no per-age
+contribution map for any of the three — confirmed against current code, which this session touched
+substantially (BUG-90 added an `inflationRate` deflation param to the SAME function, and BUG-97's fix
+re-seeds these three fields on a what-if resim) without changing this scope boundary. Still open,
+unchanged.
 
 ### BUG-84 — Withdrawal-order + conversion-sim scalars (`retTrad`/`retRoth`/`retTaxable`) stayed primary-only after #30 (found 2026-07-23, CodeRabbit review of PR #57 commit 325eaad)
 
@@ -441,6 +413,11 @@ onChange(id)}>` (now line 142, no `tabIndex`/`onKeyDown`); `OnTrackPill`'s click
 — the arc band-view rename to "Range" and a new confidence driver row rendered INSIDE the pill's
 existing popover content) added content to the popover without touching the pill's own
 keyboard-focusability. Still reproduces; scope unchanged.
+**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** `TabBar` still
+`<div key={id} onClick={() => onChange(id)}` at line 143, no `tabIndex`/`onKeyDown`. This session's
+`HorizonShell.jsx` edit added a spouse-driver `note` string inside `OnTrackPill`'s existing rows map
+(withdrawal-rate driver, "temporary — includes your spouse's income through age N") — content only,
+no change to the nav shell's keyboard reachability. Still reproduces.
 
 ### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
 
@@ -464,6 +441,10 @@ the popover.
 `Escape` handling anywhere in `HorizonShell.jsx` (file-wide grep). This session's addition to the
 popover (Batch 3's confidence driver row) is new content rendered inside the existing `open && (…)`
 block — the dismissal mechanism itself is untouched. Still reproduces.
+**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** popover still closes
+only via its own `✕` (line 111-112) — no outside-click or `Escape` handler added. This session's only
+`HorizonShell.jsx` change was the spouse-driver note string inside the existing rows map (see BUG-49's
+same-day re-verification, above); the dismissal mechanism is untouched. Still reproduces.
 
 ---
 
@@ -621,6 +602,9 @@ file was touched this session.
 **Re-verified 2026-07-23 (PR #57 session close-out):** still zero matches for `conversionTaxSource`
 in either file (grep-confirmed against current HEAD, after this session's #30 + moneyEvents-
 extension edits to `retirement-engine.js`). Still reproduces, scope unchanged.
+**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** still zero matches
+for `conversionTaxSource` in either file (grep-confirmed against current HEAD, after this session's
+spouse-engine hold-out/spillover/gap-year-map work in both files). Still reproduces, scope unchanged.
 
 ### BUG-38 — Engine doesn't charge the base tax on the SS/pension floor (found 2026-06-15, PR #32 review)
 
@@ -663,6 +647,22 @@ taxableIncomeAdjustment` (line 197): that income is taxed as an increment above 
 designed (correct — see BUG-36's 2026-07-20 narrowing note), but it means the untaxed base this bug
 describes is still exactly the SS/pension floor, now sitting under one more stacked layer than
 before. No change to this bug's scope or fix path.
+**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out) — still reproduces,
+line numbers shifted, and BUG-82's spouse gap-year income joined the untaxed floor rather than
+staying an increment above it.** This session's spouse hold-out/spillover engine work
+(`retirement-engine.js`) shifted the tax fixed-point block: `needed = (spendNeed - spouseApplied) +
+eventOutflow` now at line 249; `incFloor = floor + taxableIncomeAdjustment` now at line 284; `tFloor
+= calcTax(floor, filingStatus).tax` now at line 288. `tFloor` is still used only as a subtracted
+baseline inside `inflowTax = (tInflow - tFloor) + …`; it is never itself added to `tax` — unchanged.
+**New wrinkle:** `floor` itself (line 221-223) is now `(SS if claimed) + (pension if started) +
+spouseWages` — the spouse's gap-year wages are folded directly into the untaxed floor baseline
+(same term `tFloor` subtracts out), not into `taxableIncomeAdjustment` (which stays the
+money-events-only term feeding `incFloor`). So this bug's scope grew by exactly one more income
+source: SS, pension, AND the spouse's gap-year wages are all now effectively tax-free in the engine's
+per-year math, not just SS/pension as originally filed. No change to the fix path (the clean-form
+fix already named — fund `max(0, expenses + totalTax − grossSS − grossPension)`, extended for this
+session's work to also subtract the spouse's gross gap-year wages — would need to move `spouseWages`
+out of `floor` and into a `floorTax` component the same way SS/pension would be).
 
 ### BUG-39 — Flow-Down *accumulation* growth is a residual plug, not Σ(row.growth) (found 2026-06-15, PR #32 review)
 
@@ -689,6 +689,11 @@ line 34, unchanged. Still reproduces; `flow-down.js` was not touched this sessio
 **Re-verified 2026-07-23 (PR #57 session close-out):** `totalGrowth` still the residual formula at
 line 34, unchanged. Still reproduces; `flow-down.js` was not touched by any of this session's six
 batches or the review-fix rounds.
+**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** `totalGrowth` still
+`totalAtRet - startPortfolio - totalContrib` — the residual formula — now at line 51 (shifted by this
+session's BUG-82 Step 5 reconciliation work, which extended the file's retirement-phase rows with
+spouse contribution/spillover fields but left the accumulation-phase `totalGrowth` node itself
+untouched). Still reproduces; still inert at the default state (no accumulation money events).
 
 > **BUG-36 / BUG-37 / BUG-38 / BUG-39 — shared re-verification, 2026-07-17 (PR #56 close-out):**
 > all four are engine/model-scope deferrals, and PR #56's entire diff touches only
