@@ -391,16 +391,17 @@ describe("buildRetirementWalkByAccount — spouse gap-year working/contributing 
     expect(r70.tradSpouse).toBeLessThan(prevTradSp * 1.03); // drawn down below pure growth
   });
 
-  it("T2.7a — Option A fails CLOSED (held out), not open, when spouseAge can't be computed (CodeRabbit review fix)", () => {
+  it("T2.7a — Option A fails CLOSED on the ORDINARY pool when spouseAge can't be computed; the residual is funded ONLY via the penalized escape hatch, never a silent full exposure (CodeRabbit review fix + Finding 1)", () => {
     // spouseRetirementAge is set (spouseOptionA true) but spouseCurrentAge is
     // omitted, so spouseAgeFor(age) returns null every year. The pre-fix
     // condition (`spouseAge != null && spouseAge < spouseRetirementAge`)
     // evaluated to false on a null age and fell through to `: tradSp` —
-    // silently exposing the WHOLE held-out balance as immediately drawable,
-    // funding the spending need that should have caused a shortfall instead.
-    // No income floor here (deliberately, unlike T2.7/T2.7b's fixtures) —
-    // the ONLY funding source is the held-out spouse bucket, so whether it's
-    // actually held out is the only thing that can determine the outcome.
+    // silently exposing the WHOLE held-out balance as immediately, penalty-free
+    // drawable, as if it were an ordinary pooled account.
+    // No income floor here (deliberately, unlike T2.7/T2.7b's fixtures) — the
+    // ONLY funding source is the held-out spouse bucket, so whether it's held
+    // out from the ORDINARY pool (and reachable only via the gated, penalized
+    // escape hatch — Finding 1) is the only thing that can determine the outcome.
     const { rows, depletionAge } = buildRetirementWalkByAccount({
       startAge: 65, endAge: 70, rReal: 0.03,
       currentAge: 65, // spouseCurrentAge deliberately omitted
@@ -408,13 +409,22 @@ describe("buildRetirementWalkByAccount — spouse gap-year working/contributing 
       effectiveExpenses: 80_000, filingStatus: "single",
       spouseRetirementAge: 70,
     });
-    // Held out correctly ⇒ nothing was available to fund the $80k need ⇒
-    // immediate shortfall/depletion, NOT a successful draw from the spouse
-    // bucket (which is what the pre-fix fail-open bug would have produced).
-    expect(depletionAge).toBe(66);
+    // Held out from the ORDINARY pool correctly (spouseDrawable stays 0) — but,
+    // per Finding 1, a genuine shortfall can still reach the bucket as a
+    // last-resort PENALIZED draw (age unknown ⇒ the escape hatch conservatively
+    // charges the 10% early-withdrawal penalty). The $1M bucket easily covers
+    // five $80k/yr needs, so the walk never genuinely depletes.
+    expect(depletionAge).toBeNull();
     const r66 = rows.find(r => r.age === 66);
-    expect(r66.tradDraw).toBe(0);
-    expect(r66.tradSpouse).toBeCloseTo(1_000_000 * 1.03, 2); // pure growth, untouched by any draw
+    // The fail-OPEN bug would have exposed the whole balance to the ORDINARY,
+    // unpenalized draw mechanism — no spillover fields, no penalty. Fail-CLOSED
+    // with the escape hatch instead records an explicit, penalized spillover,
+    // and 100% of that year's 401k draw came through it (the primary pool is
+    // $0 throughout this fixture).
+    expect(r66.spouseSpillover).toBeGreaterThan(0);
+    expect(r66.spouseSpilloverTax).toBeGreaterThan(0);
+    expect(r66.tradDraw).toBeCloseTo(r66.spouseSpillover, 0); // tradDraw is unrounded, spouseSpillover is Math.round'd
+    expect(r66.tradSpouse).toBeLessThan(1_000_000 * 1.03); // bucket actually drawn down, not "untouched"
   });
 
   it("T2.7b — the spouse's final retirement-year contribution and first drawable year are the SAME year", () => {
@@ -558,6 +568,144 @@ describe("buildRetirementWalkByAccount — spouse gap-year working/contributing 
     expect(r.draw).toBe(0);
     const expectedBalEnd = r.balStart * 1.03 - r.draw - r.tax + r.spouseContrib;
     expect(Math.abs(r.balEnd - expectedBalEnd)).toBeLessThan(1e-6);
+  });
+});
+
+// ── Finding 1 (adversarial review, 2026-07-26): spouse hold-out shortfall
+// spillover (Option-A escape hatch) ────────────────────────────────────────
+// Option A holds the spouse's Traditional bucket out of the ordinary drawable
+// pool during the gap years. Before this fix, a shortfall caused PURELY by
+// that hold-out — the money exists in tradSp, it is just walled off — was
+// reported as genuine depletion while `balEnd`/`total` still counted the
+// untouched balance, so depletionAge / the chart's ending balance / "left at
+// N" all disagreed off the same walk object. The fix adds a gated,
+// last-resort penalized draw from tradSp that can only ever REDUCE a
+// shortfall, never create routine early access.
+describe("buildRetirementWalkByAccount — spouse hold-out shortfall spillover (Option-A escape hatch, Finding 1)", () => {
+  it("T-F1.1 — the bug, verbatim: a household with a large held-out spouse bucket never falsely depletes, and total never drops below the prior year's", () => {
+    const spouseIncomeFloorByAge = {};
+    const spouseContribByAge = {};
+    for (let a = 61; a <= 75; a++) { spouseIncomeFloorByAge[a] = 15_000; spouseContribByAge[a] = 12_000; }
+    const { rows, depletionAge } = buildRetirementWalkByAccount({
+      startAge: 60, endAge: 95, rReal: 0.03, currentAge: 60, spouseCurrentAge: 45,
+      tradGross: 50_000, tradGrossSpouse: 3_000_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single",
+      spouseRetirementAge: 75, spouseContribByAge, spouseIncomeFloorByAge,
+    });
+    expect(depletionAge).toBeNull();
+    let prevTotal = -Infinity;
+    for (const r of rows) {
+      expect(r.total).toBeGreaterThanOrEqual(prevTotal);
+      prevTotal = r.total;
+    }
+    // The escape hatch is genuinely exercised in this fixture, not a no-op —
+    // otherwise this test would pass vacuously even with the fix reverted to a
+    // simple "never depletes" stub.
+    expect(rows.some(r => r.spouseSpillover > 0)).toBe(true);
+  });
+
+  it("T-F1.2 — no contradiction, structurally: the depletion row can never report a positive total alongside a positive held-out spouse balance", () => {
+    // A spouse bucket too small to fully close the gap (T-F1.8's fixture) —
+    // chosen specifically because it DOES hit genuine depletion, so the
+    // invariant is exercised at the one row where it matters, not vacuously.
+    const { rows, depletionAge } = buildRetirementWalkByAccount({
+      startAge: 60, endAge: 90, rReal: 0.03, currentAge: 60,
+      tradGross: 0, tradGrossSpouse: 30_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single", spouseRetirementAge: 90,
+    });
+    expect(depletionAge).not.toBeNull();
+    for (const r of rows) {
+      const isContradiction = r.age === depletionAge && r.total > 0 && r.tradSpouse > 0;
+      expect(isContradiction).toBe(false);
+    }
+  });
+
+  it("T-F1.3 — inertness: the two new row fields are present and zero for every row when the escape hatch never fires (no spouse, or fully funded)", () => {
+    const { rows } = base({ tradGross: 500_000 }); // no-spouse default, well-funded
+    for (const r of rows) {
+      expect(r.spouseSpillover).toBe(0);
+      expect(r.spouseSpilloverTax).toBe(0);
+    }
+  });
+
+  it("T-F1.4 — a depleting no-spouse fixture is untouched (locks the frac reformulation)", () => {
+    const { depletionAge, yearsSustained } = base({
+      tradGross: 50_000, roth: 0, taxable: 0, hsa: 0, effectiveExpenses: 60_000,
+    });
+    // Value-locked at the patched engine's own output — the reformulated `frac`
+    // is provably identical to the prior formula whenever there is no spillover
+    // (no spouse ⇒ spouseHoldout is always false ⇒ the escape-hatch block is
+    // skipped entirely ⇒ residualShort === spendShort + taxShort exactly).
+    expect(depletionAge).toBe(66);
+    expect(yearsSustained).toBe(0.8046875);
+  });
+
+  it("T-F1.5 — penalty gate: the spillover is taxed strictly more when the spouse is under 59½ than when they're over, consistent with the 10% early-withdrawal penalty", () => {
+    const common = {
+      startAge: 60, endAge: 61, rReal: 0.03, currentAge: 60,
+      tradGross: 0, tradGrossSpouse: 1_000_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single", spouseRetirementAge: 90,
+    };
+    const under = buildRetirementWalkByAccount({ ...common, spouseCurrentAge: 55 }); // spouse 56 at age 61
+    const over  = buildRetirementWalkByAccount({ ...common, spouseCurrentAge: 62 }); // spouse 63 at age 61
+    const rU = under.rows.find(r => r.age === 61);
+    const rO = over.rows.find(r => r.age === 61);
+    expect(rU.spouseSpillover).toBeGreaterThan(0);
+    expect(rO.spouseSpillover).toBeGreaterThan(0);
+    expect(rU.spouseSpilloverTax).toBeGreaterThan(rO.spouseSpilloverTax);
+    // Effective tax+penalty rate on the gross spillover should be ~10 points
+    // higher under 59½ (some slack for the differing bracket each gross-up lands in).
+    const rateU = rU.spouseSpilloverTax / rU.spouseSpillover;
+    const rateO = rO.spouseSpilloverTax / rO.spouseSpillover;
+    expect(rateU - rateO).toBeGreaterThan(0.08);
+  });
+
+  it("T-F1.6 — conservation holds in a spillover row: balEnd == balStart*(1+rReal) − draw − tax + spouseContrib, and the tax breakdown sums to the row's tax", () => {
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 60, endAge: 61, rReal: 0.03, currentAge: 60, spouseCurrentAge: 45,
+      tradGross: 0, tradGrossSpouse: 500_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single", spouseRetirementAge: 90,
+    });
+    const r = rows.find(x => x.age === 61);
+    expect(r.spouseSpillover).toBeGreaterThan(0);
+    const expectedBalEnd = r.balStart * 1.03 - r.draw - r.tax + r.spouseContrib;
+    expect(Math.abs(r.balEnd - expectedBalEnd)).toBeLessThan(1);
+    expect(Math.round(r.inflowTax + r.convTax + r.rmdTax + r.drawTax)).toBe(r.tax);
+  });
+
+  it("T-F1.7 — no double-dip with money events: a one-time outflow larger than the drawable pool reaches tradSp ONLY via the reported spillover, net of that year's contribution and growth", () => {
+    const spouseContribByAge = { 61: 20_000 };
+    const { rows } = buildRetirementWalkByAccount({
+      startAge: 60, endAge: 62, rReal: 0.03, currentAge: 60,
+      tradGross: 0, tradGrossSpouse: 500_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 0, filingStatus: "single", spouseRetirementAge: 90,
+      spouseContribByAge,
+      moneyEvents: [{ age: 61, amount: 300_000, isInflow: false }],
+    });
+    const r = rows.find(x => x.age === 61);
+    expect(r.spouseSpillover).toBeGreaterThan(0);
+    // Nothing else touches tradSp this year (no RMD, no conversion, no
+    // ordinary draw — the primary pool is $0 throughout) — drawInOrder's own
+    // hold-out (spouseDrawable = 0) is intact, so growth + that year's
+    // contribution, minus the reported spillover, accounts for the ENTIRE
+    // change in tradSp exactly.
+    const expectedTradSpouse = 500_000 * 1.03 + spouseContribByAge[61] - r.spouseSpillover;
+    expect(Math.abs(r.tradSpouse - expectedTradSpouse)).toBeLessThan(1);
+  });
+
+  it("T-F1.8 — genuine depletion is still reported when the spouse bucket is too small to close the gap", () => {
+    const { rows, depletionAge, yearsSustained } = buildRetirementWalkByAccount({
+      startAge: 60, endAge: 90, rReal: 0.03, currentAge: 60,
+      tradGross: 0, tradGrossSpouse: 30_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 60_000, filingStatus: "single", spouseRetirementAge: 90,
+    });
+    expect(depletionAge).not.toBeNull();
+    const r = rows.find(x => x.age === depletionAge);
+    expect(r.spouseSpillover).toBeGreaterThan(0);
+    // The bucket was exhausted funding as much of the gap as it could —
+    // proves the escape hatch does not paper over real insolvency.
+    expect(r.tradSpouse).toBe(0);
+    expect(yearsSustained).toBeLessThan(depletionAge - 60);
   });
 });
 

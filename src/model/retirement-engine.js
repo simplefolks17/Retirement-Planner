@@ -38,6 +38,7 @@ import { calcTax } from "./taxes.js";
 import { getDivisor } from "./rmd.js";
 import { applyMoneyEvents } from "./money-events.js";
 import { spouseAgeAt as toSpouseAge } from "./retirement-phase.js";
+import { EARLY_WITHDRAWAL_AGE, EARLY_WITHDRAWAL_PENALTY } from "../config/irs-2026.js";
 
 export function buildRetirementWalkByAccount({
   startAge,                 // safeRetAge
@@ -304,6 +305,67 @@ export function buildRetirementWalkByAccount({
     const { shortfall: spendShort } = drawInOrder(needed, ORDER);
     const { shortfall: taxShort }   = drawInOrder(tax, ORDER);
 
+    // ── Option-A escape hatch: shortfall spillover with penalty (#30 / BUG-82) ─
+    // Option A holds the spouse's Traditional bucket out of `spouseDrawable`, so a
+    // shortfall caused PURELY by the hold-out (the money exists in tradSp, it is
+    // just walled off) was being reported as genuine depletion while `balEnd`/
+    // `total` still counted that untouched balance — depletion age, the chart's
+    // ending balance, and "left at N" all disagreeing off one walk. A real
+    // household facing a cash crunch taps the still-working spouse's 401k as a
+    // last resort rather than declaring insolvency next to it. Named as a
+    // deferred escape hatch in docs/SPOUSAL-PLANNING-DESIGN.md; implemented here,
+    // gated so it can only ever REDUCE a shortfall and never create routine early
+    // access:
+    //   • fires only when the normal pool genuinely could not cover the year;
+    //   • draws only from tradSp, only up to what is actually there;
+    //   • grossed up for BOTH the ordinary income tax the new draw itself
+    //     triggers (stacked on everything else this year, same calcTax basis as
+    //     the mainline draw above) and the 10% early-withdrawal penalty under
+    //     59½ — the same statutory constants and fixed-point pattern
+    //     simulation.js's event-funding cascade already uses for the analogous
+    //     last-resort 401k draw;
+    //   • charges the penalty when the spouse's age is unknown (conservative),
+    //     rather than skipping the spillover — skipping would leave the bucket
+    //     walled off AND the contradiction unfixed, which is not the safe
+    //     direction here (spouseHoldout, by contrast, correctly fails closed on
+    //     the hold-out itself when the age is unknown).
+    let spillGross = 0, spillTax = 0, spillCapped = true;
+    const unmetNeed = spendShort + taxShort;
+    if (unmetNeed > 0 && spouseHoldout && tradSp > 0) {
+      const pen = (spouseAge == null || spouseAge < EARLY_WITHDRAWAL_AGE)
+        ? EARLY_WITHDRAWAL_PENALTY : 0;
+      // The spillover stacks on top of everything already taxed this year,
+      // including the mainline 401k draw (which, in a shortfall year, is the
+      // whole drawable pre-tax balance by construction).
+      const base  = incFloor + conversion + totalRmd + tradDraw;
+      const tBase = calcTax(base, filingStatus).tax;
+      let g = unmetNeed;
+      for (let i = 0; i < 12; i++) {
+        const inc  = (calcTax(base + g, filingStatus).tax - tBase) + g * (retStateRate + pen);
+        const next = unmetNeed + inc;
+        if (!Number.isFinite(next)) break;
+        if (Math.abs(next - g) < 0.5) { g = next; break; }
+        g = next;
+      }
+      // `spillCapped` is what makes the residual EXACT. When the bucket covered
+      // the whole grossed-up need (g <= tradSp) the year is funded BY
+      // CONSTRUCTION, so the residual is 0 — never a sub-dollar fixed-point
+      // remainder that would trip the strict `> 0` depletion test below.
+      spillCapped = g > tradSp;
+      spillGross  = Math.min(Math.max(0, g), tradSp);
+      spillTax    = (calcTax(base + spillGross, filingStatus).tax - tBase)
+                  + spillGross * (retStateRate + pen);
+      tradSp   -= spillGross;
+      tradDraw += spillGross;          // it IS a 401k draw — the ledger says so
+      drawTax  += spillTax;            // income tax + penalty, per simulation.js precedent
+      tax = Math.round(inflowTax + convTax + rmdTax + drawTax);
+    }
+    // Whatever the spillover could not close is the REAL shortfall — genuine
+    // depletion, not a hold-out artifact.
+    const residualShort = spillCapped
+      ? Math.max(0, unmetNeed - (spillGross - spillTax))
+      : 0;
+
     const balEnd = trad + tradSp + rRoth + rTax + rHsa;
     rows.push({
       age,
@@ -327,15 +389,29 @@ export function buildRetirementWalkByAccount({
       // neither growth, draw, nor tax, so every reconciliation surface (Flow-Down,
       // the Year-by-year ledger) needs the combined figure, not just the 401k piece.
       spouseContrib: Math.round(spouseContrib + spouseSurplusBanked),
+      // Last-resort penalized draw from the held-out spouse bucket THIS row (0 in
+      // the common case). Reported, not silently folded in, so a UI surface can
+      // flag "this year needed an early spouse-401k withdrawal" the way
+      // eventRetirementDraw does for money events. `spouseSpilloverTax` includes
+      // the 10% penalty and is ALREADY inside `drawTax`/`tax` — it is a
+      // breakdown, not an addend.
+      spouseSpillover:    Math.round(spillGross),
+      spouseSpilloverTax: Math.round(spillTax),
       balEnd,
       total: Math.max(0, Math.round(balEnd)),
     });
 
-    // Depletion: the pool couldn't fund this year's spending (incl. one-time events) + tax.
-    if (spendShort > 0 || taxShort > 0 || balEnd <= 0) {
+    // Depletion: the pool couldn't fund this year's spending (incl. one-time
+    // events) + tax, even after the spillover escape hatch had its chance to
+    // close the gap.
+    if (residualShort > 0 || balEnd <= 0) {
       depletionAge = age;
       const outflow = needed + tax;
-      const frac = outflow > 0 ? Math.min(1, Math.max(0, availableBeforeDraw / outflow)) : 0;
+      // Share of this year's outflow the pool actually funded. Identical to the
+      // prior `availableBeforeDraw / outflow` whenever there is no spillover (a
+      // shortfall can only occur once the drawable pool is fully drained, so
+      // outflow − shortfall === availableBeforeDraw), and correct with one.
+      const frac = outflow > 0 ? Math.min(1, Math.max(0, (outflow - residualShort) / outflow)) : 0;
       yearsSustained = (age - startAge - 1) + frac;
       break;
     }
