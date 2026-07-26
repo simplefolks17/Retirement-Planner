@@ -116,3 +116,219 @@ describe("HSA family-HDHP shared ceiling (#30, rule 4)", () => {
     expect(realizedHSA(99_999, HSA_LIMIT_2026)).toBe(HSA_LIMIT_2026);
   });
 });
+
+// #30 / BUG-82 interim (Session A): the Monte Carlo "Range" lens still runs the
+// older blended walk (no spouse bucket at all), so it needs a caveat whenever the
+// spouse has a real gap window — until the MC engine is ported to the per-account
+// walk (Session B), which removes this caveat entirely.
+describe("Monte Carlo Range lens — spouse-gap caveat (#30 / BUG-82 interim)", () => {
+  it("no caveat at the default (single, no spouse) state", () => {
+    const app = mount();
+    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    app.unmount();
+  });
+
+  it("no caveat when the spouse's retirement lands in the same calendar year as the primary's (no gap)", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    // currentAge 30, retirementAge 65 (defaults): spouse age at the primary's own
+    // retirement is 20 + (65 - 30) = 55 — setting the spouse's own retirement age
+    // to exactly that opens a zero-length gap window (byte generalization case).
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(55));
+    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    app.unmount();
+  });
+
+  it("shows the caveat once the spouse's own retirement age opens a real gap window WITH real income/contributions", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    // Same setup, but the spouse now retires 7 years after the primary (age 62 vs.
+    // the 55 no-gap value above) — a real gap window opens.
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
+    const caveat = app.latest().rangeView.spouseGapCaveat;
+    expect(caveat).not.toBeNull();
+    expect(caveat).toContain("spouse");
+    app.unmount();
+  });
+
+  it("married with no spouse retirement-age override still opens a gap for an age-gap couple WITH real income (the default 'auto' case)", () => {
+    // effectiveSpouseRetAge defaults (null) to the PRIMARY's numeric retirement
+    // age (65) — for a 10-year-younger spouse that is 10 years AFTER the primary
+    // retires, so the gap is real even without the user touching the new slider.
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(65); // resolved "auto" value
+    expect(app.latest().rangeView.spouseGapCaveat).not.toBeNull();
+    app.unmount();
+  });
+
+  // Adversarial-review finding (finding 4): buildSpouseRetirementSeed writes a
+  // map KEY for every gap year regardless of the dollar amount, so checking
+  // key presence alone (the pre-fix formula) produced a false-positive caveat
+  // for a married household with an age gap but $0 spouse income/contributions
+  // — a real, if inert-looking, household (e.g. a non-working spouse).
+  it("no caveat for a married age-gap household with $0 spouse income/contributions (false-positive fix)", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    // No spouseIncome, no spouseAccounts contributions set — gap window opens
+    // by age math alone, but nothing flows through it.
+    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    app.unmount();
+  });
+});
+
+// Finding 3 (adversarial review, 2026-07-26) — wiring gate (T-F3.4). The model-only
+// fix (retirement-phase.test.js) proves the deflator works in isolation; this proves
+// BOTH App.jsx call sites actually hand it a live inflationRate, not a stale default,
+// so a future caller can't silently forget it (principle 13, "tests gate the wiring").
+describe("inflationRate wiring into the spouse gap-year deflator (Finding 3, T-F3.4)", () => {
+  it("the what-if re-seed bundle carries the live inflationRate at the default assumption", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    const infl = app.latest().assumptions.inflationRate.value;
+    expect(infl).toBeGreaterThan(0);
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs.inflationRate).toBe(infl);
+    app.unmount();
+  });
+
+  it("the bundle tracks a live change to inflationRate, not a stale snapshot", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    app.fire(() => app.latest().assumptions.inflationRate.set(6));
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs.inflationRate).toBe(6);
+    app.unmount();
+  });
+
+  it("end-to-end: raising inflationRate lowers the retirement walk's ending balance for a spouse-gap household (proves the main-path spouseSeed, not just the what-if bundle, actually consumes it)", () => {
+    // NOTE: totalAtRet is the balance AT retirement (sTrad = spouseSeed.tradSeed,
+    // T-F3.6-proven inflation-invariant) — the gap-year maps only apply INSIDE the
+    // retirement walk, after that point. So the observable here is the walk's
+    // own endVal, not totalAtRet.
+    const app = mount();
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
+    const lowInfl = app.latest().retirementWalk.endVal;
+
+    app.fire(() => app.latest().assumptions.inflationRate.set(7));
+    const highInfl = app.latest().retirementWalk.endVal;
+
+    // More inflation deflates every gap-year contribution and income-floor offset
+    // more, so the walk ends with a strictly lower balance — this can only move if
+    // the main-path spouseSeed memo (not just the what-if resim bundle) actually
+    // received the new inflationRate.
+    expect(highInfl).toBeLessThan(lowInfl);
+    app.unmount();
+  });
+
+  it("no spouse data ⇒ inert: the spouse-seed deflator path is never constructed regardless of inflationRate (golden master is guarded separately)", () => {
+    // NOTE: endVal/totalAtRet are NOT asserted invariant here — rReal already
+    // depends on inflationRate for everyone (spouse or not), pre-existing and
+    // unrelated to this fix. What IS specific to this fix, and must stay inert
+    // with no spouse, is that buildSpouseRetirementSeed (and its deflator) is
+    // never invoked at all — spouseSeedInputs stays null no matter what
+    // inflationRate is set to.
+    const app = mount();
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs).toBeNull();
+    app.fire(() => app.latest().assumptions.inflationRate.set(7));
+    expect(app.latest().whatIfSimInputs.spouseSeedInputs).toBeNull();
+    app.unmount();
+  });
+});
+
+// Finding 2 (adversarial review, 2026-07-26) — optimizer wiring (T-F2.8). The
+// conversion optimizer must search the SAME model the display shows (BUG-31 "two
+// implementations of one quantity"), so its floorArgs must receive the spouse
+// wage map too — cheapest proven by showing the optimizer's chosen amount moves
+// when a spouse's real gap-year wages are introduced, everything else fixed.
+describe("optimizer floorArgs receive spouse gap-year wages (Finding 2, T-F2.8)", () => {
+  it("the optimizer's suggested conversion amount changes when spouse wages are introduced", () => {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().conversion.conversionMode.set("custom"));
+    // Baseline: married, MFJ, but no real spouse wages (spouseIncome still 0) —
+    // a real gap window opens by age math alone, but nothing flows through it.
+    const baseline = app.latest().conversionView.optimizer.suggestedAmount;
+    expect(baseline).not.toBeNull();
+
+    // Introduce real spouse gap-year wages — everything else held fixed.
+    app.fire(() => app.latest().profile.spouseIncome.set(150_000));
+    const withSpouseWages = app.latest().conversionView.optimizer.suggestedAmount;
+
+    expect(withSpouseWages).not.toBe(baseline);
+    app.unmount();
+  });
+});
+
+// T-X.2 — composed end-to-end (adversarial review, 2026-07-26). The plan's own
+// target-demographic walkthrough: primary retires at 58 on modest-but-real
+// balances, spouse is 48 at that point and keeps working to 65 (a 17-year gap
+// window). All three findings land in the same household at once, so this
+// proves they compose without contradiction rather than each only being
+// individually correct.
+describe("target-demographic walkthrough — all three findings composed (T-X.2)", () => {
+  it("a well-funded age-gap household never falsely depletes, never needs the spillover hatch, has no seam discontinuity, and its bracket-fill target reflects the spouse's real wages", () => {
+    const app = mount();
+    app.fire(() => app.latest().assumptions.currentAge.set(50));
+    app.fire(() => app.latest().assumptions.retirementAge.set(58));
+    app.fire(() => app.latest().assumptions.returnRate.set(7));
+    app.fire(() => app.latest().assumptions.inflationRate.set(2.5));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(40)); // 48 at primary's retirement
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(65)); // 17-yr gap
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().profile.spouseIncome.set(90_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(500_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(15_000));
+    app.fire(() => app.latest().accounts.trad401k.bal.set(400_000));
+    app.fire(() => app.latest().accounts.roth.bal.set(100_000));
+    app.fire(() => app.latest().accounts.taxable.bal.set(150_000));
+    app.fire(() => app.latest().spending.annualExpenses.set(95_000));
+    app.fire(() => app.latest().ss.ssClaimingAge.set(67));
+    app.fire(() => app.latest().ss.ssOverride.set(40_000));
+
+    const latest = app.latest();
+
+    // (1) Well-funded ⇒ never falsely declared depleted, never needs the
+    // penalized escape hatch (Finding 1).
+    expect(latest.retirementWalk.depletionAge).toBeNull();
+    expect(latest.retirementWalk.totalSpouseSpillover).toBe(0);
+    expect(latest.spouseSpilloverNote ?? latest.planHighlights?.spouseSpilloverNote ?? null).toBeFalsy();
+
+    // (2) No discontinuity at the accumulation → retirement seam (Finding 3):
+    // the chart point at the retirement age and the very next point must be
+    // continuous, not a cliff — the class of artifact a wrong deflation base
+    // would introduce.
+    const chart = latest.chartData;
+    const seamIdx = chart.findIndex(p => p.age === 58);
+    expect(seamIdx).toBeGreaterThan(-1);
+    expect(seamIdx).toBeLessThan(chart.length - 1);
+    const seamJump = Math.abs(chart[seamIdx + 1].total - chart[seamIdx].total) / chart[seamIdx].total;
+    expect(seamJump).toBeLessThan(0.25);
+
+    // (3) The bracket-fill target reflects the spouse's real gap-year wages
+    // (Finding 2) — far below the naive MFJ-22%-bracket fillTo (243,600) a
+    // spouse-blind planner would have shown.
+    expect(latest.conversionView.targets.convPeakTarget).toBeLessThan(200_000);
+    expect(latest.conversionView.targets.convPeakTarget).toBeGreaterThan(0);
+
+    app.unmount();
+  });
+});

@@ -506,6 +506,44 @@ describe("StrategiesScreen", () => {
       expect(app.text()).not.toContain("saved in year-1 tax");
       act(() => app.r.unmount());
     });
+
+    // BUG-84 interim honesty relabel: scopeNote is null (no spouse) by default in
+    // the fixture and only ever a string when App resolves hasSpouse === true.
+    it("shows the household scope note when scopeNote is a string (hasSpouse)", () => {
+      const props = makeProps();
+      props.withdrawalView = {
+        ...props.withdrawalView,
+        scopeNote: "These amounts are your own accounts; your spouse's accounts sequence separately.",
+      };
+      const app = mount(props, { initialStrategy: "withdrawal" });
+      expect(app.text()).toContain("your spouse's accounts sequence separately");
+      act(() => app.r.unmount());
+    });
+
+    it("does not render a scope note when scopeNote is null (no spouse)", () => {
+      const app = mount(makeProps(), { initialStrategy: "withdrawal" });
+      expect(app.text()).not.toContain("sequence separately");
+      act(() => app.r.unmount());
+    });
+
+    // #30 / BUG-82: gapYearNote explains an empty/short draw list when a
+    // spouse's gap-year income has driven netNeed toward 0.
+    it("does not render a gap-year note by default (gapYearNote null)", () => {
+      const app = mount(makeProps(), { initialStrategy: "withdrawal" });
+      expect(app.text()).not.toContain("spouse's income covers your expenses");
+      act(() => app.r.unmount());
+    });
+
+    it("shows the gap-year note when gapYearNote is a string", () => {
+      const props = makeProps();
+      props.withdrawalView = {
+        ...props.withdrawalView,
+        gapYearNote: "No portfolio draw needed this year — your spouse's income covers your expenses.",
+      };
+      const app = mount(props, { initialStrategy: "withdrawal" });
+      expect(app.text()).toContain("spouse's income covers your expenses");
+      act(() => app.r.unmount());
+    });
   });
 
   describe("SurplusDeploymentFlow (WI-3.7 + WI-3.9 Apply-with-preview)", () => {

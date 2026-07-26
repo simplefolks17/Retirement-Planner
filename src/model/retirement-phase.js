@@ -1,5 +1,15 @@
 import { buildRetirementWalkByAccount } from "./retirement-engine.js";
 
+// Convert between the primary's age and the spouse's age in the same calendar year.
+// Inverses of each other by construction — used anywhere a per-year map needs to be
+// keyed in one person's frame from data computed in the other's (the gap-year maps,
+// the RMD gate, income-tax gating). Extracting this once removes the risk of the two
+// frames drifting out of sync across files.
+export const spouseAgeAt  = (currentAge, spouseCurrentAge, primaryAge) =>
+  spouseCurrentAge + (primaryAge - currentAge);
+export const primaryAgeAt = (currentAge, spouseCurrentAge, spouseAge) =>
+  currentAge + (spouseAge - spouseCurrentAge);
+
 // Build the engine's { [age]: amount } Roth-conversion schedule from the plan's
 // per-year (bracket-fill) or flat conversion targets. Conversions occur at ages
 // startAge .. endAge (inclusive). At the default window (startAge = safeRetAge+1,
@@ -42,6 +52,14 @@ export function buildConversionByAge({
 // totals don't accumulate per-year rounding drift). Healthcare costs (IRMAA/ACA)
 // are orthogonal cost adders layered on in conversion-evaluation.js — they consume
 // the conversion AMOUNTS (conversionByAge), not anything the engine re-derives.
+//
+// spouseRetirementAge / spouseContribByAge / spouseTaxableIncomeByAge /
+// spouseIncomeFloorByAge (#30 / BUG-82) are new pass-through params: plain
+// pass-through into `common`, so BOTH the `plan` and `noConv` engine calls see
+// the spouse's gap-year contributions/wages/income identically — the
+// counterfactual must differ from the plan ONLY in Roth conversions, never in
+// whether the spouse kept working. All four default inert (see
+// retirement-engine.js for the no-spouse byte-identical guarantee).
 export function buildRetirementPhase({
   // per-account GROSS balances at retirement (the BUG-35 gross seed)
   tradGross = 0, roth = 0, taxable = 0, hsa = 0,
@@ -60,6 +78,10 @@ export function buildRetirementPhase({
   rmdStartAge = Infinity,
   useTable2 = false, spouseCurrentAge = null, currentAge = null,
   moneyEvents = [],
+  // Spouse's own retirement timing (#30 / BUG-82) — pass-through to the engine;
+  // see retirement-engine.js for the inert defaults and Option-A gating.
+  spouseRetirementAge = null, spouseContribByAge = {},
+  spouseTaxableIncomeByAge = {}, spouseIncomeFloorByAge = {},
 }) {
   const common = {
     startAge, endAge: longevityHorizon, rReal, effectiveExpenses,
@@ -70,6 +92,8 @@ export function buildRetirementPhase({
     filingStatus, retStateRate,
     rmdStartAge, useTable2, spouseCurrentAge, currentAge,
     moneyEvents,
+    spouseRetirementAge, spouseContribByAge,
+    spouseTaxableIncomeByAge, spouseIncomeFloorByAge,
   };
 
   const plan   = buildRetirementWalkByAccount({ ...common, conversionByAge });
@@ -133,6 +157,15 @@ export function buildRetirementPhase({
     Math.round(sumRmdTaxTo(noConvRows, commonMaxAge) - sumRmdTaxTo(rows, commonMaxAge)));
   const grossNetBenefit  = rmdTaxSaved - conversionCost;
 
+  // Finding 1 (#30 / BUG-82 follow-up): lifetime rollups of the escape-hatch
+  // spillover, bounded to lifeExp like the other lifetime tax sums above (0/0/null
+  // with no spouse, or whenever the hatch never fires — inert by construction).
+  const sumSpill    = rs => rs.reduce((s, r) => s + (r.spouseSpillover    ?? 0), 0);
+  const sumSpillTax = rs => rs.reduce((s, r) => s + (r.spouseSpilloverTax ?? 0), 0);
+  const totalSpouseSpillover    = Math.round(sumSpill(rows));
+  const totalSpouseSpilloverTax = Math.round(sumSpillTax(rows));
+  const firstSpouseSpilloverAge = rows.find(r => (r.spouseSpillover ?? 0) > 0)?.age ?? null;
+
   return {
     // chart / longevity
     rows,
@@ -146,9 +179,28 @@ export function buildRetirementPhase({
     totalDrawTax,
     // conversion benefit (before IRMAA/ACA — those layer on in conversion-evaluation)
     conversionCost, rmdTaxBiteNoConv, rmdTaxSaved, grossNetBenefit,
+    // spouse hold-out escape-hatch rollups (Finding 1) — already included in
+    // totalDrawTax/tax above (a breakdown, not an addend); reported separately so
+    // a UI surface can flag "this plan needed early spouse-401k withdrawals."
+    totalSpouseSpillover, totalSpouseSpilloverTax, firstSpouseSpilloverAge,
     // full far-horizon walks for any consumer that needs the tail
     planWalk: plan, noConvWalk: noConv,
   };
+}
+
+// Per-age household RMD tax map, keyed by every year with a required distribution
+// from EITHER spouse (union filter) — fixes BUG-78: a spouse-only-RMD year (spouse
+// older, or primary trad depleted) was dropped when the map was built from the
+// primary-only rmdSchedule. row.rmdTax is the JOINT (primary + spouse) tax already.
+// No spouse → rmdSpouse = 0 on every row → this reduces to the old `r.rmd > 0`
+// filter with identical values (Math.round(r.rmdTax) is exactly what rmdSchedule's
+// `tax` field already was) → golden-master safe.
+export function buildRmdTaxByAge(rows) {
+  const out = {};
+  for (const r of rows ?? []) {
+    if ((r.rmd ?? 0) > 0 || (r.rmdSpouse ?? 0) > 0) out[r.age] = Math.round(r.rmdTax ?? 0);
+  }
+  return out;
 }
 
 // Balance at a given age from a walk's `rows` — the accessor behind App's
@@ -186,4 +238,90 @@ export function buildRmdComparison(rmdScheduleNoConv, rmdSchedule) {
       improved: withConv != null && withConv < rmd,
     };
   });
+}
+
+// Spouse retirement seed + gap-year maps for the per-account engine (#30 / BUG-82).
+//
+// The spouse's accounts are seeded at the PRIMARY's retirement year (the walk's
+// startAge). The spouse keeps contributing during the gap years until their OWN
+// retirement age, so those extra contributions are handed to the engine as a
+// per-(primary-age) MAP rather than baked into the seed — baking them in would be a
+// temporal double-count (a future-dated balance grown/drawn from an earlier start).
+// Traditional-only for v1 (BUG-85 tracks Roth/Taxable/HSA parity); the Roth/Taxable/
+// HSA seeds are returned for the shared pools exactly as today.
+//
+// Income split: spouseTaxableIncomeByAge is GROSS ordinary wages net of the spouse's
+// OWN pre-tax deductions (their 401k deferral + HSA) and stacks in the engine's
+// bracket floor; spouseIncomeFloorByAge is the NET cash that offsets the draw. The
+// deferral is excluded from BOTH because it is separately credited to the spouse 401k
+// bucket via spouseContribByAge — the same dollar must never be saved AND spent.
+export function buildSpouseRetirementSeed({
+  spouseSimData,          // the spouse's runSimulation rows
+  spouseCurrentSnapshot,  // fallback when there is no accumulation phase
+  spouseCurrentAge,
+  currentAge,
+  primaryRetAge,          // safeRetAge (main path) or a scenario's retirement age (a later batch)
+  spouseRetAge,           // effectiveSpouseRetAge
+  spouseNetRate,          // clamp01(1 − combinedEffRate) — tax-only rate, see below
+  // Annual inflation %, used ONLY to deflate the gap-year flows below into the
+  // engine's own dollar unit (BUG-82 follow-up). 0 (the default) ⇒ deflator 1 ⇒
+  // byte-identical to the pre-fix maps, so every existing caller/test is inert.
+  inflationRate = 0,
+}) {
+  const phase2End = primaryRetAge - currentAge;
+  const spouseAgeAtPrimaryRet = spouseAgeAt(currentAge, spouseCurrentAge, primaryRetAge);
+  const rows = spouseSimData ?? [];
+  const seedRow = phase2End > 0
+    ? (rows[phase2End - 1] ?? spouseCurrentSnapshot)
+    : spouseCurrentSnapshot;
+
+  // Clamp defensively: a non-finite or out-of-range rate must never scale a draw offset.
+  const netRate = Math.max(0, Math.min(1, Number.isFinite(spouseNetRate) ? spouseNetRate : 0));
+
+  // ── Unit correction (#30 / BUG-82 follow-up) ──────────────────────────────
+  // runSimulation compounds NOMINALLY (returnRate, incomeGrowth), but the retirement
+  // engine walks at rReal against a flat effectiveExpenses — its balance unit is the
+  // purchasing power of the primary's RETIREMENT year (a seed B grown at rReal for k
+  // years is exactly B(1+r)^k deflated by (1+i)^k). The seed above is already in that
+  // unit by construction (it IS the nominal balance in that calendar year). The
+  // per-year maps below were not: they carried each LATER year's nominal dollars into
+  // a walk that never re-inflates anything, so a spouse's gap-year paycheck was the
+  // only stream whose purchasing power silently grew inside the walk. Deflate each gap
+  // year back to the retirement year. Base = primaryRetAge (NOT currentAge): the
+  // spouse's contribution in the primary's retirement year is already inside the seed
+  // at full nominal value, so any other base puts a discontinuity right at the seam.
+  const infl = Number.isFinite(inflationRate) ? inflationRate / 100 : 0;
+  const deflatorFor = (primaryAge) => {
+    const k = primaryAge - primaryRetAge;               // 1, 2, 3 … over the gap window
+    if (!(k > 0) || !(1 + infl > 0)) return 1;           // guards k<=0 and a pathological rate
+    return Math.pow(1 + infl, k);
+  };
+
+  const spouseContribByAge = {};
+  const spouseTaxableIncomeByAge = {};
+  const spouseIncomeFloorByAge = {};
+  for (const row of rows) {
+    const sAge = row.age;
+    if (sAge <= spouseAgeAtPrimaryRet) continue;   // already inside the seed
+    if (sAge > spouseRetAge) break;                // spouse retired — no more contributions
+    const primaryAge = primaryAgeAt(currentAge, spouseCurrentAge, sAge);
+    const defl     = deflatorFor(primaryAge);
+    const deferral = Math.min(row.c401kEmployee ?? 0, row.salary ?? 0);
+    const hsa      = (row.cHSA ?? 0) / defl;
+    const wages    = Math.max(0, (row.salary ?? 0) - deferral - (row.cHSA ?? 0)) / defl;
+    spouseContribByAge[primaryAge]       = Math.round((row.c401k ?? 0) / defl);
+    spouseTaxableIncomeByAge[primaryAge] = Math.round(wages);
+    // v1: the spouse's Roth/Taxable/HSA gap contributions are treated as SPENT
+    // (BUG-85 tracks full parity), so cRoth/cTaxable stay inside the net wage figure
+    // and the pre-tax HSA dollars are added back untaxed. Dollar-conserving.
+    spouseIncomeFloorByAge[primaryAge]   = Math.round(wages * netRate) + Math.round(hsa);
+  }
+
+  return {
+    tradSeed:    seedRow.tradGross     ?? 0,
+    rothSeed:    seedRow["Roth IRA"]   ?? 0,   // v1: merged into the hh pools unchanged
+    taxableSeed: seedRow["Taxable"]    ?? 0,
+    hsaSeed:     seedRow["HSA"]        ?? 0,
+    spouseContribByAge, spouseTaxableIncomeByAge, spouseIncomeFloorByAge,
+  };
 }

@@ -119,8 +119,14 @@ export function calcPlanProgress({ yearsSustained, isSustainable, lifeExpect, re
 // Guideline thresholds come from ASSUMPTIONS (heuristics, documented there).
 //
 // Row shapes and edge states (documented per principle 10):
-//   { id: "withdrawal", ok, withdrawalRatePct, guidelinePct }
+//   { id: "withdrawal", ok, withdrawalRatePct, guidelinePct, temporaryIncomeBasis, basisEndsAtAge }
 //       withdrawalRatePct rounded to 1 decimal; ok = rate ≤ guideline.
+//       temporaryIncomeBasis (#30 / BUG-82, rule 5b) is true only when a
+//       spouse's gap-year income is part of the rate shown — the rate is then
+//       flattered by income that stops at basisEndsAtAge (the spouse's own
+//       retirement age), and must not be read as a permanent verdict.
+//       Both default to false / null (inert) when the caller omits them —
+//       byte-identical to the pre-#30 3-field shape for every existing caller.
 //   { id: "longevity",  ok, sustainedYears, horizonYears }
 //       sustainedYears is null when the portfolio never depletes
 //       (yearsSustained === Infinity) — "lasts beyond your plan", NOT a number;
@@ -146,6 +152,9 @@ export function calcPlanDrivers({
   takeHome,              // from calcTaxBasis
   monteCarloSuccessPct,  // OPTIONAL — Monte Carlo success rate (integer %), or
                          // null when the MC lens is unavailable; omit → no 4th row
+  temporaryIncomeBasis = false,  // #30 / BUG-82 — true while a spouse's gap-year
+                                  // income is part of withdrawalRate (rule 5b)
+  basisEndsAtAge = null,          // the age that income stops, or null
 }) {
   const wrGuideline   = ASSUMPTIONS.SAFE_WITHDRAWAL_GUIDELINE_PCT;
   const saveGuideline = ASSUMPTIONS.SAVINGS_RATE_GUIDELINE_PCT;
@@ -166,6 +175,8 @@ export function calcPlanDrivers({
       ok: withdrawalRate <= wrGuideline,
       withdrawalRatePct: Math.round(withdrawalRate * 10) / 10,
       guidelinePct: wrGuideline,
+      temporaryIncomeBasis,
+      basisEndsAtAge,
     },
     {
       id: "longevity",
@@ -210,15 +221,18 @@ export function calcPlanDrivers({
 // `tax` on the walk row is the income tax that actually left the pool that year
 // (RMD tax + conversion tax); the rmd/conversion columns are the underlying
 // amounts and are informational — they are NOT part of the ledger identity
-//   prevTotal + growth − draw − tax = nextTotal
+//   prevTotal + contrib + growth − draw − tax = nextTotal
 // which the walk already satisfies. phase:"ret" tags these as retirement rows;
-// contrib is null (no contributions in retirement).
+// contrib is null on a normal retirement year (no contributions), but a still-
+// working spouse's gap-year 401k contribution (r.spouseContrib) IS a real
+// retirement-phase contribution — shown in this column (rounded) rather than a
+// synthesized 0, so the reconciliation identity above holds on those rows too.
 export function buildYearlyRows({ rows, currentAge, currentYear, rmdByAge = {}, conversionByAge = {} }) {
   return (rows ?? []).map(r => ({
     age: r.age,
     year: currentYear + (r.age - currentAge),
     total: r.total,
-    contrib: null,
+    contrib: (r.spouseContrib ?? 0) > 0 ? Math.round(r.spouseContrib) : null,
     growth: Math.round(r.growth ?? 0),
     draw: Math.round(r.draw ?? 0),
     tax: Math.round(r.tax ?? 0),

@@ -154,6 +154,36 @@ describe("generatePhaseActions — phase3", () => {
     expect(phase3Actions.some(c => c.title.includes("Year Gap"))).toBe(true);
   });
 
+  // #30 / BUG-82: the gap-clarifying clause on the "Close the N-Year Gap" card.
+  it("gap card body omits the spouse-income clause when spouseIncomeAtRet is 0 (default)", () => {
+    const { phase3Actions } = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+    });
+    const gapCard = phase3Actions.find(c => c.title.includes("Year Gap"));
+    expect(gapCard.body).not.toContain("spouse is still earning");
+  });
+
+  it("gap card body is byte-identical whether spouseIncomeAtRet is omitted or explicitly 0", () => {
+    const withOmitted = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+    }).phase3Actions.find(c => c.title.includes("Year Gap"));
+    const withExplicitZero = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+      spouseIncomeAtRet: 0,
+    }).phase3Actions.find(c => c.title.includes("Year Gap"));
+    expect(withExplicitZero.body).toBe(withOmitted.body);
+  });
+
+  it("gap card body includes the spouse-income clause when spouseIncomeAtRet > 0", () => {
+    const { phase3Actions } = generatePhaseActions({
+      ...base, isSustainable: false, yearsSustained: 20, safeRetAge: 65, safeLifeExp: 90,
+      spouseIncomeAtRet: 15_000,
+    });
+    const gapCard = phase3Actions.find(c => c.title.includes("Year Gap"));
+    expect(gapCard.body).toContain("spouse is still earning");
+    expect(gapCard.body).toContain("post-gap need");
+  });
+
   it("action objects include impactLabel when set", () => {
     const { phase3Actions } = generatePhaseActions(base);
     const taxCard = phase3Actions.find(c => c.title.includes("Tax-Optimal Order"));
@@ -227,5 +257,87 @@ describe("generatePhaseSteps", () => {
   it("phase1Steps last entry is type 'total'", () => {
     const { phase1Steps } = generatePhaseSteps(flowData, opts);
     expect(phase1Steps[phase1Steps.length - 1].type).toBe("total");
+  });
+
+  // #30 / BUG-82 (CodeRabbit review fix): the "Living Expenses" captions and an
+  // explicit "Spouse Contribution" row both key off flowData's OWN phase-
+  // aggregate booleans (hasConvWindowSpouseContrib/hasDistSpouseContrib), not
+  // a first-walked-year scalar — so the waterfall's rows actually reconcile.
+  it("no Spouse Contribution row and no spouse-income clause when flowData has no spouse contribution (default)", () => {
+    const { phase2Steps, phase3Steps } = generatePhaseSteps(flowData, opts);
+    expect(phase2Steps.some(s => s.label === "Spouse Contribution")).toBe(false);
+    expect(phase3Steps.some(s => s.label === "Spouse Contribution")).toBe(false);
+    const p2Living = phase2Steps.find(s => s.label === "Living Expenses");
+    const p3Living = phase3Steps.find(s => s.label === "Living Expenses");
+    expect(p2Living.sub).not.toContain("spouse income");
+    expect(p3Living.sub).not.toContain("spouse income");
+  });
+
+  it("steps are byte-identical whether flowData's spouse-contribution fields are omitted or explicitly 0/false", () => {
+    const omitted = generatePhaseSteps(flowData, opts);
+    const explicitZero = generatePhaseSteps({
+      ...flowData,
+      hasConvWindowSpouseContrib: false, convWindowSpouseContrib: 0,
+      hasDistSpouseContrib: false, distSpouseContrib: 0,
+    }, opts);
+    expect(explicitZero).toEqual(omitted);
+  });
+
+  it("renders a Spouse Contribution row + the spouse-income clause in EACH phase independently", () => {
+    // Phase-independent on purpose: a spouse whose gap ends before RMDs start
+    // (or who only has a contribution in one phase) must not spuriously show
+    // the row in the OTHER phase.
+    const convOnly = generatePhaseSteps({
+      ...flowData, hasConvWindowSpouseContrib: true, convWindowSpouseContrib: 18_000,
+      hasDistSpouseContrib: false, distSpouseContrib: 0,
+    }, opts);
+    expect(convOnly.phase2Steps.some(s => s.label === "Spouse Contribution")).toBe(true);
+    expect(convOnly.phase3Steps.some(s => s.label === "Spouse Contribution")).toBe(false);
+    const convRow = convOnly.phase2Steps.find(s => s.label === "Spouse Contribution");
+    expect(convRow.amount).toBe(18_000);
+    expect(convRow.type).toBe("add");
+    expect(convOnly.phase2Steps.find(s => s.label === "Living Expenses").sub).toContain("+ spouse income");
+    expect(convOnly.phase3Steps.find(s => s.label === "Living Expenses").sub).not.toContain("spouse income");
+
+    const distOnly = generatePhaseSteps({
+      ...flowData, hasConvWindowSpouseContrib: false, convWindowSpouseContrib: 0,
+      hasDistSpouseContrib: true, distSpouseContrib: 9_000,
+    }, opts);
+    expect(distOnly.phase2Steps.some(s => s.label === "Spouse Contribution")).toBe(false);
+    expect(distOnly.phase3Steps.some(s => s.label === "Spouse Contribution")).toBe(true);
+    const distRow = distOnly.phase3Steps.find(s => s.label === "Spouse Contribution");
+    expect(distRow.amount).toBe(9_000);
+    expect(distRow.type).toBe("add");
+  });
+
+  it("the waterfall reconciles with the Spouse Contribution row included (the reconciliation identity flow-down.js documents)", () => {
+    // portPreRMD/distEndVal bumped by the added spouse-contribution amounts —
+    // in real calcFlowDown output these always move together (both derive
+    // from the same walk), so a fixture that added the contribution WITHOUT
+    // moving the totals would be testing an impossible flowData shape.
+    const withSpouse = {
+      ...flowData,
+      hasConvWindowSpouseContrib: true, convWindowSpouseContrib: 20_000,
+      portPreRMD: flowData.portPreRMD + 20_000,
+      hasDistSpouseContrib: true, distSpouseContrib: 12_000,
+      distEndVal: flowData.distEndVal + 12_000,
+    };
+    const { phase2Steps, phase3Steps } = generatePhaseSteps(withSpouse, opts);
+    // totalAtRet + convWindowGrowth + convWindowSpouseContrib − convWindowDraws − convWindowTax = portPreRMD
+    const p2Sum = phase2Steps.reduce((s, step) => {
+      if (step.type === "start") return step.amount;
+      if (step.type === "add") return s + step.amount;
+      if (step.type === "subtract" || step.type === "loss") return s - step.amount;
+      return s; // "total" row is the assertion target, not part of the sum
+    }, 0);
+    expect(p2Sum).toBeCloseTo(withSpouse.portPreRMD, 6);
+    // distStartVal + distGrowth + distSpouseContrib − distDraws − distRMDTax = distEndVal
+    const p3Sum = phase3Steps.reduce((s, step) => {
+      if (step.type === "start") return step.amount;
+      if (step.type === "add") return s + step.amount;
+      if (step.type === "subtract" || step.type === "loss") return s - step.amount;
+      return s;
+    }, 0);
+    expect(p3Sum).toBeCloseTo(withSpouse.distEndVal, 6);
   });
 });

@@ -113,6 +113,22 @@ describe("runSimulation — IRS limits", () => {
   });
 });
 
+describe("runSimulation — c401kEmployee (BUG-82)", () => {
+  it("c401kEmployee is the deferral only, and c401k − c401kEmployee is the match", () => {
+    // Flat 3% match mode (see defaultSim's matchConfig): match = salary × 3%,
+    // independent of the employee's own deferral amount.
+    const rows = defaultSim({ contrib401k: 10_000, incomeGrowth: 0, currentIncome: 100_000 });
+    for (const row of rows) {
+      expect(row.c401kEmployee).toBeGreaterThan(0);
+      expect(row.c401kEmployee).toBeLessThanOrEqual(row.c401k);
+      const match = row.c401k - row.c401kEmployee;
+      expect(match).toBeGreaterThanOrEqual(0);
+      // Flat 3% of the $100K salary (no growth) ≈ $3,000 match every year (415(c) cap not binding here).
+      expect(match).toBeCloseTo(3_000, -1);
+    }
+  });
+});
+
 describe("runSimulation — output structure", () => {
   it("returns correct number of rows", () => {
     const rows = defaultSim({ totalYears: 35 });
@@ -789,5 +805,71 @@ describe("runSimulation — pause-aware salary growth clock", () => {
     for (const age of [31, 35, 40, 45]) {
       expect(at(rows, age).salary).toBe(Math.round(100_000 * 1.03 ** (age - 31)));
     }
+  });
+});
+
+describe("runSimulation — spouseIncomeEndAge (BUG-82 follow-up: spouse income stops at the spouse's own retirement)", () => {
+  // MFJ, primary income low ($50k, below even the phase-out START on its own) and
+  // spouse income high ($250k). Combined $300k clears the MFJ Roth phase-out END
+  // ($252k) → cRoth = 0 whenever spouse income counts; primary-only $50k sits well
+  // under the phase-out START ($242k) → cRoth = full $7,000 whenever it doesn't.
+  // contrib401k/contribHSA zeroed so netOrdinaryIncome = primaryIncome (no pre-tax
+  // deductions to net out) — isolates the spouse-income gate cleanly.
+  const magiArgs = (overrides = {}) => ({
+    totalYears: 10, currentAge: 30, currentIncome: 50_000, incomeGrowth: 0,
+    filingStatus: "mfj", spouseIncome: 250_000, spouseIncomeGrowth: 0,
+    returnRate: 5,
+    bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0,
+    contrib401k: 0, contribRoth: 7_000, contribTaxable: 0, contribHSA: 0,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: () => 0,
+    ...overrides,
+  });
+  const at = (rows, age) => rows.find(r => r.age === age);
+
+  it("spouseIncomeEndAge = null is byte-identical to the old unconditional formula", () => {
+    // Default (omitted) and explicit null must agree, and — since there is no cutoff —
+    // the spouse's income must still be fully counted at a LATE age (year 9, age 39),
+    // not just near the start. cRoth stays phased out to 0 throughout.
+    const omitted  = runSimulation(magiArgs());
+    const explicit = runSimulation(magiArgs({ spouseIncomeEndAge: null }));
+    expect(explicit).toEqual(omitted);
+    expect(at(omitted, 31).cRoth).toBe(0);
+    expect(at(omitted, 39).cRoth).toBe(0); // still phased out near the end of the run — no cutoff ever fires
+  });
+
+  it("spouse income drops out of netOrdinaryIncome after the cutoff", () => {
+    const rows = runSimulation(magiArgs({ spouseIncomeEndAge: 35 }));
+    // Before the cutoff: spouse income counted → MFJ MAGI $300k → fully phased out.
+    expect(at(rows, 31).cRoth).toBe(0);
+    // After the cutoff: spouse income drops to 0 → MAGI $50k → full $7,000 contribution.
+    expect(at(rows, 39).cRoth).toBe(7_000);
+  });
+
+  it("the cutoff is inclusive — income counts fully AT spouseIncomeEndAge, drops to 0 the very next age", () => {
+    // Mirrors the contribEnd401k inclusivity convention (age <= end still active).
+    const rows = runSimulation(magiArgs({ spouseIncomeEndAge: 35 }));
+    const atCutoff     = at(rows, 35); // age <= 35 → spouse still counts → phased out
+    const afterCutoff  = at(rows, 36); // age > 35  → spouse no longer counts → full contribution
+    expect(atCutoff.cRoth).toBe(0);
+    expect(afterCutoff.cRoth).toBe(7_000);
+  });
+
+  it("the LTCG bracket relaxes after the cutoff (lower drag on Taxable growth)", () => {
+    // Two 1-year runs sharing every input except spouseIncomeEndAge: one where the
+    // spouse's income still counts at age 31 (cutoff far in the future), one where
+    // it has already dropped off (cutoff at/behind currentAge). MFJ LTCG 0% bracket
+    // tops out at $98,900 taxable income — $300k combined clears it (15% rate),
+    // $50k primary-only does not (0% rate) — so Taxable grows strictly more once
+    // the spouse's income drops out of the ordinary-income basis.
+    const sharedArgs = magiArgs({
+      totalYears: 1, contribRoth: 0, balTaxable: 100_000, returnRate: 7,
+    });
+    const beforeCutoff = runSimulation({ ...sharedArgs, spouseIncomeEndAge: 100 })[0];
+    const afterCutoff  = runSimulation({ ...sharedArgs, spouseIncomeEndAge: 30 })[0];
+    expect(afterCutoff["Taxable"]).toBeGreaterThan(beforeCutoff["Taxable"]);
+    // Exact expected values: 100k × (1 + 7%×(1-0.15)) vs 100k × (1 + 7%×(1-0))
+    expect(beforeCutoff["Taxable"]).toBe(Math.round(100_000 * (1 + 0.07 * 0.85)));
+    expect(afterCutoff["Taxable"]).toBe(Math.round(100_000 * 1.07));
   });
 });

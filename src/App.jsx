@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -171,6 +171,9 @@ export default function App() {
   const [isMarried,         setIsMarried]         = useState(false);
   const [spouseIsSoleBenef, setSpouseIsSoleBenef] = useState(false);
   const [spouseCurrentAge,  setSpouseCurrentAge]  = useState(18);
+  // null = "auto: the same NUMERIC age the primary retires at" (design doc C.2). Mirrors the
+  // livingExpenses / annualExpenses / conversionStartAge null-default pattern.
+  const [spouseRetirementAge, setSpouseRetirementAge] = useState(null);
   const [ssOverride,        setSsOverride]        = useState(null);
   const [includeSS,         setIncludeSS]         = useState(true);
 
@@ -264,6 +267,12 @@ export default function App() {
     selectedState, stateRateOverride,
   });
 
+  // Tax-only net rate for the spouse's gap-year paycheck. NOT takeHome/householdIncome:
+  // that nets out the PRIMARY's pre-tax deductions (double-counting the spouse's own
+  // deferral) and can go negative for a non-MFJ filer whose spouse out-earns them.
+  // Clamped either way.
+  const spouseNetRate = Math.max(0, Math.min(1, 1 - combinedEffRate));
+
   // The conversion events the MODEL actually sees: only when the in-service toggle is
   // on, and only valid working-year events (amount > 0, strictly before retirement).
   // Clamping here means lowering the retirement age can't strand an event inside the
@@ -280,6 +289,16 @@ export default function App() {
   const hasSpouse = isMarried || spouseIncome > 0 || spouseBal401k > 0 || spouseBalRoth > 0
     || spouseBalTaxable > 0 || spouseBalHSA > 0 || spouseContrib401k > 0 || spouseContribRoth > 0
     || spouseContribTaxable > 0 || spouseContribHSA > 0;
+  // The spouse's own retirement age (BUG-82 foundation step). null = auto: the same
+  // numeric age the primary retires at. Defensively double-clamped so a stale stored
+  // value can never escape its own bounds (the same pattern used for ssClaimingAge-
+  // style fields) — min/max are recomputed from live currentAge-family inputs every
+  // render, so a value valid when written can still fall outside a moved range.
+  const spouseRetAgeMin = spouseCurrentAge + 1;
+  const spouseRetAgeMax = Math.max(spouseRetAgeMin, lifeExpect - 1);
+  const effectiveSpouseRetAge = Math.min(
+    spouseRetAgeMax,
+    Math.max(spouseRetAgeMin, spouseRetirementAge ?? retirementAge));
   // HSA family HDHP limit is a SHARED household ceiling (rule 4). Under 'self' each
   // person keeps the self-only cap (runSimulation's default, HSA_LIMIT_2026 — the
   // existing behavior, byte-identical). Under 'family' the household shares
@@ -300,6 +319,10 @@ export default function App() {
       moneyEvents,
       conversionEvents: activeConversionEvents, stateRate,
       hsaLimit: primaryHsaLimit,
+      // The primary's age in the calendar year the SPOUSE retires. Inclusive (income
+      // counts THROUGH the retirement year), matching contribEnd*'s `age <= end`
+      // convention. null when there's no spouse — inert (byte-identical).
+      spouseIncomeEndAge: hasSpouse ? primaryAgeAt(currentAge, spouseCurrentAge, effectiveSpouseRetAge) : null,
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards
@@ -319,18 +342,21 @@ export default function App() {
     moneyEvents,
     activeConversionEvents, stateRate,
     primaryHsaLimit,
+    hasSpouse, effectiveSpouseRetAge, spouseCurrentAge,
   ]);
 
   // Spouse's own accumulation sim (#30) — mirrors the primary's runSimulation call
   // but with the spouse's own age/income/accounts/match terms. The spouse contributes
-  // over the same CALENDAR window as the primary (spouseContribEnd), so the spouse's
-  // retirement-year row lands at the same array index (phase2End - 1) as the
-  // primary's. spouseIncome/incomeGrowth are swapped into the "other earner" slot so
-  // calcTaxBasis-equivalent MFJ combined-income math inside runSimulation sees the
-  // same household income the primary sim does (rule 9). Money events and Roth-
-  // conversion events are primary/household-modeled only — never run on the spouse
-  // sim (no double-count). hasSpouse=false → [] → every spouse scalar below is 0.
-  const spouseContribEnd = spouseCurrentAge + (safeRetAge - currentAge);
+  // to their OWN retirement age (effectiveSpouseRetAge); the retirement seed is still
+  // read at the PRIMARY's retirement index (phase2End - 1), because the walk starts
+  // there; the extra rows past that index carry the gap-year contributions a later
+  // step's retirement engine consumes as per-age maps. spouseIncome/incomeGrowth are
+  // swapped into the "other earner" slot so calcTaxBasis-equivalent MFJ combined-
+  // income math inside runSimulation sees the same household income the primary sim
+  // does (rule 9). Money events and Roth-conversion events are primary/household-
+  // modeled only — never run on the spouse sim (no double-count). hasSpouse=false →
+  // [] → every spouse scalar below is 0.
+  const spouseContribEnd = effectiveSpouseRetAge;
   const spouseSimData = useMemo(() => {
     if (!hasSpouse) return [];
     const raw = runSimulation({
@@ -344,20 +370,36 @@ export default function App() {
       contribEndTaxable: spouseContribEnd, contribEndHSA: spouseContribEnd,
       calcEmployerMatchFn: spouseEmployerMatch,
       hsaLimit: spouseHsaLimit,
+      // = spouseAgeAtPrimaryRet. Without this the spouse's own sim counted the PRIMARY's
+      // salary in household MAGI forever, including years after the primary retired —
+      // wrongly suppressing the spouse's Roth contributions during the gap years.
+      spouseIncomeEndAge: spouseAgeAt(currentAge, spouseCurrentAge, safeRetAge),
     });
     return raw.map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
   }, [hasSpouse, totalYears, spouseCurrentAge, spouseIncome, spouseIncomeGrowth, incomeGrowthEndAge,
       filingStatus, currentIncome, incomeGrowth, returnRate, spouseBal401k, spouseBalRoth,
       spouseBalTaxable, spouseBalHSA, spouseContrib401k, spouseContribRoth, spouseContribTaxable,
-      spouseContribHSA, spouseContribEnd, spouseEmployerMatch, spouseHsaLimit]);
+      spouseContribHSA, spouseContribEnd, spouseEmployerMatch, spouseHsaLimit, safeRetAge, currentAge]);
 
   const spouseCurrentSnapshot = useMemo(() => ({
     age: currentAge, tradGross: spouseBal401k, "Roth IRA": spouseBalRoth,
     "Taxable": spouseBalTaxable, "HSA": spouseBalHSA,
   }), [currentAge, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
-  const spouseAtRet = phase2End > 0
-    ? (spouseSimData[phase2End - 1] ?? spouseCurrentSnapshot)
-    : spouseCurrentSnapshot;
+  // Spouse retirement seed + gap-year maps for the engine (#30 / BUG-82) — the ONE
+  // builder that both this main path and a later what-if re-seed will call, so the
+  // "auto" (same-calendar-year) case is guaranteed to reproduce the pre-fix pooled
+  // behavior (see buildSpouseRetirementSeed's own docs in retirement-phase.js).
+  // Replaces the old `spouseAtRet` local (phase2End-indexed lookup) — its job is now
+  // done inside buildSpouseRetirementSeed itself.
+  const spouseSeed = useMemo(() => {
+    if (!hasSpouse) return null;
+    return buildSpouseRetirementSeed({
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge,
+      primaryRetAge: safeRetAge, spouseRetAge: effectiveSpouseRetAge, spouseNetRate,
+      inflationRate,
+    });
+  }, [hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge,
+      safeRetAge, effectiveSpouseRetAge, spouseNetRate, inflationRate]);
 
   // Per-age estimated tax (incl. any early-withdrawal penalty) for the working-year
   // conversions actually set — read straight off the engine-computed simData rows so
@@ -464,12 +506,22 @@ export default function App() {
   const retRoth    = pRoth;
   const retTaxable = pTaxable;
   const retHsa     = pHsa;
+  // BUG-84 interim honesty relabel (copy-only): retTrad/retRoth/retTaxable are
+  // PRIMARY-only (spouse accounts are a per-person, sequence-separately concern —
+  // see docs/BUGS.md BUG-84), so the withdrawal-order card's "$X available" figures
+  // could be misread as a household total in a spouse household. No calculation
+  // changes here — just gates a copy note in both the Classic card and the
+  // Horizon withdrawalView bundle.
+  const withdrawalScopeIsPrimaryOnly = hasSpouse;
 
   // Spouse per-account balances at retirement (0 when no spouse — byte-identical path).
-  const sTrad    = spouseAtRet.tradGross ?? 0;
-  const sRoth    = spouseAtRet["Roth IRA"] ?? 0;
-  const sTaxable = spouseAtRet["Taxable"]  ?? 0;
-  const sHsa     = spouseAtRet["HSA"]       ?? 0;
+  // Sourced from spouseSeed (buildSpouseRetirementSeed), NOT spouseAtRet directly — the
+  // seed's tradSeed/rothSeed/taxableSeed/hsaSeed are defined to equal exactly what
+  // spouseAtRet's fields were, so these four scalars are unchanged by this wiring.
+  const sTrad    = spouseSeed?.tradSeed    ?? 0;
+  const sRoth    = spouseSeed?.rothSeed    ?? 0;
+  const sTaxable = spouseSeed?.taxableSeed ?? 0;
+  const sHsa     = spouseSeed?.hsaSeed     ?? 0;
 
   // Household per-account (primary + spouse) — the retirement WALK and the displayed
   // cards/headline are household; spouse=0 → household == primary (golden master safe).
@@ -520,7 +572,38 @@ export default function App() {
     isMarried, spouseClaimingAge, spouseBenefitBasis,
   });
 
-  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension);
+  // #30 / BUG-82 rule-5 wiring: the spouse's net gap-year income in the FIRST
+  // WALKED YEAR (safeRetAge + 1 — the engine's first row). Reading straight off
+  // spouseSeed's own map means this can never diverge from what the retirement-
+  // phase engine actually offsets that year. 0 when there's no spouse, or the
+  // spouse retires in/before the primary's own retirement year (empty gap
+  // window) — strict generalization, byte-identical then.
+  const spouseIncomeAtRet = spouseSeed?.spouseIncomeFloorByAge?.[safeRetAge + 1] ?? 0;
+  // Rendered beside withdrawal-rate / Income-Meter figures whenever a spouse's
+  // gap-year paycheck is part of them, so a rate that's only temporarily lower
+  // can't read as permanent. null = not applicable (the normal, no-gap case).
+  const spouseIncomeScopeNote = spouseIncomeAtRet > 0
+    ? `Includes your spouse's income through age ${effectiveSpouseRetAge}; the portfolio draw rises after that.`
+    : null;
+  // #30 / BUG-82 interim (Session A, pending the Session B Monte Carlo engine
+  // port): true whenever the spouse has a real gap window (works past the
+  // primary's retirement, before their own) — read straight off the same maps
+  // spouseIncomeAtRet uses, not re-derived from ages, so it can't disagree.
+  // The Range lens still runs the OLDER blended walk (buildRetirementDrawdown),
+  // which has no spouse bucket at all, so its shaded band can silently
+  // understate a spouse household's outlook during the gap. Surfaced as a
+  // caption rather than left unstated (rule 10: missing applicability is not
+  // silence) until the MC engine is ported to the per-account walk.
+  // Checks for an actual nonzero VALUE, not just key presence (adversarial-
+  // review fix): buildSpouseRetirementSeed writes a key for every gap year
+  // regardless of amount, so a married household with $0 spouse income/
+  // balances got a spurious caveat for a gap that offsets nothing.
+  const hasActiveSpouseGap = hasSpouse && (
+    Object.values(spouseSeed?.spouseContribByAge ?? {}).some(v => v > 0)
+    || Object.values(spouseSeed?.spouseIncomeFloorByAge ?? {}).some(v => v > 0)
+  );
+
+  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension, spouseIncomeAtRet);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
   // yearsSustained / isSustainable are defined below (after the per-year RMD &
   // conversion tax schedules), because the longevity walk now charges those
@@ -565,11 +648,15 @@ export default function App() {
   const convFloors = useMemo(() => buildIncomeFloors({
     conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
     pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
+    spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge,
+      spouseSeed]);
   const convMAGIFloors = useMemo(() => buildIncomeFloors({
     conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: householdSS,
     pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
+    spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
+      spouseSeed]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
   const retIncomeFloor = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
 
@@ -627,15 +714,33 @@ export default function App() {
     filingStatus, retStateRate, rmdStartAge: RMD_START_AGE,
     useTable2, spouseCurrentAge, currentAge,
     moneyEvents: retirementMoneyEvents,
+    // Spouse's own retirement timing (#30 / BUG-82) — the gap-year gate + maps built
+    // by buildSpouseRetirementSeed above. null/{} when no spouse (inert, engine default).
+    spouseRetirementAge:      hasSpouse ? effectiveSpouseRetAge : null,
+    spouseContribByAge:       spouseSeed?.spouseContribByAge ?? {},
+    spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
+    spouseIncomeFloorByAge:   spouseSeed?.spouseIncomeFloorByAge ?? {},
   }), [tradGrossAtRet, sTrad, safeRetAge, safeLifeExp, rReal,
        effectiveExpenses, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
        pensionMonthly, pensionStartAge, filingStatus, retStateRate,
        useTable2, spouseCurrentAge, currentAge, retirementMoneyEvents,
-       hhRoth, hhTaxable, hhHsa]);
+       hhRoth, hhTaxable, hhHsa, spouseSeed, hasSpouse, effectiveSpouseRetAge]);
 
   const retPhase = useMemo(
     () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),
     [retPhaseBase, conversionByAge]);
+
+  // Finding 1 (#30 / BUG-82 follow-up): whenever the plan needed the shortfall-
+  // spillover escape hatch (the primary pool couldn't cover a gap year on its
+  // own, and the spouse's held-out 401k covered the rest at a penalty), say so —
+  // rendered beside spouseIncomeScopeNote below (rule 10: the string is built
+  // here, the screen only renders it). null = the hatch never fired (the common
+  // case — inert with no spouse, since totalSpouseSpillover is 0 by construction).
+  const spouseSpilloverNote = (retPhase?.totalSpouseSpillover ?? 0) > 0
+    ? `Your plan works, but it needs about ${fmt(retPhase.totalSpouseSpillover)} withdrawn early `
+    + `from your spouse's 401k (from age ${retPhase.firstSpouseSpilloverAge}), costing `
+    + `${fmt(retPhase.totalSpouseSpilloverTax)} in taxes and early-withdrawal penalties.`
+    : null;
 
   // RMD display + lifetime tax, all derived from the ONE walk (no second projection).
   // rmdData rows already carry { age, rmd, bal, divisor, tax } — they ARE rmdDataWithTax.
@@ -700,7 +805,7 @@ export default function App() {
   // slightly less tax-honest than the headline — acceptable for relative comparisons;
   // full migration of what-if/optimized to the engine is a documented follow-up.
   const rmdTaxByAge = useMemo(
-    () => Object.fromEntries(retPhase.rmdSchedule.map(d => [d.age, d.tax])),
+    () => buildRmdTaxByAge(retPhase.rows),
     [retPhase]);
   const conversionTaxByAge = useMemo(
     () => Object.fromEntries(retPhase.rows.filter(r => r.conversion > 0).map(r => [r.age, Math.round(r.convTax)])),
@@ -756,10 +861,16 @@ export default function App() {
       successPct,
       successOk,
       note: mc.limitation,
+      // #30 / BUG-82 interim (Session A) — see hasActiveSpouseGap above. null
+      // (the normal case) renders nothing extra; the MC engine port (Session B)
+      // removes this caveat by giving the walk a real spouse bucket instead.
+      spouseGapCaveat: hasActiveSpouseGap
+        ? "Doesn't yet include your spouse's working years — the shaded range may understate your outlook until they retire."
+        : null,
       medianDepletionAge: mc.depletionAgePercentiles?.p50 ?? null,
       p10DepletionAge: mc.depletionAgePercentiles?.p10 ?? null,
     };
-  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retDrawShared]);
+  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retDrawShared, hasActiveSpouseGap]);
 
   // Scalar successPct extracted for V9 scalar-dep hygiene (fed to planView's
   // confidence driver + the low-odds signal; the whole rangeView object stays out
@@ -836,6 +947,9 @@ export default function App() {
         const floorArgs = {
           conversionWindowYrs: windowLen, startAge, includeSS, ssClaimingAge,
           pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+          // Same map convFloors/convMAGIFloors read (Finding 2 — the optimizer
+          // must never search a spouse-blind model the display doesn't show).
+          spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
         };
         f = {
           floors:     buildIncomeFloors({ ...floorArgs, ssAmount: ssTaxableRet }),
@@ -879,7 +993,7 @@ export default function App() {
       tradGrossAtRet, convWindowFloor, resolvedEndAge,
       includeSS, ssClaimingAge, ssTaxableRet, householdSS, pensionMonthly, pensionStartAge,
       hasMedicare, personOnMedicare,
-      hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
+      hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize, spouseSeed]);
 
   // ── WI-3.9 Apply-with-preview: the conversion-optimizer Apply site ─────────
   // The writes an "Apply" click performs — mirrors what the optimizer suggestion
@@ -977,8 +1091,20 @@ export default function App() {
     ].filter(s => s.amount > 0),
     yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings,
     hasSavings: yr1TaxSavings > 0,
+    // BUG-84 interim honesty note (copy-only) — the steps above are PRIMARY-only;
+    // in a spouse household the flow should say so rather than read as a household total.
+    scopeNote: withdrawalScopeIsPrimaryOnly
+      ? "These amounts are your own accounts; your spouse's accounts sequence separately."
+      : null,
+    // #30 / BUG-82: when the spouse's gap-year income has driven netNeed to 0,
+    // the card must explain WHY the withdrawal list is empty rather than
+    // silently showing nothing.
+    gapYearNote: (spouseIncomeAtRet > 0 && netPortfolioNeed === 0)
+      ? "No portfolio draw needed this year — your spouse's income covers your expenses."
+      : null,
   }), [netPortfolioNeed, yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate,
-       yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings]);
+       yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings, withdrawalScopeIsPrimaryOnly,
+       spouseIncomeAtRet]);
 
   const actualMarginalPct  = Math.round(fedMarginal * 100);
 
@@ -1005,7 +1131,7 @@ export default function App() {
     monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
   });
   const wr70 = totalAtRet > 0
-    ? Math.max(0, effectiveExpenses - household70SS - effectivePension) / totalAtRet * 100
+    ? Math.max(0, effectiveExpenses - household70SS - effectivePension - spouseIncomeAtRet) / totalAtRet * 100
     : 0;
 
   const flowData = useMemo(() => calcFlowDown({
@@ -1019,9 +1145,16 @@ export default function App() {
     totalConverted: conversionWindowYrs > 0
       ? conversionSim.years.reduce((s, y) => s + y.conversion, 0) : 0,
     safeRetAge, safeLifeExp, rmdStartAge: RMD_START_AGE,
+    spouseStartBal: spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
+    // Index-based, NOT age-filtered: spouseSimData rows carry the SPOUSE's age, so
+    // `d.age <= safeRetAge` (the primary's age) would be wrong. phase2End is the primary's
+    // years-to-retirement, and spouseSimData[i] is calendar year i+1 for BOTH people — the
+    // same index basis buildAccumChart's zip already relies on.
+    spouseContribRows: spouseSimData.slice(0, Math.max(0, phase2End)),
   }), [
     bal401k, balRoth, balTaxable, balHSA, simData, safeRetAge, totalAtRet,
     conversionWindowYrs, conversionSim, retirementWalk, accumChart, safeLifeExp,
+    spouseSimData, phase2End, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
   ]);
 
   const optimized = useMemo(() => calcOptimizedScenario({
@@ -1031,12 +1164,16 @@ export default function App() {
     householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
+    // #30 / BUG-82: same gap-year offset the headline netPortfolioNeed uses, so
+    // optWR and withdrawalRate stay comparable.
+    spouseIncomeAtRet,
   }), [
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
     effectiveRMDTaxRate, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
     householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
+    spouseIncomeAtRet,
   ]);
 
 
@@ -1054,12 +1191,17 @@ export default function App() {
     // Permanent working-year conversions must travel with the re-sim so the what-if
     // BASELINE matches the main plan (same class as the BUG-34 money-events fix).
     conversionEvents: activeConversionEvents, stateRate,
+    // Permanent plan input (Step 7) — a what-if re-sim must apply the same
+    // spouse-retires-first MAGI cutoff the main plan uses, or a forced resim's
+    // baseline would silently diverge from the committed plan.
+    spouseIncomeEndAge: hasSpouse ? primaryAgeAt(currentAge, spouseCurrentAge, effectiveSpouseRetAge) : null,
   }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
        contrib401k, contribRoth, contribTaxable, contribHSA,
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-       employerMatch, moneyEvents, activeConversionEvents, stateRate]);
+       employerMatch, moneyEvents, activeConversionEvents, stateRate,
+       hasSpouse, effectiveSpouseRetAge, spouseCurrentAge]);
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.
@@ -1175,9 +1317,24 @@ export default function App() {
     if (contribEndRoth    > v) setContribEndRoth(v);
     if (contribEndTaxable > v) setContribEndTaxable(v);
     if (contribEndHSA     > v) setContribEndHSA(v);
+    // Lowering the horizon can push spouseRetAgeMax (lifeExpect - 1) below a stored
+    // spouseRetirementAge — clamp the STORED value at the source so neither the
+    // bundle nor a future slider ever holds an out-of-range spouse retirement age.
+    if (spouseRetirementAge != null && spouseRetirementAge > v - 1) setSpouseRetirementAge(v - 1);
   }, [setLifeExpect, setRetirementAge, retirementAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA,
+      spouseRetirementAge, setSpouseRetirementAge]);
+
+  // Spouse-current-age coupled update: mirrors setCurrentAgeCoupled/setLifeExpectCoupled
+  // above. The spouse must retire after their own current age; clamp the STORED value at
+  // the source so neither the bundle nor a slider ever holds an out-of-range age. Shared
+  // by both the ss bundle's spouseCurrentAge.set and the Classic "Spouse's current age"
+  // slider — one implementation, not duplicated clamp logic in two places.
+  const setSpouseCurrentAgeCoupled = useCallback(v => {
+    setSpouseCurrentAge(v);
+    if (spouseRetirementAge != null && spouseRetirementAge <= v) setSpouseRetirementAge(v + 1);
+  }, [setSpouseCurrentAge, setSpouseRetirementAge, spouseRetirementAge]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
   // need so the screens can call them directly. Memoized (V9 / principle 13) with the
@@ -1204,9 +1361,29 @@ export default function App() {
     // "before" longevity metric doesn't fall back to a round(retAge+years)
     // derivation that can land one year early.
     baseDepletionAge: depletionAge,
+    // BUG-77: scenario-invariant spouse re-seed inputs. spouseContribEnd is the
+    // spouse's OWN retirement age (independent of the primary's), so spouseSimData
+    // itself never changes for a primary-retirement-age scenario — only the seed
+    // point (read at the SCENARIO's retirement age) and the gap-year maps need to be
+    // rebuilt, via the SAME buildSpouseRetirementSeed builder the main path uses. null
+    // with no spouse (inert).
+    spouseSeedInputs: hasSpouse ? {
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
+      spouseRetAge: effectiveSpouseRetAge, spouseNetRate, inflationRate,
+    } : null,
+    // #30 interop: the same two args App's own buildAccumChart call passes, so a
+    // resim's accumulation chart is HOUSEHOLD like the main path's (a pre-existing
+    // gap on this specific branch, unfixed until now).
+    spouseChartInputs: hasSpouse ? {
+      spouseSimData,
+      spouseStartingBal: spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
+    } : null,
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
-       addlPreTaxBal, depletionAge]);
+       addlPreTaxBal, depletionAge,
+       hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
+       effectiveSpouseRetAge, spouseNetRate, inflationRate,
+       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
   // scenario engine as every lever (calcWhatIfScenario) + SS helpers + a pure
@@ -1271,9 +1448,14 @@ export default function App() {
       lifeExpect: safeLifeExp, retirementAge: safeRetAge,
       currentContribTotal, takeHome,
       monteCarloSuccessPct: mcSuccessPct,
+      // #30 / BUG-82: the withdrawal driver must flag when the rate shown is
+      // flattered by a spouse's gap-year income that stops at a known age.
+      temporaryIncomeBasis: spouseIncomeAtRet > 0,
+      basisEndsAtAge: effectiveSpouseRetAge,
     }),
   }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge,
-       withdrawalRate, currentContribTotal, takeHome, mcSuccessPct]);
+       withdrawalRate, currentContribTotal, takeHome, mcSuccessPct,
+       spouseIncomeAtRet, effectiveSpouseRetAge]);
 
   // Pre-computed display scalars shared by sliderBounds and horizonProps directly.
   // monthlySpend: the QuickTune spend slider value (rule 10 — month↔year in the model).
@@ -1289,7 +1471,10 @@ export default function App() {
   // object on each call, so moving it outside would make it an unstable dep — V9).
   const currentSaved = bal401k + balRoth + balTaxable + balHSA;
   const planHighlights = useMemo(() => {
-    const flow = calcRetIncomeFlow({ effectiveExpenses, ss: ssAtRet, pension: effectivePension });
+    const flow = calcRetIncomeFlow({
+      effectiveExpenses, ss: ssAtRet, pension: effectivePension,
+      spouseIncome: spouseIncomeAtRet,
+    });
     const base = Math.max(1, effectiveExpenses);
     return {
       wealthMultiplier: currentSaved > 0
@@ -1302,16 +1487,23 @@ export default function App() {
         ...flow,
         hasSS:        flow.ss > 0,
         hasPension:   flow.pension > 0,
+        hasSpouseIncome: flow.spouseIncome > 0,
         ssPct:        Math.round(flow.ss           / base * 100),
         pensionPct:   Math.round(flow.pension       / base * 100),
+        spouseIncomePct: Math.round(flow.spouseIncome / base * 100),
         portfolioPct: Math.round(flow.portfolioDraw / base * 100),
       },
       lifetimeTaxBurden: (retPhase?.rmdTaxBite ?? 0) + (retPhase?.conversionCost ?? 0),
       yearsToRetirement:  Math.max(0, safeRetAge - currentAge),
       retirementDuration: Math.max(0, safeLifeExp - safeRetAge),
+      // #30 / BUG-82: passed through (not computed here) — see spouseIncomeScopeNote
+      // and spouseSpilloverNote (Finding 1) above.
+      spouseIncomeScopeNote,
+      spouseSpilloverNote,
     };
   }, [currentSaved, totalAtRet, takeHome, effectiveExpenses,
-      ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge]);
+      ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge,
+      spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote]);
 
   // Plan screen "Try a change" slider bounds — age/financial math extracted from the screen (rule 10).
   // canTuneRothConversion: pre-gated eligibility boolean so the screen never does > 0 check.
@@ -1439,6 +1631,15 @@ export default function App() {
       roth:     acct(spouseBalRoth, setSpouseBalRoth, spouseContribRoth, setSpouseContribRoth, ROTH_IRA_LIMIT_2026),
       taxable:  acct(spouseBalTaxable, setSpouseBalTaxable, spouseContribTaxable, setSpouseContribTaxable, 100_000),
       hsa:      acct(spouseBalHSA, setSpouseBalHSA, spouseContribHSA, setSpouseContribHSA, HSA_FAMILY_LIMIT_2026),
+      spouseRetirementAge: {
+        value: effectiveSpouseRetAge,
+        // Snap to null when the user picks the primary's own retirement age — a clean
+        // "auto" state, mirroring ssOverride / incomeGrowthEndAge / stateRateOverride.
+        set: guardWrite(v => setSpouseRetirementAge(v === retirementAge ? null : v), readOnly),
+        min: spouseRetAgeMin,
+        max: spouseRetAgeMax,
+        step: 1,
+      },
       matchMode:        { value: spouseMatchMode, set: guardWrite(setSpouseMatchMode, readOnly),
         options: [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }] },
       employerMatchPct: { value: spouseEmployerMatchPct, set: guardWrite(setSpouseEmployerMatchPct, readOnly), min: 0, max: 10, step: 0.5 },
@@ -1451,10 +1652,11 @@ export default function App() {
       spouseBalTaxable, spouseContribTaxable, spouseBalHSA, spouseContribHSA,
       spouseMatchMode, spouseEmployerMatchPct, spouseMatchFormulaRate, spouseMatchFormulaCap,
       hsaCoverageType,
+      effectiveSpouseRetAge, spouseRetAgeMin, spouseRetAgeMax, retirementAge,
       setSpouseBal401k, setSpouseContrib401k, setSpouseBalRoth, setSpouseContribRoth,
       setSpouseBalTaxable, setSpouseContribTaxable, setSpouseBalHSA, setSpouseContribHSA,
       setSpouseMatchMode, setSpouseEmployerMatchPct, setSpouseMatchFormulaRate, setSpouseMatchFormulaCap,
-      setHsaCoverageType,
+      setHsaCoverageType, setSpouseRetirementAge,
       readOnly]);
 
   const ssBundle = useMemo(() => ({
@@ -1477,12 +1679,12 @@ export default function App() {
       min: SS_MIN_CLAIM_AGE, max: SS_MAX_CLAIM_AGE, step: 1 },
     spouseBenefitBasis:{ value: spouseBenefitBasis, set: guardWrite(setSpouseBenefitBasis, readOnly),
       options: [{ value: "own", label: "Own record" }, { value: "spousal", label: "Spousal (50%)" }] },
-    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAge, readOnly), min: 18, max: currentAge - 1, step: 1 },
+    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAgeCoupled, readOnly), min: 18, max: currentAge - 1, step: 1 },
     spouseIsSoleBenef:{ value: spouseIsSoleBenef, set: guardWrite(setSpouseIsSoleBenef, readOnly) },
   }), [includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge,
        spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef, currentAge, ssAnnualBenefit,
        setIncludeSS, setSsClaimingAge, setSsOverride, setIsMarried, setSpouseSsEstimate,
-       setSpouseClaimingAge, setSpouseBenefitBasis, setSpouseCurrentAge, setSpouseIsSoleBenef,
+       setSpouseClaimingAge, setSpouseBenefitBasis, setSpouseCurrentAgeCoupled, setSpouseIsSoleBenef,
        readOnly]);
 
   const pensionBundle = useMemo(() => ({
@@ -3149,7 +3351,7 @@ export default function App() {
                 }}>reset to current spend</button>
               )}
             </p>
-            {(householdSS > 0 || effectivePension > 0) && (
+            {(householdSS > 0 || effectivePension > 0 || spouseIncomeAtRet > 0) && (
               <div style={{ marginTop: 10, background: C.card, borderRadius: 7,
                 padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -3188,6 +3390,12 @@ export default function App() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontSize: 10, color: C.blue }}>− Pension income</span>
                     <span style={{ fontSize: 11, color: C.blue, ...mono }}>− {fmt(effectivePension)}</span>
+                  </div>
+                )}
+                {spouseIncomeAtRet > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontSize: 10, color: C.purple }}>− Spouse income (through age {effectiveSpouseRetAge})</span>
+                    <span style={{ fontSize: 11, color: C.purple, ...mono }}>− {fmt(spouseIncomeAtRet)}</span>
                   </div>
                 )}
                 <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 4,
@@ -3648,7 +3856,7 @@ export default function App() {
                   <p style={{ margin: "0 0 5px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Spouse's current age</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <input type="range" min={18} max={currentAge - 1} step={1} value={spouseCurrentAge}
-                      onChange={e => setSpouseCurrentAge(Number(e.target.value))}
+                      onChange={e => setSpouseCurrentAgeCoupled(Number(e.target.value))}
                       style={{ flex: 1, accentColor: C.blue }} />
                     <span style={{ fontSize: 13, color: C.blue, ...mono, minWidth: 24 }}>{spouseCurrentAge}</span>
                   </div>
@@ -4208,8 +4416,23 @@ export default function App() {
               <div>
                 <p style={{ margin: "0 0 10px", fontSize: 12, color: C.text }}>
                   Annual need from portfolio: <span style={{ color: C.gold, ...mono }}>{fmt(netPortfolioNeed)}</span>
-                  <span style={{ fontSize: 10, color: C.muted }}> (expenses{ssAtRet > 0 ? " − SS" : ""}{effectivePension > 0 ? " − pension" : ""})</span>
+                  <span style={{ fontSize: 10, color: C.muted }}> (expenses{ssAtRet > 0 ? " − SS" : ""}{effectivePension > 0 ? " − pension" : ""}{spouseIncomeAtRet > 0 ? " − spouse income" : ""})</span>
                 </p>
+                {spouseIncomeScopeNote && (
+                  <p style={{ margin: "0 0 10px", fontSize: 10, color: C.muted, fontStyle: "italic" }}>
+                    {spouseIncomeScopeNote}
+                  </p>
+                )}
+                {spouseSpilloverNote && (
+                  <p style={{ margin: "0 0 10px", fontSize: 10, color: C.orange, fontStyle: "italic" }}>
+                    {spouseSpilloverNote}
+                  </p>
+                )}
+                {withdrawalScopeIsPrimaryOnly && (
+                  <p style={{ margin: "0 0 10px", fontSize: 10, color: C.muted, fontStyle: "italic" }}>
+                    Amounts below are your own accounts (your spouse's accounts sequence separately).
+                  </p>
+                )}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[
                     { step: 1, label: "Taxable Brokerage", color: C.green,  detail: `LTCG rates · ${fmt(retTaxable)} available`,   tax: "0–20% on gains" },
@@ -4422,6 +4645,7 @@ export default function App() {
               optimizedAllocation, optimized,
               depletionAge: flowData.depletionAge, hasConvWindow: flowData.hasConvWindow,
               retTaxable,
+              spouseIncomeAtRet,
             });
 
             return (
@@ -4495,6 +4719,12 @@ export default function App() {
                       <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>
                         <p style={{ margin: 0, fontSize: 9, color: C.muted }}>Pension</p>
                         <p style={{ margin: 0, fontSize: 13, color: C.blue, ...mono }}>{fmt(effectivePension)}/yr</p>
+                      </div>
+                    )}
+                    {spouseIncomeAtRet > 0 && (
+                      <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>
+                        <p style={{ margin: 0, fontSize: 9, color: C.muted }}>Spouse income</p>
+                        <p style={{ margin: 0, fontSize: 13, color: C.purple, ...mono }}>{fmt(spouseIncomeAtRet)}/yr</p>
                       </div>
                     )}
                     <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>

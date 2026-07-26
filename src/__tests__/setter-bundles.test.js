@@ -82,6 +82,50 @@ describe("WI-3.1 setter bundles", () => {
     app.unmount();
   });
 
+  it("round-trips spouseRetirementAge and snaps to auto (BUG-82 foundation)", () => {
+    const app = mount();
+    const retAge = app.latest().assumptions.retirementAge.value;
+    // Round-trip: write a value distinct from the primary's own retirement age.
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(retAge + 5));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(retAge + 5);
+    // Snap to auto: writing the primary's own retirement age clears the STORED
+    // value to null (a clean "auto" state) rather than pinning it — verified by
+    // then moving retirementAge and checking spouseRetirementAge.value tracks it
+    // (a pinned/non-null value would not move with it).
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(retAge));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(retAge);
+    app.fire(() => app.latest().assumptions.retirementAge.set(retAge + 1));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(retAge + 1);
+    app.unmount();
+  });
+
+  it("clamps the stored spouseRetirementAge when its bounds move (BUG-82 foundation)", () => {
+    // Max shrinks when lifeExpect drops.
+    {
+      const app = mount();
+      app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(70));
+      expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(70);
+      // Lower lifeExpect so the new spouseRetAgeMax (lifeExpect - 1) falls below 70.
+      app.fire(() => app.latest().assumptions.lifeExpect.set(66));
+      const sra = app.latest().spouseAccounts.spouseRetirementAge;
+      expect(sra.min).toBeLessThanOrEqual(sra.max);
+      expect(sra.value).toBeLessThanOrEqual(sra.max);
+      app.unmount();
+    }
+    // Min rises when spouseCurrentAge is raised.
+    {
+      const app = mount();
+      app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(25));
+      expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(25);
+      // Raise spouseCurrentAge above the currently-stored spouseRetirementAge.
+      app.fire(() => app.latest().ss.spouseCurrentAge.set(27));
+      const sra = app.latest().spouseAccounts.spouseRetirementAge;
+      expect(sra.min).toBeLessThanOrEqual(sra.max);
+      expect(sra.value).toBeGreaterThanOrEqual(sra.min);
+      app.unmount();
+    }
+  });
+
   it("round-trips a toggle and a select", () => {
     const app = mount();
 

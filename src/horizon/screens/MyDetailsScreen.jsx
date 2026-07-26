@@ -183,6 +183,9 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
                   {F({ label: "Annual contribution", field: a.contrib, format: money })}
                 </div>
               ))}
+              {F({ label: "Spouse retires at",
+                   hint: "when your spouse stops working — their accounts keep growing until then",
+                   field: spouseAccounts.spouseRetirementAge, format: ageFmt })}
               <div style={{ marginTop: 14 }}>
                 <div style={{ font: `600 12px ${HF}`, color: t.accent, letterSpacing: "0.04em", textTransform: "uppercase" }}>HSA coverage & employer match</div>
                 {F({ label: "HSA coverage", hint: "family HDHP is a shared household limit", field: spouseAccounts.hsaCoverageType })}

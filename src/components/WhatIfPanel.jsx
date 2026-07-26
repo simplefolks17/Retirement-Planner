@@ -77,13 +77,19 @@ export function WhatIfPanel({
 
   // Memoized so deltaResult/affordResult can list it honestly in their deps
   // (a fresh object each render would re-run them every render — principle 13).
+  // spouseSeedInputs (roadmap-review finding, 2026-07-26): calcWhatIfDelta's
+  // forced-resim path silently dropped the spouse's household balance without
+  // it — same basis-mismatch class as addlPreTaxBal above, already fixed for
+  // the per-account-engine mode via whatIfBundle. Read straight off the same
+  // bundle Max Affordable mode already receives — one source, not re-derived.
   const sharedArgs = useMemo(() => ({
     simInputs, fedMarginal, retDrawShared,
     safeRetAge, safeLifeExp,
     baseTotalAtRet, baseYearsSustained,
     addlPreTaxBal,
+    spouseSeedInputs: whatIfBundle?.spouseSeedInputs ?? null,
   }), [simInputs, fedMarginal, retDrawShared,
-       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, addlPreTaxBal]);
+       safeRetAge, safeLifeExp, baseTotalAtRet, baseYearsSustained, addlPreTaxBal, whatIfBundle]);
 
   const deltaResult = useMemo(() => {
     if (mode !== "delta") return null;

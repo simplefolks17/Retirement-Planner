@@ -11,7 +11,7 @@
 
 import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
-import { buildRetirementPhase } from "./retirement-phase.js";
+import { buildRetirementPhase, buildSpouseRetirementSeed } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
@@ -253,6 +253,13 @@ export function calcWhatIfDelta({
   addlPreTaxBal = 0,             // outside pre-tax balance (App.jsx) — baseTotalAtRet already
                                   // includes it; the re-sim below must add it too or a forced
                                   // resim's scenarioTotalAtRet silently drops it (basis mismatch).
+  // Same basis-mismatch class as addlPreTaxBal above, and the same fix already
+  // shipped for the sibling calcWhatIfScenario (BUG-77 + its CodeRabbit
+  // follow-up): baseTotalAtRet (App.jsx) is HOUSEHOLD (includes the spouse's
+  // seeded balance), but this function's forced-resim path only ever
+  // re-simulated the PRIMARY — so a forced resim silently dropped the spouse's
+  // entire balance from scenarioTotalAtRet. null with no spouse (inert).
+  spouseSeedInputs = null,
 }) {
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
   const scenarioExpenses  = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
@@ -292,6 +299,19 @@ export function calcWhatIfDelta({
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
     const at = raw[retIdx];
     if (at) {
+      // Re-seed the spouse at the SCENARIO's retirement age (mirrors
+      // calcWhatIfScenario's BUG-77 fix exactly — same builder, so the two
+      // functions can never diverge on what the spouse's re-seeded balance is).
+      const spouseSeed = spouseSeedInputs
+        ? buildSpouseRetirementSeed({
+            ...spouseSeedInputs,
+            currentAge: simInputs.currentAge,
+            primaryRetAge: scenarioRetAge,
+          })
+        : null;
+      const spouseTotal = spouseSeed
+        ? spouseSeed.tradSeed + spouseSeed.rothSeed + spouseSeed.taxableSeed + spouseSeed.hsaSeed
+        : 0;
       // BUG-35: gross basis (the 401k is no longer haircut) — matches the gross
       // baseTotalAtRet so scenario-vs-baseline deltas are apples-to-apples. Also
       // add addlPreTaxBal — baseTotalAtRet already includes it (App.jsx), and
@@ -300,7 +320,8 @@ export function calcWhatIfDelta({
         + (at["Roth IRA"] ?? 0)
         + (at["Taxable"]  ?? 0)
         + (at["HSA"]      ?? 0)
-        + addlPreTaxBal;
+        + addlPreTaxBal
+        + spouseTotal;
     } else {
       scenarioTotalAtRet = 0;
     }
@@ -356,7 +377,8 @@ export function calcWhatIfDelta({
 // bundle (the `whatIfBundle` App.jsx passes via horizonProps.whatIfSimInputs):
 //   { simInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
 //     baseTotalAtRet, baseYearsSustained,
-//     retPhaseBase, conversionByAge, baseChart, addlPreTaxBal }
+//     retPhaseBase, conversionByAge, baseChart, addlPreTaxBal,
+//     spouseSeedInputs, spouseChartInputs }
 //   retPhaseBase/conversionByAge/baseChart are the SAME memoized objects App.jsx
 //   feeds the main per-account engine (retirement-phase.js) for the solid line —
 //   passing them through here means the scenario walk uses the identical engine
@@ -365,6 +387,10 @@ export function calcWhatIfDelta({
 //   this falls back to the older blended-pool walk (buildRetirementDrawdown) —
 //   App.jsx always supplies retPhaseBase, so that branch is dead in production
 //   (kept only for callers/tests that haven't been migrated).
+//   spouseSeedInputs/spouseChartInputs (BUG-77, null with no spouse): re-seed the
+//   spouse's Traditional bucket + rebuild the gap-year maps at the SCENARIO's own
+//   retirement age via the shared buildSpouseRetirementSeed builder, and keep a
+//   forced resim's accumulation chart household — see the engine branch below.
 //
 // overrides: { retireAdj, retirementAge, annualExpenses, monthlyExpenses, scenarioEvents, excludeEventId }
 //   retireAdj       — convenience shift from safeRetAge (e.g. -2 = retire 2 yrs early)
@@ -418,6 +444,12 @@ export function calcWhatIfScenario({
   conversionByAge,
   baseChart,
   addlPreTaxBal,
+  // BUG-77: scenario-invariant spouse re-seed inputs (null with no spouse).
+  // spouseSeedInputs feeds buildSpouseRetirementSeed for a re-seed at the
+  // SCENARIO's own retirement age; spouseChartInputs feeds buildAccumChart so a
+  // forced resim's accumulation chart is household, not primary-only (A8).
+  spouseSeedInputs = null,
+  spouseChartInputs = null,
 }, overrides = {}) {
   if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return null;
 
@@ -519,12 +551,38 @@ export function calcWhatIfScenario({
 
   // ── Primary path: the per-account engine (BUG-35/BUG-31) ──────────────────
   if (retPhaseBase) {
+    // BUG-77: re-seed the spouse at the SCENARIO's retirement age. Uses the same
+    // shared builder as the main path so the two can never diverge. No spouse
+    // RE-SIM is needed: spouseContribEnd is the spouse's OWN retirement age, so
+    // spouseSimData is invariant to a primary-retirement-age scenario — only the
+    // seed point + gap-year maps (read/built relative to scenarioRetAge) change.
+    // Only recomputed when a resim is already happening (retirement age moved, a
+    // scenario event forced a re-sim, or an excluded committed event); otherwise
+    // retPhaseBase's own spouse fields (already correct for the base retirement
+    // age) are used unchanged below.
+    const spouseSeed = (needsResim && spouseSeedInputs)
+      ? buildSpouseRetirementSeed({
+          ...spouseSeedInputs,
+          currentAge: simInputs.currentAge,
+          primaryRetAge: scenarioRetAge,
+        })
+      : null;   // no override → retPhaseBase's base values are already correct
+
+    // CodeRabbit finding: this used to apply only tradSeed on a resim, leaving
+    // seeds.roth/taxable/hsa primary-only — inconsistent with the main path
+    // (App.jsx's hhRoth/hhTaxable/hhHsa already fold in spouseSeed's rothSeed/
+    // taxableSeed/hsaSeed). Re-seeding here mirrors that exactly, so a scenario
+    // that shifts the primary's retirement age doesn't silently drop the
+    // spouse's investment growth on those three accounts up to the new age
+    // (this is a basis-consistency fix, independent of BUG-85's gap-YEAR-
+    // CONTRIBUTION scope — these seeds grow from ordinary investment return
+    // only, same as tradSeed does before any gap contribution is added to it).
     const seeds = needsResim
       ? {
           tradGross: (resimAt.tradGross ?? 0) + (addlPreTaxBal ?? 0),
-          roth:      resimAt["Roth IRA"] ?? 0,
-          taxable:   resimAt["Taxable"]  ?? 0,
-          hsa:       resimAt["HSA"]      ?? 0,
+          roth:      (resimAt["Roth IRA"] ?? 0) + (spouseSeed?.rothSeed ?? 0),
+          taxable:   (resimAt["Taxable"]  ?? 0) + (spouseSeed?.taxableSeed ?? 0),
+          hsa:       (resimAt["HSA"]      ?? 0) + (spouseSeed?.hsaSeed ?? 0),
         }
       : {
           tradGross: retPhaseBase.tradGross ?? 0,
@@ -541,6 +599,9 @@ export function calcWhatIfScenario({
           simData: resimRaw, safeRetAge: scenarioRetAge, currentAge: simInputs.currentAge,
           bal401k: simInputs.bal401k, balRoth: simInputs.balRoth,
           balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
+          // A8: household, not primary-only — the same spouse args App's own
+          // buildAccumChart call passes for the solid-line chart.
+          ...(spouseChartInputs ?? {}),
         })
       : (baseChart ?? []).filter(r => r.age <= scenarioRetAge);
 
@@ -566,22 +627,32 @@ export function calcWhatIfScenario({
         // not a regression introduced here.
         conversionByAge: conversionByAge ?? {},
         moneyEvents: mergedEvents,
+        // BUG-77: use the re-seeded spouse values when a resim produced them;
+        // otherwise fall back to retPhaseBase's own (already-correct base-
+        // retirement-age) spouse fields — spouseRetirementAge itself is left
+        // alone (via the `...retPhaseBase` spread above) since the spouse's OWN
+        // age doesn't change in a primary-retirement-age scenario.
+        tradGrossSpouse:          spouseSeed ? spouseSeed.tradSeed                 : retPhaseBase.tradGrossSpouse,
+        spouseContribByAge:       spouseSeed ? spouseSeed.spouseContribByAge       : retPhaseBase.spouseContribByAge,
+        spouseTaxableIncomeByAge: spouseSeed ? spouseSeed.spouseTaxableIncomeByAge : retPhaseBase.spouseTaxableIncomeByAge,
+        spouseIncomeFloorByAge:   spouseSeed ? spouseSeed.spouseIncomeFloorByAge   : retPhaseBase.spouseIncomeFloorByAge,
       });
     } catch {
       return null;
     }
 
     const walkRows = rp.rows ?? [];
-    // #30 interop fix: the walk (buildRetirementPhase, just above) already
-    // includes the spouse Traditional bucket via the `...retPhaseBase` spread
-    // (tradGrossSpouse — frozen at its base-retirement-age value; re-growing it
-    // through a scenario resim is a documented follow-up, not this fix's scope).
-    // The reported SCALAR must include the same dollars the walk is seeded with,
-    // or every scenario preview (Plan's lever preview, #55 Working longer) shows
-    // a phantom ~spouse-trad-balance swing for a household with spouse 401k
-    // dollars, even when nothing about the spouse account changed.
+    // #30 interop fix + BUG-77: the walk (buildRetirementPhase, just above)
+    // already includes the spouse Traditional bucket via the explicit
+    // tradGrossSpouse override just above (re-seeded at the SCENARIO's
+    // retirement age when a resim happened, else retPhaseBase's base value).
+    // The reported SCALAR must include the same dollars the walk is seeded
+    // with, or every scenario preview (Plan's lever preview, #55 Working
+    // longer) shows a phantom spouse-trad-balance swing for a household with
+    // spouse 401k dollars, even when nothing about the spouse account changed.
+    const spouseTradForScalar = spouseSeed ? spouseSeed.tradSeed : (retPhaseBase.tradGrossSpouse ?? 0);
     const scenarioTotalAtRet = seeds.tradGross + seeds.roth + seeds.taxable + seeds.hsa
-      + (retPhaseBase.tradGrossSpouse ?? 0);
+      + spouseTradForScalar;
     const chart = [...accumChartRows, ...walkRows.map(r => ({ age: r.age, total: r.total }))];
 
     // Balance at safeLifeExp (the field keeps its historical "90" name — see

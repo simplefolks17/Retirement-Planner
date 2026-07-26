@@ -13,15 +13,17 @@ describe("calcRetIncomeFlow (WI-2.6)", () => {
     const f = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: 10_000 });
     expect(f.ss).toBe(30_000);
     expect(f.pension).toBe(10_000);
+    expect(f.spouseIncome).toBe(0);
     expect(f.portfolioDraw).toBe(40_000);
-    expect(f.ss + f.pension + f.portfolioDraw).toBeCloseTo(80_000, 6);
+    expect(f.ss + f.pension + f.spouseIncome + f.portfolioDraw).toBeCloseTo(80_000, 6);
   });
 
   it("no income: portfolio funds the whole expense, bands still sum to expenses", () => {
     const f = calcRetIncomeFlow({ effectiveExpenses: 60_000, ss: 0, pension: 0 });
     expect(f.portfolioDraw).toBe(60_000);
     expect(f.ss).toBe(0);
-    expect(f.ss + f.pension + f.portfolioDraw).toBeCloseTo(60_000, 6);
+    expect(f.spouseIncome).toBe(0);
+    expect(f.ss + f.pension + f.spouseIncome + f.portfolioDraw).toBeCloseTo(60_000, 6);
   });
 
   it("over-funded edge: income exceeds expenses → scaled down to sum exactly to expenses", () => {
@@ -30,6 +32,29 @@ describe("calcRetIncomeFlow (WI-2.6)", () => {
     expect(f.ss + f.pension).toBeCloseTo(40_000, 6);     // scaled, not 60k
     expect(f.ss).toBeCloseTo(20_000, 6);                 // proportional (equal sources)
     expect(f.ss + f.pension + f.portfolioDraw).toBeCloseTo(40_000, 6);
+  });
+
+  // #30 / BUG-82: spouse gap-year income is a 4th band.
+  it("spouseIncome defaults to 0 → byte-identical to omitting it", () => {
+    const withDefault = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: 10_000 });
+    const explicitZero = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: 10_000, spouseIncome: 0 });
+    expect(withDefault).toEqual(explicitZero);
+  });
+
+  it("with spouse gap income: all 4 bands sum to effectiveExpenses", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 90_000, ss: 30_000, pension: 10_000, spouseIncome: 20_000 });
+    expect(f.ss).toBe(30_000);
+    expect(f.pension).toBe(10_000);
+    expect(f.spouseIncome).toBe(20_000);
+    expect(f.portfolioDraw).toBe(30_000);
+    expect(f.ss + f.pension + f.spouseIncome + f.portfolioDraw).toBeCloseTo(90_000, 6);
+  });
+
+  it("spouse gap income alone exceeds expenses → scaled down, portfolioDraw 0, bands still sum to expenses", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 20_000, ss: 0, pension: 0, spouseIncome: 50_000 });
+    expect(f.portfolioDraw).toBe(0);
+    expect(f.spouseIncome).toBeCloseTo(20_000, 6);   // scaled down from 50k to fill exactly expenses
+    expect(f.ss + f.pension + f.spouseIncome + f.portfolioDraw).toBeCloseTo(20_000, 6);
   });
 });
 
@@ -48,6 +73,19 @@ describe("calcNetPortfolioNeed", () => {
 
   it("full draw when no SS and no pension", () => {
     expect(calcNetPortfolioNeed(80_000, 0, 0)).toBe(80_000);
+  });
+
+  // #30 / BUG-82: optional 4th spouse-gap-income term.
+  it("spouseIncome defaults to 0 → byte-identical to omitting it", () => {
+    expect(calcNetPortfolioNeed(80_000, 30_000, 10_000)).toBe(calcNetPortfolioNeed(80_000, 30_000, 10_000, 0));
+  });
+
+  it("subtracts spouse gap income too", () => {
+    expect(calcNetPortfolioNeed(80_000, 30_000, 10_000, 15_000)).toBe(25_000);
+  });
+
+  it("clamps to 0 when spouse income alone exceeds remaining expenses", () => {
+    expect(calcNetPortfolioNeed(80_000, 30_000, 10_000, 100_000)).toBe(0);
   });
 });
 

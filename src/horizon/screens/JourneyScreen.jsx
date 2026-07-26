@@ -246,6 +246,12 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
             <DetailRow t={t} label="Conversion tax paid" value={fmt(flowDown.convWindowTax)} source="flowDown.convWindowTax" />
             {/* flowDown.convWindowGrowth */}
             <DetailRow t={t} label="Growth during window" value={fmt(flowDown.convWindowGrowth)} source="flowDown.convWindowGrowth" />
+            {/* flowDown.convWindowSpouseContrib — #30/BUG-82 gap-year spouse 401k contribution */}
+            {flowDown.hasConvWindowSpouseContrib && (
+              <DetailRow t={t} label="Spouse still contributing"
+                value={fmt(flowDown.convWindowSpouseContrib)}
+                source="flowDown.convWindowSpouseContrib" />
+            )}
             {/* flowDown.totalConverted */}
             <DetailRow t={t} label="Total converted to Roth" value={fmt(flowDown.totalConverted)} source="flowDown.totalConverted" />
           </div>
@@ -287,6 +293,12 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
           <DetailRow t={t} label={`RMD tax (ages ${RMD_START_AGE}+)`} value={fmt(flowDown.distRMDTax)} source="flowDown.distRMDTax" />
           {/* flowDown.distGrowth */}
           <DetailRow t={t} label="Market growth" value={fmt(flowDown.distGrowth)} source="flowDown.distGrowth" />
+          {/* flowDown.distSpouseContrib — #30/BUG-82 gap-year spouse 401k contribution */}
+          {flowDown.hasDistSpouseContrib && (
+            <DetailRow t={t} label="Spouse still contributing"
+              value={fmt(flowDown.distSpouseContrib)}
+              source="flowDown.distSpouseContrib" />
+          )}
           {/* flowDown.distEndVal */}
           <DetailRow t={t} label="Ending value" value={fmt(flowDown.distEndVal)} source="flowDown.distEndVal" />
           {/* flowDown.actualSustainedYrs */}

@@ -159,6 +159,7 @@ function spouseBundle() {
   const acct = (bal) => ({ bal: num(bal, 0, 5_000_000, 10_000), contrib: num(5_000, 0, 24_500, 500) });
   return {
     trad401k: acct(200_000), roth: acct(60_000), taxable: acct(40_000), hsa: acct(8_000),
+    spouseRetirementAge: num(65, 51, 89, 1),
     hsaCoverageType: choice("family", [{ value: "self", label: "Self-only" }, { value: "family", label: "Family" }]),
     matchMode: choice("flat", [{ value: "flat", label: "Flat %" }, { value: "formula", label: "Formula" }]),
     employerMatchPct: num(4, 0, 10, 0.5),

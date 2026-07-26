@@ -215,6 +215,36 @@ describe("PlanScreen — command center survivors", () => {
     expect(text).toContain("Retirement taxes");
     act(() => renderer.unmount());
   });
+
+  // #30 / BUG-82: the Income Meter's 4th "Spouse income" bar + scope note.
+  it("does not render the spouse-income bar or note by default (hasSpouseIncome false, note null)", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    expect(text).not.toContain("Spouse income");
+    act(() => renderer.unmount());
+  });
+
+  it("renders the spouse-income bar + scope note only when hasSpouseIncome and the note are truthy", () => {
+    const { renderer } = mount({
+      planHighlights: {
+        wealthMultiplier: 14.2,
+        incomeReplacementPct: 82,
+        retIncomeFlow: {
+          ss: 25_200, pension: 0, spouseIncome: 12_000, portfolioDraw: 32_664,
+          hasSS: true, hasPension: false, hasSpouseIncome: true,
+          ssPct: 36, pensionPct: 0, spouseIncomePct: 17, portfolioPct: 47,
+        },
+        lifetimeTaxBurden: 207_557,
+        yearsToRetirement: 14,
+        retirementDuration: 25,
+        spouseIncomeScopeNote: "Includes your spouse's income through age 63; the portfolio draw rises after that.",
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Spouse income");
+    expect(text).toContain("Includes your spouse's income through age 63");
+    act(() => renderer.unmount());
+  });
 });
 
 describe("PlanScreen — Explore tray: Try a change facet", () => {

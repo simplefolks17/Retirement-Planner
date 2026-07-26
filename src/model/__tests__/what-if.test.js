@@ -9,7 +9,7 @@ import { ASSUMPTIONS } from "../../config/irs-2026.js";
 import { calcEmployerMatch } from "../employer-match.js";
 import { runSimulation } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
-import { buildRetirementPhase } from "../retirement-phase.js";
+import { buildRetirementPhase, buildSpouseRetirementSeed } from "../retirement-phase.js";
 import { buildAccumChart } from "../accumulation.js";
 
 // ── Shared baseline setup ────────────────────────────────────────────────────
@@ -253,6 +253,89 @@ describe("calcWhatIfDelta", () => {
     const omitted = calcWhatIfDelta({ ...baseArgs, moneyEvents: [] });
     const explicitZero = calcWhatIfDelta({ ...baseArgs, moneyEvents: [], addlPreTaxBal: 0 });
     expect(explicitZero).toEqual(omitted);
+  });
+
+  // ── spouseSeedInputs basis-symmetry lock (roadmap-review finding, 2026-07-26) ──
+  // Same class as the addlPreTaxBal lock above: baseTotalAtRet (App.jsx) is
+  // HOUSEHOLD (includes the spouse's seeded balance), but calcWhatIfDelta's
+  // forced-resim path only ever re-simulated the PRIMARY — unlike its sibling
+  // calcWhatIfScenario, which got this fix under BUG-77. A forced resim
+  // silently dropped the spouse's entire balance, producing a phantom delta
+  // on surplusApplySite's live Apply-with-preview button.
+  describe("calcWhatIfDelta — spouse basis symmetry on a forced re-sim", () => {
+    // currentAge (30) -> safeRetAge (65) is a 35-year accumulation window, so
+    // the seed row read at buildSpouseRetirementSeed's `rows[phase2End - 1]`
+    // (phase2End = safeRetAge - currentAge = 35) needs at least 35 rows.
+    const spouseCurrentAgeFixture = 25;
+    const spouseSimDataFixture = Array.from({ length: 35 }, (_, i) => ({
+      age: spouseCurrentAgeFixture + i + 1,
+      c401k: 12_000, c401kEmployee: 10_000, cHSA: 0, salary: 60_000,
+      tradGross: 200_000 + i * 15_000,
+      "Roth IRA": 40_000, "Taxable": 20_000, "HSA": 0,
+    }));
+    const spouseCurrentSnapshotFixture = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    const spouseSeedInputsFixture = {
+      spouseSimData: spouseSimDataFixture, spouseCurrentSnapshot: spouseCurrentSnapshotFixture,
+      spouseCurrentAge: spouseCurrentAgeFixture, spouseRetAge: safeRetAge, spouseNetRate: 0.7,
+    };
+    const baseSpouseSeed = buildSpouseRetirementSeed({
+      ...spouseSeedInputsFixture, currentAge, primaryRetAge: safeRetAge,
+    });
+    const spouseBaseTotal = baseSpouseSeed.tradSeed + baseSpouseSeed.rothSeed
+      + baseSpouseSeed.taxableSeed + baseSpouseSeed.hsaSeed;
+
+    // Household basis (mirrors App.jsx's totalAtRet — primary + spouse), the
+    // exact shape that exposes the bug: baseTotalAtRet already includes the
+    // spouse, so a resim that drops it diverges from the non-resim baseline.
+    const householdArgs = {
+      ...baseArgs, baseTotalAtRet: realBaseTotalAtRet + spouseBaseTotal,
+      spouseSeedInputs: spouseSeedInputsFixture,
+    };
+
+    it("a forced re-sim adds the spouse's re-seeded total, not silently dropping it", () => {
+      // Sanity: the fixture actually has a nonzero spouse balance to lose.
+      expect(spouseBaseTotal).toBeGreaterThan(0);
+      const forceResimEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+      const withoutSpouse = calcWhatIfDelta({ ...baseArgs, moneyEvents: [forceResimEvent] });
+      const withSpouse = calcWhatIfDelta({ ...householdArgs, moneyEvents: [forceResimEvent] });
+      // Primary side is identical in both calls (spouse data never touches the
+      // primary's own runSimulation) — the whole delta must be the spouse total.
+      expect(withSpouse.scenarioTotalAtRet - withoutSpouse.scenarioTotalAtRet)
+        .toBeCloseTo(spouseBaseTotal, 6);
+    });
+
+    it("the phantom-delta bug this fixes: a no-op candidate (matching contribOverrides) no longer shows a spurious spouse-sized delta", () => {
+      // Mirrors surplusApplySite's exact shape: "current" has no override (no
+      // resim -> baseTotalAtRet passthrough, household); "candidate" sets
+      // contribOverrides matching the existing contributions exactly (forces a
+      // resim, but should be a true no-op on the total). Before this fix, the
+      // candidate's resim dropped the entire spouse balance, showing a phantom
+      // six-figure "regression" on an unchanged scenario.
+      const current = calcWhatIfDelta({ ...householdArgs });
+      const candidate = calcWhatIfDelta({
+        ...householdArgs,
+        contribOverrides: {
+          contrib401k: simInputs.contrib401k,
+          contribRoth: simInputs.contribRoth,
+          contribTaxable: simInputs.contribTaxable,
+          contribHSA: simInputs.contribHSA,
+        },
+      });
+      // Loose tolerance (0.1% of the household total) absorbs ordinary
+      // sim-vs-baseline float noise, not a systematic basis drop the size of
+      // the entire spouse balance (which would be roughly 10-20% here).
+      expect(Math.abs(candidate.scenarioTotalAtRet - current.scenarioTotalAtRet))
+        .toBeLessThan(Math.abs(current.scenarioTotalAtRet) * 0.001);
+    });
+
+    it("spouseSeedInputs defaults to null (no-op) when omitted — no spouse, no effect", () => {
+      const forceResimEvent = { label: "Car", amount: 80_000, age: 40, isInflow: false, isTaxable: false };
+      const omitted = calcWhatIfDelta({ ...baseArgs, moneyEvents: [forceResimEvent] });
+      const explicitNull = calcWhatIfDelta({
+        ...baseArgs, moneyEvents: [forceResimEvent], spouseSeedInputs: null,
+      });
+      expect(explicitNull).toEqual(omitted);
+    });
   });
 
   // ── contribOverrides no-op lock (WI-3.7 extension) ─────────────────────────
@@ -726,6 +809,210 @@ describe("calcWhatIfScenario — engine migration", () => {
     const actualAccum = s.chart.slice(0, expectedAccum.length);
     expect(actualAccum).toEqual(expectedAccum);
     expect(s.chart[expectedAccum.length].age).toBe(scenarioRetAge + 1);
+  });
+});
+
+// ── calcWhatIfScenario — spouse re-seed (BUG-77) ──────────────────────────────
+// Because spouseContribEnd (App.jsx) is the spouse's OWN retirement age —
+// independent of the primary's — spouseSimData never changes for a primary-
+// retirement-age scenario; only the SEED POINT (read at the scenario's own
+// retirement age) and the gap-year maps need to be rebuilt via the shared
+// buildSpouseRetirementSeed builder. Before this fix, a scenario that shifted
+// the primary's retirement age kept the spouse Traditional bucket FROZEN at
+// whatever it was at the BASE retirement age.
+describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
+  const spCurrentAge = 40, spSafeRetAge = 65, spSafeLifeExp = 90;
+  const spouseCurrentAge = 35;
+  const spouseRetAge = 75; // spouse retires well after any scenario retirement age tested below
+  const spouseNetRate = 0.65;
+
+  const primarySimInputs = {
+    totalYears: 60, currentAge: spCurrentAge, currentIncome: 120_000, incomeGrowth: 2,
+    filingStatus: "single", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 6,
+    bal401k: 100_000, balRoth: 40_000, balTaxable: 60_000, balHSA: 15_000,
+    contrib401k: 15_000, contribRoth: 6_000, contribTaxable: 5_000, contribHSA: 3_000,
+    contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+    calcEmployerMatchFn: em, moneyEvents: [],
+  };
+  const primarySim = runSimulation(primarySimInputs)
+    .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+  const primaryAtBase = primarySim[spSafeRetAge - spCurrentAge - 1];
+  const primaryTradGrossAtRet = primaryAtBase.tradGross ?? 0;
+  const primaryRoth    = primaryAtBase["Roth IRA"] ?? 0;
+  const primaryTaxable = primaryAtBase["Taxable"]  ?? 0;
+  const primaryHsa     = primaryAtBase["HSA"]      ?? 0;
+
+  // Deterministic synthetic spouse accumulation rows (mirrors retirement-phase.test.js's
+  // buildRows helper): tradGross grows linearly with i so a seed point read at a LATER
+  // primary age is predictably larger — isolating the re-seed fix from real-engine noise.
+  const buildSpouseRows = (count) => Array.from({ length: count }, (_, i) => ({
+    age: spouseCurrentAge + i + 1,
+    c401k: 12_000, c401kEmployee: 10_000, cHSA: 1_000, salary: 90_000,
+    tradGross: 200_000 + i * 10_000,
+    "Roth IRA": 50_000, "Taxable": 30_000, "HSA": 5_000,
+  }));
+  const spouseSimData = buildSpouseRows(40); // spouse ages 36..75
+  const spouseCurrentSnapshot = {
+    age: spCurrentAge, tradGross: 190_000, "Roth IRA": 50_000, "Taxable": 30_000, "HSA": 5_000,
+  };
+  const spouseStartingBal = 190_000 + 50_000 + 30_000 + 5_000;
+
+  // Base retPhaseBase's frozen spouse seed — read at the BASE retirement age (65),
+  // exactly as App.jsx's own spouseSeed memo does (primaryRetAge: safeRetAge).
+  const baseSpouseSeed = buildSpouseRetirementSeed({
+    spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge: spCurrentAge,
+    primaryRetAge: spSafeRetAge, spouseRetAge, spouseNetRate,
+  });
+
+  const householdRetPhaseBase = {
+    tradGross: primaryTradGrossAtRet, tradGrossSpouse: baseSpouseSeed.tradSeed,
+    spouseRmdStartAge: Infinity,
+    roth: primaryRoth + baseSpouseSeed.rothSeed,
+    taxable: primaryTaxable + baseSpouseSeed.taxableSeed,
+    hsa: primaryHsa + baseSpouseSeed.hsaSeed,
+    startAge: spSafeRetAge, lifeExp: spSafeLifeExp, longevityHorizon: spSafeRetAge + 130,
+    rReal: 0.02, effectiveExpenses: 60_000,
+    ssGross: 24_000, ssTaxable: 20_000, ssClaimAge: 67,
+    pension: 0, pensionStartAge: Infinity,
+    filingStatus: "single", retStateRate: 0,
+    rmdStartAge: 73, useTable2: false, spouseCurrentAge, currentAge: spCurrentAge,
+    moneyEvents: [],
+    spouseRetirementAge: spouseRetAge,
+    spouseContribByAge: baseSpouseSeed.spouseContribByAge,
+    spouseTaxableIncomeByAge: baseSpouseSeed.spouseTaxableIncomeByAge,
+    spouseIncomeFloorByAge: baseSpouseSeed.spouseIncomeFloorByAge,
+  };
+  const householdRetPhase = buildRetirementPhase({ ...householdRetPhaseBase, conversionByAge: {} });
+
+  const householdAccumChart = buildAccumChart({
+    simData: primarySim, safeRetAge: spSafeRetAge, currentAge: spCurrentAge,
+    bal401k: primarySimInputs.bal401k, balRoth: primarySimInputs.balRoth,
+    balTaxable: primarySimInputs.balTaxable, balHSA: primarySimInputs.balHSA,
+    spouseSimData, spouseStartingBal,
+  });
+  const householdTotalChartData = [
+    ...householdAccumChart,
+    ...householdRetPhase.rows.map(r => ({ age: r.age, total: r.total })),
+  ];
+
+  const householdRetDrawShared = {
+    rReal: householdRetPhaseBase.rReal, effectiveExpenses: householdRetPhaseBase.effectiveExpenses,
+    ssAmount: householdRetPhaseBase.ssGross, ssClaimAge: householdRetPhaseBase.ssClaimAge,
+    pensionAmount: 0, pensionStartAge: Infinity,
+    rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [],
+  };
+
+  // Household total: primary balances + ALL FOUR spouse buckets — householdRetPhaseBase's
+  // roth/taxable/hsa are already household-combined (primary + spouse, mirroring App.jsx's
+  // hhRoth/hhTaxable/hhHsa), so this must include the spouse's Roth/Taxable/HSA seeds too,
+  // not just tradSeed (which stays a separate bucket, tradGrossSpouse).
+  const householdBaseTotalAtRet = primaryTradGrossAtRet + primaryRoth + primaryTaxable + primaryHsa
+    + baseSpouseSeed.tradSeed + baseSpouseSeed.rothSeed + baseSpouseSeed.taxableSeed + baseSpouseSeed.hsaSeed;
+
+  const householdBundle = {
+    simInputs: primarySimInputs, fedMarginal: 0.22, retDrawShared: householdRetDrawShared,
+    safeRetAge: spSafeRetAge, safeLifeExp: spSafeLifeExp,
+    baseTotalAtRet: householdBaseTotalAtRet, baseYearsSustained: householdRetPhase.yearsSustained,
+    retPhaseBase: householdRetPhaseBase, conversionByAge: {},
+    baseChart: householdTotalChartData, addlPreTaxBal: 0,
+    spouseSeedInputs: {
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
+      spouseRetAge, spouseNetRate,
+    },
+    spouseChartInputs: { spouseSimData, spouseStartingBal },
+  };
+
+  it("a retire-later scenario re-seeds the spouse trad (no longer frozen at the base value)", () => {
+    const laterRetAge = spSafeRetAge + 5; // 70 — primary retires 5 yrs later than the base plan
+    const s = calcWhatIfScenario(householdBundle, { retirementAge: laterRetAge });
+
+    // Expected primary-only portion: re-sim the primary directly (same pattern the
+    // "retire-earlier" engine-migration test above uses) and read the row at the
+    // scenario's own retirement age.
+    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const primaryAtScenario = primaryResim[laterRetAge - primarySimInputs.currentAge - 1];
+    const primaryPortion = (primaryAtScenario.tradGross ?? 0)
+      + (primaryAtScenario["Roth IRA"] ?? 0) + (primaryAtScenario["Taxable"] ?? 0) + (primaryAtScenario["HSA"] ?? 0);
+
+    // Expected re-seeded spouse trad: buildSpouseRetirementSeed at the SCENARIO's
+    // own retirement age (70), not the base (65) — the spouse kept contributing
+    // (and growing) for 5 more years before this later seed point.
+    const expectedSpouseSeed = buildSpouseRetirementSeed({
+      spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge: spCurrentAge,
+      primaryRetAge: laterRetAge, spouseRetAge, spouseNetRate,
+    });
+    // Sanity: the fixture actually exercises growth between the base and scenario seed points.
+    expect(expectedSpouseSeed.tradSeed).toBeGreaterThan(baseSpouseSeed.tradSeed);
+
+    // CodeRabbit review fix: the resim now re-seeds rothSeed/taxableSeed/hsaSeed
+    // too (previously only tradSeed), so scenarioTotalAtRet must include all four
+    // re-seeded spouse buckets, not just the Traditional one.
+    const expectedScenarioTotalAtRet = primaryPortion + expectedSpouseSeed.tradSeed
+      + expectedSpouseSeed.rothSeed + expectedSpouseSeed.taxableSeed + expectedSpouseSeed.hsaSeed;
+    expect(s.scenarioTotalAtRet).toBeCloseTo(expectedScenarioTotalAtRet, 6);
+
+    // The bug this fixes: the OLD code kept the spouse trad FROZEN at the base-
+    // retirement-age value even 5 years later — the fixed result must be larger.
+    const frozenWouldBe = primaryPortion + baseSpouseSeed.tradSeed
+      + baseSpouseSeed.rothSeed + baseSpouseSeed.taxableSeed + baseSpouseSeed.hsaSeed;
+    expect(s.scenarioTotalAtRet).toBeGreaterThan(frozenWouldBe);
+  });
+
+  it("a retire-later scenario also re-seeds the spouse's Roth/Taxable/HSA buckets, not just Traditional (CodeRabbit review fix)", () => {
+    const laterRetAge = spSafeRetAge + 5;
+    const s = calcWhatIfScenario(householdBundle, { retirementAge: laterRetAge });
+    // Even though this fixture's synthetic spouse rows hold Roth/Taxable/HSA flat
+    // (no growth for THESE three fields — only tradGross grows with i), the fix
+    // is about the resim path actually READING spouseSeed.rothSeed/taxableSeed/
+    // hsaSeed at all — before the fix these three were silently dropped from
+    // scenarioTotalAtRet on ANY forced resim, not just when they'd changed value.
+    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const primaryAtScenario = primaryResim[laterRetAge - primarySimInputs.currentAge - 1];
+    const primaryRothTaxableHsa = (primaryAtScenario["Roth IRA"] ?? 0)
+      + (primaryAtScenario["Taxable"] ?? 0) + (primaryAtScenario["HSA"] ?? 0);
+    // The synthetic fixture's spouse Roth/Taxable/HSA are flat 50k/30k/5k = 85k.
+    expect(s.scenarioTotalAtRet).toBeGreaterThanOrEqual(primaryRothTaxableHsa + 85_000);
+  });
+
+  it("the no-op scenario invariant still holds with a spouse", () => {
+    const s = calcWhatIfScenario(householdBundle, {});
+    expect(s.chart).toEqual(householdTotalChartData);
+    expect(s.scenarioTotalAtRet).toBe(householdBaseTotalAtRet);
+  });
+
+  it("a resim's accumulation chart is household, not primary-only (A8)", () => {
+    const laterRetAge = spSafeRetAge + 5;
+    const s = calcWhatIfScenario(householdBundle, { retirementAge: laterRetAge });
+
+    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const expectedAccum = buildAccumChart({
+      simData: primaryResim, safeRetAge: laterRetAge, currentAge: primarySimInputs.currentAge,
+      bal401k: primarySimInputs.bal401k, balRoth: primarySimInputs.balRoth,
+      balTaxable: primarySimInputs.balTaxable, balHSA: primarySimInputs.balHSA,
+      spouseSimData, spouseStartingBal,
+    });
+    const actualAccum = s.chart.slice(0, expectedAccum.length);
+    expect(actualAccum).toEqual(expectedAccum);
+
+    // Prove the fix is what makes it household: a primary-only rebuild (no spouse
+    // args) must NOT match — the spouse balance is really being included.
+    const primaryOnlyAccum = buildAccumChart({
+      simData: primaryResim, safeRetAge: laterRetAge, currentAge: primarySimInputs.currentAge,
+      bal401k: primarySimInputs.bal401k, balRoth: primarySimInputs.balRoth,
+      balTaxable: primarySimInputs.balTaxable, balHSA: primarySimInputs.balHSA,
+    });
+    expect(actualAccum).not.toEqual(primaryOnlyAccum);
+  });
+
+  it("no spouse (spouseSeedInputs/spouseChartInputs both null) is byte-identical to omitting them entirely", () => {
+    const overrides = { retireAdj: -2 };
+    const withoutFields    = calcWhatIfScenario(baseArgs, overrides);
+    const withExplicitNulls = calcWhatIfScenario(
+      { ...baseArgs, spouseSeedInputs: null, spouseChartInputs: null }, overrides);
+    expect(withExplicitNulls).toEqual(withoutFields);
   });
 });
 

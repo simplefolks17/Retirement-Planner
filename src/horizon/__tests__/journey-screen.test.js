@@ -190,4 +190,61 @@ describe("JourneyScreen (WI-2.1)", () => {
     expect(renderer.toJSON()).toBeTruthy();
     act(() => renderer.unmount());
   });
+
+  // ── Gap-year spouse contribution line item (#30 / BUG-82) ──────────────────
+  // Chapter 2's line item lives in the always-visible conversion-window box;
+  // Chapter 3's lives inside that chapter's <ToggleDetail>, so these tests open
+  // every "Show detail" disclosure before asserting presence/absence — this
+  // proves the row is truly absent (not merely collapsed) in the T5.5 case.
+  function openAllDetails(root) {
+    const buttons = root.findAll(n => n.type === "button");
+    for (const b of buttons) act(() => b.props.onClick());
+  }
+
+  it("T5.4 — renders the spouse-contribution line item in both chapters when the model says so", () => {
+    const props = {
+      ...minimalProps,
+      flowDown: {
+        ...flowDown,
+        hasConvWindowSpouseContrib: true,
+        convWindowSpouseContrib: 84_000,
+        hasDistSpouseContrib: true,
+        distSpouseContrib: 96_000,
+      },
+    };
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(JourneyScreen, { t, props }));
+    });
+    openAllDetails(renderer.root);
+    const allText = textOf(renderer.root);
+
+    // Both line items render with their label + fmt()-ed value.
+    const occurrences = allText.split("Spouse still contributing").length - 1;
+    expect(occurrences).toBe(2);
+    expect(allText).toContain("$84k");   // fmt(convWindowSpouseContrib)
+    expect(allText).toContain("$96k");   // fmt(distSpouseContrib)
+    act(() => renderer.unmount());
+  });
+
+  it("T5.5 — renders neither line item when the model says not applicable", () => {
+    const props = {
+      ...minimalProps,
+      flowDown: {
+        ...flowDown,
+        hasConvWindowSpouseContrib: false,
+        convWindowSpouseContrib: 0,
+        hasDistSpouseContrib: false,
+        distSpouseContrib: 0,
+      },
+    };
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(JourneyScreen, { t, props }));
+    });
+    openAllDetails(renderer.root);
+    const allText = textOf(renderer.root);
+    expect(allText).not.toContain("Spouse still contributing");
+    act(() => renderer.unmount());
+  });
 });

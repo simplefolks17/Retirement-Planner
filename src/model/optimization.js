@@ -32,6 +32,12 @@ export function calcOptimizedScenario({
   retTaxable,
   rmdTaxByAge = {},
   conversionTaxByAge = {},
+  // #30 / BUG-82: the spouse's net gap-year income in the first walked
+  // retirement year — the SAME offset the headline netPortfolioNeed uses, so
+  // optWR and withdrawalRate stay comparable (an optimized scenario that looks
+  // worse only because it's missing this offset would be dishonest). Defaults
+  // to 0 — inert for every household without a spouse gap window.
+  spouseIncomeAtRet = 0,
 }) {
   const r = returnRate / 100;
   const g = incomeGrowth / 100;
@@ -68,7 +74,7 @@ export function calcOptimizedScenario({
   const optClaimAge     = !includeSS ? Infinity : (optDelaying ? SS_MAX_CLAIM_AGE : ssClaimingAge);
   const optSSatRet      = optClaimAge <= safeRetAge ? optSS : 0;
   const optPensionAtRet = pensionStartAge <= safeRetAge ? effectivePension : 0;
-  const optNetNeed = Math.max(0, effectiveExpenses - optSSatRet - optPensionAtRet);
+  const optNetNeed = Math.max(0, effectiveExpenses - optSSatRet - optPensionAtRet - spouseIncomeAtRet);
   const optWR = optTotalAtRet > 0 ? (optNetNeed / optTotalAtRet) * 100 : 0;
 
   // Longevity via the SAME shared tax-honest walk as the headline metric, so the

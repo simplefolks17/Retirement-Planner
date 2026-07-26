@@ -76,4 +76,26 @@ describe("calcOptimizedScenario", () => {
     const result = calcOptimizedScenario(base);
     expect(result.actionCount).toBeGreaterThan(0);
   });
+
+  // #30 / BUG-82: spouseIncomeAtRet keeps optWR comparable to the headline withdrawalRate.
+  it("spouseIncomeAtRet defaults to 0 → byte-identical to omitting it", () => {
+    const withDefault = calcOptimizedScenario(base);
+    const explicitZero = calcOptimizedScenario({ ...base, spouseIncomeAtRet: 0 });
+    expect(withDefault).toEqual(explicitZero);
+  });
+
+  it("spouseIncomeAtRet lowers optNetNeed and optWR by exactly that amount", () => {
+    const withoutSpouse = calcOptimizedScenario(base);
+    const withSpouse = calcOptimizedScenario({ ...base, spouseIncomeAtRet: 10_000 });
+    expect(withSpouse.netNeed).toBe(withoutSpouse.netNeed - 10_000);
+    const expectedWR = (withSpouse.netNeed / withSpouse.totalAtRet) * 100;
+    expect(withSpouse.withdrawalRate).toBeCloseTo(expectedWR, 8);
+    expect(withSpouse.withdrawalRate).toBeLessThan(withoutSpouse.withdrawalRate);
+  });
+
+  it("spouseIncomeAtRet floors optNetNeed at 0 when it exceeds the remaining need", () => {
+    const result = calcOptimizedScenario({ ...base, spouseIncomeAtRet: 1_000_000 });
+    expect(result.netNeed).toBe(0);
+    expect(result.withdrawalRate).toBe(0);
+  });
 });

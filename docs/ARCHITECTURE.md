@@ -25,7 +25,8 @@ src/
     conversion-planning.js buildIncomeFloors, calcBracketFillTargets (conversion-window floors + bracket fill)  [CLIENT]
     conversion-evaluation.js evaluateConversionPlan (ONE shared sim→RMD-tax→net-benefit→ACA/IRMAA pipeline; display + optimizer)  [SERVER]
     roth-conversion.js    calcConversionSim, findOptimalConversion              [SERVER]
-    flow-down.js          calcFlowDown (waterfall decomposition from the shared walk)  [SERVER]
+    flow-down.js          calcFlowDown (waterfall decomposition from the shared walk; optional
+                          spouseStartBal/spouseContribRows household params, BUG-86)  [SERVER]
     action-cards.js       generatePhaseActions, generatePhaseSteps              [SERVER]
     money-events.js       applyMoneyEvents, totalEventImpact (per-year event application — accumulation + retirement)  [CLIENT]
     what-if.js            calcWhatIfDelta (parallel scenario vs baseline), calcAffordabilityMax (binary-search max one-time spend)  [CLIENT]
@@ -196,7 +197,7 @@ invariants Classic enforces.
 | `conversion` | conversionMode, conversionBracketTarget, annualConversionAmt, conversionTaxSource |
 | `health` | hasMarketplaceInsurance, householdSize, marketplaceMonthlyPremium, hasMedicare, personOnMedicare |
 | `assumptions` | currentAge, retirementAge, lifeExpect (coupled setters), returnRate, inflationRate, retirementState, savingsSurplusPct |
-| `spouseAccounts` (#30, premium) | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib }` — no per-account `contribEnd`; the spouse contributes until the household retirement), hsaCoverageType (`self`/`family`), matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
+| `spouseAccounts` (#30, premium) | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib }`), `spouseRetirementAge` (self-describing `{value,set,min,max,step}` — the spouse's OWN retirement age, independent of the primary's; `contribEnd*` for every spouse account now equals this, not a primary-derived formula — BUG-82 fix, see BUGS.md), hsaCoverageType (`self`/`family`), matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
 
 **`spouseAccounts` (#30) — spouse account modeling.** Same self-describing field
 convention as `accounts`. The spouse's HSA contribution cap is `HSA_FAMILY_LIMIT_2026`
@@ -206,17 +207,51 @@ the remainder) and passes each `runSimulation` its own effective `hsaLimit` (rul
 The card is gated on the model-provided `spouseAccountsApplicable` flag (`isMarried ||
 spouseIncome > 0`) and rendered behind `LockedCard` when `entitlements.isPremium`
 is false (the first premium-gated surface). **Household model:** a second
-`runSimulation` run projects the spouse's accounts to the household retirement year;
+`runSimulation` run projects the spouse's accounts, contributing until their OWN
+`spouseRetirementAge` (BUG-82, 2026-07-25 — previously contributions stopped, and the
+account froze, the instant the PRIMARY retired regardless of the spouse's age);
 `totalAtRet`, the drawdown chart, and `retVals` display cards are HOUSEHOLD (primary +
 spouse), while the conversion sim / optimizer / withdrawal card keep reading the
-**primary** per-account scalars (primary-modeled strategies). The retirement engine
-(`buildRetirementWalkByAccount`) carries a second Traditional 401k bucket
-(`tradGrossSpouse`) with its **own** RMD schedule keyed to the spouse's age
-(`spouseRmdStartAge`) — so a younger spouse's RMDs begin later — feeding the ONE joint
-tax walk (both RMDs stacked together for a single bracket-accurate tax; Roth/taxable/HSA
-stay merged household buckets — no per-person tax-timing difference). With no spouse
-data every value collapses to the primary total (golden master untouched). Combined
-per-account toggle + household budget view are deferred to #31/#32.
+**primary** per-account scalars (primary-modeled strategies — BUG-84, open). The
+retirement engine (`buildRetirementWalkByAccount`) carries a second Traditional 401k
+bucket (`tradGrossSpouse`/`tradSp`) with its **own** RMD schedule keyed to the spouse's
+age (`spouseRmdStartAge`) — so a younger spouse's RMDs begin later — feeding the ONE
+joint tax walk (both RMDs stacked together for a single bracket-accurate tax). **Gap
+years** (between the primary's retirement and the spouse's own) are modeled inside the
+engine: the spouse's bucket keeps receiving 401k contributions, their gross wages stack
+in the bracket floor, and their net cash offsets that year's portfolio draw (surplus
+banked, not discarded) — see "`buildSpouseRetirementSeed` and the spouse gap-year
+mechanism" below. Roth/taxable/HSA stay merged household buckets (gap-year
+contributions to those three are dollar-conserving but not separately tracked — BUG-85,
+open). With no spouse data every value collapses to the primary total (golden master
+untouched). Combined per-account toggle + household budget view are deferred to #31/#32.
+
+**`buildSpouseRetirementSeed` and the spouse gap-year mechanism (#30/BUG-82, added
+2026-07-25).** A pure export in `retirement-phase.js`, the ONE builder both App.jsx's live
+path and the what-if re-seed (below) call, so they can never diverge. Shape:
+```
+buildSpouseRetirementSeed({
+  spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, currentAge,
+  primaryRetAge, spouseRetAge, spouseNetRate,
+}) → {
+  tradSeed, rothSeed, taxableSeed, hsaSeed,        // balances at primaryRetAge
+  spouseContribByAge,                              // {primaryAge: gap-year 401k contribution}
+  spouseTaxableIncomeByAge,                        // {primaryAge: gross wages, for the bracket floor}
+  spouseIncomeFloorByAge,                          // {primaryAge: net cash offsetting the draw}
+}
+```
+`primaryRetAge` is a PARAMETER (not hardcoded to `safeRetAge`) specifically so a what-if
+scenario can re-seed at its own candidate retirement age. `spouseAgeAt`/`primaryAgeAt`
+(also exported from `retirement-phase.js`) are the shared, exact-inverse age-frame helpers
+every consumer of this mechanism uses to convert between the two people's ages in the
+same calendar year — previously 9 inline duplicate implementations across files (the
+BUG-25 "one calculation, N definitions" class). `buildRetirementWalkByAccount` gained four
+new params consuming this builder's output: `spouseRetirementAge`, `spouseContribByAge`,
+`spouseTaxableIncomeByAge`, `spouseIncomeFloorByAge` — all default to `null`/`{}` (inert).
+Each engine row gained a `spouseContrib` field (the gap-year 401k contribution PLUS any
+banked income surplus) so every downstream reconciliation surface (Flow-Down, the
+Year-by-year ledger, Journey) can close its conservation identity — see
+`docs/FINANCIAL-MODEL.md`'s "Years Sustained" section for the full per-row identity.
 
 The Roth-conversion **window** fields (`conversionStartAge`/`conversionEndAge`), the
 in-service toggle, and `conversionEvents` are intentionally **not** in the `conversion`
@@ -339,10 +374,15 @@ bundles keyed by their strategy id, separately memoized (V9), built from already
 App values.
 
 - **`withdrawalView`** — `{ netNeed, steps, yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings,
-  hasSavings }`. `steps` is a pre-filtered (`amount > 0`), pre-labeled, pre-ordered array
-  (`[{key, label, amount, note}]` — taxable → traditional → Roth); `hasSavings` is the
-  pre-gated boolean the flow's savings callout renders under (never a fabricated $0 when
-  false). Read-only — no Apply site (the draw order isn't a tunable setting).
+  hasSavings, scopeNote, gapYearNote }`. `steps` is a pre-filtered (`amount > 0`), pre-labeled,
+  pre-ordered array (`[{key, label, amount, note}]` — taxable → traditional → Roth);
+  `hasSavings` is the pre-gated boolean the flow's savings callout renders under (never a
+  fabricated $0 when false). Read-only — no Apply site (the draw order isn't a tunable
+  setting). `scopeNote` (BUG-84 interim, added 2026-07-25) is a copy-only string present when
+  `retTrad`/`retRoth`/`retTaxable` are primary-only in a spouse household (the underlying
+  per-person-vs-pooled design question is still open — see BUGS.md). `gapYearNote` (#30/BUG-82,
+  added 2026-07-25) is present when a spouse's gap-year income has driven `netNeed` toward 0,
+  explaining WHY the draw list is short/empty instead of showing nothing.
 - **`surplusView`** — `{ availableSurplus, savingsSurplusPct, totalExtra, deployLabel,
   extraRows, optRows, applyAllocation }`. `extraRows`/`optRows` are pre-filtered
   (`amount > 0`), pre-labeled row arrays mirroring Classic's ①–⑤ IRS-priority breakdown —
@@ -456,7 +496,17 @@ on the bundle's `retPhaseBase`/`conversionByAge` (whatIfBundle also carries `bas
 `ArcGraph.trimScenarioOverlay` starts the dashed line at the divergence age. `calcWhatIfDelta`
 /the optimizer remain on the blended walk (BUG-36's narrowed scope); `calcAffordabilityMax`
 moved onto the engine (`calcWhatIfScenario`) in the 2026-07-11 fix pass — see BUG-36's scope
-note.
+note. **`whatIfBundle` also carries two spouse sub-bundles (#30/BUG-82, added 2026-07-25):**
+`spouseSeedInputs` (`{spouseSimData, spouseCurrentSnapshot, spouseCurrentAge, spouseRetAge,
+spouseNetRate}` — the exact args `buildSpouseRetirementSeed` needs) and `spouseChartInputs`
+(`{spouseSimData, spouseStartingBal}` — what `buildAccumChart` needs for a household chart).
+Both `null` when there's no spouse. A forced resim (retirement-age change, contribution
+override, pre-retirement event) re-seeds the spouse's balance and gap-year maps at the
+scenario's own retirement age via the SAME `buildSpouseRetirementSeed` builder the live path
+uses (BUG-77 fix) — no spouse re-sim needed, since `spouseContribEnd` is the spouse's own
+retirement age and therefore invariant to a primary-retirement-age scenario. The resim's
+`buildAccumChart` call also spreads `spouseChartInputs` so a scenario's dashed overlay is
+household, not primary-only (the resim-branch instance of the BUG-80 gap).
 
 ---
 
