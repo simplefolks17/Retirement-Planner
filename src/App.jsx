@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -322,7 +322,7 @@ export default function App() {
       // The primary's age in the calendar year the SPOUSE retires. Inclusive (income
       // counts THROUGH the retirement year), matching contribEnd*'s `age <= end`
       // convention. null when there's no spouse — inert (byte-identical).
-      spouseIncomeEndAge: hasSpouse ? currentAge + (effectiveSpouseRetAge - spouseCurrentAge) : null,
+      spouseIncomeEndAge: hasSpouse ? primaryAgeAt(currentAge, spouseCurrentAge, effectiveSpouseRetAge) : null,
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards
@@ -373,7 +373,7 @@ export default function App() {
       // = spouseAgeAtPrimaryRet. Without this the spouse's own sim counted the PRIMARY's
       // salary in household MAGI forever, including years after the primary retired —
       // wrongly suppressing the spouse's Roth contributions during the gap years.
-      spouseIncomeEndAge: spouseCurrentAge + (safeRetAge - currentAge),
+      spouseIncomeEndAge: spouseAgeAt(currentAge, spouseCurrentAge, safeRetAge),
     });
     return raw.map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
   }, [hasSpouse, totalYears, spouseCurrentAge, spouseIncome, spouseIncomeGrowth, incomeGrowthEndAge,
@@ -1175,7 +1175,7 @@ export default function App() {
     // Permanent plan input (Step 7) — a what-if re-sim must apply the same
     // spouse-retires-first MAGI cutoff the main plan uses, or a forced resim's
     // baseline would silently diverge from the committed plan.
-    spouseIncomeEndAge: hasSpouse ? currentAge + (effectiveSpouseRetAge - spouseCurrentAge) : null,
+    spouseIncomeEndAge: hasSpouse ? primaryAgeAt(currentAge, spouseCurrentAge, effectiveSpouseRetAge) : null,
   }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
