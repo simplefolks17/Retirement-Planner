@@ -648,11 +648,15 @@ export default function App() {
   const convFloors = useMemo(() => buildIncomeFloors({
     conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
     pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge]);
+    spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge,
+      spouseSeed]);
   const convMAGIFloors = useMemo(() => buildIncomeFloors({
     conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: householdSS,
     pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
-  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge]);
+    spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
+      spouseSeed]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
   const retIncomeFloor = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
 
@@ -943,6 +947,9 @@ export default function App() {
         const floorArgs = {
           conversionWindowYrs: windowLen, startAge, includeSS, ssClaimingAge,
           pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+          // Same map convFloors/convMAGIFloors read (Finding 2 — the optimizer
+          // must never search a spouse-blind model the display doesn't show).
+          spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
         };
         f = {
           floors:     buildIncomeFloors({ ...floorArgs, ssAmount: ssTaxableRet }),
@@ -986,7 +993,7 @@ export default function App() {
       tradGrossAtRet, convWindowFloor, resolvedEndAge,
       includeSS, ssClaimingAge, ssTaxableRet, householdSS, pensionMonthly, pensionStartAge,
       hasMedicare, personOnMedicare,
-      hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize]);
+      hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize, spouseSeed]);
 
   // ── WI-3.9 Apply-with-preview: the conversion-optimizer Apply site ─────────
   // The writes an "Apply" click performs — mirrors what the optimizer suggestion

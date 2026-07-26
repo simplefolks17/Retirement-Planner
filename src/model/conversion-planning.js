@@ -27,13 +27,27 @@ export function buildIncomeFloors({
   conversionWindowYrs, startAge,
   includeSS, ssClaimingAge, ssAmount,
   pensionMonthly, pensionStartAge, monthsPerYear,
+  // Spouse gap-year ORDINARY WAGES by PRIMARY age (#30 / BUG-82, Finding 2 — rule
+  // 5b names retIncomeFloors[] explicitly). This is the SAME map the retirement
+  // engine stacks in its own bracket floor (retirement-engine.js) — read here,
+  // never re-derived, so the conversion planner and the engine can never model
+  // different households for the same window year. {} (the default) ⇒ +0 ⇒
+  // byte-identical to the pre-spouse behavior.
+  spouseTaxableIncomeByAge = {},
 }) {
   return Array.from({ length: conversionWindowYrs }, (_, i) => {
     const age         = startAge + i;
     const yearSS      = includeSS && age >= ssClaimingAge ? ssAmount : 0;
     const yearPension = pensionMonthly > 0 && age >= pensionStartAge
       ? pensionMonthly * monthsPerYear : 0;
-    return yearSS + yearPension;
+    // Unlike SS — which enters convFloors at its 85%-taxable fraction and
+    // convMAGIFloors at 100% gross — wages take the SAME value in both arrays:
+    // the map is already net of the spouse's own 401k deferral + HSA
+    // (retirement-phase.js), i.e. exactly the AGI/MAGI contribution AND exactly
+    // the taxable-income contribution. The SS asymmetry exists because SS has a
+    // taxable fraction; wages do not.
+    const yearSpouse  = spouseTaxableIncomeByAge[age] ?? 0;
+    return yearSS + yearPension + yearSpouse;
   });
 }
 

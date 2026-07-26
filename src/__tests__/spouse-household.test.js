@@ -250,3 +250,29 @@ describe("inflationRate wiring into the spouse gap-year deflator (Finding 3, T-F
     app.unmount();
   });
 });
+
+// Finding 2 (adversarial review, 2026-07-26) — optimizer wiring (T-F2.8). The
+// conversion optimizer must search the SAME model the display shows (BUG-31 "two
+// implementations of one quantity"), so its floorArgs must receive the spouse
+// wage map too — cheapest proven by showing the optimizer's chosen amount moves
+// when a spouse's real gap-year wages are introduced, everything else fixed.
+describe("optimizer floorArgs receive spouse gap-year wages (Finding 2, T-F2.8)", () => {
+  it("the optimizer's suggested conversion amount changes when spouse wages are introduced", () => {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
+    app.fire(() => app.latest().conversion.conversionMode.set("custom"));
+    // Baseline: married, MFJ, but no real spouse wages (spouseIncome still 0) —
+    // a real gap window opens by age math alone, but nothing flows through it.
+    const baseline = app.latest().conversionView.optimizer.suggestedAmount;
+    expect(baseline).not.toBeNull();
+
+    // Introduce real spouse gap-year wages — everything else held fixed.
+    app.fire(() => app.latest().profile.spouseIncome.set(150_000));
+    const withSpouseWages = app.latest().conversionView.optimizer.suggestedAmount;
+
+    expect(withSpouseWages).not.toBe(baseline);
+    app.unmount();
+  });
+});
