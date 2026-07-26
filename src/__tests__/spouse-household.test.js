@@ -276,3 +276,59 @@ describe("optimizer floorArgs receive spouse gap-year wages (Finding 2, T-F2.8)"
     app.unmount();
   });
 });
+
+// T-X.2 — composed end-to-end (adversarial review, 2026-07-26). The plan's own
+// target-demographic walkthrough: primary retires at 58 on modest-but-real
+// balances, spouse is 48 at that point and keeps working to 65 (a 17-year gap
+// window). All three findings land in the same household at once, so this
+// proves they compose without contradiction rather than each only being
+// individually correct.
+describe("target-demographic walkthrough — all three findings composed (T-X.2)", () => {
+  it("a well-funded age-gap household never falsely depletes, never needs the spillover hatch, has no seam discontinuity, and its bracket-fill target reflects the spouse's real wages", () => {
+    const app = mount();
+    app.fire(() => app.latest().assumptions.currentAge.set(50));
+    app.fire(() => app.latest().assumptions.retirementAge.set(58));
+    app.fire(() => app.latest().assumptions.returnRate.set(7));
+    app.fire(() => app.latest().assumptions.inflationRate.set(2.5));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(40)); // 48 at primary's retirement
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(65)); // 17-yr gap
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().profile.spouseIncome.set(90_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(500_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(15_000));
+    app.fire(() => app.latest().accounts.trad401k.bal.set(400_000));
+    app.fire(() => app.latest().accounts.roth.bal.set(100_000));
+    app.fire(() => app.latest().accounts.taxable.bal.set(150_000));
+    app.fire(() => app.latest().spending.annualExpenses.set(95_000));
+    app.fire(() => app.latest().ss.ssClaimingAge.set(67));
+    app.fire(() => app.latest().ss.ssOverride.set(40_000));
+
+    const latest = app.latest();
+
+    // (1) Well-funded ⇒ never falsely declared depleted, never needs the
+    // penalized escape hatch (Finding 1).
+    expect(latest.retirementWalk.depletionAge).toBeNull();
+    expect(latest.retirementWalk.totalSpouseSpillover).toBe(0);
+    expect(latest.spouseSpilloverNote ?? latest.planHighlights?.spouseSpilloverNote ?? null).toBeFalsy();
+
+    // (2) No discontinuity at the accumulation → retirement seam (Finding 3):
+    // the chart point at the retirement age and the very next point must be
+    // continuous, not a cliff — the class of artifact a wrong deflation base
+    // would introduce.
+    const chart = latest.chartData;
+    const seamIdx = chart.findIndex(p => p.age === 58);
+    expect(seamIdx).toBeGreaterThan(-1);
+    expect(seamIdx).toBeLessThan(chart.length - 1);
+    const seamJump = Math.abs(chart[seamIdx + 1].total - chart[seamIdx].total) / chart[seamIdx].total;
+    expect(seamJump).toBeLessThan(0.25);
+
+    // (3) The bracket-fill target reflects the spouse's real gap-year wages
+    // (Finding 2) — far below the naive MFJ-22%-bracket fillTo (243,600) a
+    // spouse-blind planner would have shown.
+    expect(latest.conversionView.targets.convPeakTarget).toBeLessThan(200_000);
+    expect(latest.conversionView.targets.convPeakTarget).toBeGreaterThan(0);
+
+    app.unmount();
+  });
+});
