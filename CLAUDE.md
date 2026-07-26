@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1027 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1030 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -1632,11 +1632,56 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   1002 → **1027 tests**. Golden master untouched throughout — every new parameter defaults to its
   zero/null/false value. Full root cause, fix mechanism, and file list: `docs/BUGS.md` →
   BUG-88/BUG-89/BUG-90 (Resolved), BUG-91/BUG-92 (Open), BUG-84 (addendum).
+- **Three-agent Opus review battery + stabilization handoff (2026-07-26, same branch/PR #59, after
+  BUG-88/89/90 shipped).** Owner request: three parallel Opus agents, each auditing a different
+  angle of the just-landed spouse engine — (1) adversarial correctness (does the BUG-88/89/90 diff
+  actually deliver what it claims, verified empirically, not just re-read), (2) cross-feature
+  interoperability (do Classic/Horizon, the conversion planner, the Monte Carlo lens, and what-if
+  scenarios agree with each other for the same household), (3) roadmap alignment / foundation
+  health (is this a solid base for #113/#114/Session B/#126, or does it need stabilization first).
+  All three converged independently on the same headline conclusion: **the feature isn't
+  converging** — severity across five-plus review passes isn't decaying, and the root cause is a
+  pattern, not a bug: nearly every spouse-engine defect decomposes into one of two undeclared-basis
+  axes (primary-only vs. household scope; nominal vs. real dollars) that `golden-master.test.js`
+  structurally cannot see (one filer, one fixed default). Two agents independently constructed the
+  *same* repro scenario (a spouse with a balance but no income) and found the same bug from it.
+  New findings filed: **BUG-93** (the Option-A hold-out/penalty fires for a non-working spouse —
+  fired in 9/9 tested cells for that household shape) + **BUG-94** (the Monte Carlo spouse-gap
+  caveat has a false negative on exactly that household, and is one-directional in wording for a
+  two-directional error) — one root cause, two symptoms; **BUG-95** (`spouseCurrentAge` defaults to
+  18 and its only editor is buried behind an unrelated RMD-beneficiary toggle — a $4.2M/$1.6M swing
+  with zero signal on any headline number); **BUG-96** (the RMD screen's household tiles vs.
+  primary-only table disagree by up to 71%, with a mislabeled tax-rate header and a card that can
+  hide itself exactly when RMDs are largest); **BUG-98** (defensive-contract gaps in the gap-year
+  maps, unhardened unlike their sibling `spouseHoldout`, low severity). **BUG-91 amended** with an
+  independent re-derivation against the golden-master default (worse than originally filed —
+  `withdrawalRate` should read ~5.61%, failing the app's own 4% guideline, not the locked 1.42%) plus
+  a `livingExpenseGrowth` dead-input finding (a fully-wired UI control with zero model consumers).
+  **BUG-97 found AND fixed same-day** (small enough to close now rather than defer): the roadmap
+  agent's own new finding — `calcWhatIfDelta`'s forced-resim branch dropped the spouse balance
+  entirely, a phantom −$900,000 delta reproduced on the live `surplusApplySite` Apply button; same
+  bug class as BUG-61/BUG-79, third occurrence. Minor correctness-review findings (fixed-point
+  truncation ≤ ~$226, the spouse HSA add-back not exactly dollar-conserving, "byte-identical" being
+  1-ULP-identical) folded as addenda into BUG-88/BUG-90 or `docs/FINANCIAL-MODEL.md`'s Known
+  Simplifications rather than filed as new bugs.
+  **Owner decision:** don't fix everything now — this PR is already large. Isolate the minimal work
+  that reduces risk for near-term work (BUG-97, done), write up the full findings + a sequenced
+  handoff plan, then close this PR and continue the rest in a dedicated new session. New document:
+  **`docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`** — the single "start here" reference for that
+  session, laying out why (the diagnosis above) and the exact order to work the remaining list:
+  (1) promote the BUG-88/89/90 session's `T-X.2` target-demographic fixture into a permanent
+  spouse-household golden master; (2) add a unit-contract invariant test; (3) **then** fix BUG-91
+  itself — coupled to BUG-90's already-locked deflation base (`T-F3.2`), and must land before
+  Session B (Monte Carlo port) or #126 (survivor scenario), both of which it would otherwise
+  silently miscalibrate; (4) BUG-93+94 together; (5) BUG-95+96 (independent, UI-only); (6) the
+  pre-existing backlog (BUG-84/85/92/98).
+  1027 → **1030 tests** (BUG-97's fix only — everything else in this pass is documentation, filed
+  bugs, and the new plan doc; no other code changed). Golden master untouched, lint clean, build OK.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (1027 tests)
+- `npm test` — run model + formatter + render-smoke tests (1030 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
