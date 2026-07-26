@@ -267,6 +267,17 @@ session's `what-if.js` edits (the BUG-75 additions-only `moneyEvents` contract, 
 spouse-trad scalar fix, the new `calcWorkLongerBreakEven`) all touched call sites of the blended
 walk without migrating any of them onto the engine — same pattern as the 2026-07-12 note. Still
 reproduces, scope unchanged.
+**Widened by one dimension (2026-07-26, PR #59 CodeRabbit review-fix round — flagged, not fixed).**
+BUG-82's rule-5 wiring (`docs/BUGS.md` → BUG-82, Resolved) made `calcOptimizedScenario`'s `optWR`
+spouse-aware (`optNetNeed` now subtracts `spouseIncomeAtRet`), but `optYS` — the optimizer's
+years-sustained figure — still runs `buildRetirementDrawdown`, which has no spouse-income parameter
+at all. Before this PR the two were CONSISTENTLY blind to spouse income together; now they can
+disagree specifically for a spouse-gap household (a lower `optWR` with no matching improvement in
+`optYS`). CodeRabbit caught this; verified real, left unfixed with the same reasoning as the rest of
+this bug — both proposed fix shapes (route `optYS` through `buildRetirementPhase`, or extend
+`buildRetirementDrawdown` with a per-year spouse-income map) are genuine architecture changes to a
+walk shared by `calcWhatIfDelta`/`calcAffordabilityMax` too, not a spot patch. Fold into the
+eventual migration this bug already tracks rather than special-casing the spouse dimension.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 
