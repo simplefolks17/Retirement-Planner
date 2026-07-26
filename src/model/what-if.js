@@ -547,12 +547,21 @@ export function calcWhatIfScenario({
         })
       : null;   // no override → retPhaseBase's base values are already correct
 
+    // CodeRabbit finding: this used to apply only tradSeed on a resim, leaving
+    // seeds.roth/taxable/hsa primary-only — inconsistent with the main path
+    // (App.jsx's hhRoth/hhTaxable/hhHsa already fold in spouseSeed's rothSeed/
+    // taxableSeed/hsaSeed). Re-seeding here mirrors that exactly, so a scenario
+    // that shifts the primary's retirement age doesn't silently drop the
+    // spouse's investment growth on those three accounts up to the new age
+    // (this is a basis-consistency fix, independent of BUG-85's gap-YEAR-
+    // CONTRIBUTION scope — these seeds grow from ordinary investment return
+    // only, same as tradSeed does before any gap contribution is added to it).
     const seeds = needsResim
       ? {
           tradGross: (resimAt.tradGross ?? 0) + (addlPreTaxBal ?? 0),
-          roth:      resimAt["Roth IRA"] ?? 0,
-          taxable:   resimAt["Taxable"]  ?? 0,
-          hsa:       resimAt["HSA"]      ?? 0,
+          roth:      (resimAt["Roth IRA"] ?? 0) + (spouseSeed?.rothSeed ?? 0),
+          taxable:   (resimAt["Taxable"]  ?? 0) + (spouseSeed?.taxableSeed ?? 0),
+          hsa:       (resimAt["HSA"]      ?? 0) + (spouseSeed?.hsaSeed ?? 0),
         }
       : {
           tradGross: retPhaseBase.tradGross ?? 0,

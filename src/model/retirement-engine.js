@@ -37,6 +37,7 @@
 import { calcTax } from "./taxes.js";
 import { getDivisor } from "./rmd.js";
 import { applyMoneyEvents } from "./money-events.js";
+import { spouseAgeAt as toSpouseAge } from "./retirement-phase.js";
 
 export function buildRetirementWalkByAccount({
   startAge,                 // safeRetAge
@@ -88,9 +89,12 @@ export function buildRetirementWalkByAccount({
   let depletionAge = null;
   let yearsSustained = Infinity;
 
+  // Both closures share the exact age-frame formula with retirement-phase.js's
+  // spouseAgeAt export (CodeRabbit finding — was two inline copies of the same
+  // arithmetic); only the null-gating differs per call site.
   const spouseAgeAt = (age) =>
     useTable2 && spouseCurrentAge != null && currentAge != null
-      ? Math.round(spouseCurrentAge + (age - currentAge))
+      ? Math.round(toSpouseAge(currentAge, spouseCurrentAge, age))
       : null;
 
   // Spouse's own age each year — used for the spouse RMD gate, independent of
@@ -98,7 +102,7 @@ export function buildRetirementWalkByAccount({
   // Table II divisor). null when either age is unknown (no spouse configured).
   const spouseAgeFor = (age) =>
     (spouseCurrentAge != null && currentAge != null)
-      ? Math.round(spouseCurrentAge + (age - currentAge))
+      ? Math.round(toSpouseAge(currentAge, spouseCurrentAge, age))
       : null;
 
   const spouseOptionA = spouseRetirementAge != null && Number.isFinite(spouseRetirementAge);

@@ -294,10 +294,6 @@ export function generatePhaseActions({
 export function generatePhaseSteps(flowData, {
   returnRate, rReal, netPortfolioNeed, effectivePension,
   effectiveRMDTaxRate, safeRetAge, currentAge, safeLifeExp,
-  // #30 / BUG-82: spouse's net gap-year income offsetting netPortfolioNeed —
-  // named in the caption so it's clear what was actually subtracted. Defaults
-  // to 0 (inert for households without a spouse gap window).
-  spouseIncomeAtRet = 0,
 }) {
   const phase1Steps = [
     { label: "Starting Portfolio", amount: flowData.startPortfolio, type: "start" },
@@ -308,14 +304,30 @@ export function generatePhaseSteps(flowData, {
     { label: "At Retirement",      amount: flowData.totalAtRet,     type: "total" },
   ];
 
+  // #30 / BUG-82 (CodeRabbit review fix): the captions used to gate on the
+  // first-walked-year spouseIncomeAtRet scalar, and the waterfall never
+  // rendered an explicit row for the spouse's gap-year inflow — so for a
+  // spouse-gap household the displayed rows didn't sum to the displayed
+  // total (a residual, unlabeled term; rule 2b). Both phases now read their
+  // OWN phase-aggregate spouse-contribution figure straight off flowData
+  // (calcFlowDown's convWindowSpouseContrib/distSpouseContrib — already
+  // computed there for exactly this reconciliation, and already the
+  // reconciliation identity documented in flow-down.js's header comment),
+  // and render it as an explicit "add" row so the waterfall visibly closes:
+  //   totalAtRet + convWindowGrowth + convWindowSpouseContrib
+  //     − convWindowDraws − convWindowTax = portPreRMD
   const phase2Steps = flowData.hasConvWindow ? [
     { label: "Portfolio In", amount: flowData.totalAtRet, type: "start" },
     { label: flowData.convWindowGrowth >= 0 ? "Portfolio Growth" : "Net Investment Loss",
       amount: Math.abs(flowData.convWindowGrowth),
       type:   flowData.convWindowGrowth >= 0 ? "add" : "loss",
       sub: `${flowData.conversionWindowYrs} yrs at ${returnRate}% (real)` },
+    ...(flowData.hasConvWindowSpouseContrib
+      ? [{ label: "Spouse Contribution", amount: flowData.convWindowSpouseContrib, type: "add",
+           sub: "401k contributions + banked income surplus while still working" }]
+      : []),
     { label: "Living Expenses", amount: flowData.convWindowDraws, type: "subtract",
-      sub: `${fmt(netPortfolioNeed)}/yr net of SS${effectivePension > 0 ? " + pension" : ""}${spouseIncomeAtRet > 0 ? " + spouse income" : ""}` },
+      sub: `${fmt(netPortfolioNeed)}/yr net of SS${effectivePension > 0 ? " + pension" : ""}${flowData.hasConvWindowSpouseContrib ? " + spouse income" : ""}` },
     ...(flowData.convWindowTax > 0
       ? [{ label: "Roth Conversion Tax", amount: flowData.convWindowTax, type: "subtract",
            sub: `on ${fmt(flowData.totalConverted)} converted` }]
@@ -329,8 +341,12 @@ export function generatePhaseSteps(flowData, {
       amount: Math.abs(flowData.distGrowth),
       type:   flowData.distGrowth >= 0 ? "add" : "loss",
       sub: `${returnRate}% return (real ${(rReal * 100).toFixed(1)}%)` },
+    ...(flowData.hasDistSpouseContrib
+      ? [{ label: "Spouse Contribution", amount: flowData.distSpouseContrib, type: "add",
+           sub: "401k contributions + banked income surplus while still working" }]
+      : []),
     { label: "Living Expenses", amount: flowData.distDraws, type: "subtract",
-      sub: `${fmt(netPortfolioNeed)}/yr${spouseIncomeAtRet > 0 ? " + spouse income" : ""} × ${flowData.actualSustainedYrs} yrs` },
+      sub: `${fmt(netPortfolioNeed)}/yr${flowData.hasDistSpouseContrib ? " + spouse income" : ""} × ${flowData.actualSustainedYrs} yrs` },
     ...(flowData.distRMDTax > 0
       ? [{ label: "RMD Tax Bite", amount: flowData.distRMDTax, type: "subtract",
            sub: `~${(effectiveRMDTaxRate * 100).toFixed(1)}% effective (bracket-accurate)` }]

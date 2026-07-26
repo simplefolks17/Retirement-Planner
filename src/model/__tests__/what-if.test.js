@@ -862,13 +862,35 @@ describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
     // Sanity: the fixture actually exercises growth between the base and scenario seed points.
     expect(expectedSpouseSeed.tradSeed).toBeGreaterThan(baseSpouseSeed.tradSeed);
 
-    const expectedScenarioTotalAtRet = primaryPortion + expectedSpouseSeed.tradSeed;
+    // CodeRabbit review fix: the resim now re-seeds rothSeed/taxableSeed/hsaSeed
+    // too (previously only tradSeed), so scenarioTotalAtRet must include all four
+    // re-seeded spouse buckets, not just the Traditional one.
+    const expectedScenarioTotalAtRet = primaryPortion + expectedSpouseSeed.tradSeed
+      + expectedSpouseSeed.rothSeed + expectedSpouseSeed.taxableSeed + expectedSpouseSeed.hsaSeed;
     expect(s.scenarioTotalAtRet).toBeCloseTo(expectedScenarioTotalAtRet, 6);
 
     // The bug this fixes: the OLD code kept the spouse trad FROZEN at the base-
     // retirement-age value even 5 years later — the fixed result must be larger.
-    const frozenWouldBe = primaryPortion + baseSpouseSeed.tradSeed;
+    const frozenWouldBe = primaryPortion + baseSpouseSeed.tradSeed
+      + baseSpouseSeed.rothSeed + baseSpouseSeed.taxableSeed + baseSpouseSeed.hsaSeed;
     expect(s.scenarioTotalAtRet).toBeGreaterThan(frozenWouldBe);
+  });
+
+  it("a retire-later scenario also re-seeds the spouse's Roth/Taxable/HSA buckets, not just Traditional (CodeRabbit review fix)", () => {
+    const laterRetAge = spSafeRetAge + 5;
+    const s = calcWhatIfScenario(householdBundle, { retirementAge: laterRetAge });
+    // Even though this fixture's synthetic spouse rows hold Roth/Taxable/HSA flat
+    // (no growth for THESE three fields — only tradGross grows with i), the fix
+    // is about the resim path actually READING spouseSeed.rothSeed/taxableSeed/
+    // hsaSeed at all — before the fix these three were silently dropped from
+    // scenarioTotalAtRet on ANY forced resim, not just when they'd changed value.
+    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
+      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    const primaryAtScenario = primaryResim[laterRetAge - primarySimInputs.currentAge - 1];
+    const primaryRothTaxableHsa = (primaryAtScenario["Roth IRA"] ?? 0)
+      + (primaryAtScenario["Taxable"] ?? 0) + (primaryAtScenario["HSA"] ?? 0);
+    // The synthetic fixture's spouse Roth/Taxable/HSA are flat 50k/30k/5k = 85k.
+    expect(s.scenarioTotalAtRet).toBeGreaterThanOrEqual(primaryRothTaxableHsa + 85_000);
   });
 
   it("the no-op scenario invariant still holds with a spouse", () => {

@@ -4590,7 +4590,6 @@ export default function App() {
             const { phase1Steps, phase2Steps, phase3Steps } = generatePhaseSteps(flowData, {
               returnRate, rReal, netPortfolioNeed, effectivePension,
               effectiveRMDTaxRate, safeRetAge, currentAge, safeLifeExp,
-              spouseIncomeAtRet,
             });
             const { phase1Actions, phase2Actions, phase3Actions } = generatePhaseActions({
               totalAtRet, netPortfolioNeed, withdrawalRate, yearsSustained,
