@@ -391,6 +391,32 @@ describe("buildRetirementWalkByAccount — spouse gap-year working/contributing 
     expect(r70.tradSpouse).toBeLessThan(prevTradSp * 1.03); // drawn down below pure growth
   });
 
+  it("T2.7a — Option A fails CLOSED (held out), not open, when spouseAge can't be computed (CodeRabbit review fix)", () => {
+    // spouseRetirementAge is set (spouseOptionA true) but spouseCurrentAge is
+    // omitted, so spouseAgeFor(age) returns null every year. The pre-fix
+    // condition (`spouseAge != null && spouseAge < spouseRetirementAge`)
+    // evaluated to false on a null age and fell through to `: tradSp` —
+    // silently exposing the WHOLE held-out balance as immediately drawable,
+    // funding the spending need that should have caused a shortfall instead.
+    // No income floor here (deliberately, unlike T2.7/T2.7b's fixtures) —
+    // the ONLY funding source is the held-out spouse bucket, so whether it's
+    // actually held out is the only thing that can determine the outcome.
+    const { rows, depletionAge } = buildRetirementWalkByAccount({
+      startAge: 65, endAge: 70, rReal: 0.03,
+      currentAge: 65, // spouseCurrentAge deliberately omitted
+      tradGross: 0, tradGrossSpouse: 1_000_000, roth: 0, taxable: 0, hsa: 0,
+      effectiveExpenses: 80_000, filingStatus: "single",
+      spouseRetirementAge: 70,
+    });
+    // Held out correctly ⇒ nothing was available to fund the $80k need ⇒
+    // immediate shortfall/depletion, NOT a successful draw from the spouse
+    // bucket (which is what the pre-fix fail-open bug would have produced).
+    expect(depletionAge).toBe(66);
+    const r66 = rows.find(r => r.age === 66);
+    expect(r66.tradDraw).toBe(0);
+    expect(r66.tradSpouse).toBeCloseTo(1_000_000 * 1.03, 2); // pure growth, untouched by any draw
+  });
+
   it("T2.7b — the spouse's final retirement-year contribution and first drawable year are the SAME year", () => {
     // Locks the intentional one-year overlap (contributed during the year,
     // retired at year end): the map convention is >= at the retirement age, not >.

@@ -174,6 +174,27 @@ export function buildRetirementWalkByAccount({
       if (divSp) { rmdSp = tradSp / divSp; tradSp -= rmdSp; rTax += rmdSp; }
     }
 
+    // CodeRabbit review fix (PR #59), narrowed after checking against the
+    // existing test contract: only the DRAW gate gets a dedicated flag.
+    // spouseContribByAge/spouseTaxableIncomeByAge/spouseIncomeFloorByAge are
+    // deliberately left keyed on map presence alone (unconditional `?? 0`,
+    // unchanged below) — they are ALREADY bounded to the gap window by
+    // buildSpouseRetirementSeed's own loop (`sAge > spouseRetAge` breaks), and
+    // this engine's own test suite (T2.2 etc.) intentionally exercises them
+    // independent of spouseRetirementAge/spouseOptionA — gating them here too
+    // would silently zero out a caller-supplied map whenever spouseOptionA
+    // isn't set, changing the function's established contract for no real
+    // safety gain (the real App.jsx caller always keeps the maps and
+    // spouseRetirementAge consistent by construction).
+    //   spouseHoldout fails CLOSED on an unknown spouseAge (true — stays held
+    //     out) instead of the old condition's fail-OPEN behavior: `spouseAge
+    //     != null && spouseAge < spouseRetirementAge` evaluated to false when
+    //     spouseAge was null, silently exposing the WHOLE held-out balance as
+    //     drawable. Unreachable via the real App.jsx caller (currentAge/
+    //     spouseCurrentAge are always-set numeric state), but this is an
+    //     exported pure function — its own contract should fail safe.
+    const spouseHoldout = spouseOptionA && (spouseAge == null || spouseAge < spouseRetirementAge);
+
     // Spouse still working (Option A, #30 / BUG-82): add this gap-year's contribution to
     // the held-out spouse bucket. Sourced from the accumulation sim's own per-year c401k
     // (deferral + match + IRS caps + income growth) via spouseContribByAge — reuse, not
@@ -238,11 +259,7 @@ export function buildRetirementWalkByAccount({
     //   spouse's OWN retirement age (they are still working and still contributing to
     //   it; it is also likely pre-59½). Fully pooled from the year the spouse retires.
     //   Option A off (no spouse / no spouseRetirementAge) ⇒ pooled exactly as before.
-    //   `spouseAge` is already bound from the RMD block above — reuse it, do not
-    //   recompute/shadow it.
-    spouseDrawable = (spouseOptionA && spouseAge != null && spouseAge < spouseRetirementAge)
-      ? 0
-      : tradSp;
+    spouseDrawable = spouseHoldout ? 0 : tradSp;
 
     // Available to cover this year's outflow (spending + tax) before depletion check.
     const availableBeforeDraw = trad + spouseDrawable + rRoth + rTax + rHsa;
