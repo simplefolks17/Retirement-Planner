@@ -597,6 +597,14 @@ export default function App() {
     pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0, inflationRate, yearsToRetForBasis);
   const retPensionMonthlyBasis = pensionMonthly > 0
     ? toRetirementYearDollars(pensionMonthly, inflationRate, yearsToRetForBasis) : 0;
+  // retPensionAtRMDAge: gated to the RMD-age (73) horizon, not retirement age —
+  // for projectRetirementBracket, which does ZERO internal timing gate of its
+  // own (unlike calcRMDIncomeFloor, which gates against rmdStartAge internally
+  // and so takes the fully-ungated retPensionAnnualBasis instead). A pension
+  // that starts after retirement but by/before 73 must show up here, or the
+  // projected bracket undercounts income for delayed-start pensions (Qodo
+  // review finding, PR #62).
+  const retPensionAtRMDAge = pensionStartAge <= RMD_START_AGE ? retPensionAnnualBasis : 0;
 
   // #30 / BUG-82 rule-5 wiring: the spouse's net gap-year income in the FIRST
   // WALKED YEAR (safeRetAge + 1 — the engine's first row). Reading straight off
@@ -695,9 +703,14 @@ export default function App() {
 
   // The income floor RMDs/withdrawals stack on (SS taxable + pension, gated to RMD
   // start). Still used by the withdrawal-order strategy card (calcWithdrawalOrderTax).
+  // effectivePension here must be the UNGATED retPensionAnnualBasis — this
+  // function already gates internally on pensionStartAge <= rmdStartAge (73).
+  // Passing the retirement-gated retPensionBasis double-gated a pension that
+  // starts after retirement but by/before 73, silently zeroing it (Qodo
+  // review finding, PR #62).
   const rmdIncomeFloor = calcRMDIncomeFloor({
     includeSS, ssClaimingAge, ssTaxableRet,
-    pensionMonthly, pensionStartAge, effectivePension: retPensionBasis, rmdStartAge: RMD_START_AGE,
+    pensionMonthly, pensionStartAge, effectivePension: retPensionAnnualBasis, rmdStartAge: RMD_START_AGE,
   });
 
   // The engine's conversion schedule ({ [age]: amount }). Empty when there's no
@@ -1177,7 +1190,7 @@ export default function App() {
   // the household total by the primary-only row count, overstating the average.
   const avgAnnualRMD      = rmdData.length > 0 ? Math.round(primaryTotalRMDs / rmdData.length) : 0;
   const { bracketPct: projRetBracketPct } = projectRetirementBracket({
-    avgAnnualRMD, householdSS, effectivePension: retPensionBasis, filingStatus,
+    avgAnnualRMD, householdSS, effectivePension: retPensionAtRMDAge, filingStatus,
   });
 
   // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
@@ -3953,6 +3966,7 @@ export default function App() {
                   <p style={{ margin: "0 0 5px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Spouse's current age</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <input type="range" min={18} max={80} step={1} value={spouseCurrentAge}
+                      aria-label="Spouse's current age"
                       onChange={e => setSpouseCurrentAgeCoupled(Number(e.target.value))}
                       style={{ flex: 1, accentColor: C.blue }} />
                     <span style={{ fontSize: 13, color: C.blue, ...mono, minWidth: 24 }}>{spouseCurrentAge}</span>
