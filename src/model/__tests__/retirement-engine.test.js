@@ -709,6 +709,46 @@ describe("buildRetirementWalkByAccount — spouse hold-out shortfall spillover (
   });
 });
 
+describe("buildRetirementWalkByAccount — BUG-98: spouse gap-year maps fail safe, not open", () => {
+  const common = {
+    startAge: 65, endAge: 75, rReal: 0.03, currentAge: 65, spouseCurrentAge: 60,
+    tradGross: 1_000_000, roth: 0, taxable: 0, hsa: 0,
+    effectiveExpenses: 60_000, filingStatus: "single", spouseRetirementAge: 70,
+  };
+
+  it("a negative spouseIncomeFloor is clamped to 0, never increasing the draw", () => {
+    const zero = buildRetirementWalkByAccount({ ...common, spouseIncomeFloorByAge: { 66: 0 } });
+    const negative = buildRetirementWalkByAccount({ ...common, spouseIncomeFloorByAge: { 66: -50_000 } });
+    const zRow = zero.rows.find(r => r.age === 66);
+    const nRow = negative.rows.find(r => r.age === 66);
+    expect(nRow.draw).toBeCloseTo(zRow.draw, 5);
+  });
+
+  it("a non-finite spouseIncomeFloor/spouseContrib/spouseTaxableIncome degrades to inert (0), not NaN", () => {
+    const { rows } = buildRetirementWalkByAccount({
+      ...common,
+      tradGrossSpouse: 200_000,
+      spouseIncomeFloorByAge: { 66: NaN },
+      spouseContribByAge: { 66: NaN },
+      spouseTaxableIncomeByAge: { 66: NaN },
+    });
+    const r = rows.find(x => x.age === 66);
+    expect(Number.isFinite(r.draw)).toBe(true);
+    expect(Number.isFinite(r.tax)).toBe(true);
+    expect(Number.isFinite(r.total)).toBe(true);
+    expect(r.tradSpouse).toBeCloseTo(200_000 * 1.03, 5); // no NaN contribution added
+  });
+
+  it("a negative spouseContrib does not shrink the held-out bucket", () => {
+    const { rows } = buildRetirementWalkByAccount({
+      ...common, tradGrossSpouse: 200_000,
+      spouseContribByAge: { 66: -10_000 },
+    });
+    const r = rows.find(x => x.age === 66);
+    expect(r.tradSpouse).toBeCloseTo(200_000 * 1.03, 5);
+  });
+});
+
 describe("buildRetirementWalkByAccount — depletion", () => {
   it("reports a depletion age when spending outruns the portfolio", () => {
     const { depletionAge, yearsSustained } = base({

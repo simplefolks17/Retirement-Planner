@@ -40,6 +40,14 @@ import { applyMoneyEvents } from "./money-events.js";
 import { spouseAgeAt as toSpouseAge } from "./retirement-phase.js";
 import { EARLY_WITHDRAWAL_AGE, EARLY_WITHDRAWAL_PENALTY } from "../config/irs-2026.js";
 
+// BUG-98: the three spouse gap-year maps are read by AGE key from an exported pure
+// function's own contract — like spouseHoldout's fail-closed null-handling (BUG-82's
+// review-fix round), a non-finite or negative map value should degrade to inert (0),
+// not propagate a NaN or (worse) a negative value that would INCREASE a draw instead
+// of reducing it. `buildSpouseRetirementSeed` already clamps its own outputs this way
+// internally; this is the matching guard on the read side.
+const nonNegOrZero = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+
 export function buildRetirementWalkByAccount({
   startAge,                 // safeRetAge
   endAge,                   // safeLifeExp (chart) or a high cap (longevity)
@@ -203,7 +211,7 @@ export function buildRetirementWalkByAccount({
     // AFTER the spouse RMD so this year's contribution does not inflate this year's own
     // required distribution (the IRS divisor applies to the prior 31-Dec balance). It
     // compounds starting next year. Inert with an empty map (golden-master safe).
-    const spouseContrib = spouseContribByAge[age] ?? 0;
+    const spouseContrib = nonNegOrZero(spouseContribByAge[age]);
     if (spouseContrib > 0) tradSp += spouseContrib;
 
     // 3. Roth conversion (window): 401k → Roth principal, on the post-RMD balance.
@@ -217,7 +225,7 @@ export function buildRetirementWalkByAccount({
     //   SS/pension — it is never itself withdrawn, only used to determine which
     //   bracket other withdrawals land in (see spouseIncomeFloor below for the
     //   CASH offset). 0 by default (empty map) ⇒ inert.
-    const spouseWages = spouseTaxableIncomeByAge[age] ?? 0;
+    const spouseWages = nonNegOrZero(spouseTaxableIncomeByAge[age]);
     const floor   = (age >= ssClaimAge ? ssTaxable : 0)
                   + (age >= pensionStartAge ? pension : 0)
                   + spouseWages;
@@ -243,9 +251,13 @@ export function buildRetirementWalkByAccount({
     //   working spouse whose income exceeds expenses is common; silently dropping
     //   the excess would vaporize a large share of this fix's own benefit). 0 by
     //   default (empty map) ⇒ spendNeed === needed and the bank-line below adds 0.
-    const spouseIncomeFloor = spouseIncomeFloorByAge[age] ?? 0;
+    const spouseIncomeFloor = nonNegOrZero(spouseIncomeFloorByAge[age]);
     const spendNeed     = Math.max(0, effectiveExpenses - ssCash - penCash);
-    const spouseApplied = Math.min(spouseIncomeFloor, spendNeed);
+    // Math.max(0, …) here is the BUG-98 guard itself: without it, a negative
+    // spouseIncomeFloor (already prevented above, but this is the function's own
+    // contract, not just this call site's discipline) would make spouseApplied
+    // negative and INCREASE `needed` below instead of leaving it unaffected.
+    const spouseApplied = Math.max(0, Math.min(spouseIncomeFloor, spendNeed));
     const needed         = (spendNeed - spouseApplied) + eventOutflow;
     // The banked surplus (spouse cash beyond this year's need) is, like the 401k
     // contribution below, a real inflow that is neither growth, draw, nor tax — found

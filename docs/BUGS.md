@@ -122,30 +122,6 @@ alongside the `eventRetirementDraw` cap) to also cap at "tight" whenever
 both tick rails.
 **Not fixed here.** No code change; filed as a follow-up.
 
-### BUG-98 — Defensive-contract gaps in the spouse gap-year maps / escape hatch, unhardened unlike their sibling `spouseHoldout` (found 2026-07-26, adversarial-correctness review agent)
-
-**Owner:** me_theguy. **Severity: LOW (unreachable from any current caller; a "same class as
-something we already hardened" gap, not a live bug).**
-**What:** `spouseApplied = Math.min(spouseIncomeFloor, spendNeed)` (`retirement-engine.js`) has no
-`Math.max(0, …)` guard — a negative map value would INCREASE the draw rather than being clamped
-(probe: a −$50k floor produced a $110k draw instead of $60k). A NaN in any of the three gap-year maps
-propagates into `row.spouseContrib` and onward into Flow-Down's `convWindowSpouseContrib`/
-`distSpouseContrib` sums, with `depletionAge` still reporting `null`. Today this is unreachable —
-`buildSpouseRetirementSeed`'s own `wages` is `Math.max(0, …)` and `netRate` is clamped to `[0,1]` — but
-it is precisely the class of gap the team already decided to hardened defensively elsewhere in this
-same engine: `spouseHoldout`'s fail-closed null-handling (see BUG-82's Resolved entry, the CodeRabbit
-review-fix round) was added specifically because "this is an exported pure function — its own
-contract should fail safe," even though the real `App.jsx` caller could never trigger it either.
-Separately: `spouseRetirementAge: Infinity` ("spouse never retires") pools the bucket immediately
-rather than holding it out, which is a reasonable interpretation but is undocumented as a special case.
-**Recommended fix shape:** clamp `spouseApplied` at 0 (one-line `Math.max`); consider whether the
-three gap-year maps should validate/clamp their inputs the same way `buildSpouseRetirementSeed`
-already does internally, for defense-in-depth parity with `spouseHoldout`.
-**Where:** `src/model/retirement-engine.js` (`spouseApplied`, the three gap-year map reads).
-**Not fixed here.** Low priority; bundle into the dedicated spousal-engine stabilization session if
-convenient, otherwise fine to leave for a future hardening pass —
-see `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`.
-
 ### BUG-85 — Spouse Roth/Taxable/HSA gap-year contributions treated as spent, not tracked (filed 2026-07-25, BUG-82 fix session — v1 scope decision)
 
 **Owner:** me_theguy. **Severity: LOW-MEDIUM (smaller, weaker-rationale dollar impact than BUG-82).**
@@ -777,6 +753,38 @@ totalRMDs`, no display change. Golden master untouched.
 **Where:** `src/App.jsx` (`primaryTotalRMDs`, `avgAnnualRMD`, `rmdView` bundle, `strategiesView.rmd`,
 Classic RMD tiles + table header), `src/horizon/screens/strategies/RMDOutlookFlow.jsx` (household-total
 note, tax-column relabel).
+
+### BUG-98 — Defensive-contract gaps in the spouse gap-year maps / escape hatch, unhardened unlike their sibling `spouseHoldout` (found 2026-07-26, adversarial-correctness review agent; fixed 2026-07-27, spousal-engine stabilization session, Step 6)
+
+**Owner:** me_theguy. **Severity: LOW (unreachable from any current caller; a "same class as
+something we already hardened" gap, not a live bug).**
+**What:** `spouseApplied = Math.min(spouseIncomeFloor, spendNeed)` (`retirement-engine.js`) had no
+`Math.max(0, …)` guard — a negative map value would INCREASE the draw rather than being clamped
+(probe: a −$50k floor produced a $110k draw instead of $60k). A NaN in any of the three gap-year maps
+(`spouseContribByAge`/`spouseTaxableIncomeByAge`/`spouseIncomeFloorByAge`) would propagate into
+`row.spouseContrib` and onward into Flow-Down's reconciliation sums. Unreachable from any current
+caller (`buildSpouseRetirementSeed`'s own outputs are always non-negative and finite), but precisely
+the class of gap the team had already decided to harden defensively elsewhere in this same engine:
+`spouseHoldout`'s fail-closed null-handling (BUG-82's Resolved entry, the CodeRabbit review-fix round)
+was added specifically because "this is an exported pure function — its own contract should fail
+safe," even though the real `App.jsx` caller could never trigger it either.
+**Fix:** new shared guard `nonNegOrZero(v)` (`retirement-engine.js`) — non-finite or non-positive
+degrades to inert `0`, mirroring `spouseHoldout`'s reasoning — applied at all three map-read call sites
+(`spouseContrib`, `spouseWages`, `spouseIncomeFloor`). `spouseApplied` itself also gets the one-line
+`Math.max(0, …)` the original entry recommended, as a second layer of defense even though
+`spouseIncomeFloor` can no longer be negative by the time it reaches that line.
+**Tests:** 3 new tests in `retirement-engine.test.js` — a negative `spouseIncomeFloorByAge` value
+produces the same draw as an explicit `0` (not a larger one); `NaN` in any of the three maps degrades to
+a fully finite row (`draw`/`tax`/`total`) rather than propagating; a negative `spouseContribByAge` value
+does not shrink the held-out spouse bucket.
+**Not addressed (left as documented, not a bug):** the `spouseRetirementAge: Infinity` special-case
+behavior noted in the original filing (pools the bucket immediately rather than holding it out) is
+unchanged — still a reasonable interpretation, still undocumented as an explicit special case; not
+touched by this pass since it's a documentation gap, not a defensive one.
+**Inert for every real caller** — golden master untouched, this branch's own spouse-household golden
+master (T-X.2) also untouched.
+**Where:** `src/model/retirement-engine.js` (`nonNegOrZero`, `spouseContrib`, `spouseWages`,
+`spouseIncomeFloor`, `spouseApplied`).
 
 ### BUG-90 — Nominal spouse gap-year flows in a real-dollar retirement walk (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
 
