@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
+import { toRetirementYearDollars } from "../model/finance-math.js";
 
 // ── Unit-contract invariant (SPOUSAL-ENGINE-STABILIZATION-PLAN.md, §2 step 2)
 //
@@ -52,13 +53,19 @@ function mount() {
   };
 }
 
-// The forward conversion the contract requires: a today's-dollar amount,
-// carried forward to what it becomes in the primary's retirement year at the
-// plan's own inflation assumption.
-const toRetirementYearDollars = (todaysDollarAmount, inflationRate, yearsToRetirement) =>
-  todaysDollarAmount * Math.pow(1 + inflationRate / 100, yearsToRetirement);
+// Imports the REAL conversion (finance-math.js) rather than reimplementing it
+// here — a test asserting App.jsx's wiring against a hand-copied formula could
+// drift from the production formula and stop meaning anything (test-quality
+// review finding, PR #62 review-fix round).
 
-describe("unit contract — every quantity entering the retirement walk is retirement-year real dollars", () => {
+// NOTE on scope: this probes the SPEND and PENSION basis via withdrawalRate —
+// it does NOT cover SS's conversion (SS is deliberately excluded from this
+// conversion by BUG-91's own scoping — already nominal at the claim date) or
+// the spouse gap-year maps' conversion (covered separately, by BUG-90's own
+// tests in spouse-household.test.js). A future engine-facing call site added
+// without threading it through toRetirementYearDollars would NOT necessarily
+// be caught here unless it also flows through withdrawalRate.
+describe("unit contract — the spend/pension basis feeding the retirement walk is retirement-year real dollars", () => {
   it("the spend basis feeding withdrawalRate is today's living spend inflated to the retirement year, not the flat today's-dollar figure", () => {
     const app = mount();
     const latest = app.latest();

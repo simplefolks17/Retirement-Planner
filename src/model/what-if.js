@@ -34,6 +34,22 @@ function deltaYearsFrom(scenarioYears, baseYearsSustained) {
   return scenarioYears - baseYearsSustained;
 }
 
+// Converts a today's-dollar expense figure (a scenario's override, or the base
+// plan's own raw `effectiveExpenses`) into a retirement-year-dollar figure at
+// the given retirement age — shared by calcWhatIfDelta and calcWhatIfScenario
+// so a scenario's spend re-basing can't silently diverge between the two
+// (BUG-31/25 class; reuse/duplication review finding, PR #62 review-fix round).
+// `atRetAge` may be earlier OR later than `currentAge`'s own plan retirement
+// age — this only ever moves FORWARD in time from today, so the underlying
+// `toRetirementYearDollars` clamp (negative years → 0) is exactly right here,
+// unlike SS/pension's `inflationRebaseFactor` re-basing (which must also
+// handle a scenario retiring EARLIER than the base plan — a different need,
+// kept separate).
+function scenarioExpensesInRetYearDollars(retDrawShared, todaysDollarExpenses, atRetAge, currentAge) {
+  return toRetirementYearDollars(
+    todaysDollarExpenses, retDrawShared.inflationRate, Math.max(0, atRetAge - currentAge));
+}
+
 // ── verdictForMargin ─────────────────────────────────────────────────────────
 // The ONE definition of the comfortable/tight/unaffordable verdict from a
 // sustainability margin (scenarioYears sustained minus the plan horizon in
@@ -285,13 +301,13 @@ export function calcWhatIfDelta({
   // when retirementAgeOverride is set), not the base plan's. inflationRate
   // rides along on retDrawShared for exactly this re-derivation.
   const scenarioExpensesTodays = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
-  const scenarioExpenses = toRetirementYearDollars(
-    scenarioExpensesTodays, retDrawShared.inflationRate, Math.max(0, scenarioRetAge - simInputs.currentAge));
+  const scenarioExpenses = scenarioExpensesInRetYearDollars(
+    retDrawShared, scenarioExpensesTodays, scenarioRetAge, simInputs.currentAge);
   // Base plan's own converted spend, for the returned baseExpenses field below
   // — was the raw today's-dollar figure, which no longer matches the frame
   // scenarioExpenses is now in (WhatIfPanel compares the two directly).
-  const baseExpensesConverted = toRetirementYearDollars(
-    retDrawShared.effectiveExpenses, retDrawShared.inflationRate, Math.max(0, safeRetAge - simInputs.currentAge));
+  const baseExpensesConverted = scenarioExpensesInRetYearDollars(
+    retDrawShared, retDrawShared.effectiveExpenses, safeRetAge, simInputs.currentAge);
   // SS/pension in retDrawShared are already converted at the BASE plan's
   // safeRetAge (App.jsx); a scenario retiring at a DIFFERENT age needs them
   // re-expressed in ITS OWN retirement-year frame — inflationRebaseFactor
@@ -504,8 +520,8 @@ export function calcWhatIfScenario({
     ?? (overrides.monthlyExpenses != null
       ? overrides.monthlyExpenses * ASSUMPTIONS.MONTHS_PER_YEAR
       : retDrawShared.effectiveExpenses);
-  const scenarioExpenses = toRetirementYearDollars(
-    scenarioExpensesTodays, retDrawShared.inflationRate, Math.max(0, scenarioRetAge - simInputs.currentAge));
+  const scenarioExpenses = scenarioExpensesInRetYearDollars(
+    retDrawShared, scenarioExpensesTodays, scenarioRetAge, simInputs.currentAge);
   // SS/pension in retPhaseBase/retDrawShared are already converted at the BASE
   // plan's safeRetAge — re-express in the SCENARIO's own frame when the
   // retirement age differs (inflationRebaseFactor, unlike toRetirementYearDollars,

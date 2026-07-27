@@ -7,6 +7,41 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
+### BUG-102 — Lever-preview's spouse-gap gating is inherited from the BASE plan, not the scenario's own re-seeded maps — a retire-earlier preview can under-restrict relative to what Applying it actually produces (found 2026-07-27, interoperability review agent, PR #62)
+
+**Owner:** me_theguy. **Severity: MEDIUM — a preview/commit disagreement, the same class as BUG-61/79/97
+(three prior "the resim path silently drops something the main path has" bugs), not a headline-number
+error at the default state.**
+**What:** `calcWhatIfScenario`'s spouse-aware paths (BUG-77's re-seed, threaded through
+`spouseSeedInputs`) correctly rebuild the spouse's gap-year contribution/income maps at the SCENARIO's
+own retirement age when a lever preview shifts it (e.g. Plan's "Try a change" retire-2-years-earlier
+dial) — verified by the interoperability audit to compose correctly with BUG-91's basis conversion, no
+mismatch there. But `spouseRetirementAge` — the flag that actually ACTIVATES the Option-A hold-out and
+BUG-88's penalized escape hatch inside the engine — reaches the scenario only via `...retPhaseBase`
+(`src/App.jsx` `whatIfBundle`), where App gates it on `hasActiveSpouseGap` computed from the married
+household's **committed** (base-plan) spouse-seed maps, not the scenario's re-seeded ones. A household
+whose committed plan has no active spouse gap (`effectiveSpouseRetAge === retirementAge`, the common
+default) gets `spouseRetirementAge: null` baked into every scenario preview — even a scenario that
+itself creates a two-year gap by retiring the primary earlier. The dashed preview overlay and its
+delta chip therefore show the household as if Option A never engages (no hold-out, no possible
+BUG-92 verdict cap) — while clicking Apply commits the new retirement age, `hasActiveSpouseGap`
+recomputes true on the next render, and the REAL committed walk now has the hold-out (and possibly the
+escape hatch) active. The preview over-promises relative to what Applying it actually produces.
+**Fix shape (sketched, not implemented):** derive the gate the scenario passes to
+`spouseRetirementAge` from the SCENARIO's own re-seeded maps (mirroring how BUG-77 already re-seeds
+`tradGrossSpouse`/the contribution maps for the scenario's retirement age) rather than inheriting
+`hasActiveSpouseGap` computed at the base plan's age. Likely a new scenario-local
+`hasActiveSpouseGapAt(scenarioRetAge)` helper alongside `buildSpouseRetirementSeed`, called from
+`calcWhatIfScenario` wherever it currently spreads `...retPhaseBase`.
+**Where:** `src/model/what-if.js` (`calcWhatIfScenario`'s `retPhaseBase` spread, the engine branch),
+`src/App.jsx` (`hasActiveSpouseGap`, `whatIfBundle`'s `retPhaseBase`).
+**Inert at the default state** (no spouse) and for any household whose base plan already has an
+active spouse gap (the common case for a household with a real age difference) — only exposed by a
+lever preview that ITSELF creates or removes a gap window relative to the committed plan.
+**Not fixed here.** Filed for a future session; flagged by the interoperability audit as contained
+(same file/function family as BUG-93's fix) but requiring its own verification pass, not a one-line
+change made under review-fix time pressure.
+
 ### BUG-99 — Money events (Goals/LifeEventSheet) are entered/applied in nominal (today's) dollars against a retirement walk now denominated in retirement-year dollars (found 2026-07-27, BUG-91 fix-plan audit)
 
 **Owner:** me_theguy. **Severity: MEDIUM (a real, systematic understatement of every retirement-phase
@@ -135,6 +170,15 @@ contribution map for any of the three — confirmed against current code, which 
 substantially (BUG-90 added an `inflationRate` deflation param to the SAME function, and BUG-97's fix
 re-seeds these three fields on a what-if resim) without changing this scope boundary. Still open,
 unchanged.
+**Forward-compat note (2026-07-27, PR #62 review battery):** an Opus forward-compatibility audit
+flagged that `tradSp` is threaded as a bare scalar through ~20 sites in `retirement-engine.js` (growth,
+spouse RMD, contribution, `spouseDrawable`/`spouseHoldout`, BUG-88's grossed-up penalized spillover
+with its rollups and row fields, `balStart`/`balEnd`, the `tradSpouse` output) — three more buckets
+means three more copies of that apparatus, and the spillover hatch is Traditional-specific by
+construction (ordinary tax + 10% penalty), so a Roth/Taxable spillover needs different tax rules and
+will fork it further. Recommendation for whoever picks up BUG-85: refactor `tradSp` into a keyed
+held-out-bucket structure BEFORE adding the other three buckets, and decide each bucket's own spillover
+tax rule up front, rather than copy-pasting the scalar pattern three more times.
 
 ### BUG-84 — Withdrawal-order + conversion-sim scalars (`retTrad`/`retRoth`/`retTaxable`) stayed primary-only after #30 (found 2026-07-23, CodeRabbit review of PR #57 commit 325eaad)
 
@@ -535,6 +579,125 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 ---
+
+### PR #62 review battery — adversarial code review + interoperability/forward-compat audits (2026-07-27, spousal-engine stabilization session)
+
+**Owner:** me_theguy. **Process:** after the Qodo/CodeRabbit bot review round (which found the pension
+double-gating and an a11y miss, both fixed earlier the same day — see the "PR #62 review fixes" commit),
+the owner asked for a full close-out pass before merging: an adversarial code review (the project's
+`/code-review` skill is user-invocation-only, so this was replicated manually as 4 parallel Sonnet
+finder agents — BUG-91 wiring correctness, spouse-gating correctness, reuse/duplication +
+CLAUDE.md-convention compliance, test-coverage/golden-master integrity) plus 2 Opus reasoning audits
+(cross-feature interoperability, forward-compatibility/foundation-health), mirroring this project's
+established BUG-79/80 and post-ship-review patterns. All 6 agents' findings were independently verified
+against the actual code before any fix — see the individual fixes below for what was traced and
+confirmed vs. what was filed for later.
+
+**Fixed (display-basis rollout gaps — the same "BUG-91 landed in the engine but not every display" class,
+found independently by 2 of the 4 code-review agents and confirmed/expanded by the interoperability audit):**
+1. **Classic "Total Portfolio — Full Lifecycle" chart caption** (`src/App.jsx`) read
+   `{fmt(effectiveExpenses)}/yr` — the raw, unconverted figure — captioning a chart built from
+   `totalChartData`/`retPhase`, which this PR's own BUG-91 fix changed to draw down at `retSpendBasis`.
+   **Live at the golden-master default** (not inert like most of this PR's other fixes): $57,377 shown
+   vs. the chart's actual $226,415/yr drawdown, a ~4× mismatch on the Classic dashboard's headline
+   chart. Fixed: now reads `retSpendBasis`.
+2. **Plan screen's Income Meter headline** (`src/horizon/screens/PlanScreen.jsx`, `IncomeMeter`) showed
+   `fmtMo(effectiveExpenses)` above per-source bars (`ssPct`/`pensionPct`/`portfolioPct`) that are
+   built by `calcRetIncomeFlow` to SUM to `retSpendBasis` by construction (`App.jsx`'s `planHighlights`
+   memo) — the headline and its own breakdown bars are contractually supposed to be the same number and
+   were not. Live at any default with `takeHome > 0` (i.e., always, since `effectiveExpenses` is never
+   0 at default). Fixed: now reads the already-available `retIncomeFlow.expenses` (the model-provided
+   field `calcRetIncomeFlow` itself returns, `Math.max(0, effectiveExpenses)` — no new model code
+   needed, and the `effectiveExpenses` prop the component no longer used was removed).
+3. **`SSTimingFlow.jsx`'s "Counts as $X/yr of retirement income" pension line** and
+   **`JourneyScreen.jsx`'s Chapter-3 pension pill** both read the raw `effectivePension`, while the
+   conversion planner's analogous caption (`ConversionPlannerFlow.jsx`) was already fixed to the
+   converted basis earlier this PR — these two were the missed siblings. Inert at the default (pension
+   = 0) but real for any user with a pension. Fixed: new `ssView.effectivePensionAnnual` field
+   (= `retPensionBasis`) added and both sites switched to it; the applicability gate
+   (`showEffectivePension`) stays on the raw value (an existence check, not a display value — correct
+   as-is).
+4. **`wr70`** (`src/App.jsx`, the withdrawal-rate-at-age-70 figure feeding the "delay SS to 70"
+   comparison card) had the exact SAME double-gate class Qodo's bot finding caught once already this
+   session (`calcRMDIncomeFloor`/`projectRetirementBracket`, fixed earlier the same day) — it subtracted
+   the retirement-gated `retPensionBasis`, but `wr70` represents income AT AGE 70, a later horizon than
+   retirement. Pre-existing (was raw `effectivePension` before this PR), not introduced here, caught by
+   the interoperability audit's systematic sweep of every pension-basis consumer. Fixed the same way as
+   the other two: new `retPensionAt70 = pensionStartAge <= SS_MAX_CLAIM_AGE ? retPensionAnnualBasis : 0`.
+
+**Fixed (a genuinely NEW scope regression introduced by this PR's own BUG-96 fix, found by the spouse-gating correctness agent):**
+5. **`avgAnnualRMD` → `projectRetirementBracket`.** BUG-96 correctly narrowed `avgAnnualRMD` to
+   primary-only (`primaryTotalRMDs / rmdData.length`) to match the RMD schedule table's own scope — but
+   `projectRetirementBracket` also consumed that same variable, alongside full **household** `SS`,
+   projecting a household bracket from a primary-only RMD average. Before BUG-96, the numerator was
+   (imperfectly, but at least scope-consistently) household-wide. Fixed: new
+   `avgAnnualRMDHousehold = totalRMDs / rmdData.length` computed separately and passed to
+   `projectRetirementBracket`; `avgAnnualRMD` (primary-only) stays exactly as BUG-96 left it for the
+   tile's own display. Inert at the default (no spouse); real for any spouse household where the spouse
+   also has RMDs.
+
+**Fixed (reuse/duplication and test-quality, all mechanical/safe):**
+6. **`what-if.js` scenario-basis duplication.** `calcWhatIfDelta` and `calcWhatIfScenario` each
+   independently derived "convert a today's-dollar expense override into the scenario's own
+   retirement-year frame" (byte-identical formulas, but two copies — the exact BUG-31/25 shape this
+   codebase has repeatedly hit). Extracted to one shared `scenarioExpensesInRetYearDollars` helper; both
+   call sites (plus `calcWhatIfDelta`'s `baseExpensesConverted`) now call it. No behavior change (116
+   what-if tests unchanged).
+7. **`unit-contract.test.js` reimplemented `toRetirementYearDollars`** locally instead of importing the
+   real one from `finance-math.js` — a future drift between the two would have gone undetected. Fixed to
+   import; also narrowed the describe-block title from an overreaching claim ("every quantity...") to
+   what it actually probes (spend/pension via `withdrawalRate`), with a note on what it doesn't cover
+   (SS, the spouse gap-year maps — both covered elsewhere).
+8. **`pension-timing-wiring.test.js` had zero wiring-level coverage of `calcRMDIncomeFloor`'s call
+   site** — only `projectRetirementBracket`'s. A regression reintroducing the double-gate on
+   `rmdIncomeFloor` specifically (leaving the bracket correct) would have passed every existing test.
+   Added a second test, verified against the reintroduced bug (temporarily reverted the one line,
+   confirmed the new test fails, restored the fix) before trusting it.
+
+**Documentation (cheap, high-value, per the forward-compat audit's top recommendation):**
+9. **New CLAUDE.md Critical Rule 11** — the "declared dollar basis" convention BUG-91 fixed instances of
+   but never promoted to an enforced rule, per the forward-compat audit's diagnosis that this was the
+   single highest-leverage gap (the pattern existed only in code comments and one bug entry, not
+   somewhere a future contributor would look before wiring a new call site).
+10. **`retDrawShared`'s "mixed-basis bundle" shape** (deliberately keeps `effectiveExpenses` raw while
+    converting `pensionAmount`) now carries an explicit `⚠ MIXED-BASIS BUNDLE` warning comment — the
+    forward-compat audit's specific concern was that a future "tidying" edit could silently
+    double-convert inside `calcWhatIfDelta`/`calcWhatIfScenario`.
+11. **BUG-85's entry** gained a forward-compat addendum recommending a `tradSp`-to-keyed-structure
+    refactor BEFORE adding the three more spouse buckets it's scoped for (see BUG-85, above).
+
+**Filed, not fixed (contained but requiring their own verification pass, not a fix rushed under
+review-fix time pressure — consistent with this session's own established judgment on BUG-84/85):**
+- **BUG-102** (interoperability audit) — a lever-preview's spouse-gap gating is inherited from the base
+  plan rather than derived from the scenario's own re-seeded maps, so a retire-earlier preview can
+  under-restrict relative to what Applying it actually produces. Same bug FAMILY as BUG-93 (same file,
+  same `hasActiveSpouseGap` concept) but a distinct code path.
+- **Third golden master recommended** (interoperability audit) — both existing masters are pension-free
+  (default = no spouse/no pension; T-X.2 = spouse, no pension), so the whole pension-basis triad this
+  review round just fixed three instances of is locked by ZERO golden-master value. Recommended shape:
+  MFJ + spouse with an active gap + `pensionStartAge = safeRetAge + 3` + a non-TX state + an open
+  conversion window, locking `projRetBracketPct`/`rmdIncomeFloor`/`wr70`/`rangeSuccessPct`. Not built
+  this round (test-authoring work, not a correctness fix) — recommended for the next session touching
+  this area.
+- **`golden-master.test.js` migration recommended** (forward-compat audit) — it hand-builds its inputs
+  and mirrors App.jsx's `toRetirementYearDollars` conversion BY HAND rather than mounting App (unlike
+  `spouse-household.test.js`, which does mount App) — structurally unable to catch a wiring bug in the
+  exact layer BUG-91 lived in, since a wrong App.jsx conversion and a wrong hand-copied test conversion
+  would agree with each other. Recommended: migrate to mount App like the spouse-household golden
+  master does, re-locking once deliberately. Not done this round — a larger, deliberate-relock change,
+  not a review-fix-round item.
+- **Documentation-debt recommendations** (forward-compat audit) — `docs/BUGS.md` is large (~100+
+  entries); recommended a short index table at the top (id / one-line / status / files) so a session can
+  locate relevant entries without reading the whole file, and capping CLAUDE.md's per-session history
+  length (move older entries to a `docs/HISTORY.md`). Noted, not executed this round — a documentation
+  restructuring project, not a correctness fix, and out of scope for this PR's close-out.
+
+**Tests:** 2 new (`pension-timing-wiring.test.js`'s second test). **npm test: 1061 passed** (was 1059
+before this round). Golden master untouched throughout — every fix in this batch is either inert at the
+default state or a pure refactor. Lint clean, build OK.
+**Where:** `src/App.jsx` (5 fixes), `src/horizon/screens/PlanScreen.jsx`, `src/horizon/screens/strategies/SSTimingFlow.jsx`,
+`src/horizon/screens/JourneyScreen.jsx`, `src/model/what-if.js`, `src/__tests__/unit-contract.test.js`,
+`src/__tests__/pension-timing-wiring.test.js`, `CLAUDE.md`.
 
 ### BUG-91 — Model-wide real/nominal dollar-basis mismatch: `effectiveExpenses` is today's dollars, the retirement walk is retirement-year dollars (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-27, spousal-engine stabilization session)
 

@@ -108,7 +108,7 @@ function PortfolioHero({ t, totalAtRet, planHighlights }) {
 // Shows retirement monthly income + how much of current income it replaces,
 // with per-source breakdown bars (SS, portfolio). Bar widths use model-provided
 // integer percentages (ssPct, portfolioPct) — no division in JSX (rule 10).
-function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
+function IncomeMeter({ t, planHighlights }) {
   const { incomeReplacementPct, retIncomeFlow, spouseIncomeScopeNote, spouseSpilloverNote } = planHighlights ?? {};
   if (!retIncomeFlow) return null;
 
@@ -130,7 +130,7 @@ function IncomeMeter({ t, effectiveExpenses, planHighlights }) {
       </div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
         <span style={{ font: `700 22px/1 ${HM}`, color: t.ink }}>
-          {fmtMo(effectiveExpenses)}/mo
+          {fmtMo(retIncomeFlow.expenses)}/mo
         </span>
         {incomeReplacementPct !== null && incomeReplacementPct !== undefined && (
           <span style={{ font: `500 12px ${HF}`, color: t.mut }}>
@@ -585,7 +585,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
         gap: isMobile ? 10 : 14, marginTop: 14, flexShrink: 0,
       }}>
         <PortfolioHero t={t} totalAtRet={totalAtRet} planHighlights={planHighlights} />
-        <IncomeMeter t={t} effectiveExpenses={effectiveExpenses} planHighlights={planHighlights} />
+        <IncomeMeter t={t} planHighlights={planHighlights} />
       </div>
 
       {/* ── stat cards ───────────────────────────────────────────────────────── */}

@@ -132,7 +132,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
         {/* Applicability of the DERIVED effectivePension travels with the data (model flag). */}
         {sv.showEffectivePension && (
           <div style={{ font: `400 11px ${HF}`, color: t.faint }}>
-            Counts as {fmt(props.effectivePension)}/yr of retirement income.
+            Counts as {fmt(sv.effectivePensionAnnual)}/yr of retirement income.
           </div>
         )}
       </div>

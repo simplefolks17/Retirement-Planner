@@ -605,6 +605,14 @@ export default function App() {
   // projected bracket undercounts income for delayed-start pensions (Qodo
   // review finding, PR #62).
   const retPensionAtRMDAge = pensionStartAge <= RMD_START_AGE ? retPensionAnnualBasis : 0;
+  // retPensionAt70: same gating shape as retPensionAtRMDAge, but for `wr70`
+  // (the withdrawal rate AT AGE 70, feeding the "delay SS to 70" comparison
+  // card) — a pension starting after retirement but by/before 70 must count
+  // there too, or the card computes as if the pension doesn't exist at 70
+  // (interoperability-audit finding, PR #62 review-fix round; pre-existing,
+  // not introduced this PR, but the same double-gate class Qodo caught once
+  // already).
+  const retPensionAt70 = pensionStartAge <= SS_MAX_CLAIM_AGE ? retPensionAnnualBasis : 0;
 
   // #30 / BUG-82 rule-5 wiring: the spouse's net gap-year income in the FIRST
   // WALKED YEAR (safeRetAge + 1 — the engine's first row). Reading straight off
@@ -870,17 +878,24 @@ export default function App() {
 
   // Shared inputs for the secondary blended walks (what-if + optimized scenario).
   // Memoized (V9): whatIfBundle + the optimized scenario read this.
-  // effectiveExpenses stays TODAY's-dollars here (unlike retPhaseBase's own
-  // copy) — what-if.js's LEVERS.monthlyExpenses.baseValue reads it directly as
-  // the "current monthly spend" a slider compares against, and a what-if
-  // scenario re-derives its OWN retirement-year conversion at its own
-  // (possibly different) retirement age (BUG-91 what-if fix — see
-  // calcWhatIfDelta/calcWhatIfScenario). inflationRate travels along so that
-  // re-derivation has what it needs. pensionAmount, unlike effectiveExpenses,
+  // ⚠ MIXED-BASIS BUNDLE — do not "tidy" this without reading the rest of this
+  // comment. `effectiveExpenses` stays TODAY's-dollars here (unlike
+  // retPhaseBase's own copy) — what-if.js's LEVERS.monthlyExpenses.baseValue
+  // reads it directly as the "current monthly spend" a slider compares
+  // against, and a what-if scenario re-derives its OWN retirement-year
+  // conversion at its own (possibly different) retirement age (BUG-91 what-if
+  // fix — see calcWhatIfDelta/calcWhatIfScenario, both of which call the
+  // shared `scenarioExpensesInRetYearDollars` helper on THIS raw value).
+  // inflationRate travels along so that re-derivation has what it needs.
+  // Setting `effectiveExpenses: retSpendBasis` here would silently
+  // DOUBLE-CONVERT inside those callers — they assume today's-dollars in,
+  // retirement-year-dollars out. `pensionAmount`, unlike `effectiveExpenses`,
   // has no such UI-comparison consumer, so it carries the ALREADY-converted
   // (at safeRetAge) value directly — an approximation for a scenario that also
   // shifts the retirement age, same class as the conversion schedule's
-  // documented "stays at absolute ages" approximation just below.
+  // documented "stays at absolute ages" approximation just below. The two
+  // fields are deliberately in DIFFERENT bases; that's the design, not a bug
+  // (forward-compat review finding, PR #62 review-fix round).
   const retDrawShared = useMemo(() => ({
     rReal, effectiveExpenses, inflationRate,
     ssAmount: householdSS,
@@ -1188,9 +1203,18 @@ export default function App() {
 
   // BUG-96: numerator matches rmdData's own scope (primary-only) — was dividing
   // the household total by the primary-only row count, overstating the average.
+  // This is THE TILE's own stat ("Avg. Annual RMD") and must stay primary-only
+  // to match the table beside it.
   const avgAnnualRMD      = rmdData.length > 0 ? Math.round(primaryTotalRMDs / rmdData.length) : 0;
+  // projectRetirementBracket projects HOUSEHOLD taxable income (it's stacked
+  // against householdSS below) — it needs its own household-scoped RMD average,
+  // not avgAnnualRMD (BUG-96 correctly narrowed that to primary-only for the
+  // tile's own purpose, but this consumer was accidentally narrowed along with
+  // it, understating the projected bracket for any household where the spouse
+  // also has RMDs — correctness-review finding, PR #62 review-fix round).
+  const avgAnnualRMDHousehold = rmdData.length > 0 ? Math.round(totalRMDs / rmdData.length) : 0;
   const { bracketPct: projRetBracketPct } = projectRetirementBracket({
-    avgAnnualRMD, householdSS, effectivePension: retPensionAtRMDAge, filingStatus,
+    avgAnnualRMD: avgAnnualRMDHousehold, householdSS, effectivePension: retPensionAtRMDAge, filingStatus,
   });
 
   // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
@@ -1208,7 +1232,7 @@ export default function App() {
     monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
   });
   const wr70 = totalAtRet > 0
-    ? Math.max(0, retSpendBasis - household70SS - retPensionBasis - spouseIncomeAtRet) / totalAtRet * 100
+    ? Math.max(0, retSpendBasis - household70SS - retPensionAt70 - spouseIncomeAtRet) / totalAtRet * 100
     : 0;
 
   const flowData = useMemo(() => calcFlowDown({
@@ -1363,8 +1387,9 @@ export default function App() {
   }, [setMoneyEvents]);
 
   // Current-age coupled update: mirrors the Classic onChange (Tax Rate Phases)
-  // that pushes retirement age, spouse age, and contribEnd ages forward so they
-  // never fall before the new current age.
+  // that pushes retirement age and contribEnd ages forward so they never fall
+  // before the new current age. Does NOT touch spouse age (BUG-95 removed that
+  // coupling — a same-age-or-older spouse is a real, representable household).
   const setCurrentAgeCoupled = useCallback(v => {
     setCurrentAge(v);
     // Keep the horizon ahead of the (raised) current/retirement age so lifeExpect
@@ -2177,11 +2202,17 @@ export default function App() {
     householdSSMonthly: Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR),  // monthly split in the model (rule 10), not householdSS/12 in JSX
     householdCoveragePct: retSpendBasis > 0 ? Math.round((householdSS / retSpendBasis) * 100) : null,
     // Pension applicability (a DERIVED value → the flag travels with the data, not a
-    // `> 0` comparison in JSX); effectivePension itself is read directly for display.
+    // `> 0` comparison in JSX); the applicability check stays on the raw (retirement-
+    // gated) effectivePension, but the DISPLAYED amount must be the retirement-year
+    // basis (retPensionBasis) — this "counts as $X/yr of retirement income" line
+    // describes the walk's own contribution, the same quantity the conversion
+    // planner's caption already shows via the correctly-converted basis (BUG-91
+    // review-fix round, PR #62 — this site had been missed).
     showEffectivePension: effectivePension > 0,
+    effectivePensionAnnual: retPensionBasis,
   }), [ssOverride, ssMonthlyBenefit, effectiveSS, ssAnnualBenefit, ssAIME, ssClaimingAge,
        ssBreakEven, retSpendBasis, ss70DrawReduction, includeSS, wr70, ssDelayGainYrs,
-       spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS, effectivePension]);
+       spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS, effectivePension, retPensionBasis]);
 
   // WI-3.5 (#102): RMD outlook flow bundle. Sibling keyed by "rmd". firstRMD*
   // pre-extracted behind the same guard App uses (firstRMD may be undefined →
@@ -3618,7 +3649,7 @@ export default function App() {
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Total Portfolio — Full Lifecycle</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
           Combined gross portfolio from today to life expectancy (age {safeLifeExp}).
-          Grows through retirement age {safeRetAge}, then draws down at {fmt(effectiveExpenses)}/yr.
+          Grows through retirement age {safeRetAge}, then draws down at {fmt(retSpendBasis)}/yr.
         </p>
         <ResponsiveContainer width="100%" height={320}>
           <LineChart data={totalChartData} margin={{ top: 10, right: 16, left: 16, bottom: 8 }}>

@@ -138,6 +138,7 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
     retirementWalk,
     householdSS,
     effectivePension,
+    ssView,
     isSustainable,
   } = props;
 
@@ -276,10 +277,10 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
               SS {fmtMo(householdSS)}/mo
             </div>
           )}
-          {/* props.effectivePension — annual, displayed monthly */}
+          {/* ssView.effectivePensionAnnual — retirement-year basis, annual, displayed monthly (BUG-91 review-fix round, PR #62) */}
           {effectivePension > 0 && (
             <div style={{ padding: "6px 12px", borderRadius: 999, background: `${t.good}14`, border: `1px solid ${t.good}44`, font: `500 12px ${HF}`, color: t.ink }}>
-              Pension {fmtMo(effectivePension)}/mo
+              Pension {fmtMo(ssView.effectivePensionAnnual)}/mo
             </div>
           )}
         </div>
