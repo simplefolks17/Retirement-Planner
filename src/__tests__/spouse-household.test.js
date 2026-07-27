@@ -283,27 +283,36 @@ describe("optimizer floorArgs receive spouse gap-year wages (Finding 2, T-F2.8)"
 // window). All three findings land in the same household at once, so this
 // proves they compose without contradiction rather than each only being
 // individually correct.
+//
+// Shared fixture builder — used by BOTH the qualitative T-X.2 test below and
+// the exact-locked golden master (spouse-household-golden-master describe,
+// same file) so the two never drift into describing two different
+// households under the same "T-X.2" name.
+function buildTX2Household() {
+  const app = mount();
+  app.fire(() => app.latest().assumptions.currentAge.set(50));
+  app.fire(() => app.latest().assumptions.retirementAge.set(58));
+  app.fire(() => app.latest().assumptions.returnRate.set(7));
+  app.fire(() => app.latest().assumptions.inflationRate.set(2.5));
+  app.fire(() => app.latest().ss.isMarried.set(true));
+  app.fire(() => app.latest().ss.spouseCurrentAge.set(40)); // 48 at primary's retirement
+  app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(65)); // 17-yr gap
+  app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+  app.fire(() => app.latest().profile.spouseIncome.set(90_000));
+  app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(500_000));
+  app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(15_000));
+  app.fire(() => app.latest().accounts.trad401k.bal.set(400_000));
+  app.fire(() => app.latest().accounts.roth.bal.set(100_000));
+  app.fire(() => app.latest().accounts.taxable.bal.set(150_000));
+  app.fire(() => app.latest().spending.annualExpenses.set(95_000));
+  app.fire(() => app.latest().ss.ssClaimingAge.set(67));
+  app.fire(() => app.latest().ss.ssOverride.set(40_000));
+  return app;
+}
+
 describe("target-demographic walkthrough — all three findings composed (T-X.2)", () => {
   it("a well-funded age-gap household never falsely depletes, never needs the spillover hatch, has no seam discontinuity, and its bracket-fill target reflects the spouse's real wages", () => {
-    const app = mount();
-    app.fire(() => app.latest().assumptions.currentAge.set(50));
-    app.fire(() => app.latest().assumptions.retirementAge.set(58));
-    app.fire(() => app.latest().assumptions.returnRate.set(7));
-    app.fire(() => app.latest().assumptions.inflationRate.set(2.5));
-    app.fire(() => app.latest().ss.isMarried.set(true));
-    app.fire(() => app.latest().ss.spouseCurrentAge.set(40)); // 48 at primary's retirement
-    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(65)); // 17-yr gap
-    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
-    app.fire(() => app.latest().profile.spouseIncome.set(90_000));
-    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(500_000));
-    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(15_000));
-    app.fire(() => app.latest().accounts.trad401k.bal.set(400_000));
-    app.fire(() => app.latest().accounts.roth.bal.set(100_000));
-    app.fire(() => app.latest().accounts.taxable.bal.set(150_000));
-    app.fire(() => app.latest().spending.annualExpenses.set(95_000));
-    app.fire(() => app.latest().ss.ssClaimingAge.set(67));
-    app.fire(() => app.latest().ss.ssOverride.set(40_000));
-
+    const app = buildTX2Household();
     const latest = app.latest();
 
     // (1) Well-funded ⇒ never falsely declared depleted, never needs the
@@ -328,6 +337,100 @@ describe("target-demographic walkthrough — all three findings composed (T-X.2)
     // spouse-blind planner would have shown.
     expect(latest.conversionView.targets.convPeakTarget).toBeLessThan(200_000);
     expect(latest.conversionView.targets.convPeakTarget).toBeGreaterThan(0);
+
+    app.unmount();
+  });
+});
+
+// ── Spouse-household golden master (SPOUSAL-ENGINE-STABILIZATION-PLAN.md, §2
+// step 1) ─────────────────────────────────────────────────────────────────
+//
+// T-X.2's own assertions above are qualitative ("never depletes", "under
+// $200k") — deliberately, since they were written to prove three findings
+// compose without contradiction, not to pin exact numbers. That looseness is
+// exactly why this engine's bug class (undeclared scope/unit basis — see the
+// stabilization plan) has gone five-plus review passes without saturating:
+// golden-master.test.js locks the no-spouse default exactly, but nothing
+// locked the spouse/household case at all, so a regression there had no test
+// to fail against.
+//
+// This block locks EVERY headline number for the SAME T-X.2 household to its
+// exact current value — the same convention golden-master.test.js uses for
+// the no-spouse default. These values are EXPECTED TO MOVE, substantially and
+// deliberately, once BUG-91 (the real/nominal dollar-basis mismatch, plan §2
+// step 3) is fixed — that is what this test is *for*: turning "did the fix
+// move the number in the direction and magnitude the PR description claims"
+// into a mechanical diff instead of a fresh manual recomputation. Re-lock only
+// when a change is deliberate and understood, exactly like golden-master.test.js.
+describe("spouse-household golden master (T-X.2, exact-locked)", () => {
+  const E = {
+    totalAtRet:              2_509_497,
+    yearsSustainedInfinite:  true,     // trivially sustainable at this spend
+    withdrawalRate:          0.7846592364924126,
+    isSustainable:           true,
+    depletionAge:            null,
+    endVal:                  485_176_142, // far-horizon (safeRetAge+130) walk end — see BUG-91
+    firstRMD:                0,          // primary Trad drained by conversions before age 73 (BUG-96 shape)
+    totalRMDs:               1_330_378,  // household (primary + spouse RMDs)
+    rmdTaxBite:              209_803,
+    totalDrawTax:            9_758,
+    conversionCost:          190_860,
+    rmdTaxSaved:             291_821,
+    grossNetBenefit:         100_961,
+    netConversionBenefit:    100_961,
+    totalSpouseSpillover:    0,
+    totalSpouseSpilloverTax: 0,
+    firstSpouseSpilloverAge: null,
+    conversionWindowYrs:     14,
+    convPeakTarget:          150_910,
+    convSteadyTarget:        110_856,
+    effectiveExpenses:       95_000,
+    householdSS:             40_000,
+    rangeSuccessPct:         95,
+  };
+
+  it("locks the retirement-walk headline numbers", () => {
+    const app = buildTX2Household();
+    const latest = app.latest();
+    const rw = latest.retirementWalk;
+
+    expect(latest.totalAtRet).toBe(E.totalAtRet);
+    expect(latest.yearsSustained === Infinity).toBe(E.yearsSustainedInfinite);
+    expect(latest.withdrawalRate).toBeCloseTo(E.withdrawalRate, 8);
+    expect(latest.isSustainable).toBe(E.isSustainable);
+    expect(latest.effectiveExpenses).toBe(E.effectiveExpenses);
+    expect(latest.householdSS).toBe(E.householdSS);
+
+    expect(rw.depletionAge).toBe(E.depletionAge);
+    expect(rw.endVal).toBe(E.endVal);
+    expect(rw.firstRMD).toBe(E.firstRMD);
+    expect(rw.totalRMDs).toBe(E.totalRMDs);
+    expect(rw.rmdTaxBite).toBe(E.rmdTaxBite);
+    expect(rw.totalDrawTax).toBe(E.totalDrawTax);
+    expect(rw.conversionCost).toBe(E.conversionCost);
+    expect(rw.rmdTaxSaved).toBe(E.rmdTaxSaved);
+    expect(rw.grossNetBenefit).toBe(E.grossNetBenefit);
+    expect(rw.totalSpouseSpillover).toBe(E.totalSpouseSpillover);
+    expect(rw.totalSpouseSpilloverTax).toBe(E.totalSpouseSpilloverTax);
+    expect(rw.firstSpouseSpilloverAge).toBe(E.firstSpouseSpilloverAge);
+
+    app.unmount();
+  });
+
+  it("locks the conversion planner + Range lens numbers", () => {
+    const app = buildTX2Household();
+    const latest = app.latest();
+
+    expect(latest.netConversionBenefit).toBe(E.netConversionBenefit);
+    expect(latest.conversionWindowYrs).toBe(E.conversionWindowYrs);
+    expect(latest.conversionView.targets.convPeakTarget).toBe(E.convPeakTarget);
+    expect(latest.conversionView.targets.convSteadyTarget).toBe(E.convSteadyTarget);
+    expect(latest.rangeView.successPct).toBe(E.rangeSuccessPct);
+    // The Range-lens spouse-gap caveat (BUG-94) is expected to fire for this
+    // household today — locked here as a fact, not a value judgment; BUG-94's
+    // own fix (plan §2 step 4) may change its firing condition/wording, at
+    // which point this assertion is re-examined alongside that fix.
+    expect(latest.rangeView.spouseGapCaveat).not.toBeNull();
 
     app.unmount();
   });
