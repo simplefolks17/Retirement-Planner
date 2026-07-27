@@ -7,61 +7,95 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 ## Open Issues
 
-### BUG-91 — Model-wide real/nominal dollar-basis mismatch: `effectiveExpenses` is today's dollars, the retirement walk is retirement-year dollars (found 2026-07-26, adversarial review of BUG-82's PR #59, surfaced during Finding 3's planning pass)
+### BUG-99 — Money events (Goals/LifeEventSheet) are entered/applied in nominal (today's) dollars against a retirement walk now denominated in retirement-year dollars (found 2026-07-27, BUG-91 fix-plan audit)
 
-**Owner:** me_theguy. **Severity: HIGH — larger in magnitude than BUG-88/89/90 combined; would move
-the golden master.** **Found by:** the Opus planning-and-audit pass commissioned to design BUG-90's
-fix (Finding 3), as a NEW discovery beyond the three findings it was scoped to address.
-**What:** establishing BUG-90's fix required first pinning down the retirement engine's own dollar
-unit — proven rigorously (see BUG-90): a balance growing at `rReal` for `k` years is expressed in the
-PRIMARY's RETIREMENT-YEAR purchasing power. But `effectiveExpenses` (`annualExpenses ??
-effectiveLiving`, `App.jsx`) is a TODAY's-dollar figure, applied flat against that retirement-year-
-dollar balance every year of the walk. So a 40-year-old retiring at 65 with 4% inflation has their
-$60k CURRENT spend charged against a portfolio measured in dollars worth ~38% LESS than today's — a
-systematic, compounding UNDERSTATEMENT of the real required spend, growing with the years-to-
-retirement and the inflation assumption. `pensionMonthly` has the identical shape (today's dollars,
-applied flat) — SS does not (nominal at the claim date, then held flat in the walk, matching the
-engine's own convention). The accumulation sim compounds the same issue from the other direction:
-`contrib401k` is entered as a flat NOMINAL contribution, i.e. a shrinking REAL one, understating the
-saved amount by retirement.
-**Why not fixed alongside BUG-90:** this is pre-existing, model-wide, and pre-dates BUG-82/the spouse
-engine entirely — it affects every household, not just spouse-gap ones. `docs/FINANCIAL-MODEL.md` →
-Known Simplifications already has an adjacent-but-DIFFERENT note ("inflation applied to returns but
-not to brackets/limits") which does NOT cover this. Fixing it would move the golden master
-substantially in the conservative direction (spend requirements rise) — exactly the class of
-cross-variable, headline-moving issue this codebase's gated-batch process exists to isolate into its
-own dedicated session, not fold into an unrelated PR under review-fix pressure.
-**Recommendation (from the planning pass):** file as its own bug with the derivation above, take it
-as a dedicated session with its own plan, audit, and gated-batch implementation — the same process
-BUG-82 and BUG-88/89/90 themselves used.
-**Where:** `src/App.jsx` (`effectiveExpenses`, `pensionMonthly`), `src/model/simulation.js`
-(`contrib401k` and other flat-nominal contribution inputs), `src/model/retirement-engine.js` (the
-`rReal` walk that establishes the retirement-year-dollar unit).
-**Not fixed here.** No code change; filed for its own future session.
-**Independently re-verified and found WORSE than originally filed (2026-07-26, roadmap-alignment
-review, run against the actual golden-master default rather than an illustrative example):** at the
-shipped default (age 30 → retire 65, 4% inflation, mismatch factor `1.04^35 = 3.95`), the
-unit-corrected annual retirement spend is **$226,415** against the shipped **$57,377** — moving
-`withdrawalRate` from the locked **1.42%** to **~5.61%**, which *fails* the app's own
-`SAFE_WITHDRAWAL_GUIDELINE_PCT` (4%) instead of comfortably passing it. This is not a tail case: it
-is the shipped default, and it is the single largest input to every headline number the app shows.
-**Two supporting findings from the same pass:**
-1. `livingExpenseGrowth` is a fully-wired UI input (state → Classic slider → the `spending`
-   setter bundle → `MyDetailsScreen`) with **zero model consumers** (confirmed by a full-tree
-   grep) — a dead lever that is exactly the mechanism BUG-91 conceptually needs, wired to the UI
-   but never connected to anything, suggesting the basis question was scoped but never actually
-   decided rather than simply overlooked.
-2. This bug is now understood to be one instance of a broader pattern, not an isolated defect:
-   nearly every spouse-engine bug found across BUG-77 through BUG-96 decomposes into one of two
-   **undeclared-basis axes** — *scope* (primary-only vs. household) or *unit* (nominal vs. real
-   dollars) — that the codebase has a strong convention for avoiding duplication of (principle 11,
-   "one source per quantity") but **no convention at all for declaring**. The golden master is
-   structurally blind to both axes (one filer, one fixed default), which is the root reason
-   discovery of this bug class has not saturated across five-plus review passes. See
-   `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md` for the full diagnosis and the recommended sequencing
-   (a spouse-household golden master + a unit-contract invariant test, both landing BEFORE this
-   bug's fix, precede tackling it — and this bug's fix must land before Session B or #126, which it
-   would otherwise silently miscalibrate).
+**Owner:** me_theguy. **Severity: MEDIUM (a real, systematic understatement of every retirement-phase
+money event's impact, but bounded and easy to reason about — unlike BUG-91 itself, this doesn't flip
+any headline verdict at the default state, since the default has no events).**
+**What:** `applyMoneyEvents` (`money-events.js`), consumed directly by the retirement engine
+(`retirement-engine.js`), applies a money event's dollar amount unchanged in whatever year it fires.
+Now that BUG-91 has corrected the walk's spend/pension basis to retirement-year dollars, a retirement-
+phase event (a $40k trip at 70, a duration event, etc.) is the one remaining quantity still entered and
+applied in TODAY's dollars, understating its relative impact on the (now larger, correctly-denominated)
+walk — e.g. a $40k trip that should cost ~$40k × the retirement-year conversion factor in the walk's own
+units instead costs a flat $40k, reading as proportionally smaller against the corrected spend than it
+actually is.
+**Why not fixed alongside BUG-91:** money events have their own age-keyed semantics (one-time vs.
+duration, `eventFirstAge`/`eventLastAge`, boundary-spanning events reaching both the accumulation sim
+and the retirement walk) and their own established UI (Goals/LifeEventSheet) built on the assumption
+that a dollar amount is a flat dollar amount at the age it fires — converting them to retirement-year
+dollars requires deciding what "today's dollars" means for an event dated, say, 20 years in the future
+(inflate from TODAY to the EVENT's own year, or to the primary's retirement year, matching BUG-91's own
+base-year choice?) and reworking the LifeEventSheet's live verdict/impact copy to match. A genuine,
+scoped follow-up, not a one-line fix.
+**Fix shape (sketched, not implemented):** apply `toRetirementYearDollars` (or a duration-event
+variant keyed to the event's own age, using the SAME primary-retirement-year base BUG-91/BUG-90 both
+use) to a retirement-phase event's dollar amount before `applyMoneyEvents` folds it into the walk;
+accumulation-phase events are unaffected (that phase isn't in the retirement-year frame at all).
+**Where:** `src/model/money-events.js` (`applyMoneyEvents`, `eventNetForYear`), `src/model/retirement-engine.js`
+(the `applyMoneyEvents` call site), `src/horizon/LifeEventSheet.jsx` (the verdict/impact copy that would
+need to reflect the corrected magnitude).
+**Not fixed here.** No code change; filed for a future session.
+
+### BUG-100 — BUG-91's fix removes an offsetting error, so the pre-existing "tax brackets aren't inflated" simplification now bites at full strength (found 2026-07-27, BUG-91 fix-plan audit)
+
+**Owner:** me_theguy. **Severity: LOW (a documented, accepted simplification whose magnitude changed —
+not a new defect).**
+**What:** the retirement engine has always taxed every draw against `TAX_DATA_2026`'s fixed brackets/
+deduction, never inflated forward to match the walk's own retirement-year dollars (`docs/FINANCIAL-MODEL.md`
+→ Known Simplifications already documents this, pre-dating BUG-91). Before BUG-91's fix, the
+UNDERSTATED spend (today's dollars, unconverted) partially offset this — a too-small draw pushed against
+brackets that were also, in effect, too-small relative to the walk's real frame, landing in roughly the
+right bracket by accident. After BUG-91's fix, the draw is correctly sized but the brackets are not, so
+the draw's marginal rate is now measured against 2026-dollar brackets even decades into retirement — the
+full, undiluted effect of the pre-existing simplification. This is WHY `firstRMD`/`totalRMDs`/`rmdTaxBite`
+at the golden-master default drop so sharply (a much larger, correctly-taxed draw drains the Traditional
+401k far faster than the old understated-spend/understated-bracket combination did).
+**Why not fixed alongside BUG-91:** inflating tax brackets/deductions/IRMAA thresholds/ACA FPL forward
+through a multi-decade retirement walk is a genuinely separate, large piece of work (every `calcTax`/
+`stackedIncomeTax` call site would need a per-year bracket table, not the fixed `TAX_DATA_2026` import),
+already scoped out as a documented simplification before this session existed. BUG-91 did not introduce
+it — it only removed an accidental, unrelated error that had been partially masking it.
+**Considered-and-rejected alternative (recorded so it isn't re-litigated):** re-basing the ENTIRE walk to
+TODAY's dollars instead (deflating the seed backward, rather than inflating spend/pension forward) would
+have kept the draw and the fixed brackets in roughly the same accidental alignment — but it would break
+BUG-90's already-locked `T-F3.2` seam-continuity test and move every displayed `totalAtRet`/RMD-schedule
+balance to a today's-dollar figure, a far larger and more confusing display change (users expect
+"Trad 401k: $2.1M" to mean the actual future balance, not a deflated today's-dollar equivalent). Forward
+conversion (BUG-91's shipped approach) keeps all BALANCE displays unchanged and touches only the
+spend/pension/SS-comparison inputs.
+**Fix shape (sketched, not implemented):** a per-year inflated bracket/deduction table (index
+`TAX_DATA_2026`'s brackets forward by the same `rReal`-implied inflation each walk year) used by
+`calcTax`/`stackedIncomeTax` inside the retirement-phase code paths only (working-year tax stays on
+today's brackets, correctly).
+**Where:** `src/model/taxes.js` (`calcTax`, `stackedIncomeTax`), `src/model/retirement-engine.js` (every
+`calcTax`/`stackedIncomeTax` call site), `docs/FINANCIAL-MODEL.md` → Known Simplifications (existing note,
+needs a magnitude update).
+**Not fixed here.** No code change; filed for a future session.
+
+### BUG-101 — Accumulation-phase `contrib401k` (and other flat-dollar contribution inputs) stay nominal, understating real savings by retirement (found 2026-07-26, BUG-91's original filing; re-filed as its own scoped bug at BUG-91's close-out)
+
+**Owner:** me_theguy. **Severity: LOW-MEDIUM (partially self-correcting — `contrib401k` already scales
+with `incomeGrowth` each year via `runSimulation`'s `growFactor`, so it only understates in REAL terms
+when `incomeGrowth < inflationRate`, e.g. the golden-master default's 3% vs. 4%).**
+**What:** `contrib401k`/`contribRoth`/`contribTaxable`/`contribHSA` are entered as flat TODAY's-dollar
+annual contributions; `simulation.js` grows the 401k contribution by `Math.pow(1+incomeGrowth/100,
+years)` each year (matching salary growth) but never by inflation specifically — so whenever
+`incomeGrowth` trails `inflationRate` (as it does at the shipped default), the contribution shrinks in
+REAL purchasing power over the accumulation window, a smaller but real instance of BUG-91's same
+"today's dollars fed into a real-terms walk" class.
+**Why scoped out of BUG-91's own fix:** BUG-91's fix is specifically about the RETIREMENT WALK's basis
+(`effectiveExpenses`/`effectivePension`, the frame `buildRetirementPhase`/`buildRetirementDrawdown`
+use) — this is a different code path (`simulation.js`'s accumulation-phase per-year loop) with a
+different, already-partially-correct mechanism (income-linked growth, not zero growth), and has no
+single precise measured example the way the spend/pension mismatch did. Folding it in would have
+broadened an already-large fix without a clear, isolated before/after to verify.
+**Fix shape (sketched, not implemented):** decide whether `contrib401k` should track `incomeGrowth`
+(current behavior — "contribute a fixed % of a growing salary") or be separately inflation-adjusted
+("maintain constant real savings regardless of salary growth") — a genuine product/design decision, not
+a pure bug fix, since both are defensible models of how a person actually sets their contribution.
+**Where:** `src/model/simulation.js` (the `growFactor`/`clockYears` per-year contribution scaling).
+**Not fixed here.** No code change; filed for a future session.
 
 ### BUG-92 — No verdict signal when a plan leans on the spillover escape hatch (found 2026-07-26, BUG-88's planning pass; deliberately not folded into that fix)
 
@@ -706,6 +740,89 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 ---
+
+### BUG-91 — Model-wide real/nominal dollar-basis mismatch: `effectiveExpenses` is today's dollars, the retirement walk is retirement-year dollars (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-27, spousal-engine stabilization session)
+
+**Owner:** me_theguy. **Severity: HIGH — the single largest input to every headline number the app
+shows.** **Found by:** the Opus planning-and-audit pass commissioned to design BUG-90's fix (Finding
+3), as a NEW discovery beyond the three findings it was scoped to address; independently re-verified
+worse than originally filed by a follow-on roadmap-alignment review.
+**What:** the retirement engine grows every account at `rReal = (1+returnRate/100)/(1+inflationRate/100)
+- 1` — a REAL rate. BUG-90's own proof established what that means for the engine's balance UNIT: a
+seed grown at `rReal` for `k` years equals the nominal balance in that later year, deflated by
+`(1+inflationRate/100)^k` — the whole walk is denominated in the PRIMARY's RETIREMENT-YEAR purchasing
+power. But `effectiveExpenses` (`annualExpenses ?? effectiveLiving`) and `effectivePension`/
+`pensionMonthly` are TODAY's-dollar figures, fed into that walk with **zero conversion**. At the shipped
+default (age 30 → retire 65, 4% inflation, factor `1.04^35 ≈ 3.95`) the unit-corrected annual spend is
+**$226,415** against the shipped **$57,377** — `withdrawalRate` **1.42% → 5.61%**, which now *fails* the
+app's own `SAFE_WITHDRAWAL_GUIDELINE_PCT` (4%) instead of comfortably passing it.
+**Fix:** a new shared helper, `toRetirementYearDollars(todaysDollarAmount, inflationRate,
+yearsToRetirement)` (`finance-math.js`), inflates a today's-dollar quantity forward to the primary's
+retirement-year frame — the exact inverse of, and using the same base year as, BUG-90's already-shipped
+spouse gap-year deflator, so the two compose without a seam (verified: BUG-90's `T-F3.2` seam-continuity
+test needed no changes). App.jsx computes `retSpendBasis`/`retPensionBasis`/`retPensionAnnualBasis`/
+`retPensionMonthlyBasis` ONCE and rewires every retirement-walk-facing call site to use them:
+`netPortfolioNeed`, the engine (`retPhaseBase`), the blended walk / Monte Carlo / what-if baseline
+(`retDrawShared`), the conversion optimizer's income floors (`buildIncomeFloors`, 3 call sites), the RMD
+income floor, the projected retirement bracket, the SS-delay comparison, the optimized scenario, and the
+Income Meter / Statement-view SS+pension+portfolio breakdown (`calcRetIncomeFlow`,
+`calcStatementView`'s new optional `effectiveExpensesRetYear`/`effectivePensionRetYear` params).
+Raw `effectiveExpenses`/`effectivePension` are DELIBERATELY left unconverted everywhere they're a
+genuinely different, today's-dollar quantity: the Statement/Budget tabs' own display, the Income Meter's
+"% of today's take-home" (`incomeReplacementPct`), and the Plan lever/WhatIfPanel UI's slider baseline
+(`LEVERS.monthlyExpenses.baseValue`) — converting those would have been the SAME bug in the opposite
+direction (a retirement-year-dollar figure compared against a today's-dollar one).
+**what-if.js companion fix (found during the plan audit, folded into the same fix):** a what-if scenario
+that overrides the retirement age walks in a DIFFERENT retirement-year frame than the base plan.
+`calcWhatIfDelta`/`calcWhatIfScenario` already re-derived the expense conversion at the scenario's own
+age; SS/pension did not (they rode `retPhaseBase`/`retDrawShared`'s pre-converted-at-the-base-plan's-age
+values unchanged) — fixed with a second helper, `inflationRebaseFactor(inflationRate, yearsDiff)`
+(bidirectional — unlike `toRetirementYearDollars` it does not clamp a negative `yearsDiff`, since
+retiring EARLIER in a scenario needs to DIVIDE, not no-op), applied to `ssGross`/`ssTaxable`/`pension`
+(engine branch) and `ssAmount`/`pensionAmount` (blended-walk fallback + `calcWhatIfDelta`'s two walks).
+**Independent plan-audit pass (2026-07-27, before any code was written) found several scope gaps in the
+original fix plan, all folded in before/during implementation:** four display sites that would have
+stopped reconciling once `netPortfolioNeed` moved to the new basis (the Classic drawdown waterfall, two
+SS-coverage percentages, the Flow-Down outcome stat row) — fixed by converting the SAME quantities there;
+`golden-master.test.js` (which hand-builds its inputs and never mounts App) needed the identical
+conversion mirrored into its own setup, or it would have silently stopped reflecting what the app
+actually computes; the original unit-contract test (this branch's own step 2) probed the raw DISPLAY
+passthrough fields, which this fix deliberately leaves unconverted, so it could never have turned green —
+rewritten to probe `withdrawalRate` (an engine-derived, already-exposed quantity) instead.
+**Deliberately NOT fixed in the same pass (all documented, all filed as their own follow-ups):** money
+events (Goals/LifeEventSheet) are still applied in nominal dollars against the now-correctly-converted
+walk (**BUG-99**); the pre-existing "tax brackets aren't inflated" simplification now bites at full
+strength since it's no longer accidentally offset by the understated spend (**BUG-100**); accumulation-
+phase `contrib401k` (and siblings) still track `incomeGrowth`, not inflation specifically, a smaller
+instance of the same class (**BUG-101**, re-filed from BUG-91's own original text); the
+fully-wired-but-unconsumed `livingExpenseGrowth` UI lever is left as dead code (no fix — no live bug
+depends on it; a future feature could wire it, but nothing currently silently ignores a user's input,
+since the lever was never functional to begin with).
+**Golden master impact (deliberate, both re-locked):** the no-spouse default (`golden-master.test.js`):
+`withdrawalRate` 1.42% → 5.61% (now fails the 4% guideline), `isSustainable` **true → false**
+(`yearsSustained` Infinity → 21.65, `depletionAge` null → 87), `firstRMD`/`totalRMDs`/`rmdTaxBite` drop
+sharply (207,557 → 10,182 lifetime RMD tax — see BUG-100 for why: the corrected, much larger draw drains
+the Traditional 401k well before 73, and the un-inflated brackets no longer have an offsetting error to
+hide behind), `netConversionBenefit` −9,854 → −70,844, `spendableAtRet` 3,654,179 → 3,763,788. The
+spouse-household golden master (this branch's own step 1, `spouse-household.test.js`): `withdrawalRate`
+0.78% → 1.61% (this fixture's shorter 8-year/2.5%-inflation gap produces a much smaller conversion factor
+than the no-spouse default's 35-year/4% gap, so it stays comfortably sustainable — `isSustainable` stays
+true, `depletionAge` stays null); RMD/conversion figures shift for the same live-balance-changes-with-the-
+draw reason as the default; `rangeSuccessPct` 95 → 83.
+**Tests:** `finance-math.test.js` (+18: both new helpers), `unit-contract.test.js` (both assertions
+flipped from `it.fails` to real passing `it`s, rewritten to probe `withdrawalRate`), `what-if.test.js`
+(+4: the SS/pension scenario re-basing, isolated from the expense re-basing by holding the converted
+expense identical between a "real" and a "frozen" run via an explicit override), 2 fixture rewrites in
+`spouse-household.test.js` and `conversion-view-wiring.test.js` where the corrected (much larger) default
+spend made an existing comparison degenerate (both sides landing on the same $0) — given a lower,
+comfortably-affordable spend override so the comparison the test exists for is observable again.
+**Where:** `src/model/finance-math.js` (both new helpers), `src/App.jsx` (the ~15 call-site rewires +
+the 4 display-reconciliation fixes), `src/model/budget.js` (`calcStatementView`'s dual-basis split),
+`src/model/what-if.js` (`calcWhatIfDelta`, `calcWhatIfScenario`), `src/horizon/screens/strategies/ConversionPlannerFlow.jsx`
+(one display site switched from the raw prop to the bundle's converted field).
+**Inert at zero years-to-retirement or zero inflation:** both new helpers degrade to a no-op factor of 1,
+verified by dedicated tests — the entire fix is invisible to any household already retired or to a 0%
+inflation assumption.
 
 ### BUG-90 — Nominal spouse gap-year flows in a real-dollar retirement walk (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
 
