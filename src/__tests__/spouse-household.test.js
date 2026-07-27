@@ -550,3 +550,42 @@ describe("spouse-household golden master (T-X.2, exact-locked)", () => {
     app.unmount();
   });
 });
+
+// BUG-96 (found 2026-07-26, interoperability review agent; fixed 2026-07-27,
+// spousal-engine stabilization session). The T-X.2 household is the exact
+// shape the bug describes: the primary's own Traditional bucket is drained by
+// conversions (firstRMD/rw.firstRMD = 0, no primary RMD rows at all) while the
+// household owes real RMDs from the spouse's bucket (rw.totalRMDs > $1.1M,
+// per the golden master locked above) — before the fix, the "Lifetime RMD
+// Total" tile showed the household figure over an EMPTY table, and the
+// Strategies RMD card hid itself (applicable keyed on firstRMD alone).
+describe("BUG-96 — RMD tiles/table scope agreement", () => {
+  it("rmdView.totalRMDs (the tile) matches the table's own scope (primary-only), with the real household total surfaced separately", () => {
+    const app = buildTX2Household();
+    const latest = app.latest();
+    const rv = latest.rmdView;
+
+    // The table (rv.rows) is primary-only by design — its sum IS rv.totalRMDs
+    // now (the bug: it used to be the unrelated household figure).
+    const tableSum = (rv.rows ?? []).reduce((s, r) => s + r.rmd, 0);
+    expect(rv.totalRMDs).toBe(tableSum);
+    expect(rv.totalRMDs).toBe(0); // this household's primary schedule is empty
+
+    // The real household total is exposed separately, clearly distinguished,
+    // and correctly flagged as "worth showing" since it's nonzero here.
+    expect(rv.householdTotalRMDs).toBe(latest.retirementWalk.totalRMDs);
+    expect(rv.householdTotalRMDs).toBeGreaterThan(0);
+    expect(rv.showHouseholdTotal).toBe(true);
+    app.unmount();
+  });
+
+  it("the Strategies RMD card stays applicable for a household that owes real (spouse-only) RMDs, even though the primary's own schedule is empty", () => {
+    const app = buildTX2Household();
+    const latest = app.latest();
+    // Before the fix this kept `applicable: !!firstRMD` — firstRMD is
+    // undefined here (empty primary schedule), which would have hidden the
+    // card behind "Browse all strategies" for a household facing $1M+ of RMDs.
+    expect(latest.strategiesView.rmd.applicable).toBe(true);
+    app.unmount();
+  });
+});

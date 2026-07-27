@@ -122,90 +122,6 @@ alongside the `eventRetirementDraw` cap) to also cap at "tight" whenever
 both tick rails.
 **Not fixed here.** No code change; filed as a follow-up.
 
-### BUG-95 — `spouseCurrentAge` silently drives the whole spouse engine, defaults to 18, and its only editor is buried behind an unrelated toggle (found 2026-07-26, interoperability review agent)
-
-**Owner:** me_theguy. **Severity: HIGH — a multi-million-dollar swing with zero signal on any
-headline number, and no reachable control for most users.**
-**What:** `spouseCurrentAge` (`App.jsx:173`, `useState(18)`, capped `max: currentAge - 1` at
-`App.jsx:1682`) was originally added as a narrow input for the RMD Table II lookup. BUG-82 made it
-the master clock for the ENTIRE spouse engine: the spouse's own accumulation sim, the gap window's
-start and length, the Option-A hold-out, and the spouse's own RMD age. Its only editor in either UI is
-double-gated behind an unrelated RMD-beneficiary question that most married users will never touch:
-- Horizon: `RMDOutlookFlow.jsx:43` — rendered only when `isMarried && spouseIsSoleBenef` (which
-  itself defaults `false`).
-- Classic: `App.jsx:3855` — the same double gate via `pointerEvents`.
-Meanwhile "My details → Spouse & household" shows *"Spouse retires at ___"* (`MyDetailsScreen.jsx:186`)
-and tells the user their accounts are *"simulated on their own income, **age**, and IRS limits"* — the
-age in question being the invisible default of 18.
-**Measured (primary retires at 65 from 50, spouse income $90k, spouse 401k $300k — comparing the
-shipped default spouseAge=18 against the true value, 48):**
-| | spouseAge = 18 (shipped default) | spouseAge = 48 (true) |
-|---|---|---|
-| totalAtRet | $4,570,651 | $4,571,193 |
-| withdrawalRate | 0.62% | 0.62% |
-| **balance at 90** | **$12,858,703** | **$8,635,138** |
-| **lifetime RMDs** | **$2,623,944** | **$4,266,668** |
-A **$4.2M** swing at the plan horizon and **$1.6M** of vanished RMDs, while `totalAtRet` and
-`withdrawalRate` — the two numbers a user would actually glance at — read identically. Nothing on
-Plan hints anything is wrong. (Mechanism: a spouse modeled as 33 years old at the primary's
-retirement keeps "working" all the way to primary age 90 in this fixture, and never reaches RMD age
-inside the walk's horizon.) The `max: currentAge - 1` cap on the field also means a same-age or
-older spouse **cannot be represented at all** — every spouse household is forced into a gap window
-whether or not one exists.
-**Recommended fix shape:** give `spouseCurrentAge` its own visible, always-reachable editor in "My
-details → Spouse & household" (the same section that already asks for the spouse's retirement age and
-income) — not gated behind the RMD-beneficiary question, which is a genuinely separate concern. Also
-reconsider whether an unset spouse age should default to 18 at all, versus defaulting to "same age as
-primary" (which at least produces a conservative, gap-free result) or prompting the user explicitly.
-**Where:** `src/App.jsx:173` (state + default), `:1682` (bound), `src/horizon/screens/RMDOutlookFlow.jsx:43`,
-`src/horizon/screens/MyDetailsScreen.jsx:186`, `App.jsx:3855` (Classic gate).
-**Not fixed here.** Deferred to the dedicated spousal-engine stabilization session —
-see `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`.
-
-### BUG-96 — RMD screen self-contradicts: household headline tiles over a primary-only table, in both UIs (found 2026-07-26, interoperability review agent)
-
-**Owner:** me_theguy. **Severity: HIGH — the disagreeing numbers sit inches apart on one screen.**
-**What:** `retirement-phase.js:122` filters the DISPLAYED RMD schedule to `r.rmd > 0` (PRIMARY only,
-by design — see that file's own comment, "the spouse RMD sub-schedule display is a deferred
-household-dashboard follow-up"), while `:131`'s `totalRMDs` sums `r.rmd + r.rmdSpouse` (HOUSEHOLD)
-and `rmdTaxBite` sums the joint `r.rmdTax`. The primary-only/household split was a deliberate,
-documented scoping decision — but the two scopes are displayed side by side with no distinguishing
-label, so they read as a contradiction, not a documented limitation.
-**Measured (App.jsx:3924/3929/3946; `RMDOutlookFlow.jsx:73-100`):**
-1. **Tile vs. table, 45–71% apart.** Base household: "Lifetime RMD Total" tile reads **$2,718,847**
-   over a table whose RMD column sums to **$1,868,912**. With a conversion window + a money event
-   active: **$2,051,300** (tile) vs. **$1,201,366** (table).
-2. **The Tax column contradicts its own header.** The header renders `Tax (~22.6% eff.)` and the
-   copy describes it as "the RMD the IRS will require, and the estimated tax owed on it" — but the
-   column is the JOINT tax divided against the PRIMARY-only RMD in that row:
-   ```
-   age | table RMD (primary) | table Tax (JOINT) | implied rate | spouse RMD that yr
-    82     $105,698      $20,219    19.1%           $0
-    83     $108,562      $46,565    42.9%      $93,980
-    90     $127,177      $59,196    46.5%     $118,918
-   ```
-3. **Worst case — the table empties out while the tiles keep climbing.** When the primary's
-   Traditional bucket is drained by conversions but the spouse still holds a large balance, every RMD
-   row is dropped (primary `rmd` is 0 every year), "First RMD" renders "—", and the table section
-   doesn't render at all — while the tiles still claim **$1,813,963** of lifetime RMDs and
-   **$332,641** of tax.
-4. **The Strategies RMD card can hide itself in exactly that case.** `strategiesView.rmd.applicable
-   = !!firstRMD` (`App.jsx:2039`) is primary-only, so case 3 above HIDES the RMD Strategies card
-   behind "Browse all strategies" for a household actually facing $1.8M of RMDs.
-5. **`avgAnnualRMD`** (`App.jsx:1114`) divides the household numerator (`totalRMDs`) by the
-   primary-only table's row count (`rmdData.length`), overstating the average (~$151k/yr claimed vs.
-   ~$104k/yr actually in the table).
-**Recommended fix shape:** either (a) make the tiles primary-only too (matching the table, and
-relocating the household total to its own clearly-labeled line), or (b) add a real spouse RMD
-sub-schedule to the table (closing the "deferred household-dashboard follow-up" the code comment
-already names) so tiles and table agree at the same scope. Also: label the tax-rate header
-"per-primary-row, joint tax" or split it into two columns; fix `strategiesView.rmd.applicable` to key
-off `totalRMDs > 0`, not `firstRMD`; fix `avgAnnualRMD`'s denominator.
-**Where:** `src/model/retirement-phase.js:122-131`, `src/App.jsx:1114/2039/3924/3929/3946`,
-`src/horizon/screens/strategies/RMDOutlookFlow.jsx:73-100`.
-**Not fixed here.** Deferred to the dedicated spousal-engine stabilization session —
-see `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`.
-
 ### BUG-98 — Defensive-contract gaps in the spouse gap-year maps / escape hatch, unhardened unlike their sibling `spouseHoldout` (found 2026-07-26, adversarial-correctness review agent)
 
 **Owner:** me_theguy. **Severity: LOW (unreachable from any current caller; a "same class as
@@ -790,6 +706,77 @@ spouse-household golden master (T-X.2, real spouse income) is also unaffected, s
 **Not fully closed:** BUG-92 (no verdict signal when a plan leans on the spillover escape hatch) remains
 Open — orthogonal to this fix (it's about the VERDICT machinery when the hatch genuinely does fire for a
 household with real gap-year income, which this fix doesn't change).
+
+### BUG-95 — `spouseCurrentAge` silently drives the whole spouse engine, defaults to 18, and its only editor was buried behind an unrelated toggle (found 2026-07-26, interoperability review agent; fixed 2026-07-27, spousal-engine stabilization session)
+
+**Owner:** me_theguy. **Severity: HIGH — a multi-million-dollar swing with zero signal on any
+headline number, and no reachable control for most users.**
+**What:** see the original Open write-up for the full measured example ($4.2M swing / $1.6M of vanished
+lifetime RMDs between the shipped default `spouseAge=18` and a household's true spouse age of 48) — the
+root cause was twofold: (1) the field's only editor in either UI was double-gated behind the unrelated
+"is spouse the sole RMD beneficiary" toggle, so most married users could never reach it; (2) the stored
+value was hard-capped at `currentAge - 1`, making a same-age or older spouse literally unrepresentable.
+**Fix:** (1) new always-reachable editor — a `spouseCurrentAge` `DetailField` added to "My details →
+Spouse & household" (`MyDetailsScreen.jsx`), alongside the existing "Spouse retires at" field, gated only
+on the card's own `spouseAccountsApplicable`/entitlements visibility (never on `spouseIsSoleBenef`); the
+double-gated `RMDOutlookFlow.jsx` editor is untouched and still exists for the RMD-table question it
+actually answers — the two editors write the same `ss.spouseCurrentAge` bundle field, so neither can
+drift from the other. (2) widened the bound: `ss.spouseCurrentAge.max` `currentAge - 1` → **80** (both
+the bundle field and the mirrored Classic slider), so a same-age or older spouse is now representable.
+(3) `setCurrentAgeCoupled` no longer force-decrements a stored `spouseCurrentAge` when the primary's own
+age rises past it (the old coupling made "spouse same age or older" an impossible state to *enter* even
+after widening the bound) — a new `setSpouseCurrentAgeCoupled` clamps the STORED value the other
+direction instead (pushes `spouseRetirementAge` forward if it would fall at-or-below the new spouse age),
+mirroring the existing `setLifeExpectCoupled` pattern. **The default value itself (18) is intentionally
+left unchanged** — every household with a spouse must now set a real age via the new visible editor
+rather than the app guessing one; a wrong-but-visible-and-editable default is preferable to picking a
+different wrong-but-invisible one.
+**Tests:** 2 new tests in `my-details-screen.test.js` (the spouse-age editor renders and writes through
+the `ss` bundle; it stays absent, defensively, when the `ss` bundle prop isn't provided).
+**Inert at default state:** no spouse data → the card doesn't render at all. Golden master untouched.
+**Where:** `src/App.jsx` (`spouseCurrentAge` bundle field + Classic slider bound, `setCurrentAgeCoupled`,
+new `setSpouseCurrentAgeCoupled`), `src/horizon/screens/MyDetailsScreen.jsx` (new editor field).
+
+### BUG-96 — RMD screen's household tiles vs. primary-only table disagreed by up to 71%, with a mislabeled tax-rate header and a card that could hide itself exactly when RMDs were largest (found 2026-07-26, adversarial-correctness review agent; fixed 2026-07-27, spousal-engine stabilization session)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — a user reading the RMD stat tiles and the schedule
+table right below them would see two different numbers for "your RMDs" with no explanation.**
+**What:** the `rmdView`/RMD-outlook stat tiles (`firstRMDAmount`, `totalRMDs`, `rmdTaxBite`) read
+the HOUSEHOLD-scoped `totalRMDs`/`rmdTaxBite` (primary + spouse's own RMDs, once #30 gave the spouse
+their own RMD schedule), while the year-by-year schedule table directly below them (`rv.rows`) has
+always been, and remains, PRIMARY-only (a spouse RMD sub-schedule was explicitly deferred, per BUG-85's
+v1 scope). The two numbers could disagree by as much as 71% in a two-earner household, with nothing on
+screen explaining why. Two smaller compounding findings: the tax-column header showed a bare percentage
+with no scope label (read as "the tax rate on the row's RMD," when it's actually the JOINT household
+rate stacked on both spouses' RMDs); `strategiesView.rmd.applicable` gated on `!!firstRMD` (a
+primary-only value), so the Strategies card could report "not applicable" for a household whose spouse
+alone had RMDs due — hiding the card exactly when it mattered most; `avgAnnualRMD` divided the
+household total by the primary-only row count, overstating the primary's own average RMD.
+**Fix (scope option (a) — match tiles to the table, surface the household number separately, rather
+than build a full spouse RMD sub-schedule display — the latter is a genuine future feature, not a
+one-session fix):** added `primaryTotalRMDs = rmdData.reduce((s, r) => s + r.rmd, 0)` (App.jsx) — sums
+the exact same rows the table renders, so tile and table can never disagree again by construction. The
+`rmdView` bundle's `totalRMDs` field now returns `primaryTotalRMDs`; the household figure is exposed
+under new, explicitly-named fields `householdTotalRMDs` (= the old household `totalRMDs`) and
+`showHouseholdTotal` (`totalRMDs > primaryTotalRMDs`) so a screen can show it as a clearly-labeled
+addendum instead of silently substituting it. `RMDOutlookFlow.jsx` now shows the primary-only tiles plus
+a conditional note ("Includes your spouse's own RMDs: household lifetime total $X — their schedule isn't
+itemized in the table below yet") only when `showHouseholdTotal` is true; the Classic UI gets the same
+treatment (tile now shows `primaryTotalRMDs`, a conditional household-total note, both tax-tile and
+table-header relabeled "(household)"/"Tax (household, ~X% eff.)" since the tax figure genuinely is
+joint). `strategiesView.rmd.applicable` changed from `!!firstRMD` to `totalRMDs > 0` (the household
+scope) so the card can't hide itself when only the spouse has RMDs due. `avgAnnualRMD`'s numerator
+switched from the household `totalRMDs` to `primaryTotalRMDs` to match its own denominator
+(`rmdData.length`, a primary-only row count).
+**Tests:** 2 new tests in `spouse-household.test.js`'s "BUG-96 — RMD tiles/table scope agreement"
+describe block, using the existing T-X.2 household fixture: the tile total equals the sum of the
+table's own rows exactly; the household addendum note appears with the correct (larger) total and only
+when the household total genuinely exceeds the primary-only one.
+**Inert at default state:** no spouse data → `showHouseholdTotal` is always false, `primaryTotalRMDs ===
+totalRMDs`, no display change. Golden master untouched.
+**Where:** `src/App.jsx` (`primaryTotalRMDs`, `avgAnnualRMD`, `rmdView` bundle, `strategiesView.rmd`,
+Classic RMD tiles + table header), `src/horizon/screens/strategies/RMDOutlookFlow.jsx` (household-total
+note, tax-column relabel).
 
 ### BUG-90 — Nominal spouse gap-year flows in a real-dollar retirement walk (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
 

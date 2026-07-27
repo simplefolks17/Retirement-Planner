@@ -783,7 +783,15 @@ export default function App() {
   const rmdData         = retPhase.rmdSchedule;
   const rmdDataWithTax  = retPhase.rmdSchedule;
   const firstRMD        = rmdData[0];
-  const totalRMDs       = retPhase.totalRMDs;
+  const totalRMDs       = retPhase.totalRMDs;         // HOUSEHOLD (primary + spouse RMDs) — feeds effectiveRMDTaxRate/spendableAtRet, which are genuinely household concepts
+  // BUG-96: the DISPLAYED table (rmdData) is PRIMARY-only by design (the spouse
+  // RMD sub-schedule display is a deferred follow-up — see retirement-phase.js).
+  // A "Lifetime RMD Total" tile reading the HOUSEHOLD totalRMDs above the
+  // primary-only table self-contradicted (up to 71% apart in the review's own
+  // measurement) and could show a nonzero total over an EMPTY table (primary's
+  // Trad bucket drained by conversions while the spouse still owes RMDs).
+  // primaryTotalRMDs matches the table's own scope exactly — same rows, same sum.
+  const primaryTotalRMDs = rmdData.reduce((s, r) => s + r.rmd, 0);
   const rmdTaxBite      = retPhase.rmdTaxBite;
   const effectiveRMDTaxRate = totalRMDs > 0
     ? rmdTaxBite / totalRMDs
@@ -1165,7 +1173,9 @@ export default function App() {
   const contrib401kRoom    = Math.max(0, TRAD_401K_LIMIT_2026 - contrib401k);
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);
 
-  const avgAnnualRMD      = rmdData.length > 0 ? Math.round(totalRMDs / rmdData.length) : 0;
+  // BUG-96: numerator matches rmdData's own scope (primary-only) — was dividing
+  // the household total by the primary-only row count, overstating the average.
+  const avgAnnualRMD      = rmdData.length > 0 ? Math.round(primaryTotalRMDs / rmdData.length) : 0;
   const { bracketPct: projRetBracketPct } = projectRetirementBracket({
     avgAnnualRMD, householdSS, effectivePension: retPensionBasis, filingStatus,
   });
@@ -2106,7 +2116,12 @@ export default function App() {
     // withdrawalView, surplus → budget, ss → ssView, rmd → rmdView, mega → megaView
     // (siblings keyed by the same id). One number, one source (principle 11).
     conversion: { applicable: conversionWindowYrs > 0 },
-    rmd:        { applicable: !!firstRMD },
+    // BUG-96 finding 4: was !!firstRMD (primary-only) — a household could face
+    // real RMDs entirely from the SPOUSE's bucket (primary's Trad drained by
+    // conversions) while firstRMD is undefined, hiding the RMD card behind
+    // "Browse all strategies" for a household that needs it most. totalRMDs is
+    // the household figure, so this now keys on whether ANY RMDs are owed.
+    rmd:        { applicable: totalRMDs > 0 },
     ss:         { applicable: includeSS },
     worklonger: { applicable: safeRetAge > currentAge },
     withdrawal: { applicable: true },
@@ -2114,7 +2129,7 @@ export default function App() {
     // surplusPositive (>= 0 = "not a deficit"): a $0 surplus = nothing to deploy.
     surplus:    { applicable: availableSurplus > 0 },
     mega:       { applicable: megaCapacity > 0 },
-  }), [conversionWindowYrs, firstRMD, includeSS, availableSurplus, megaCapacity, safeRetAge, currentAge]);
+  }), [conversionWindowYrs, totalRMDs, includeSS, availableSurplus, megaCapacity, safeRetAge, currentAge]);
 
   // WI-3.4 (#101): Social Security timing flow bundle. Sibling of strategiesView
   // keyed by the "ss" strategy id (forward contract in docs/ARCHITECTURE.md). All
@@ -2162,7 +2177,14 @@ export default function App() {
   const rmdView = useMemo(() => ({
     firstRMDAmount: firstRMD ? firstRMD.rmd : null,
     firstRMDAge:    firstRMD ? firstRMD.age : null,
-    totalRMDs,
+    // BUG-96: totalRMDs (the tile) now matches the table's own scope (primary-
+    // only) — was the HOUSEHOLD total sitting over a primary-only table, up to
+    // 71% apart, and could show a nonzero total over an EMPTY table. The real
+    // household total is exposed separately as householdTotalRMDs, shown only
+    // when it actually differs (a spouse RMD schedule exists).
+    totalRMDs: primaryTotalRMDs,
+    householdTotalRMDs: totalRMDs,
+    showHouseholdTotal: totalRMDs > primaryTotalRMDs,
     rmdTaxBite,
     effectiveRMDTaxRate,
     // Preformatted so the screen never multiplies a model rate by 100 (rule 10).
@@ -2173,7 +2195,7 @@ export default function App() {
     activeTableLabel,                                // "Table II (Joint Life)" / "Table III (Uniform Lifetime)"
     qualifiesTable2: useTable2,
     spouseAgeGap:    currentAge - spouseCurrentAge, // meaningful only when isMarried (the flow gates it)
-  }), [firstRMD, totalRMDs, rmdTaxBite, effectiveRMDTaxRate, rmdData, safeRetAge,
+  }), [firstRMD, totalRMDs, primaryTotalRMDs, rmdTaxBite, effectiveRMDTaxRate, rmdData, safeRetAge,
        activeTableLabel, useTable2, currentAge, spouseCurrentAge]);
 
   // WI-3.6 (#103): Roth-conversion planner flow bundle. Sibling of strategiesView
@@ -3995,16 +4017,23 @@ export default function App() {
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>mandatory withdrawal · taxed as income</p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
+                  {/* BUG-96: matches the table below exactly (primary-only) — was the
+                      HOUSEHOLD total sitting over a primary-only table, up to 71% apart. */}
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Lifetime RMD Total</p>
-                  <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(totalRMDs)}</p>
+                  <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(primaryTotalRMDs)}</p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>forced out of 401k · age 73 → {safeLifeExp}</p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
-                  <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Est. Total Tax on RMDs</p>
+                  <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Est. Total Tax on RMDs (household)</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(rmdTaxBite)}</p>
-                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {(effectiveRMDTaxRate*100).toFixed(1)}% effective rate (bracket-accurate)</p>
+                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {(effectiveRMDTaxRate*100).toFixed(1)}% effective rate on household RMDs (bracket-accurate)</p>
                 </div>
               </div>
+            )}
+            {totalRMDs > primaryTotalRMDs && (
+              <p style={{ margin: "-8px 0 16px", fontSize: 10, color: C.muted }}>
+                Includes your spouse's own RMDs: household lifetime total {fmt(totalRMDs)} (their schedule isn't itemized in the table below yet).
+              </p>
             )}
             <p style={{ margin: "0 0 8px", fontSize: 11, color: C.muted, lineHeight: 1.6 }}>
               The table below shows your projected 401k balance each year, the RMD the IRS will require, and the estimated tax owed on it.
@@ -4014,7 +4043,10 @@ export default function App() {
             <div style={{ overflowX: "auto" }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, auto)", gap: "4px 20px",
                 fontSize: 11, minWidth: 440 }}>
-                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (~${(effectiveRMDTaxRate*100).toFixed(1)}% eff.)`].map(h => (
+                {/* BUG-96: labeled "household" — this column is the JOINT tax (primary +
+                    spouse RMD stacked in one bracket-accurate calc), not a rate on the
+                    primary-only RMD Amount column beside it. */}
+                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (household, ~${(effectiveRMDTaxRate*100).toFixed(1)}% eff.)`].map(h => (
                   <span key={h} style={{ fontSize: 10, color: C.muted, textTransform: "uppercase",
                     letterSpacing: "0.06em", borderBottom: `1px solid ${C.border}`, paddingBottom: 4 }}>{h}</span>
                 ))}
