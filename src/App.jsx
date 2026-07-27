@@ -1353,13 +1353,15 @@ export default function App() {
     const minSsClaimAge = Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, v));
     if (ssClaimingAge < minSsClaimAge) setSsClaimingAge(minSsClaimAge);
     if (retirementAge < v) setRetirementAge(v);
-    if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
+    // BUG-95: no longer forces the spouse younger than the primary — a
+    // same-age or older spouse is a real, representable household (the old
+    // coupling made that state literally impossible to enter).
     if (contribEnd401k    <= v) setContribEnd401k(v + 1);
     if (contribEndRoth    <= v) setContribEndRoth(v + 1);
     if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
     if (contribEndHSA     <= v) setContribEndHSA(v + 1);
-  }, [setCurrentAge, setRetirementAge, setLifeExpect, setSpouseCurrentAge, setSsClaimingAge,
-      retirementAge, lifeExpect, spouseCurrentAge, ssClaimingAge,
+  }, [setCurrentAge, setRetirementAge, setLifeExpect, setSsClaimingAge,
+      retirementAge, lifeExpect, ssClaimingAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
@@ -1745,7 +1747,9 @@ export default function App() {
       min: SS_MIN_CLAIM_AGE, max: SS_MAX_CLAIM_AGE, step: 1 },
     spouseBenefitBasis:{ value: spouseBenefitBasis, set: guardWrite(setSpouseBenefitBasis, readOnly),
       options: [{ value: "own", label: "Own record" }, { value: "spousal", label: "Spousal (50%)" }] },
-    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAgeCoupled, readOnly), min: 18, max: currentAge - 1, step: 1 },
+    // BUG-95: max is no longer currentAge - 1 — a same-age or older spouse is
+    // a real household, not an invalid state (matches currentAge's own 80 ceiling).
+    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAgeCoupled, readOnly), min: 18, max: 80, step: 1 },
     spouseIsSoleBenef:{ value: spouseIsSoleBenef, set: guardWrite(setSpouseIsSoleBenef, readOnly) },
   }), [includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge,
        spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef, currentAge, ssAnnualBenefit,
@@ -3926,7 +3930,7 @@ export default function App() {
                 <div style={{ opacity: isMarried && spouseIsSoleBenef ? 1 : 0.35, pointerEvents: isMarried && spouseIsSoleBenef ? "auto" : "none" }}>
                   <p style={{ margin: "0 0 5px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Spouse's current age</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <input type="range" min={18} max={currentAge - 1} step={1} value={spouseCurrentAge}
+                    <input type="range" min={18} max={80} step={1} value={spouseCurrentAge}
                       onChange={e => setSpouseCurrentAgeCoupled(Number(e.target.value))}
                       style={{ flex: 1, accentColor: C.blue }} />
                     <span style={{ fontSize: 13, color: C.blue, ...mono, minWidth: 24 }}>{spouseCurrentAge}</span>

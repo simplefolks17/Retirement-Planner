@@ -47,7 +47,7 @@ function Card({ t, title, summary, note, open, onToggle, children }) {
 }
 
 export default function MyDetailsScreen({ t, props, isMobile }) {
-  const { profile, spending, accounts, health, assumptions, spouseAccounts } = props;
+  const { profile, spending, accounts, health, assumptions, spouseAccounts, ss } = props;
   const isMarried = props.isMarried;
   // #30: the spouse & household card. Applicability is model-provided (principle 8);
   // premium gating comes from the entitlements bundle (LockedCard when locked).
@@ -183,6 +183,13 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
                   {F({ label: "Annual contribution", field: a.contrib, format: money })}
                 </div>
               ))}
+              {/* BUG-95: spouseCurrentAge drives the whole spouse engine (their own
+                  accumulation, the gap window's length, the Option-A hold-out, and
+                  their own RMD age) — this is its one always-reachable editor, not
+                  gated behind the RMD-beneficiary question in the Strategies flow. */}
+              {ss && F({ label: "Spouse's current age",
+                   hint: "drives their own accumulation, retirement gap, and RMD timing",
+                   field: ss.spouseCurrentAge, format: ageFmt })}
               {F({ label: "Spouse retires at",
                    hint: "when your spouse stops working — their accounts keep growing until then",
                    field: spouseAccounts.spouseRetirementAge, format: ageFmt })}
