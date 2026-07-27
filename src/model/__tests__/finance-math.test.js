@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fvAnnuity } from "../finance-math.js";
+import { fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "../finance-math.js";
 
 describe("fvAnnuity", () => {
   it("compounds an annual contribution at a positive rate", () => {
@@ -27,5 +27,47 @@ describe("fvAnnuity", () => {
 
   it("returns 0 for a non-positive horizon", () => {
     expect(fvAnnuity(10_000, 0.05, 0)).toBe(0);
+  });
+});
+
+describe("toRetirementYearDollars (BUG-91)", () => {
+  it("inflates a today's-dollar amount forward by (1+inflation)^years", () => {
+    expect(toRetirementYearDollars(57_377, 4, 35)).toBeCloseTo(57_377 * Math.pow(1.04, 35), 6);
+  });
+
+  it("is a no-op at 0 years to retirement", () => {
+    expect(toRetirementYearDollars(50_000, 4, 0)).toBe(50_000);
+  });
+
+  it("is a no-op at 0% inflation", () => {
+    expect(toRetirementYearDollars(50_000, 0, 20)).toBe(50_000);
+  });
+
+  it("clamps a negative years-to-retirement to 0 (never deflates)", () => {
+    expect(toRetirementYearDollars(50_000, 4, -5)).toBe(50_000);
+  });
+
+  it("guards a pathological rate (<=-100%) by returning the amount unchanged", () => {
+    expect(toRetirementYearDollars(50_000, -150, 10)).toBe(50_000);
+  });
+});
+
+describe("inflationRebaseFactor (BUG-91 / what-if scenario re-basing)", () => {
+  it("is 1 at zero years difference", () => {
+    expect(inflationRebaseFactor(4, 0)).toBe(1);
+  });
+
+  it("inflates forward for a positive years difference", () => {
+    expect(inflationRebaseFactor(4, 5)).toBeCloseTo(Math.pow(1.04, 5), 10);
+  });
+
+  it("deflates (factor < 1) for a NEGATIVE years difference — unlike toRetirementYearDollars", () => {
+    const f = inflationRebaseFactor(4, -5);
+    expect(f).toBeCloseTo(Math.pow(1.04, -5), 10);
+    expect(f).toBeLessThan(1);
+  });
+
+  it("guards a pathological rate by returning 1 (no rebase)", () => {
+    expect(inflationRebaseFactor(-150, 5)).toBe(1);
   });
 });
