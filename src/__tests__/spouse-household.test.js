@@ -589,3 +589,100 @@ describe("BUG-96 — RMD tiles/table scope agreement", () => {
     app.unmount();
   });
 });
+
+// ── T-X.3 — third golden master: MFJ + spouse gap + pension + non-TX + open
+// conversion window (interoperability audit recommendation, PR #62 review
+// battery) ────────────────────────────────────────────────────────────────
+// Both existing golden masters (the no-spouse default, and T-X.2 above) have
+// pensionMonthly = 0 and filingStatus/state combinations that never exercise
+// the pension-timing basis triad this PR's review rounds fixed THREE separate
+// times (retPensionAtRMDAge for projectRetirementBracket, retPensionAt70 for
+// wr70, the ungated retPensionAnnualBasis for calcRMDIncomeFloor — see the
+// "PR #62 review battery" entry in docs/BUGS.md) — meaning all three fixes
+// were locked by zero golden-master value, only by the narrower, synthetic
+// wiring tests in pension-timing-wiring.test.js. This fixture closes that gap:
+// a REAL pension (starts after retirement, before RMD age — the exact shape
+// that was double-gated), MFJ filing, a non-TX retirement state (exercises
+// calcStateTax's table path instead of TX's 0% no-op), a spouse with an
+// active gap window, and a genuinely open conversion window with real RMD,
+// wr70, and projected-bracket signal (none of the three locked values is
+// degenerate — see the build helper's comment for how each was tuned).
+function buildTX3Household() {
+  const app = mount();
+  app.fire(() => app.latest().assumptions.currentAge.set(50));
+  app.fire(() => app.latest().assumptions.retirementAge.set(62));
+  app.fire(() => app.latest().ss.isMarried.set(true));
+  app.fire(() => app.latest().ss.spouseCurrentAge.set(45)); // 57 at primary's retirement — real gap vs. spouseRetirementAge 65
+  app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(65));
+  app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+  app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+  app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(400_000));
+  app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(12_000));
+  // Trad 401k sized so conversions (the open window below) don't fully drain
+  // it before RMD age — unlike T-X.2, this fixture needs a REAL, nonzero
+  // primary RMD schedule to exercise the pension-basis fixes at RMD age.
+  app.fire(() => app.latest().accounts.trad401k.bal.set(1_400_000));
+  app.fire(() => app.latest().accounts.roth.bal.set(80_000));
+  app.fire(() => app.latest().accounts.taxable.bal.set(150_000));
+  // Expense level tuned so wr70 (the age-70 SS-delay comparison) is nonzero —
+  // SS + pension alone don't fully cover it at 70, unlike a lower-spend
+  // household where wr70 degenerates to a vacuous 0.
+  app.fire(() => app.latest().spending.annualExpenses.set(140_000));
+  app.fire(() => app.latest().ss.ssClaimingAge.set(67));
+  app.fire(() => app.latest().ss.ssOverride.set(38_000));
+  // The pension: starts AFTER retirement (62) but BY RMD age (73) — exactly
+  // the double-gated shape Qodo's finding and this fixture's two siblings
+  // (retPensionAtRMDAge, retPensionAt70) were about.
+  app.fire(() => app.latest().pension.pensionMonthly.set(3_000));
+  app.fire(() => app.latest().pension.pensionStartAge.set(65));
+  app.fire(() => app.latest().assumptions.retirementState.set("CA")); // non-TX — exercises calcStateTax's real table
+  return app;
+}
+
+describe("spouse-household golden master (T-X.3, exact-locked — MFJ + pension + non-TX)", () => {
+  const E = {
+    totalAtRet:           4_429_144,
+    withdrawalRate:       3.3378348186348292,
+    isSustainable:        true,
+    depletionAge:         96,
+    effectiveExpenses:    140_000,   // TODAY's dollars — unchanged, raw user-facing figure
+    householdSS:          38_000,
+    conversionWindowYrs:  10,
+    netConversionBenefit: 19_837,
+    firstRMD:             16_908,
+    totalRMDs:             133_413,
+    rmdTaxBite:            28_417,
+    projectedRetBracket:  0.12,     // taxView.projectedRetBracket — exercises retPensionAtRMDAge (nonzero pension, MFJ brackets)
+    wr70:                 1.4225852835455082,  // ssView.wr70 — exercises retPensionAt70
+    rangeSuccessPct:      61,
+  };
+
+  it("locks the retirement-walk + conversion + Range-lens headline numbers for a pensioned MFJ spouse household", () => {
+    const app = buildTX3Household();
+    const latest = app.latest();
+    const rw = latest.retirementWalk;
+
+    expect(latest.totalAtRet).toBe(E.totalAtRet);
+    expect(latest.withdrawalRate).toBeCloseTo(E.withdrawalRate, 8);
+    expect(latest.isSustainable).toBe(E.isSustainable);
+    expect(latest.effectiveExpenses).toBe(E.effectiveExpenses);
+    expect(latest.householdSS).toBe(E.householdSS);
+
+    expect(rw.depletionAge).toBe(E.depletionAge);
+    expect(rw.firstRMD).toBe(E.firstRMD);
+    expect(rw.totalRMDs).toBe(E.totalRMDs);
+    expect(rw.rmdTaxBite).toBe(E.rmdTaxBite);
+
+    expect(latest.conversionWindowYrs).toBe(E.conversionWindowYrs);
+    expect(latest.netConversionBenefit).toBe(E.netConversionBenefit);
+
+    // The three pension-basis fixes this golden master exists to cover —
+    // untested by any other golden master (both have pensionMonthly = 0).
+    expect(latest.taxView.projectedRetBracket).toBeCloseTo(E.projectedRetBracket, 6);
+    expect(latest.ssView.wr70).toBeCloseTo(E.wr70, 8);
+
+    expect(latest.rangeView.successPct).toBe(E.rangeSuccessPct);
+
+    app.unmount();
+  });
+});

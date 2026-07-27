@@ -46,6 +46,20 @@
  * the much larger spending draw deplete the Traditional 401k well before 73),
  * netConversionBenefit drops (RMD tax savings shrink along with the RMDs).
  * This is the fix working as intended — see docs/BUGS.md BUG-91.
+ *
+ * KNOWN LIMITATION (forward-compat audit, PR #62 review battery): because this
+ * file never mounts App, it can prove the underlying MODEL FUNCTIONS are
+ * correct in isolation, but it CANNOT catch a bug in App.jsx's own WIRING —
+ * e.g. passing the wrong variable into a call site (the exact shape of the
+ * pension-double-gating bug Qodo caught elsewhere in this same PR). A
+ * companion file, `src/__tests__/golden-master-app-wiring.test.js`, mounts
+ * the REAL App at this same default state and asserts a subset of these SAME
+ * locked values read from real horizonProps fields — verified (2026-07-27) to
+ * actually catch a wiring regression this file misses (reverted
+ * `netPortfolioNeed` to the pre-BUG-91 raw `effectiveExpenses` in App.jsx;
+ * this file stayed green, the companion file failed immediately). If you
+ * re-lock a value here, re-lock the matching value in that file too, in the
+ * SAME commit — see that file's own header for the full rationale.
  */
 
 import { describe, it, expect } from "vitest";

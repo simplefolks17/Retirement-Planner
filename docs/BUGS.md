@@ -3,6 +3,31 @@
 This file tracks known bugs, UI oddities, and design questions in the app.
 Each entry records **what was found**, **why it happens** (root cause), **status**, and **fix notes** once resolved.
 
+## Open Issues — Index
+
+**Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
+find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
+section below (currently 12 entries) — the "Resolved Issues" section (~100 entries) stays
+chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
+**Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
+SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
+place this gets checked).
+
+| ID | Severity | One-line | Key files |
+|---|---|---|---|
+| **BUG-102** | Medium | Lever-preview's spouse-gap gating inherited from the base plan, not the scenario's own re-seeded maps | `src/model/what-if.js`, `src/App.jsx` |
+| **BUG-101** | Low-Medium | Accumulation-phase `contrib401k` stays nominal (tracks `incomeGrowth`, not inflation) | `src/model/simulation.js` |
+| **BUG-100** | Low | Tax brackets aren't inflated forward — BUG-91's fix removed an error that was accidentally offsetting this | `src/model/taxes.js`, `src/model/retirement-engine.js` |
+| **BUG-99** | Medium | Money events (Goals/LifeEventSheet) still entered/applied in nominal dollars against the now-corrected retirement-year walk | `src/model/money-events.js`, `src/model/retirement-engine.js`, `src/horizon/LifeEventSheet.jsx` |
+| **BUG-85** | Low-Medium | Spouse Roth/Taxable/HSA gap-year contributions dollar-conserving but not separately tracked (only Traditional 401k is, v1 scope) | `src/model/retirement-phase.js`, `src/model/retirement-engine.js` |
+| **BUG-84** | Major (owner tax-law call) | Withdrawal-order/conversion scalars (`retTrad`/`retRoth`/`retTaxable`) stay primary-only after #30 — needs an owner decision between two fix shapes, coupled to BUG-85 | `src/App.jsx` |
+| **BUG-50** | Low (polish) | `OnTrackPill` popover has no outside-click/Escape dismissal | `src/horizon/screens/HorizonShell.jsx` |
+| **BUG-49** | Medium (a11y, broad) | Most of Horizon's nav/Ideas controls are keyboard-unreachable — needs a dedicated `kbActivate`-pattern pass, not a single fix | `src/horizon/**` |
+| **BUG-39** | Low (accepted) | Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (the one documented exception to the no-residual-plug rule) | `src/model/flow-down.js` |
+| **BUG-38** | Low (accepted) | Engine charges only *incremental* tax above the SS/pension floor — SS/pension effectively tax-free | `src/model/retirement-engine.js` |
+| **BUG-37** | Low (accepted, owner-deferred) | Engine ignores `conversionTaxSource` — always funds conversion tax from the pool | `src/model/retirement-engine.js` |
+| **BUG-36** | Low (accepted) | What-if/optimized-scenario deltas still use the blended (not taxed-once) engine for *deltas* only | `src/model/what-if.js`, `src/model/optimization.js` |
+
 ---
 
 ## Open Issues
