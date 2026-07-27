@@ -1446,9 +1446,14 @@ export default function App() {
     currentIncome: householdIncome, fedTax, fica, stateTax, takeHome,
     currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
     totalAtRet, totalContrib: flowTotalContrib,
+    // BUG-91: the SS/pension/portfolio-draw breakdown needs the retirement-year
+    // basis to reconcile with householdSS's own frame; incomeReplacementPct
+    // stays on the raw effectiveExpenses/effectivePension above (today's-dollar
+    // comparison against today's take-home).
+    effectiveExpensesRetYear: retSpendBasis, effectivePensionRetYear: retPensionBasis,
   }), [householdIncome, fedTax, fica, stateTax, takeHome,
        currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
-       totalAtRet, flowTotalContrib]);
+       totalAtRet, flowTotalContrib, retSpendBasis, retPensionBasis]);
 
   // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
   // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE

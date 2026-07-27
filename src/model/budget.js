@@ -150,6 +150,15 @@ export function calcStatementView({
   effectivePension = 0,
   totalAtRet = null,
   totalContrib = null,
+  // BUG-91: the retirement-year-dollar versions of effectiveExpenses/
+  // effectivePension (App.jsx's retSpendBasis/retPensionBasis) — used ONLY for
+  // the SS/pension/portfolio-draw breakdown below, which must reconcile with
+  // netPortfolioNeed's own basis (the same frame householdSS is already in).
+  // Default to the raw values so a caller that doesn't pass them (existing
+  // tests, any other consumer) stays byte-identical — inert unless a caller
+  // actually has years-to-retirement/inflation to convert with.
+  effectiveExpensesRetYear = effectiveExpenses,
+  effectivePensionRetYear = effectivePension,
 }) {
   const hasIncome = currentIncome != null && currentIncome > 0;
   const gross     = hasIncome ? currentIncome : 0;
@@ -183,9 +192,13 @@ export function calcStatementView({
   const showPaycheckLine = afterTaxSavings > 0 && takeHome > 0;
 
   // Monthly figures (display-ready — the month conversion lives HERE, not in JSX)
+  // ss/pension/exp (the SS + pension + portfolio-draw breakdown, BUG-91) are
+  // retirement-YEAR dollars, matching householdSS's own frame, so the three
+  // bands actually reconcile to monthlyTotal — unlike incomeReplacementPct
+  // below, which is a deliberately different (today's-dollars) comparison.
   const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
-  const pension         = effectivePension ?? 0;
-  const exp             = effectiveExpenses ?? 0;
+  const pension         = effectivePensionRetYear ?? 0;
+  const exp             = effectiveExpensesRetYear ?? 0;
   const monthlyHHSS     = Math.round(ss / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyPension  = Math.round(pension / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyPortDraw = Math.round(Math.max(0, exp - ss - pension) / ASSUMPTIONS.MONTHS_PER_YEAR);
@@ -193,8 +206,12 @@ export function calcStatementView({
   const monthlyTakeHome = (hasIncome && takeHome > 0)
     ? Math.round(takeHome / ASSUMPTIONS.MONTHS_PER_YEAR)
     : null;
-  const incomeReplacementPct = (monthlyTakeHome != null && monthlyTakeHome > 0 && monthlyTotal > 0)
-    ? Math.round(monthlyTotal / monthlyTakeHome * 100)
+  // "How much of your CURRENT paycheck would retirement replace" — deliberately
+  // TODAY's dollars vs. today's take-home (BUG-91 scope decision), not the
+  // retirement-year-converted monthlyTotal above.
+  const monthlyTodaysExp = Math.round((effectiveExpenses ?? 0) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const incomeReplacementPct = (monthlyTakeHome != null && monthlyTakeHome > 0 && monthlyTodaysExp > 0)
+    ? Math.round(monthlyTodaysExp / monthlyTakeHome * 100)
     : null;
 
   // Effective federal rate footnote (1 decimal place), null when no income

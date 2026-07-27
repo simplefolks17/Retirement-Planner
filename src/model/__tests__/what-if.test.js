@@ -713,6 +713,112 @@ describe("calcWhatIfScenario", () => {
   });
 });
 
+// ── calcWhatIfScenario / calcWhatIfDelta — BUG-91 scenario re-basing ─────────
+// A what-if scenario that shifts the retirement age walks retirement in a
+// DIFFERENT retirement-year-dollar frame than the base plan (retPhaseBase's
+// own ssGross/ssTaxable/pension, and retDrawShared's ssAmount/pensionAmount,
+// are converted at the BASE plan's safeRetAge). Without re-basing, a
+// household's SS/pension would be the only figures that stay frozen in the
+// wrong frame while effectiveExpenses correctly re-derives at the scenario's
+// own age — exactly the kind of "one quantity forgotten" gap this bug class
+// is about. inflationRate must be nonzero for this to be observable (it
+// defaults to 0 = factor 1 = inert, which is what keeps every other fixture
+// in this file — none of which set inflationRate — byte-identical).
+describe("calcWhatIfScenario / calcWhatIfDelta — BUG-91 scenario SS/pension re-basing", () => {
+  // Self-contained, deliberately large-balance fixture (NOT derived from the
+  // shared baseArgs/retDrawShared above): retirementAge overrides force a
+  // resim (runSimulation re-derives the starting balance from simInputs, NOT
+  // retPhaseBase's own balance), so simInputs carries large balances/
+  // contributions to produce a comfortably-sustainable accumulated balance at
+  // ANY of the scenario ages below.
+  const ssCurrentAge = 60, ssSafeRetAge = 65, ssSafeLifeExp = 90;
+  const ssSimInputs = {
+    ...simInputs, currentAge: ssCurrentAge, totalYears: ssSafeLifeExp - ssCurrentAge,
+    bal401k: 2_000_000, balRoth: 500_000, balTaxable: 500_000, balHSA: 50_000,
+  };
+  const ssBalance = 3_000_000;
+  const makeArgs = (inflationRate) => {
+    const ssRetDrawShared = {
+      rReal, effectiveExpenses: 70_000, inflationRate,
+      ssAmount: 40_000, ssClaimAge: 62,
+      pensionAmount: 0, pensionStartAge: Infinity,
+      rmdTaxByAge: {}, conversionTaxByAge: {}, moneyEvents: [],
+    };
+    const ssRetPhaseBase = {
+      tradGross: 0, roth: 0, taxable: ssBalance, hsa: 0,
+      startAge: ssSafeRetAge, lifeExp: ssSafeLifeExp, longevityHorizon: ssSafeRetAge + 130,
+      rReal, effectiveExpenses: ssRetDrawShared.effectiveExpenses,
+      ssGross: ssRetDrawShared.ssAmount, ssTaxable: ssRetDrawShared.ssAmount, ssClaimAge: ssRetDrawShared.ssClaimAge,
+      pension: 0, pensionStartAge: Infinity,
+      filingStatus: "single", retStateRate: 0,
+      rmdStartAge: Infinity, useTable2: false, spouseCurrentAge: null, currentAge: ssCurrentAge,
+      moneyEvents: [],
+    };
+    return {
+      simInputs: ssSimInputs, fedMarginal, retDrawShared: ssRetDrawShared,
+      safeRetAge: ssSafeRetAge, safeLifeExp: ssSafeLifeExp,
+      baseTotalAtRet: ssBalance, baseYearsSustained: Infinity,
+      retPhaseBase: ssRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
+    };
+  };
+
+  // Isolating the SS re-basing effect from the (correctly working, separately
+  // tested) expense re-basing requires holding the CONVERTED expense IDENTICAL
+  // between the "real" (nonzero inflationRate) and "frozen" (inflationRate: 0,
+  // so the rebase factor is 1 — a no-op) runs — inflationRate feeds BOTH
+  // conversions, so simply zeroing it for a "before" comparison would also
+  // change the expense basis, confounding the comparison. Passing an explicit
+  // annualExpenses override of TARGET / conversionFactor makes BOTH runs
+  // converge on the exact same converted spend (TARGET), leaving SS's
+  // rebasing as the only remaining difference.
+  const TARGET = 70_000;
+  const overrideFor = (inflationRate, retAge, currentAge) =>
+    TARGET / Math.pow(1 + inflationRate / 100, retAge - currentAge);
+
+  it("calcWhatIfScenario (engine path): retiring LATER inflates SS relative to the base plan's frame", () => {
+    const retAge = ssSafeRetAge + 5;
+    const later = calcWhatIfScenario(makeArgs(4),
+      { retirementAge: retAge, annualExpenses: overrideFor(4, retAge, ssCurrentAge) });
+    const laterFrozenSS = calcWhatIfScenario(makeArgs(0),
+      { retirementAge: retAge, annualExpenses: overrideFor(0, retAge, ssCurrentAge) });
+    expect(later.scenarioExpenses).toBeCloseTo(laterFrozenSS.scenarioExpenses, 4);
+    // Same converted expense in both runs; the ONLY remaining difference is
+    // whether SS is re-based (nonzero inflationRate) or frozen (factor 1) —
+    // a larger effective SS income leaves a larger ending balance.
+    expect(later.scenarioBalAt90).toBeGreaterThan(laterFrozenSS.scenarioBalAt90);
+  });
+
+  it("calcWhatIfScenario (engine path): retiring EARLIER deflates SS relative to the base plan's frame (inflationRebaseFactor divides, unlike toRetirementYearDollars)", () => {
+    const retAge = ssSafeRetAge - 3;
+    const earlier = calcWhatIfScenario(makeArgs(4),
+      { retirementAge: retAge, annualExpenses: overrideFor(4, retAge, ssCurrentAge) });
+    const earlierFrozenSS = calcWhatIfScenario(makeArgs(0),
+      { retirementAge: retAge, annualExpenses: overrideFor(0, retAge, ssCurrentAge) });
+    expect(earlier.scenarioExpenses).toBeCloseTo(earlierFrozenSS.scenarioExpenses, 4);
+    // Retiring earlier means the scenario's own frame is EARLIER than the
+    // base plan's — SS re-based to that frame is SMALLER than the frozen
+    // (factor-1) figure, so the re-based scenario's ending balance is lower.
+    expect(earlier.scenarioBalAt90).toBeLessThan(earlierFrozenSS.scenarioBalAt90);
+  });
+
+  it("calcWhatIfDelta: retiring LATER inflates SS relative to the base plan's frame (fallback blended walk)", () => {
+    const retAge = ssSafeRetAge + 5;
+    const later = calcWhatIfDelta({
+      simInputs: ssSimInputs, fedMarginal, retDrawShared: makeArgs(4).retDrawShared,
+      safeRetAge: ssSafeRetAge, safeLifeExp: ssSafeLifeExp,
+      baseTotalAtRet: ssBalance, baseYearsSustained: Infinity,
+      retirementAgeOverride: retAge, annualExpensesOverride: overrideFor(4, retAge, ssCurrentAge),
+    });
+    const laterFrozen = calcWhatIfDelta({
+      simInputs: ssSimInputs, fedMarginal, retDrawShared: makeArgs(0).retDrawShared,
+      safeRetAge: ssSafeRetAge, safeLifeExp: ssSafeLifeExp,
+      baseTotalAtRet: ssBalance, baseYearsSustained: Infinity,
+      retirementAgeOverride: retAge, annualExpensesOverride: overrideFor(0, retAge, ssCurrentAge),
+    });
+    expect(later.scenarioEndVal).toBeGreaterThan(laterFrozen.scenarioEndVal);
+  });
+});
+
 // ── calcWhatIfScenario — engine migration (2026-07-11 overlay-continuity fix) ──
 // These tests exercise the PRIMARY (per-account engine) path directly, using a
 // bundle built the exact way App.jsx builds it — not the all-taxable fixtures

@@ -21,6 +21,7 @@ import {
 import { buildPreviewMetric } from "./apply-preview.js";
 import { calcAIME, calcPIA, calcBenefit } from "./social-security.js";
 import { fmtSigned } from "../formatters.js";
+import { toRetirementYearDollars, inflationRebaseFactor } from "./finance-math.js";
 
 // Infinity-aware longevity delta: scenarioYears vs baseYearsSustained, with
 // the ±Infinity edges handled explicitly (plain subtraction gives NaN when
@@ -262,7 +263,28 @@ export function calcWhatIfDelta({
   spouseSeedInputs = null,
 }) {
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
-  const scenarioExpenses  = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
+  // BUG-91: retDrawShared.effectiveExpenses is TODAY's dollars (kept raw so the
+  // what-if UI's lever baseline reads sensibly — see LEVERS.monthlyExpenses
+  // below); the retirement walk needs it converted to the SCENARIO's own
+  // retirement-year frame (which may differ from the base plan's safeRetAge
+  // when retirementAgeOverride is set), not the base plan's. inflationRate
+  // rides along on retDrawShared for exactly this re-derivation.
+  const scenarioExpensesTodays = annualExpensesOverride ?? retDrawShared.effectiveExpenses;
+  const scenarioExpenses = toRetirementYearDollars(
+    scenarioExpensesTodays, retDrawShared.inflationRate, Math.max(0, scenarioRetAge - simInputs.currentAge));
+  // Base plan's own converted spend, for the returned baseExpenses field below
+  // — was the raw today's-dollar figure, which no longer matches the frame
+  // scenarioExpenses is now in (WhatIfPanel compares the two directly).
+  const baseExpensesConverted = toRetirementYearDollars(
+    retDrawShared.effectiveExpenses, retDrawShared.inflationRate, Math.max(0, safeRetAge - simInputs.currentAge));
+  // SS/pension in retDrawShared are already converted at the BASE plan's
+  // safeRetAge (App.jsx); a scenario retiring at a DIFFERENT age needs them
+  // re-expressed in ITS OWN retirement-year frame — inflationRebaseFactor
+  // (unlike toRetirementYearDollars) handles retiring EARLIER too (a negative
+  // years difference divides, it doesn't clamp to a no-op).
+  const scenarioRetYearFactor = inflationRebaseFactor(retDrawShared.inflationRate, scenarioRetAge - safeRetAge);
+  const scenarioSSAmount = retDrawShared.ssAmount * scenarioRetYearFactor;
+  const scenarioPensionAmount = retDrawShared.pensionAmount * scenarioRetYearFactor;
 
   // Split events by phase — kind-aware (money-events.js): a duration event
   // spanning the retirement boundary goes to BOTH walks; each walk applies only
@@ -337,6 +359,8 @@ export function calcWhatIfDelta({
   const scenarioWalk = buildRetirementDrawdown({
     ...retDrawShared,
     effectiveExpenses: scenarioExpenses,
+    ssAmount: scenarioSSAmount,
+    pensionAmount: scenarioPensionAmount,
     startBal:  scenarioTotalAtRet,
     startAge:  scenarioRetAge,
     endAge:    scenarioRetAge + 130,
@@ -347,6 +371,8 @@ export function calcWhatIfDelta({
   const scenarioLifeWalk = buildRetirementDrawdown({
     ...retDrawShared,
     effectiveExpenses: scenarioExpenses,
+    ssAmount: scenarioSSAmount,
+    pensionAmount: scenarioPensionAmount,
     startBal: scenarioTotalAtRet,
     startAge: scenarioRetAge,
     endAge:   safeLifeExp,
@@ -362,7 +388,7 @@ export function calcWhatIfDelta({
     baseYears:    baseYearsSustained,
     scenarioYears,
     deltaYears,
-    baseExpenses:    retDrawShared.effectiveExpenses,
+    baseExpenses:    baseExpensesConverted,
     scenarioExpenses,
     scenarioEndVal: scenarioLifeWalk.endVal,
     scenarioDepletionAge: scenarioWalk.depletionAge,
@@ -455,10 +481,21 @@ export function calcWhatIfScenario({
 
   const retireAdj        = overrides.retireAdj ?? 0;
   const scenarioRetAge   = overrides.retirementAge ?? (safeRetAge + retireAdj);
-  const scenarioExpenses = overrides.annualExpenses
+  // BUG-91: retDrawShared.effectiveExpenses/the overrides are TODAY's dollars;
+  // convert to the SCENARIO's own retirement-year frame (may differ from the
+  // base plan's safeRetAge when the retirement age itself is overridden) —
+  // see calcWhatIfDelta's identical derivation above for the full rationale.
+  const scenarioExpensesTodays = overrides.annualExpenses
     ?? (overrides.monthlyExpenses != null
       ? overrides.monthlyExpenses * ASSUMPTIONS.MONTHS_PER_YEAR
       : retDrawShared.effectiveExpenses);
+  const scenarioExpenses = toRetirementYearDollars(
+    scenarioExpensesTodays, retDrawShared.inflationRate, Math.max(0, scenarioRetAge - simInputs.currentAge));
+  // SS/pension in retPhaseBase/retDrawShared are already converted at the BASE
+  // plan's safeRetAge — re-express in the SCENARIO's own frame when the
+  // retirement age differs (inflationRebaseFactor, unlike toRetirementYearDollars,
+  // handles retiring EARLIER too — a negative years difference divides).
+  const scenarioRetYearFactor = inflationRebaseFactor(retDrawShared.inflationRate, scenarioRetAge - safeRetAge);
   const scenarioEvents   = overrides.scenarioEvents ?? [];
   const excludeEventId   = overrides.excludeEventId ?? null;
 
@@ -620,6 +657,12 @@ export function calcWhatIfScenario({
         lifeExp,
         longevityHorizon: scenarioRetAge + 130,
         effectiveExpenses: scenarioExpenses,
+        // BUG-91: retPhaseBase's ssGross/ssTaxable/pension are converted at the
+        // BASE plan's safeRetAge — re-express in the scenario's own retirement-
+        // year frame (inert, factor 1, when the retirement age is unchanged).
+        ssGross: retPhaseBase.ssGross * scenarioRetYearFactor,
+        ssTaxable: retPhaseBase.ssTaxable * scenarioRetYearFactor,
+        pension: retPhaseBase.pension * scenarioRetYearFactor,
         // The conversion schedule stays at ABSOLUTE ages even when the retirement
         // age shifts — the same approximation the blended walk already made with
         // its per-age tax maps (rmdTaxByAge/conversionTaxByAge above); a schedule
@@ -719,6 +762,8 @@ export function calcWhatIfScenario({
     lifeWalk = buildRetirementDrawdown({
       ...retDrawShared,
       effectiveExpenses: scenarioExpenses,
+      ssAmount: retDrawShared.ssAmount * scenarioRetYearFactor,
+      pensionAmount: retDrawShared.pensionAmount * scenarioRetYearFactor,
       startBal,
       startAge: scenarioRetAge,
       endAge,
@@ -728,6 +773,8 @@ export function calcWhatIfScenario({
     farWalk = buildRetirementDrawdown({
       ...retDrawShared,
       effectiveExpenses: scenarioExpenses,
+      ssAmount: retDrawShared.ssAmount * scenarioRetYearFactor,
+      pensionAmount: retDrawShared.pensionAmount * scenarioRetYearFactor,
       startBal,
       startAge: scenarioRetAge,
       endAge: scenarioRetAge + 130,
