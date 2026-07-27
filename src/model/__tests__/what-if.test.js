@@ -648,6 +648,37 @@ describe("calcWhatIfScenario", () => {
     expect(s.scenarioTotalAtRet).toBe(householdBaseTotalAtRet);
   });
 
+  // BUG-92 wiring: calcWhatIfScenario must surface the engine's own spillover
+  // rollup (not just include the spouse balance in scenarioTotalAtRet, which
+  // the test above already covers) — otherwise the verdict resolver has
+  // nothing to cap on for a real household that leans on the escape hatch.
+  it("totalSpouseSpillover flows through from the engine's own rollup (T-F1.1's exact fixture)", () => {
+    const spouseIncomeFloorByAge = {};
+    const spouseContribByAge = {};
+    for (let a = 61; a <= 75; a++) { spouseIncomeFloorByAge[a] = 15_000; spouseContribByAge[a] = 12_000; }
+    const spillArgs = {
+      ...baseArgs,
+      retPhaseBase: {
+        ...baseRetPhaseBase,
+        startAge: 60, currentAge: 60, spouseCurrentAge: 45,
+        tradGross: 50_000, tradGrossSpouse: 3_000_000, roth: 0, taxable: 0, hsa: 0,
+        effectiveExpenses: 60_000,
+        spouseRetirementAge: 75, spouseContribByAge, spouseIncomeFloorByAge,
+      },
+      safeRetAge: 60,
+    };
+    const s = calcWhatIfScenario(spillArgs);
+    expect(s.totalSpouseSpillover).toBeGreaterThan(0);
+    expect(verdictForScenarioResult(s, safeLifeExp)).toBe("tight");
+    // No spouse hold-out at all (spouseRetirementAge null) → no escape hatch,
+    // no spillover, cap inert.
+    const noSpouse = calcWhatIfScenario({
+      ...spillArgs,
+      retPhaseBase: { ...spillArgs.retPhaseBase, spouseRetirementAge: null, tradGrossSpouse: 0 },
+    });
+    expect(noSpouse.totalSpouseSpillover).toBe(0);
+  });
+
   it("scenarioBalAt90 reads the safeLifeExp row of the SAME walk the chart shows", () => {
     const s = calcWhatIfScenario(baseArgs); // baseArgs.safeLifeExp === 90
     const rowAtLifeExp = s.chart.find(r => r.age === safeLifeExp);
@@ -1448,6 +1479,30 @@ describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-7
     };
     expect(verdictForScenarioResult(alreadyTight, safeLifeExp)).toBe("tight");
     expect(verdictInfoForScenario(alreadyTight, safeLifeExp).marginLabel).toBe("2 yrs to spare past 90");
+  });
+
+  it("BUG-92: a plan that only stays afloat by raiding a spouse's held-out 401k early can never read 'comfortable'", () => {
+    // Same shape as the eventRetirementDraw override, triggered by the Option-A
+    // spillover escape hatch (BUG-88) instead of a money event — a household
+    // whose end-state walk looks healthy but got there only by repeatedly
+    // penalizing a still-working spouse's own 401k should read the same way.
+    const scenario = {
+      scenarioYears: Infinity, scenarioRetAge: 65,
+      scenarioBalAt90: 2_000_000, scenarioExpenses: 57_000, scenarioDrawAtPlanAge: 9_000,
+      eventFundingShortfall: 0, totalSpouseSpillover: 60_000,
+    };
+    expect(verdictForScenarioResult(scenario, safeLifeExp)).toBe("tight");
+    const info = verdictInfoForScenario(scenario, safeLifeExp);
+    expect(info.verdict).toBe("tight");
+    expect(info.marginLabel).toBe("needs early withdrawals from a spouse's still-working 401k to fund");
+    // No spillover → cap inert, margin verdict applies.
+    const noSpillover = { ...scenario, totalSpouseSpillover: 0 };
+    expect(verdictForScenarioResult(noSpillover, safeLifeExp)).toBe("comfortable");
+    // Already tight/unaffordable on the margin → cap changes nothing.
+    const alreadyTight = {
+      scenarioYears: 27, scenarioRetAge: 65, totalSpouseSpillover: 60_000,
+    };
+    expect(verdictForScenarioResult(alreadyTight, safeLifeExp)).toBe("tight");
   });
 
   it("cushion label caps at CUSHION_LABEL_CAP_YEARS ('366 yrs' reads as '50+')", () => {

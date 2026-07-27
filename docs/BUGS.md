@@ -97,31 +97,6 @@ a pure bug fix, since both are defensible models of how a person actually sets t
 **Where:** `src/model/simulation.js` (the `growFactor`/`clockYears` per-year contribution scaling).
 **Not fixed here.** No code change; filed for a future session.
 
-### BUG-92 — No verdict signal when a plan leans on the spillover escape hatch (found 2026-07-26, BUG-88's planning pass; deliberately not folded into that fix)
-
-**Owner:** me_theguy. **Severity: MEDIUM.** **Found by:** the same Opus planning-and-audit pass that
-designed BUG-88's fix, as an explicit "surfacing" follow-up question it answered by recommending
-deferral.
-**What:** after BUG-88's fix, a household can be "sustainable" ONLY BECAUSE it repeatedly raids a
-still-working spouse's 401k at a 10% early-withdrawal penalty — and today's verdict machinery (the
-shared `verdictForScenarioResult` resolver in `what-if.js`) would still call that plan "comfortable."
-A precedent for capping such a plan at "tight" already exists in the same file:
-`eventRetirementDraw`/`eventRetirementDrawTax` already cap a scenario's verdict when a money event
-forces an early retirement-account withdrawal (BUG-74's fix). The same treatment should logically
-apply here.
-**Why deferred rather than folded into BUG-88:** the fix touches the SHARED verdict resolver
-consumed by `evaluateLifeEvent`, both tick rails (`buildLeverRail`/`buildDurationRail`), and the
-lever previews — a fourth surface area, in a PR that already changed the engine, the seed builder, and
-(in the same session) the conversion planner. BUG-88 already ships the model rollups
-(`totalSpouseSpillover`/`totalSpouseSpilloverTax`/`firstSpouseSpilloverAge`) a future fix here would
-consume — nothing about this deferral re-litigates or blocks that follow-up.
-**Fix shape (sketched, not implemented):** extend `verdictForScenarioResult` (or a sibling check
-alongside the `eventRetirementDraw` cap) to also cap at "tight" whenever
-`retPhase.totalSpouseSpillover > 0` for the scenario being evaluated.
-**Where:** `src/model/what-if.js` (`verdictForScenarioResult`), consumed by `evaluateLifeEvent` and
-both tick rails.
-**Not fixed here.** No code change; filed as a follow-up.
-
 ### BUG-85 — Spouse Roth/Taxable/HSA gap-year contributions treated as spent, not tracked (filed 2026-07-25, BUG-82 fix session — v1 scope decision)
 
 **Owner:** me_theguy. **Severity: LOW-MEDIUM (smaller, weaker-rationale dollar impact than BUG-82).**
@@ -785,6 +760,40 @@ touched by this pass since it's a documentation gap, not a defensive one.
 master (T-X.2) also untouched.
 **Where:** `src/model/retirement-engine.js` (`nonNegOrZero`, `spouseContrib`, `spouseWages`,
 `spouseIncomeFloor`, `spouseApplied`).
+
+### BUG-92 — No verdict signal when a plan leans on the spillover escape hatch (found 2026-07-26, BUG-88's planning pass; fixed 2026-07-27, spousal-engine stabilization session, Step 6)
+
+**Owner:** me_theguy. **Severity: MEDIUM.** **Found by:** the same Opus planning-and-audit pass that
+designed BUG-88's fix, as an explicit "surfacing" follow-up question it answered by recommending
+deferral to a dedicated session.
+**What:** after BUG-88's fix, a household can be "sustainable" ONLY BECAUSE it repeatedly raids a
+still-working spouse's 401k at a 10% early-withdrawal penalty (the Option-A hold-out's escape hatch) —
+and the shared `verdictForScenarioResult` resolver in `what-if.js` would still call that plan
+"comfortable." A precedent for capping such a plan at "tight" already existed in the same file:
+`eventRetirementDraw`/`eventRetirementDrawTax` already cap a scenario's verdict when a money event
+forces an early retirement-account withdrawal (BUG-74's fix).
+**Fix:** `verdictForScenarioResult` now caps a "comfortable" verdict at "tight" whenever
+`scenario.totalSpouseSpillover > 0`, the identical treatment `eventRetirementDraw > 0` already got —
+both conditions share one `if`. `calcWhatIfScenario` now threads `rp.totalSpouseSpillover` (the
+engine's own rollup, already computed by `buildRetirementPhase`) into its returned scenario object as
+`totalSpouseSpillover` — the resolver had nothing to read before this wiring existed.
+`verdictInfoForScenario`'s override-label branch (used whenever the margin alone would have said
+"comfortable" but the shared resolver downgraded it) now attributes the honest reason to whichever
+condition actually applies: "needs early retirement-account withdrawals to fund" for a money event,
+"needs early withdrawals from a spouse's still-working 401k to fund" for the spillover case. Because
+`evaluateLifeEvent` and both tick rails (`buildLeverRail`/`buildDurationRail`) all call
+`calcWhatIfScenario` and then the shared resolver, they inherit the fix automatically — no separate
+mechanism needed for any of the three surfaces named in the original deferral.
+**Tests:** a pure-function test locks the resolver's new cap + label (mirroring the existing
+`eventRetirementDraw` test); a second test drives a genuine engine-level spillover through
+`calcWhatIfScenario` (T-F1.1's exact fixture from `retirement-engine.test.js` — a household that
+would falsely depend on the escape hatch) and confirms `totalSpouseSpillover` actually flows through
+end-to-end, not just in a synthetic scenario object, and that the no-spouse case stays 0.
+**Inert whenever `totalSpouseSpillover` is 0** (no spouse, or a household whose spouse bucket was
+never actually raided) — golden master untouched, this branch's own spouse-household golden master
+(T-X.2) also untouched (it never triggers the escape hatch).
+**Where:** `src/model/what-if.js` (`verdictForScenarioResult`, `verdictInfoForScenario`,
+`calcWhatIfScenario`'s returned `totalSpouseSpillover` field).
 
 ### BUG-90 — Nominal spouse gap-year flows in a real-dollar retirement walk (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
 

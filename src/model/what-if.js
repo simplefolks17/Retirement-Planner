@@ -148,11 +148,18 @@ function buildMarginLabel({ marginYears, marginBasis }, safeLifeExp) {
 //      withdrawals (eventRetirementDraw > 0) can never read "comfortable" —
 //      raiding the 401k/Roth (with penalties) for a discretionary event is at
 //      best "tight", however healthy the end-state walk looks.
+//   3. BUG-92: a plan that only stays afloat by repeatedly raiding a still-
+//      working spouse's held-out 401k early (Option-A's escape hatch,
+//      totalSpouseSpillover > 0) gets the SAME treatment as override 2 — it's
+//      the identical shape of "penalized early withdrawal propping up an
+//      otherwise-healthy-looking walk," just triggered by the spouse hold-out
+//      instead of a money event.
 export function verdictForScenarioResult(scenario, safeLifeExp) {
   if (scenario.eventFundingShortfall > 0) return "unaffordable";
   const { marginYears } = marginForScenario(scenario, safeLifeExp);
   const verdict = verdictForMargin(marginYears);
-  if (scenario.eventRetirementDraw > 0 && verdict === "comfortable") return "tight";
+  if (verdict === "comfortable"
+      && (scenario.eventRetirementDraw > 0 || scenario.totalSpouseSpillover > 0)) return "tight";
   return verdict;
 }
 
@@ -197,12 +204,20 @@ export function verdictInfoForScenario(scenario, safeLifeExp) {
       marginLabel: "part of this can't be funded from savings",
     };
   }
-  if (scenario.eventRetirementDraw > 0 && verdict === "tight"
-      && verdictForMargin(marginYears) === "comfortable") {
+  if (verdict === "tight" && verdictForMargin(marginYears) === "comfortable"
+      && (scenario.eventRetirementDraw > 0 || scenario.totalSpouseSpillover > 0)) {
     return {
       ...common,
       verdict,
-      marginLabel: "needs early retirement-account withdrawals to fund",
+      // BUG-92: same override slot as the money-event case, distinct wording —
+      // this plan's "comfortable" margin only holds because it's repeatedly
+      // raiding a still-working spouse's held-out 401k, not because of a money
+      // event. Both can't independently apply to the same scenario today
+      // (eventRetirementDraw is money-event-only, totalSpouseSpillover is
+      // spouse-holdout-only), so checking eventRetirementDraw first is safe.
+      marginLabel: scenario.eventRetirementDraw > 0
+        ? "needs early retirement-account withdrawals to fund"
+        : "needs early withdrawals from a spouse's still-working 401k to fund",
     };
   }
   return {
@@ -738,6 +753,11 @@ export function calcWhatIfScenario({
       // whenever the failure year is < 50% funded (yearsSustained's fractional
       // part < 0.5 rounds DOWN past a depletion that already happened).
       scenarioDepletionAge: rp.depletionAge ?? null,
+      // BUG-92: the engine's own spouse-holdout-escape-hatch rollup (0 = the
+      // plan never had to raid a still-working spouse's held-out 401k early to
+      // stay afloat) — verdictForScenarioResult caps at "tight" when this fires,
+      // the same treatment BUG-74's eventRetirementDraw already gets.
+      totalSpouseSpillover: rp.totalSpouseSpillover ?? 0,
     };
   }
 
