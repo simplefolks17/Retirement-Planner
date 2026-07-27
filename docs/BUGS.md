@@ -176,6 +176,15 @@ is 73). Its only consumer is `calcWithdrawalOrderTax` (`App.jsx:1055`), already 
 by this entry's interim relabel above — the retirement ENGINE computes the actual RMD tax itself and
 does not use this floor. Documented here rather than patched, so the two primary-only surfaces are
 resolved together whichever fix shape (1 or 2, above) the owner picks. No code change.
+**Owner decision (2026-07-27, Step 6 of the spousal-engine stabilization session):** stay deferred —
+confirmed as a genuine scope decision, not a quick patch. Verified while explaining the sizing to the
+owner: `calcWithdrawalOrderTax`/`evaluateConversionPlan` are both small functions that already reuse
+the ONE retirement engine's output as input (not a second multi-decade simulation to build) — the
+expensive part (growth, RMDs, the spouse's held-out bucket) is already shared. But fix shape 2 (the
+spouse's own sequence) is **coupled to BUG-85**, not independent of it: sequencing the spouse's own
+Trad/Roth/Taxable/HSA draw order needs separately-tracked spouse Roth/Taxable/HSA buckets, which don't
+exist yet (only `tradSp` is split out). Recommend fixing BUG-85's buckets first; option 2 becomes a
+smaller add-on once they exist. Noted on `feature-tracker.html`'s #30 entry.
 
 ### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
 
