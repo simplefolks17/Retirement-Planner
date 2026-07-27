@@ -1702,6 +1702,56 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
      second opinion alongside CodeRabbit. Greptile ruled out (paid-only, per owner). Codex code
      review to be done via Codex Cloud (chatgpt.com/codex, uses the owner's existing ChatGPT plan
      instead of pay-per-token API billing) — also an owner-side sign-in/connect step.
+- **Spousal-engine stabilization session (2026-07-27, branch `claude/spouse-engine-stabilization-6s97pc`):**
+  worked `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md` (written at the close of PR #59) end to end, in
+  its recommended order. The plan's diagnosis: nearly every #30 bug decomposed into an undeclared
+  scope (primary-only vs. household) or unit (nominal vs. real dollars) basis mismatch, and
+  `golden-master.test.js` was structurally blind to both (one filer, one fixed default).
+  1. **Step 1** — promoted the target-demographic fixture (`T-X.2`, `src/__tests__/spouse-household.test.js`)
+     into a permanent, exact-locked spouse-household golden master, converting the whole scope axis
+     from "found by whoever looks hardest" into a test `npm test` enforces.
+  2. **Step 2** — added a unit-contract invariant test (every quantity entering the retirement walk
+     is retirement-year real dollars).
+  3. **Step 3 — BUG-91 fixed (the big one):** `effectiveExpenses`/`effectivePension` were today's-dollar
+     figures fed into a walk denominated in the primary's retirement-year purchasing power (proven by
+     BUG-90) with **zero unit conversion**. New `toRetirementYearDollars`/`inflationRebaseFactor`
+     (`finance-math.js`) inflate spend/pension forward to the same frame BUG-90's spouse deflator
+     already uses, so the two compose without a seam. **Golden master moved substantially and
+     conservatively, deliberately** — this is the fix working: no-spouse default `withdrawalRate`
+     1.42% → **5.61%** (now *fails* the app's own 4% guideline, correctly), `firstRMD` → 32,213,
+     `totalRMDs` → 79,341, `rmdTaxBite` → 10,182, `netConversionBenefit` → −70,844,
+     `spendableAtRet` → 3,763,788 (`totalAtRet` itself is unaffected — only spend/pension/SS-comparison
+     inputs changed, never balances). The spouse-household golden master (`T-X.2`) moved too:
+     `withdrawalRate` 0.78% → 1.61%, `totalRMDs` 1,330,378 → 1,138,926, `rmdTaxBite` 209,803 → 167,684,
+     `netConversionBenefit` 100,961 → 159,745, Monte Carlo `rangeSuccessPct` 95% → 83%. Filed three
+     scoped follow-ups rather than folding them in: BUG-99 (money events still nominal against the
+     corrected walk), BUG-100 (the pre-existing "brackets aren't inflated" simplification now bites at
+     full strength, no longer partially offset by the old error), BUG-101 (accumulation-phase
+     `contrib401k` stays nominal).
+  4. **Step 4 — BUG-93+94 fixed (one root cause):** the Option-A hold-out gated on bare `hasSpouse`
+     instead of real gap-year income, so a spouse holding only a rollover balance (no income) got
+     penalized-early-withdrawal treatment it never needed — fired in 9/9 tested cells. Re-gated on the
+     existing `hasActiveSpouseGap` flag (the same real-income check the Monte Carlo caveat already
+     used), which closes BUG-94's engine/caveat disagreement as a structural side effect.
+  5. **Step 5 — BUG-95+96 fixed:** `spouseCurrentAge` (defaults to 18, drove the whole spouse engine)
+     gets an always-reachable editor in "My details → Spouse & household" (was buried behind an
+     unrelated RMD-beneficiary toggle) and its bound widened `currentAge-1` → 80 (a same-age-or-older
+     spouse was previously unrepresentable). The RMD screen's household-scoped stat tiles disagreed
+     with its primary-only schedule table by up to 71%; tiles now match the table exactly
+     (`primaryTotalRMDs`), with the real household figure surfaced separately
+     (`householdTotalRMDs`/`showHouseholdTotal`) instead of silently substituted.
+  6. **Step 6 — backlog triage:** BUG-98 fixed (the three spouse gap-year maps now fail safe on
+     negative/non-finite inputs, matching `spouseHoldout`'s existing fail-closed contract). BUG-92
+     fixed (a plan sustainable only by repeatedly raiding a still-working spouse's 401k now caps at
+     "tight," not "comfortable" — the same treatment `eventRetirementDraw` already got). BUG-84 (owner
+     call, per an `AskUserQuestion` prompt): stays deferred — confirmed its two candidate fix shapes
+     aren't a second multi-decade simulation (the engine is already shared), but fix shape 2 is
+     coupled to BUG-85's not-yet-built spouse Roth/Taxable/HSA buckets, so both stay deferred together
+     (noted on `feature-tracker.html`'s #30 entry). BUG-85 left as the already-correctly-scoped
+     feature addition it was filed as.
+  `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md` marked DONE and retired (kept as a historical record).
+  1030 → **1059 tests** across the session. Full root cause / fix / test detail for every item:
+  `docs/BUGS.md`.
 
 ## Commands
 
