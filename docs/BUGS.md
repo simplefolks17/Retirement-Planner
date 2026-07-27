@@ -122,87 +122,6 @@ alongside the `eventRetirementDraw` cap) to also cap at "tight" whenever
 both tick rails.
 **Not fixed here.** No code change; filed as a follow-up.
 
-### BUG-93 — Option-A hold-out (and its 10% early-withdrawal penalty) fires for a spouse who has NO income or contributions (found 2026-07-26, independently by both the adversarial-correctness and interoperability review agents)
-
-**Owner:** me_theguy. **Severity: HIGH — fires as the DEFAULT behavior for a common household shape,
-not a rare edge case.** **Found by:** two independent review agents, using unrelated methods
-(isolated-probe correctness verification vs. a full end-to-end interoperability harness), converging
-on the same root cause and the same repro shape — strong corroboration.
-**What:** `App.jsx:719` passes `spouseRetirementAge: hasSpouse ? effectiveSpouseRetAge : null`
-unconditionally whenever `hasSpouse` is true (a spouse BALANCE alone, `App.jsx:289-291`) —
-`effectiveSpouseRetAge` defaults to the PRIMARY's own retirement age when unset. The engine's
-Option-A hold-out (`retirement-engine.js:259`, justified there as *"they are still working and still
-contributing to it; it is also likely pre-59½"*) then walls the spouse's balance out of the drawable
-pool, reachable only through BUG-88's penalized escape hatch — **regardless of whether the spouse
-actually has any income or contributions**. The gate keys on ages only; it never checks whether any
-wages/contributions exist for that spouse.
-**Measured (interoperability agent, swept across 9 balance/expense combinations for a healthy,
-never-depleting plan with a non-working spouse and a $1M rollover 401k):** the escape hatch fired in
-**all 9 cells**, producing a fabricated narrative — e.g. *"Your plan works, but it needs about
-$502,754 withdrawn early from your spouse's 401k (from age 67), costing $102,813 in taxes and
-early-withdrawal penalties"* — for money that is not actually locked up in any real sense. Isolating
-the case (spouse "retires" in the primary's own retirement year, closing the gap window entirely)
-removes the entire $102,813 penalty and leaves $35,765 more at the plan horizon.
-**Measured (correctness agent, isolated probe — primary retires 65, spouse 55, $600k spouse 401k, zero
-income/contributions, empty gap maps):**
-```
-Option A OFF (pre-BUG-82 behavior):  spillover $0        tax+penalty $0
-"auto" spouseRetAge = 65 (shipped):  spillover $35,863   tax+penalty $3,844
-```
-**Root cause, shared with BUG-94:** `hasSpouse` is used throughout the spouse engine as a proxy for
-"the spouse is a separate, still-working person with their own timeline" — but the two inputs that
-would make that literally true (the spouse's actual income, and — see BUG-95 — the spouse's actual
-current age) are respectively unchecked and hidden.
-**Recommended fix shape:** gate the hold-out (and therefore the escape hatch) on the spouse actually
-having a nonzero income/contribution stream during the gap window, not merely on `hasSpouse`/an age
-comparison — e.g. `spouseOptionA = hasSpouse && (spouseIncome > 0 || spouseContrib401k > 0)`. A
-household entering a pure rollover balance with no ongoing income should pool it immediately.
-**Where:** `src/App.jsx:719` (the `spouseRetirementAge` pass-through), `src/model/retirement-engine.js`
-(`spouseOptionA`/`spouseHoldout`, the escape hatch itself is fine — it's the *gate into* it that's
-wrong).
-**Not fixed here.** Deferred to the dedicated spousal-engine stabilization session —
-see `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`.
-
-### BUG-94 — Monte Carlo `spouseGapCaveat` fires on the wrong condition — false negative on exactly BUG-93's household, and mis-directional even when it does fire (found 2026-07-26, independently by both the adversarial-correctness and interoperability review agents)
-
-**Owner:** me_theguy. **Severity: HIGH — the two lenses can show OPPOSITE verdicts with no warning.**
-**Found by:** both review agents (correctness F2, interoperability Finding 3), again converging
-independently on the same mechanism.
-**What:** the false-positive fix shipped 2026-07-25 (`hasActiveSpouseGap`, `App.jsx:601-604`) keys the
-caveat on the gap-year INCOME/CONTRIBUTION maps having a nonzero value. But the engine's hold-out
-(BUG-93, above) doesn't depend on those map values at all — it fires on `hasSpouse` + an age
-comparison alone. `retDrawShared` (the Range lens's own input) carries **no spouse fields
-whatsoever** — the blended Monte Carlo walk (`buildRetirementDrawdown`, seeded with
-`startBal: totalAtRet`) pools the whole household balance immediately, with no hold-out and no
-escape-hatch penalty, while the solid-line engine walk walls the same dollars off. The caveat that
-exists specifically to warn about this divergence is suppressed exactly when the divergence is
-largest.
-**Measured (interoperability agent — married, spouse 10 years younger, $900k rollover IRA, no
-earnings):**
-| Surface | Story |
-|---|---|
-| Plan / arc / Journey (the engine) | Depletes at 86; needed $1,067,417 of early spouse-401k withdrawals, costing $239,858 in tax + penalties |
-| Numbers → Range lens (Monte Carlo) | 56% success; median path never depletes; $186,410 left at 90 |
-| `spouseGapCaveat` | `null` — nothing rendered |
-The on-track pill's popover shows both the engine's longevity driver and the MC's confidence driver
-side by side, so a user sees two contradictory verdicts with zero explanation for the gap.
-**Secondary finding (correctness agent):** even when the caveat DOES fire, its wording ("the shaded
-range MAY UNDERSTATE your outlook") is one-directional for what is actually a two-directional error —
-the blended MC walk simultaneously OVER-counts the held-out spouse bucket (pools it early, for free)
-and UNDER-counts the spouse's gap-year income/contributions (has no concept of the maps at all). The
-net direction depends on which effect dominates for a given household; it is not safe to always say
-"understate."
-**Recommended fix shape:** the caveat's condition should be the same one the engine actually uses for
-the hold-out (real hold-out window + BUG-93's income check), not "does money flow through the maps";
-its wording should not assert a direction until the actual two-effect net has been characterized (or
-should be reworded to name both effects rather than pick one).
-**Where:** `src/App.jsx:601-604` (`hasActiveSpouseGap`), `:851` (`spouseGapCaveat` string),
-`src/model/monte-carlo.js` (the blended walk with no spouse fields at all).
-**Not fixed here.** Deferred to the dedicated spousal-engine stabilization session —
-see `docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`. This is also the interim caveat mechanism Session B
-(the Monte Carlo engine port) is expected to retire entirely — fixing this narrowly now may be
-throwaway work if Session B lands first; the stabilization plan should make that call explicitly.
-
 ### BUG-95 — `spouseCurrentAge` silently drives the whole spouse engine, defaults to 18, and its only editor is buried behind an unrelated toggle (found 2026-07-26, interoperability review agent)
 
 **Owner:** me_theguy. **Severity: HIGH — a multi-million-dollar swing with zero signal on any
@@ -823,6 +742,54 @@ the 4 display-reconciliation fixes), `src/model/budget.js` (`calcStatementView`'
 **Inert at zero years-to-retirement or zero inflation:** both new helpers degrade to a no-op factor of 1,
 verified by dedicated tests — the entire fix is invisible to any household already retired or to a 0%
 inflation assumption.
+
+### BUG-93 + BUG-94 — Option-A hold-out fired for a spouse with NO income/contributions; the Range-lens caveat disagreed with the engine on exactly that household (found 2026-07-26, independently by the adversarial-correctness and interoperability review agents; fixed 2026-07-27, spousal-engine stabilization session)
+
+**Owner:** me_theguy. **Severity: HIGH (both) — BUG-93 fired as the DEFAULT behavior for a common
+household shape (a spouse holding a rollover balance with no ongoing income), not a rare edge case;
+BUG-94 meant the engine and the Monte Carlo lens could show OPPOSITE verdicts with no warning.**
+**What:** `hasSpouse` was used throughout the spouse engine as a proxy for "the spouse is a separate,
+still-working person with their own timeline" — but the input that would make that literally true (the
+spouse's actual income/contributions) was never checked. `App.jsx` passed
+`spouseRetirementAge: hasSpouse ? effectiveSpouseRetAge : null` unconditionally whenever a spouse
+BALANCE was entered (income or not), so the engine's Option-A hold-out walled a pure rollover balance
+out of the drawable pool and could force BUG-88's penalized escape hatch for money that was never
+actually locked up — measured (interoperability agent, 9 balance/expense combinations, a non-working
+spouse with a $1M rollover 401k): the escape hatch fired in **all 9 cells**. Separately, the Range
+lens's own `hasActiveSpouseGap` caveat (shipped 2026-07-25 as a false-positive fix) already correctly
+keyed on the gap-year INCOME maps having a nonzero value — a DIFFERENT condition than the engine's
+hasSpouse-only gate — so the two could disagree: measured (interoperability agent, spouse 10 years
+younger, $900k rollover IRA, no earnings), the engine reported a depletion needing $1,067,417 of early
+spouse-401k withdrawals while the Range lens showed 56% success and the caveat rendered nothing.
+**Fix:** gate `spouseRetirementAge` on `hasActiveSpouseGap` (the SAME real-income/contribution check the
+caveat already used) instead of bare `hasSpouse` — a pure rollover balance with no ongoing income now
+pools immediately from day one (Option A never activates, so the escape hatch has nothing to escape
+from). Because the engine's hold-out and the caveat's firing condition are now the identical
+expression, BUG-94's contradiction closes as a structural side effect of BUG-93's own fix, exactly as
+`docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md`'s step 4 anticipated — no separate mechanism was needed.
+Also fixed the caveat's secondary wording finding (it asserted "may understate," a one-directional claim
+for what is actually a two-directional error — the blended MC walk both omits gap-year income
+(understating) and pools the held-out bucket for free (overstating)): reworded to "may over- or
+understate" rather than asserting a direction.
+**Verified against the pre-fix condition, not just the post-fix behavior** (this session's own
+process): the exact regression fixture below was run against BOTH the old (`hasSpouse`-gated) and new
+(`hasActiveSpouseGap`-gated) code — the old code produces a real, nonzero `totalSpouseSpillover` of
+$4,783 at age 71 for this household; the new code produces exactly $0. The fix is a genuine behavior
+change, not a no-op.
+**Tests:** 3 new tests in `spouse-household.test.js` — a pure-rollover household under genuine
+depletion stress never triggers the escape hatch even though the primary's own portfolio does
+eventually deplete (proving the fixture is real stress, not a trivially-easy household); the Range-lens
+caveat and the engine's spillover now agree (both null/0) for that same household; a spouse with REAL
+gap-year income still gets Option A exactly as before (`hasActiveSpouseGap` true is unaffected).
+**Inert whenever `hasActiveSpouseGap` was already true** (a spouse with real gap-year income/
+contributions) — golden master unaffected (no spouse at the default state); this session's own
+spouse-household golden master (T-X.2, real spouse income) is also unaffected, since that household's
+`hasActiveSpouseGap` was already true both before and after this fix.
+**Where:** `src/App.jsx` (the `spouseRetirementAge` pass-through in `retPhaseBase`, the
+`spouseGapCaveat` wording).
+**Not fully closed:** BUG-92 (no verdict signal when a plan leans on the spillover escape hatch) remains
+Open — orthogonal to this fix (it's about the VERDICT machinery when the hatch genuinely does fire for a
+household with real gap-year income, which this fix doesn't change).
 
 ### BUG-90 — Nominal spouse gap-year flows in a real-dollar retirement walk (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-26, same session)
 

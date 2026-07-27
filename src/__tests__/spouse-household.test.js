@@ -184,6 +184,84 @@ describe("Monte Carlo Range lens — spouse-gap caveat (#30 / BUG-82 interim)", 
   });
 });
 
+// BUG-93 + BUG-94 (found 2026-07-26, independently by the adversarial-
+// correctness and interoperability review agents; fixed 2026-07-27, spousal-
+// engine stabilization session). Root cause shared by both: hasSpouse was
+// used as a proxy for "the spouse is a separate, still-working person with
+// their own timeline," gating the engine's Option-A hold-out (and therefore
+// its penalized escape hatch) on hasSpouse + a finite spouseRetirementAge
+// alone — never checking whether the spouse actually has any income or
+// contributions flowing through the gap window. A pure rollover balance (no
+// ongoing spouse income) was walled out of the drawable pool and could force
+// the 10%-penalty escape hatch for money that was never actually locked up.
+// Fixed by gating spouseRetirementAge on hasActiveSpouseGap (the SAME real-
+// income check the Range-lens caveat already used) instead of hasSpouse — one
+// condition now governs both the engine's hold-out and the caveat's firing,
+// so they can no longer disagree (closing BUG-94 as a side effect of BUG-93's
+// own fix, exactly as docs/SPOUSAL-ENGINE-STABILIZATION-PLAN.md's step 4
+// anticipated).
+describe("BUG-93/94 — Option-A hold-out gated on real spouse income, not just hasSpouse", () => {
+  // Mirrors BUG-93's own measured repro: primary retires 65 on a modest
+  // portfolio (forcing genuine depletion stress), spouse holds a large
+  // Traditional 401k with a real age gap but ZERO income/contributions (a
+  // pure rollover). Verified (2026-07-27) against the PRE-fix condition
+  // (hasSpouse-gated) that this exact fixture produces a nonzero
+  // totalSpouseSpillover ($4,783 at age 71) — this is not a hypothetical.
+  function buildRolloverOnlyHousehold() {
+    const app = mount();
+    app.fire(() => app.latest().assumptions.currentAge.set(55));
+    app.fire(() => app.latest().assumptions.retirementAge.set(65));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(45)); // spouse 55 at primary's retirement
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62)); // a real 7-yr gap window
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(600_000));
+    // spouseIncome stays at its 0 default — no income, no contributions.
+    app.fire(() => app.latest().accounts.trad401k.bal.set(100_000));
+    app.fire(() => app.latest().accounts.roth.bal.set(0));
+    app.fire(() => app.latest().accounts.taxable.bal.set(0));
+    app.fire(() => app.latest().spending.annualExpenses.set(60_000));
+    app.fire(() => app.latest().ss.includeSS.set(false));
+    return app;
+  }
+
+  it("a spouse's pure rollover balance (no income) is never walled off — the escape hatch never fires, even under genuine depletion stress", () => {
+    const app = buildRolloverOnlyHousehold();
+    const rw = app.latest().retirementWalk;
+    // The PRIMARY's own portfolio still genuinely depletes in this stressed
+    // fixture (proving the scenario is real stress, not a trivially-easy
+    // household) — but the spouse's rollover balance, having no ongoing
+    // income, was never held out in the first place, so there is nothing to
+    // "escape" from and the penalized hatch never fires.
+    expect(rw.depletionAge).not.toBeNull();
+    expect(rw.totalSpouseSpillover).toBe(0);
+    expect(rw.totalSpouseSpilloverTax).toBe(0);
+    expect(rw.firstSpouseSpilloverAge).toBeNull();
+    app.unmount();
+  });
+
+  it("BUG-94: the Range-lens caveat agrees with the engine — no caveat for the same pure-rollover household the engine now pools normally", () => {
+    const app = buildRolloverOnlyHousehold();
+    // Before the fix, the engine (hasSpouse-gated) walled the balance off and
+    // could force the escape hatch while the caveat (already hasActiveSpouseGap-
+    // gated) stayed null — a direct contradiction between the two surfaces.
+    // Now both key on the same condition, so they can't disagree.
+    expect(app.latest().retirementWalk.totalSpouseSpillover).toBe(0);
+    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    app.unmount();
+  });
+
+  it("a spouse with REAL gap-year income still gets Option A exactly as before (hasActiveSpouseGap true)", () => {
+    const app = buildRolloverOnlyHousehold();
+    app.fire(() => app.latest().profile.spouseIncome.set(60_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    // Real income flowing through the gap window ⇒ hasActiveSpouseGap true ⇒
+    // Option A hold-out is genuinely active for this household (unchanged
+    // from before the fix) — the caveat should also reflect a real gap.
+    expect(app.latest().rangeView.spouseGapCaveat).not.toBeNull();
+    app.unmount();
+  });
+});
+
 // Finding 3 (adversarial review, 2026-07-26) — wiring gate (T-F3.4). The model-only
 // fix (retirement-phase.test.js) proves the deflator works in isolation; this proves
 // BOTH App.jsx call sites actually hand it a live inflationRate, not a stale default,

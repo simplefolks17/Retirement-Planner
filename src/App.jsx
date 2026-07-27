@@ -742,7 +742,17 @@ export default function App() {
     moneyEvents: retirementMoneyEvents,
     // Spouse's own retirement timing (#30 / BUG-82) — the gap-year gate + maps built
     // by buildSpouseRetirementSeed above. null/{} when no spouse (inert, engine default).
-    spouseRetirementAge:      hasSpouse ? effectiveSpouseRetAge : null,
+    // BUG-93: gated on hasActiveSpouseGap (real income/contributions actually
+    // flowing through the gap window), NOT merely hasSpouse + a finite age —
+    // hasSpouse alone was true for a pure rollover balance with no ongoing
+    // spouse income, which walled that money out of the drawable pool
+    // (Option A) and could force the penalized escape hatch for cash that was
+    // never actually locked up. A household with a real gap-year paycheck
+    // still gets Option A exactly as before (hasActiveSpouseGap true).
+    // Reusing the SAME flag the Range-lens caveat already keys on (below)
+    // also closes BUG-94: the engine's hold-out and the caveat's firing
+    // condition can no longer disagree, since they're now one condition.
+    spouseRetirementAge:      hasActiveSpouseGap ? effectiveSpouseRetAge : null,
     spouseContribByAge:       spouseSeed?.spouseContribByAge ?? {},
     spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
     spouseIncomeFloorByAge:   spouseSeed?.spouseIncomeFloorByAge ?? {},
@@ -750,7 +760,7 @@ export default function App() {
        retSpendBasis, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
        retPensionAnnualBasis, pensionMonthly, pensionStartAge, filingStatus, retStateRate,
        useTable2, spouseCurrentAge, currentAge, retirementMoneyEvents,
-       hhRoth, hhTaxable, hhHsa, spouseSeed, hasSpouse, effectiveSpouseRetAge]);
+       hhRoth, hhTaxable, hhHsa, spouseSeed, hasActiveSpouseGap, effectiveSpouseRetAge]);
 
   const retPhase = useMemo(
     () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),
@@ -901,8 +911,15 @@ export default function App() {
       // #30 / BUG-82 interim (Session A) — see hasActiveSpouseGap above. null
       // (the normal case) renders nothing extra; the MC engine port (Session B)
       // removes this caveat by giving the walk a real spouse bucket instead.
+      // BUG-94 wording fix: the blended walk's error isn't one-directional —
+      // it has no concept of the spouse's gap-year income/contributions
+      // (understating the outlook) but ALSO pools the engine's held-out
+      // spouse bucket for free, with no hold-out and no escape-hatch penalty
+      // (overstating it) — the net direction depends on which effect
+      // dominates for a given household, so the copy names both rather than
+      // asserting "understate."
       spouseGapCaveat: hasActiveSpouseGap
-        ? "Doesn't yet include your spouse's working years — the shaded range may understate your outlook until they retire."
+        ? "Doesn't yet fully model your spouse's working years — the shaded range may over- or understate your outlook until they retire."
         : null,
       medianDepletionAge: mc.depletionAgePercentiles?.p50 ?? null,
       p10DepletionAge: mc.depletionAgePercentiles?.p10 ?? null,
