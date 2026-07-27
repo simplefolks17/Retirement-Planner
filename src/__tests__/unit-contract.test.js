@@ -19,18 +19,22 @@ import { act, create } from "react-test-renderer";
 // factor (1+inflationRate/100)^(retirementAge-currentAge) — before it can be
 // compared against, or subtracted from, a balance the engine is walking in
 // retirement-year dollars. That conversion is the "unit contract" this file
-// asserts; BUG-91 is that App.jsx does not perform it (effectiveExpenses and
-// effectivePension are both passed through flat, at their as-entered,
-// today's-dollar value).
+// asserts.
 //
-// This file is deliberately RED against the current implementation, using
-// `it.fails` so `npm test` stays green while the contract is documented and
-// checked mechanically rather than only in a docs/BUGS.md paragraph. Per the
-// stabilization plan, this must exist and be understood BEFORE BUG-91's fix
-// (step 3) lands. Once that fix ships, each `it.fails` below must be flipped
-// to a plain `it` — if the assertion doesn't pass at that point, the fix is
-// incomplete, not the test wrong.
-
+// IMPORTANT (revised after the BUG-91 fix-plan audit, 2026-07-27): the first
+// version of this file probed `latest.effectiveExpenses`/`latest.effectivePension`
+// — the raw DISPLAY passthrough fields (App.jsx horizonProps). BUG-91's fix
+// deliberately leaves those raw (today's dollars) — they feed the Statement/
+// Budget tabs and the Income Meter's "% of today's take-home" comparison,
+// which are legitimately about TODAY's dollars, not the engine's frame. So
+// probing them can never distinguish "fixed" from "not fixed" — the contract
+// has to be checked against an ENGINE-DERIVED quantity instead. withdrawalRate
+// (= netPortfolioNeed / totalAtRet * 100) is exposed on horizonProps and is
+// exactly netPortfolioNeed's own basis — at the default state (SS not yet
+// claimed, no spouse) netPortfolioNeed reduces to retSpendBasis (spend only)
+// or retSpendBasis − retPensionBasis (spend + pension), so it's a direct,
+// already-exposed probe of the engine-facing conversion without needing any
+// new horizonProps field just for this test.
 const captured = [];
 vi.mock("../components/HorizonShell.jsx", () => ({
   default: (props) => { captured.push(props); return null; },
@@ -55,40 +59,60 @@ const toRetirementYearDollars = (todaysDollarAmount, inflationRate, yearsToRetir
   todaysDollarAmount * Math.pow(1 + inflationRate / 100, yearsToRetirement);
 
 describe("unit contract — every quantity entering the retirement walk is retirement-year real dollars", () => {
-  // it.fails: CURRENTLY effectiveExpenses is passed through unchanged from
-  // effectiveLiving (App.jsx: `effectiveExpenses = annualExpenses ?? effectiveLiving`)
-  // with no inflation compounding at all — the bug verbatim (BUG-91).
-  it.fails("the spend basis fed to the engine is today's living spend inflated to the retirement year, not the flat today's-dollar figure", () => {
+  it("the spend basis feeding withdrawalRate is today's living spend inflated to the retirement year, not the flat today's-dollar figure", () => {
     const app = mount();
     const latest = app.latest();
-    const { currentAge, retirementAge } = latest;
+    const { currentAge, retirementAge, totalAtRet } = latest;
     const inflationRate = latest.assumptions.inflationRate.value;
-    const todaysDollarSpend = latest.effectiveExpenses; // as entered/derived, today's dollars
+    const todaysDollarSpend = latest.effectiveExpenses; // as entered/derived, today's dollars — the DISPLAY value, deliberately left raw
 
+    // Default state: SS claims after retirement (ssAtRet = 0) and there's no
+    // pension, so netPortfolioNeed reduces to exactly the converted spend —
+    // making withdrawalRate a direct probe of retSpendBasis / totalAtRet.
     const expectedRetirementYearSpend =
       toRetirementYearDollars(todaysDollarSpend, inflationRate, retirementAge - currentAge);
+    const expectedWithdrawalRate = (expectedRetirementYearSpend / totalAtRet) * 100;
 
-    // The contract: what actually reaches the engine (also `latest.effectiveExpenses`
-    // today, since no conversion exists yet) must match the retirement-year figure.
-    expect(latest.effectiveExpenses).toBeCloseTo(expectedRetirementYearSpend, 0);
+    expect(latest.withdrawalRate).toBeCloseTo(expectedWithdrawalRate, 6);
+    // And the DISPLAY value itself must stay raw (today's dollars) — it's a
+    // legitimately different quantity from what feeds the engine (rule 10 /
+    // BUG-91's own scope decision), not a second copy of the same bug.
+    expect(latest.effectiveExpenses).toBe(todaysDollarSpend);
     app.unmount();
   });
 
-  // it.fails: CURRENTLY effectivePension = pensionMonthly * 12 (retirement-income.js),
-  // a flat today's-dollar figure with no compounding either.
-  it.fails("the pension amount fed to the engine is today's pension quote inflated to the retirement year, not the flat today's-dollar figure", () => {
+  it("the pension amount feeding withdrawalRate is today's pension quote inflated to the retirement year, not the flat today's-dollar figure", () => {
     const app = mount();
     app.fire(() => app.latest().pension.pensionMonthly.set(2_000));
     app.fire(() => app.latest().pension.pensionStartAge.set(65));
     const latest = app.latest();
-    const { currentAge, retirementAge } = latest;
+    const { currentAge, retirementAge, totalAtRet } = latest;
     const inflationRate = latest.assumptions.inflationRate.value;
+    const todaysDollarSpend = latest.effectiveExpenses;
     const todaysDollarPension = 2_000 * 12;
 
-    const expectedRetirementYearPension =
-      toRetirementYearDollars(todaysDollarPension, inflationRate, retirementAge - currentAge);
+    const yearsToRet = retirementAge - currentAge;
+    const expectedRetirementYearSpend = toRetirementYearDollars(todaysDollarSpend, inflationRate, yearsToRet);
+    const expectedRetirementYearPension = toRetirementYearDollars(todaysDollarPension, inflationRate, yearsToRet);
+    // Default state still has ssAtRet = 0 (claims after retirement) — pension
+    // starts AT retirement (65 <= 65), so netPortfolioNeed = spend - pension.
+    const expectedWithdrawalRate =
+      ((expectedRetirementYearSpend - expectedRetirementYearPension) / totalAtRet) * 100;
 
-    expect(latest.effectivePension).toBeCloseTo(expectedRetirementYearPension, 0);
+    expect(latest.withdrawalRate).toBeCloseTo(expectedWithdrawalRate, 6);
+    app.unmount();
+  });
+
+  it("no-op at 0 years to retirement (already retired) — the conversion factor is exactly 1 regardless of inflationRate", () => {
+    const app = mount();
+    app.fire(() => app.latest().assumptions.retirementAge.set(app.latest().currentAge));
+    app.fire(() => app.latest().assumptions.inflationRate.set(7));
+    const latest = app.latest();
+
+    // yearsToRetirement = 0 ⇒ retSpendBasis === effectiveExpenses exactly (no
+    // inflation compounding applies) — the contract's own base case.
+    const expectedWithdrawalRate = (latest.effectiveExpenses / latest.totalAtRet) * 100;
+    expect(latest.withdrawalRate).toBeCloseTo(expectedWithdrawalRate, 6);
     app.unmount();
   });
 });

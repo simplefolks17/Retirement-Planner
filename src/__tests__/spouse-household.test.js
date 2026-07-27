@@ -218,6 +218,23 @@ describe("inflationRate wiring into the spouse gap-year deflator (Finding 3, T-F
     // retirement walk, after that point. So the observable here is the walk's
     // own endVal, not totalAtRet.
     const app = mount();
+    // BUG-91: effectiveExpenses is now converted to retirement-year dollars
+    // using a factor of (1+inflationRate)^(retirementAge-currentAge) — so
+    // changing inflationRate at the DEFAULT 35-year gap would ALSO rescale the
+    // entire required spend (a second, much larger effect this test isn't
+    // about), and at inflationRate=7 vs. the default returnRate=5 the walk's
+    // real return (rReal) goes negative, guaranteeing eventual depletion over
+    // the 130-year longevity horizon regardless of spend size — collapsing
+    // the comparison to a degenerate 0-vs-0. Retiring IMMEDIATELY
+    // (retirementAge = currentAge) makes yearsToRetForBasis exactly 0, so
+    // retSpendBasis is invariant to inflationRate — isolating the effect this
+    // test is actually about (the spouse gap-year deflator) — and a large
+    // balance + modest spend + a small inflation delta (4% → 4.5%, both
+    // keeping rReal comfortably positive) keeps the walk solvent at both
+    // rates so the comparison is observable instead of 0 vs. 0.
+    app.fire(() => app.latest().assumptions.retirementAge.set(30));
+    app.fire(() => app.latest().accounts.trad401k.bal.set(5_000_000));
+    app.fire(() => app.latest().spending.annualExpenses.set(20_000));
     app.fire(() => app.latest().ss.isMarried.set(true));
     app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
     app.fire(() => app.latest().profile.spouseIncome.set(80_000));
@@ -225,7 +242,7 @@ describe("inflationRate wiring into the spouse gap-year deflator (Finding 3, T-F
     app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
     const lowInfl = app.latest().retirementWalk.endVal;
 
-    app.fire(() => app.latest().assumptions.inflationRate.set(7));
+    app.fire(() => app.latest().assumptions.inflationRate.set(4.5));
     const highInfl = app.latest().retirementWalk.endVal;
 
     // More inflation deflates every gap-year contribution and income-floor offset
@@ -263,6 +280,13 @@ describe("optimizer floorArgs receive spouse gap-year wages (Finding 2, T-F2.8)"
     app.fire(() => app.latest().ss.isMarried.set(true));
     app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
     app.fire(() => app.latest().conversion.conversionMode.set("custom"));
+    // BUG-91: the default retirement spend (effectiveLiving, inflated to the
+    // retirement-year frame) is so large for this household that the optimizer
+    // suggests $0 regardless of spouse wages (every dollar is needed for
+    // spending, none for conversions) — a degenerate 0-vs-0 comparison. Pin a
+    // modest, clearly-sustainable spend so the optimizer has real room to
+    // suggest a nonzero conversion, which is what this test needs to observe.
+    app.fire(() => app.latest().spending.annualExpenses.set(40_000));
     // Baseline: married, MFJ, but no real spouse wages (spouseIncome still 0) —
     // a real gap window opens by age math alone, but nothing flows through it.
     const baseline = app.latest().conversionView.optimizer.suggestedAmount;
@@ -356,37 +380,50 @@ describe("target-demographic walkthrough — all three findings composed (T-X.2)
 //
 // This block locks EVERY headline number for the SAME T-X.2 household to its
 // exact current value — the same convention golden-master.test.js uses for
-// the no-spouse default. These values are EXPECTED TO MOVE, substantially and
-// deliberately, once BUG-91 (the real/nominal dollar-basis mismatch, plan §2
-// step 3) is fixed — that is what this test is *for*: turning "did the fix
-// move the number in the direction and magnitude the PR description claims"
-// into a mechanical diff instead of a fresh manual recomputation. Re-lock only
-// when a change is deliberate and understood, exactly like golden-master.test.js.
+// the no-spouse default. Re-lock only when a change is deliberate and
+// understood, exactly like golden-master.test.js.
+//
+// BUG-91 (2026-07-27): re-locked. The retirement engine walks in the PRIMARY's
+// RETIREMENT-YEAR real dollars; effectiveExpenses/effectivePension are
+// TODAY's dollars, now converted forward via toRetirementYearDollars before
+// they reach the engine (App.jsx). This household stays comfortably
+// sustainable even at the honest spend (spouse income + healthy balances), so
+// yearsSustained/isSustainable/depletionAge are UNCHANGED — but withdrawalRate
+// roughly doubles (0.78% → 1.61%, the conversion factor at this fixture's
+// 8-years-to-retirement/2.5%-inflation is only ~1.22×, far smaller than the
+// no-spouse default's 35-year/4%-inflation ~3.95× factor), and the RMD/
+// conversion figures shift because the live 401k balance the engine draws
+// down/converts from is now different (a larger draw depletes the primary's
+// Traditional bucket faster, changing both the RMD schedule and the
+// conversion economics — netConversionBenefit actually RISES here, since a
+// larger required spend makes avoiding future RMD tax more valuable for this
+// household). endVal (the far-horizon walk's ending balance) drops sharply —
+// same higher-draw mechanism, compounded over the 130-year longevity horizon.
 describe("spouse-household golden master (T-X.2, exact-locked)", () => {
   const E = {
     totalAtRet:              2_509_497,
-    yearsSustainedInfinite:  true,     // trivially sustainable at this spend
-    withdrawalRate:          0.7846592364924126,
+    yearsSustainedInfinite:  true,     // still comfortably sustainable at the honest spend
+    withdrawalRate:          1.6114494364186185,   // was 0.7846592364924126
     isSustainable:           true,
     depletionAge:            null,
-    endVal:                  485_176_142, // far-horizon (safeRetAge+130) walk end — see BUG-91
+    endVal:                  362_928_420, // far-horizon (safeRetAge+130) walk end — was 485_176_142
     firstRMD:                0,          // primary Trad drained by conversions before age 73 (BUG-96 shape)
-    totalRMDs:               1_330_378,  // household (primary + spouse RMDs)
-    rmdTaxBite:              209_803,
-    totalDrawTax:            9_758,
-    conversionCost:          190_860,
-    rmdTaxSaved:             291_821,
-    grossNetBenefit:         100_961,
-    netConversionBenefit:    100_961,
+    totalRMDs:               1_138_926,  // household (primary + spouse RMDs) — was 1_330_378
+    rmdTaxBite:              167_684,    // was 209_803
+    totalDrawTax:            83_566,     // was 9_758 — much larger spending draw needs more 401k-funded tax
+    conversionCost:          174_196,    // was 190_860
+    rmdTaxSaved:             333_941,    // was 291_821
+    grossNetBenefit:         159_745,    // was 100_961
+    netConversionBenefit:    159_745,    // was 100_961
     totalSpouseSpillover:    0,
     totalSpouseSpilloverTax: 0,
     firstSpouseSpilloverAge: null,
     conversionWindowYrs:     14,
     convPeakTarget:          150_910,
     convSteadyTarget:        110_856,
-    effectiveExpenses:       95_000,
+    effectiveExpenses:       95_000,     // TODAY's dollars — unchanged, this is the raw user-facing figure
     householdSS:             40_000,
-    rangeSuccessPct:         95,
+    rangeSuccessPct:         83,         // was 95 — Monte Carlo success drops at the honest spend
   };
 
   it("locks the retirement-walk headline numbers", () => {

@@ -107,7 +107,7 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                   ) : (
                     <>
                       {" "}· assumes Social Security ({fmt(props.householdSS)}/yr, 85% taxable)
-                      {cv.targets.assumesPension && <> + pension ({fmt(props.effectivePension)}/yr)</>} as
+                      {cv.targets.assumesPension && <> + pension ({fmt(cv.targets.pensionAmount)}/yr)</>} as
                       other ordinary income
                     </>
                   )}
