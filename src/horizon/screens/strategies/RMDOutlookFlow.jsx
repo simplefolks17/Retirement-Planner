@@ -74,8 +74,17 @@ export default function RMDOutlookFlow({ t, props, isMobile = false }) {
             sub="mandatory · taxed as income" tone="warm" />
           <StatTile t={t} label="Lifetime RMD total" value={fmt(rv.totalRMDs)}
             sub="forced out of the 401k" tone="warm" />
-          <StatTile t={t} label="Est. total tax on RMDs" value={fmt(rv.rmdTaxBite)}
-            sub={`at ${rv.effectiveRMDTaxRateLabel} effective`} tone="warm" />
+          <StatTile t={t} label="Est. total tax on RMDs (household)" value={fmt(rv.rmdTaxBite)}
+            sub={`at ${rv.effectiveRMDTaxRateLabel} effective on household RMDs`} tone="warm" />
+        </div>
+      )}
+      {/* BUG-96: the table above is PRIMARY-only by design (a spouse RMD
+          sub-schedule display is a deferred follow-up) — surface the real
+          household total explicitly rather than let the tiles imply it. */}
+      {rv.showHouseholdTotal && (
+        <div style={{ font: `400 11px ${HF}`, color: t.mut }}>
+          Includes your spouse's own RMDs: household lifetime total {fmt(rv.householdTotalRMDs)}
+          {" "}(their schedule isn't itemized in the table below yet).
         </div>
       )}
 
@@ -85,7 +94,10 @@ export default function RMDOutlookFlow({ t, props, isMobile = false }) {
           <SectionLabel t={t}>Year-by-year (first 10)</SectionLabel>
           <div style={{ overflowX: "auto" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, auto)", gap: "4px 18px", minWidth: 420 }}>
-              {["Age", "Divisor", "Est. 401k bal.", "RMD", `Tax (~${rv.effectiveRMDTaxRateLabel})`].map(h => (
+              {/* BUG-96: labeled "household" — the Tax column is the JOINT tax
+                  (primary + spouse RMD stacked), not a rate on the primary-only
+                  RMD column beside it. */}
+              {["Age", "Divisor", "Est. 401k bal.", "RMD", `Tax (household, ~${rv.effectiveRMDTaxRateLabel})`].map(h => (
                 <span key={h} style={{ font: `500 10px ${HF}`, color: t.mut, textTransform: "uppercase",
                   letterSpacing: "0.05em", borderBottom: `1px solid ${t.line}`, paddingBottom: 4 }}>{h}</span>
               ))}

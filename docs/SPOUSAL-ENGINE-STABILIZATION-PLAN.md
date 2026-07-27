@@ -1,5 +1,16 @@
 # Spousal Engine Stabilization Plan
 
+**Status: DONE — retired 2026-07-27.** All six steps below shipped on branch
+`claude/spouse-engine-stabilization-6s97pc`: Step 1 (spouse-household golden master, `T-X.2`),
+Step 2 (unit-contract test), Step 3 (BUG-91), Step 4 (BUG-93+94), Step 5 (BUG-95+96), Step 6
+(BUG-98 fixed; BUG-92 fixed; BUG-84 confirmed deferred — coupled to BUG-85, see its `docs/BUGS.md`
+entry; BUG-85 left as the already-correctly-scoped feature addition it was filed as). Every fix is
+in `docs/BUGS.md` → Resolved with root cause, fix, and tests. This document's job — sequencing the
+work — is done; it is kept only as a historical record of why the order was chosen. Do not add new
+work here; file it in `docs/BUGS.md` instead.
+
+---
+
 **Written:** 2026-07-26, at the close of the BUG-82 → BUG-88/89/90 → BUG-97 arc on branch
 `claude/spousal-planning-design-cjxl0i` (PR #59). **Purpose:** this is the single "start here"
 document for the next session's work on the spouse-retirement engine (#30). It exists because a

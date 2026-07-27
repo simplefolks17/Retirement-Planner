@@ -26,7 +26,7 @@ import { calcOptimizedScenario } from "./model/optimization.js";
 import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "./model/accumulation.js";
-import { fvAnnuity } from "./model/finance-math.js";
+import { fvAnnuity, toRetirementYearDollars } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
 import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
@@ -572,6 +572,48 @@ export default function App() {
     isMarried, spouseClaimingAge, spouseBenefitBasis,
   });
 
+  // ── Retirement-year dollar basis (BUG-91) ─────────────────────────────────
+  // effectiveExpenses / effectivePension / pensionMonthly are TODAY's-dollar
+  // quantities; the retirement engine walks in the PRIMARY's RETIREMENT-YEAR
+  // real dollars (see BUG-90's proof + finance-math.js's toRetirementYearDollars
+  // doc comment). Every quantity that feeds the retirement WALK (not a display
+  // of today's budget) must be inflated forward to that frame — computed ONCE
+  // here and reused at every engine-facing call site below, so this fix can't
+  // silently miss one the way the bug itself went undetected for so long.
+  // SS is deliberately excluded (BUG-91's own scoping: SS is already nominal at
+  // the claim date, matching the engine's convention) — only spend + pension.
+  const yearsToRetForBasis = Math.max(0, safeRetAge - currentAge);
+  // retSpendBasis / retPensionBasis: the "gated" figures (effectivePension is
+  // already 0 unless pension has started BY retirement) — used wherever the
+  // CALLER does its own gating (netPortfolioNeed, the optimizer, RMD floor,
+  // projected bracket, the SS-delay/wr70 comparisons).
+  const retSpendBasis   = toRetirementYearDollars(effectiveExpenses, inflationRate, yearsToRetForBasis);
+  const retPensionBasis = toRetirementYearDollars(effectivePension, inflationRate, yearsToRetForBasis);
+  // retPensionAnnualBasis / retPensionMonthlyBasis: the UNGATED figures (the
+  // engine/blended-walk gate internally by pensionStartAge, since pension can
+  // start AFTER retirement) — used for retPhaseBase.pension, retDrawShared's
+  // engine input, and buildIncomeFloors' pensionMonthly param.
+  const retPensionAnnualBasis = toRetirementYearDollars(
+    pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0, inflationRate, yearsToRetForBasis);
+  const retPensionMonthlyBasis = pensionMonthly > 0
+    ? toRetirementYearDollars(pensionMonthly, inflationRate, yearsToRetForBasis) : 0;
+  // retPensionAtRMDAge: gated to the RMD-age (73) horizon, not retirement age —
+  // for projectRetirementBracket, which does ZERO internal timing gate of its
+  // own (unlike calcRMDIncomeFloor, which gates against rmdStartAge internally
+  // and so takes the fully-ungated retPensionAnnualBasis instead). A pension
+  // that starts after retirement but by/before 73 must show up here, or the
+  // projected bracket undercounts income for delayed-start pensions (Qodo
+  // review finding, PR #62).
+  const retPensionAtRMDAge = pensionStartAge <= RMD_START_AGE ? retPensionAnnualBasis : 0;
+  // retPensionAt70: same gating shape as retPensionAtRMDAge, but for `wr70`
+  // (the withdrawal rate AT AGE 70, feeding the "delay SS to 70" comparison
+  // card) — a pension starting after retirement but by/before 70 must count
+  // there too, or the card computes as if the pension doesn't exist at 70
+  // (interoperability-audit finding, PR #62 review-fix round; pre-existing,
+  // not introduced this PR, but the same double-gate class Qodo caught once
+  // already).
+  const retPensionAt70 = pensionStartAge <= SS_MAX_CLAIM_AGE ? retPensionAnnualBasis : 0;
+
   // #30 / BUG-82 rule-5 wiring: the spouse's net gap-year income in the FIRST
   // WALKED YEAR (safeRetAge + 1 — the engine's first row). Reading straight off
   // spouseSeed's own map means this can never diverge from what the retirement-
@@ -603,7 +645,7 @@ export default function App() {
     || Object.values(spouseSeed?.spouseIncomeFloorByAge ?? {}).some(v => v > 0)
   );
 
-  const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ssAtRet, effectivePension, spouseIncomeAtRet);
+  const netPortfolioNeed = calcNetPortfolioNeed(retSpendBasis, ssAtRet, retPensionBasis, spouseIncomeAtRet);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
   // yearsSustained / isSustainable are defined below (after the per-year RMD &
   // conversion tax schedules), because the longevity walk now charges those
@@ -647,18 +689,18 @@ export default function App() {
   //   convMAGIFloors → householdSS  (100% gross SS, ACA/IRMAA MAGI)
   const convFloors = useMemo(() => buildIncomeFloors({
     conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: ssTaxableRet,
-    pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+    pensionMonthly: retPensionMonthlyBasis, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
     spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
-  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, ssTaxableRet, pensionMonthly, pensionStartAge,
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, ssTaxableRet, retPensionMonthlyBasis, pensionStartAge,
       spouseSeed]);
   const convMAGIFloors = useMemo(() => buildIncomeFloors({
     conversionWindowYrs, startAge: resolvedStartAge, includeSS, ssClaimingAge, ssAmount: householdSS,
-    pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+    pensionMonthly: retPensionMonthlyBasis, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
     spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
-  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, householdSS, pensionMonthly, pensionStartAge,
+  }), [conversionWindowYrs, resolvedStartAge, includeSS, ssClaimingAge, householdSS, retPensionMonthlyBasis, pensionStartAge,
       spouseSeed]);
   // Steady-state floor (all sources active) — used for display and bracket fill.
-  const retIncomeFloor = ssTaxableRet + (pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0);
+  const retIncomeFloor = ssTaxableRet + retPensionAnnualBasis;
 
   // Bracket-fill targets. Memoized for the stable bracketFillConversions array.
   const { bracketFillConversions, bracketFillConversion, convPeakTarget, convSteadyTarget, targetsVary } =
@@ -669,9 +711,14 @@ export default function App() {
 
   // The income floor RMDs/withdrawals stack on (SS taxable + pension, gated to RMD
   // start). Still used by the withdrawal-order strategy card (calcWithdrawalOrderTax).
+  // effectivePension here must be the UNGATED retPensionAnnualBasis — this
+  // function already gates internally on pensionStartAge <= rmdStartAge (73).
+  // Passing the retirement-gated retPensionBasis double-gated a pension that
+  // starts after retirement but by/before 73, silently zeroing it (Qodo
+  // review finding, PR #62).
   const rmdIncomeFloor = calcRMDIncomeFloor({
     includeSS, ssClaimingAge, ssTaxableRet,
-    pensionMonthly, pensionStartAge, effectivePension, rmdStartAge: RMD_START_AGE,
+    pensionMonthly, pensionStartAge, effectivePension: retPensionAnnualBasis, rmdStartAge: RMD_START_AGE,
   });
 
   // The engine's conversion schedule ({ [age]: amount }). Empty when there's no
@@ -706,25 +753,35 @@ export default function App() {
     tradGross: tradGrossAtRet, tradGrossSpouse: sTrad, spouseRmdStartAge: RMD_START_AGE,
     roth: hhRoth, taxable: hhTaxable, hsa: hhHsa,
     startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
-    rReal, effectiveExpenses,
+    rReal, effectiveExpenses: retSpendBasis,
     ssGross: householdSS, ssTaxable: ssTaxableRet,
     ssClaimAge: includeSS ? ssClaimingAge : Infinity,
-    pension: pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0,
+    pension: retPensionAnnualBasis,
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     filingStatus, retStateRate, rmdStartAge: RMD_START_AGE,
     useTable2, spouseCurrentAge, currentAge,
     moneyEvents: retirementMoneyEvents,
     // Spouse's own retirement timing (#30 / BUG-82) — the gap-year gate + maps built
     // by buildSpouseRetirementSeed above. null/{} when no spouse (inert, engine default).
-    spouseRetirementAge:      hasSpouse ? effectiveSpouseRetAge : null,
+    // BUG-93: gated on hasActiveSpouseGap (real income/contributions actually
+    // flowing through the gap window), NOT merely hasSpouse + a finite age —
+    // hasSpouse alone was true for a pure rollover balance with no ongoing
+    // spouse income, which walled that money out of the drawable pool
+    // (Option A) and could force the penalized escape hatch for cash that was
+    // never actually locked up. A household with a real gap-year paycheck
+    // still gets Option A exactly as before (hasActiveSpouseGap true).
+    // Reusing the SAME flag the Range-lens caveat already keys on (below)
+    // also closes BUG-94: the engine's hold-out and the caveat's firing
+    // condition can no longer disagree, since they're now one condition.
+    spouseRetirementAge:      hasActiveSpouseGap ? effectiveSpouseRetAge : null,
     spouseContribByAge:       spouseSeed?.spouseContribByAge ?? {},
     spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
     spouseIncomeFloorByAge:   spouseSeed?.spouseIncomeFloorByAge ?? {},
   }), [tradGrossAtRet, sTrad, safeRetAge, safeLifeExp, rReal,
-       effectiveExpenses, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
-       pensionMonthly, pensionStartAge, filingStatus, retStateRate,
+       retSpendBasis, householdSS, ssTaxableRet, includeSS, ssClaimingAge,
+       retPensionAnnualBasis, pensionMonthly, pensionStartAge, filingStatus, retStateRate,
        useTable2, spouseCurrentAge, currentAge, retirementMoneyEvents,
-       hhRoth, hhTaxable, hhHsa, spouseSeed, hasSpouse, effectiveSpouseRetAge]);
+       hhRoth, hhTaxable, hhHsa, spouseSeed, hasActiveSpouseGap, effectiveSpouseRetAge]);
 
   const retPhase = useMemo(
     () => buildRetirementPhase({ ...retPhaseBase, conversionByAge }),
@@ -747,7 +804,15 @@ export default function App() {
   const rmdData         = retPhase.rmdSchedule;
   const rmdDataWithTax  = retPhase.rmdSchedule;
   const firstRMD        = rmdData[0];
-  const totalRMDs       = retPhase.totalRMDs;
+  const totalRMDs       = retPhase.totalRMDs;         // HOUSEHOLD (primary + spouse RMDs) — feeds effectiveRMDTaxRate/spendableAtRet, which are genuinely household concepts
+  // BUG-96: the DISPLAYED table (rmdData) is PRIMARY-only by design (the spouse
+  // RMD sub-schedule display is a deferred follow-up — see retirement-phase.js).
+  // A "Lifetime RMD Total" tile reading the HOUSEHOLD totalRMDs above the
+  // primary-only table self-contradicted (up to 71% apart in the review's own
+  // measurement) and could show a nonzero total over an EMPTY table (primary's
+  // Trad bucket drained by conversions while the spouse still owes RMDs).
+  // primaryTotalRMDs matches the table's own scope exactly — same rows, same sum.
+  const primaryTotalRMDs = rmdData.reduce((s, r) => s + r.rmd, 0);
   const rmdTaxBite      = retPhase.rmdTaxBite;
   const effectiveRMDTaxRate = totalRMDs > 0
     ? rmdTaxBite / totalRMDs
@@ -813,16 +878,34 @@ export default function App() {
 
   // Shared inputs for the secondary blended walks (what-if + optimized scenario).
   // Memoized (V9): whatIfBundle + the optimized scenario read this.
+  // ⚠ MIXED-BASIS BUNDLE — do not "tidy" this without reading the rest of this
+  // comment. `effectiveExpenses` stays TODAY's-dollars here (unlike
+  // retPhaseBase's own copy) — what-if.js's LEVERS.monthlyExpenses.baseValue
+  // reads it directly as the "current monthly spend" a slider compares
+  // against, and a what-if scenario re-derives its OWN retirement-year
+  // conversion at its own (possibly different) retirement age (BUG-91 what-if
+  // fix — see calcWhatIfDelta/calcWhatIfScenario, both of which call the
+  // shared `scenarioExpensesInRetYearDollars` helper on THIS raw value).
+  // inflationRate travels along so that re-derivation has what it needs.
+  // Setting `effectiveExpenses: retSpendBasis` here would silently
+  // DOUBLE-CONVERT inside those callers — they assume today's-dollars in,
+  // retirement-year-dollars out. `pensionAmount`, unlike `effectiveExpenses`,
+  // has no such UI-comparison consumer, so it carries the ALREADY-converted
+  // (at safeRetAge) value directly — an approximation for a scenario that also
+  // shifts the retirement age, same class as the conversion schedule's
+  // documented "stays at absolute ages" approximation just below. The two
+  // fields are deliberately in DIFFERENT bases; that's the design, not a bug
+  // (forward-compat review finding, PR #62 review-fix round).
   const retDrawShared = useMemo(() => ({
-    rReal, effectiveExpenses,
+    rReal, effectiveExpenses, inflationRate,
     ssAmount: householdSS,
     ssClaimAge: includeSS ? ssClaimingAge : Infinity,
-    pensionAmount:   pensionMonthly > 0 ? pensionMonthly * ASSUMPTIONS.MONTHS_PER_YEAR : 0,
+    pensionAmount: retPensionAnnualBasis,
     pensionStartAge: pensionMonthly > 0 ? pensionStartAge : Infinity,
     rmdTaxByAge, conversionTaxByAge,
     moneyEvents: retirementMoneyEvents,
-  }), [rReal, effectiveExpenses, householdSS, includeSS, ssClaimingAge,
-       pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
+  }), [rReal, effectiveExpenses, inflationRate, householdSS, includeSS, ssClaimingAge,
+       retPensionAnnualBasis, pensionMonthly, pensionStartAge, rmdTaxByAge, conversionTaxByAge,
        retirementMoneyEvents]);
 
   // ── Monte Carlo "Range" lens (WI-5.3 / #114) ──────────────────────────────────
@@ -842,7 +925,7 @@ export default function App() {
       startAge: safeRetAge,
       endAge: safeLifeExp,
       returnRate, inflationRate,
-      effectiveExpenses: retDrawShared.effectiveExpenses,
+      effectiveExpenses: retSpendBasis,
       ssAmount: retDrawShared.ssAmount,
       ssClaimAge: retDrawShared.ssClaimAge,
       pensionAmount: retDrawShared.pensionAmount,
@@ -864,13 +947,20 @@ export default function App() {
       // #30 / BUG-82 interim (Session A) — see hasActiveSpouseGap above. null
       // (the normal case) renders nothing extra; the MC engine port (Session B)
       // removes this caveat by giving the walk a real spouse bucket instead.
+      // BUG-94 wording fix: the blended walk's error isn't one-directional —
+      // it has no concept of the spouse's gap-year income/contributions
+      // (understating the outlook) but ALSO pools the engine's held-out
+      // spouse bucket for free, with no hold-out and no escape-hatch penalty
+      // (overstating it) — the net direction depends on which effect
+      // dominates for a given household, so the copy names both rather than
+      // asserting "understate."
       spouseGapCaveat: hasActiveSpouseGap
-        ? "Doesn't yet include your spouse's working years — the shaded range may understate your outlook until they retire."
+        ? "Doesn't yet fully model your spouse's working years — the shaded range may over- or understate your outlook until they retire."
         : null,
       medianDepletionAge: mc.depletionAgePercentiles?.p50 ?? null,
       p10DepletionAge: mc.depletionAgePercentiles?.p10 ?? null,
     };
-  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retDrawShared, hasActiveSpouseGap]);
+  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retSpendBasis, retDrawShared, hasActiveSpouseGap]);
 
   // Scalar successPct extracted for V9 scalar-dep hygiene (fed to planView's
   // confidence driver + the low-odds signal; the whole rangeView object stays out
@@ -946,7 +1036,7 @@ export default function App() {
       if (!f) {
         const floorArgs = {
           conversionWindowYrs: windowLen, startAge, includeSS, ssClaimingAge,
-          pensionMonthly, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
+          pensionMonthly: retPensionMonthlyBasis, pensionStartAge, monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
           // Same map convFloors/convMAGIFloors read (Finding 2 — the optimizer
           // must never search a spouse-blind model the display doesn't show).
           spouseTaxableIncomeByAge: spouseSeed?.spouseTaxableIncomeByAge ?? {},
@@ -991,7 +1081,7 @@ export default function App() {
   }, [conversionMode, conversionWindowYrs, hasRetRow, retPhaseBase, retStateRate,
       retRoth, retTaxable, returnRate, retIncomeFloor, filingStatus, conversionTaxSource,
       tradGrossAtRet, convWindowFloor, resolvedEndAge,
-      includeSS, ssClaimingAge, ssTaxableRet, householdSS, pensionMonthly, pensionStartAge,
+      includeSS, ssClaimingAge, ssTaxableRet, householdSS, retPensionMonthlyBasis, pensionStartAge,
       hasMedicare, personOnMedicare,
       hasMarketplaceInsurance, marketplaceMonthlyPremium, householdSize, spouseSeed]);
 
@@ -1111,9 +1201,28 @@ export default function App() {
   const contrib401kRoom    = Math.max(0, TRAD_401K_LIMIT_2026 - contrib401k);
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);
 
-  const avgAnnualRMD      = rmdData.length > 0 ? Math.round(totalRMDs / rmdData.length) : 0;
+  // BUG-96: numerator matches rmdData's own scope (primary-only) — was dividing
+  // the household total by the primary-only row count, overstating the average.
+  // This is THE TILE's own stat ("Avg. Annual RMD") and must stay primary-only
+  // to match the table beside it.
+  const avgAnnualRMD      = rmdData.length > 0 ? Math.round(primaryTotalRMDs / rmdData.length) : 0;
+  // projectRetirementBracket projects HOUSEHOLD taxable income (it's stacked
+  // against householdSS below) — it needs its own household-scoped RMD average,
+  // not avgAnnualRMD (BUG-96 correctly narrowed that to primary-only for the
+  // tile's own purpose, but this consumer was accidentally narrowed along with
+  // it, understating the projected bracket for any household where the spouse
+  // also has RMDs — correctness-review finding, PR #62 review-fix round).
+  // CodeRabbit review-fix: dividing by rmdData.length (primary-only row count)
+  // was WRONG here too — a spouse-only-RMD household has rmdData=[] (primary
+  // never hits an RMD), making this 0 even though totalRMDs > 0, and any
+  // household where the spouse's RMD years don't exactly match the primary's
+  // would average over the wrong year count. The correct household RMD-year
+  // count is the number of retPhase.rows where EITHER the primary or the
+  // spouse has a nonzero RMD that year (the union, not the primary's own count).
+  const householdRmdYears = retPhase.rows.filter(r => r.rmd > 0 || (r.rmdSpouse ?? 0) > 0).length;
+  const avgAnnualRMDHousehold = householdRmdYears > 0 ? Math.round(totalRMDs / householdRmdYears) : 0;
   const { bracketPct: projRetBracketPct } = projectRetirementBracket({
-    avgAnnualRMD, householdSS, effectivePension, filingStatus,
+    avgAnnualRMD: avgAnnualRMDHousehold, householdSS, effectivePension: retPensionAtRMDAge, filingStatus,
   });
 
   // SS-delay gain (BUG-26): compare portfolio longevity under the user's current
@@ -1126,12 +1235,12 @@ export default function App() {
   // (3–6 yrs for users who retire well before 70).
   const ssDelayGainYrs = calcSSDelayGain({
     includeSS, ssClaimingAge, ssMaxClaimAge: SS_MAX_CLAIM_AGE, yearsSustained,
-    totalAtRet, safeRetAge, effectiveExpenses, rReal,
-    householdSS, household70SS, pensionMonthly, pensionStartAge,
+    totalAtRet, safeRetAge, effectiveExpenses: retSpendBasis, rReal,
+    householdSS, household70SS, pensionMonthly: retPensionMonthlyBasis, pensionStartAge,
     monthsPerYear: ASSUMPTIONS.MONTHS_PER_YEAR,
   });
   const wr70 = totalAtRet > 0
-    ? Math.max(0, effectiveExpenses - household70SS - effectivePension - spouseIncomeAtRet) / totalAtRet * 100
+    ? Math.max(0, retSpendBasis - household70SS - retPensionAt70 - spouseIncomeAtRet) / totalAtRet * 100
     : 0;
 
   const flowData = useMemo(() => calcFlowDown({
@@ -1161,7 +1270,8 @@ export default function App() {
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
     withdrawalTaxRate: Math.round(effectiveRMDTaxRate * 100),
     contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
-    householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
+    householdSS, effectiveExpenses: retSpendBasis, effectivePension: retPensionBasis,
+    pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
     // #30 / BUG-82: same gap-year offset the headline netPortfolioNeed uses, so
@@ -1170,7 +1280,7 @@ export default function App() {
   }), [
     totalAtRet, optimizedAllocation, returnRate, incomeGrowth, safeRetAge, currentAge,
     effectiveRMDTaxRate, contrib401k, includeSS, ssClaimingAge, ss70Annual, spouseSsBenefit,
-    householdSS, effectiveExpenses, effectivePension, pensionStartAge, rReal, safeLifeExp,
+    householdSS, retSpendBasis, retPensionBasis, pensionStartAge, rReal, safeLifeExp,
     yr1TaxSavings, netConversionBenefit, isSustainable, yearsSustained,
     conversionSim, retTaxable, rmdTaxByAge, conversionTaxByAge,
     spouseIncomeAtRet,
@@ -1285,8 +1395,9 @@ export default function App() {
   }, [setMoneyEvents]);
 
   // Current-age coupled update: mirrors the Classic onChange (Tax Rate Phases)
-  // that pushes retirement age, spouse age, and contribEnd ages forward so they
-  // never fall before the new current age.
+  // that pushes retirement age and contribEnd ages forward so they never fall
+  // before the new current age. Does NOT touch spouse age (BUG-95 removed that
+  // coupling — a same-age-or-older spouse is a real, representable household).
   const setCurrentAgeCoupled = useCallback(v => {
     setCurrentAge(v);
     // Keep the horizon ahead of the (raised) current/retirement age so lifeExpect
@@ -1298,13 +1409,15 @@ export default function App() {
     const minSsClaimAge = Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, v));
     if (ssClaimingAge < minSsClaimAge) setSsClaimingAge(minSsClaimAge);
     if (retirementAge < v) setRetirementAge(v);
-    if (spouseCurrentAge >= v) setSpouseCurrentAge(Math.max(18, v - 1));
+    // BUG-95: no longer forces the spouse younger than the primary — a
+    // same-age or older spouse is a real, representable household (the old
+    // coupling made that state literally impossible to enter).
     if (contribEnd401k    <= v) setContribEnd401k(v + 1);
     if (contribEndRoth    <= v) setContribEndRoth(v + 1);
     if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
     if (contribEndHSA     <= v) setContribEndHSA(v + 1);
-  }, [setCurrentAge, setRetirementAge, setLifeExpect, setSpouseCurrentAge, setSsClaimingAge,
-      retirementAge, lifeExpect, spouseCurrentAge, ssClaimingAge,
+  }, [setCurrentAge, setRetirementAge, setLifeExpect, setSsClaimingAge,
+      retirementAge, lifeExpect, ssClaimingAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
@@ -1408,9 +1521,14 @@ export default function App() {
     currentIncome: householdIncome, fedTax, fica, stateTax, takeHome,
     currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
     totalAtRet, totalContrib: flowTotalContrib,
+    // BUG-91: the SS/pension/portfolio-draw breakdown needs the retirement-year
+    // basis to reconcile with householdSS's own frame; incomeReplacementPct
+    // stays on the raw effectiveExpenses/effectivePension above (today's-dollar
+    // comparison against today's take-home).
+    effectiveExpensesRetYear: retSpendBasis, effectivePensionRetYear: retPensionBasis,
   }), [householdIncome, fedTax, fica, stateTax, takeHome,
        currentContribTotal, householdSS, effectiveExpenses, safeDeduc, effectivePension,
-       totalAtRet, flowTotalContrib]);
+       totalAtRet, flowTotalContrib, retSpendBasis, retPensionBasis]);
 
   // Lifetime-chart milestones (Today / First $1M / Retire / Peak / RMDs start /
   // For life) + peakTotal for proportional bars. RMD gate uses RMD_START_AGE
@@ -1471,11 +1589,17 @@ export default function App() {
   // object on each call, so moving it outside would make it an unstable dep — V9).
   const currentSaved = bal401k + balRoth + balTaxable + balHSA;
   const planHighlights = useMemo(() => {
+    // retIncomeFlow (BUG-91) is a RETIREMENT-YEAR-dollar breakdown — ss/pension/
+    // portfolioDraw must sum to the SAME frame `netPortfolioNeed` uses, so it's
+    // built from retSpendBasis/retPensionBasis (ssAtRet/spouseIncomeAtRet are
+    // already in that frame). incomeReplacementPct is a DIFFERENT comparison
+    // (today's spend vs. today's take-home) and deliberately stays on the raw
+    // effectiveExpenses.
     const flow = calcRetIncomeFlow({
-      effectiveExpenses, ss: ssAtRet, pension: effectivePension,
+      effectiveExpenses: retSpendBasis, ss: ssAtRet, pension: retPensionBasis,
       spouseIncome: spouseIncomeAtRet,
     });
-    const base = Math.max(1, effectiveExpenses);
+    const base = Math.max(1, retSpendBasis);
     return {
       wealthMultiplier: currentSaved > 0
         ? Math.round((totalAtRet / currentSaved) * 10) / 10
@@ -1501,8 +1625,8 @@ export default function App() {
       spouseIncomeScopeNote,
       spouseSpilloverNote,
     };
-  }, [currentSaved, totalAtRet, takeHome, effectiveExpenses,
-      ssAtRet, effectivePension, retPhase, safeRetAge, safeLifeExp, currentAge,
+  }, [currentSaved, totalAtRet, takeHome, effectiveExpenses, retSpendBasis,
+      ssAtRet, retPensionBasis, retPhase, safeRetAge, safeLifeExp, currentAge,
       spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote]);
 
   // Plan screen "Try a change" slider bounds — age/financial math extracted from the screen (rule 10).
@@ -1679,7 +1803,9 @@ export default function App() {
       min: SS_MIN_CLAIM_AGE, max: SS_MAX_CLAIM_AGE, step: 1 },
     spouseBenefitBasis:{ value: spouseBenefitBasis, set: guardWrite(setSpouseBenefitBasis, readOnly),
       options: [{ value: "own", label: "Own record" }, { value: "spousal", label: "Spousal (50%)" }] },
-    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAgeCoupled, readOnly), min: 18, max: currentAge - 1, step: 1 },
+    // BUG-95: max is no longer currentAge - 1 — a same-age or older spouse is
+    // a real household, not an invalid state (matches currentAge's own 80 ceiling).
+    spouseCurrentAge: { value: spouseCurrentAge, set: guardWrite(setSpouseCurrentAgeCoupled, readOnly), min: 18, max: 80, step: 1 },
     spouseIsSoleBenef:{ value: spouseIsSoleBenef, set: guardWrite(setSpouseIsSoleBenef, readOnly) },
   }), [includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge,
        spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef, currentAge, ssAnnualBenefit,
@@ -2036,7 +2162,12 @@ export default function App() {
     // withdrawalView, surplus → budget, ss → ssView, rmd → rmdView, mega → megaView
     // (siblings keyed by the same id). One number, one source (principle 11).
     conversion: { applicable: conversionWindowYrs > 0 },
-    rmd:        { applicable: !!firstRMD },
+    // BUG-96 finding 4: was !!firstRMD (primary-only) — a household could face
+    // real RMDs entirely from the SPOUSE's bucket (primary's Trad drained by
+    // conversions) while firstRMD is undefined, hiding the RMD card behind
+    // "Browse all strategies" for a household that needs it most. totalRMDs is
+    // the household figure, so this now keys on whether ANY RMDs are owed.
+    rmd:        { applicable: totalRMDs > 0 },
     ss:         { applicable: includeSS },
     worklonger: { applicable: safeRetAge > currentAge },
     withdrawal: { applicable: true },
@@ -2044,7 +2175,7 @@ export default function App() {
     // surplusPositive (>= 0 = "not a deficit"): a $0 surplus = nothing to deploy.
     surplus:    { applicable: availableSurplus > 0 },
     mega:       { applicable: megaCapacity > 0 },
-  }), [conversionWindowYrs, firstRMD, includeSS, availableSurplus, megaCapacity, safeRetAge, currentAge]);
+  }), [conversionWindowYrs, totalRMDs, includeSS, availableSurplus, megaCapacity, safeRetAge, currentAge]);
 
   // WI-3.4 (#101): Social Security timing flow bundle. Sibling of strategiesView
   // keyed by the "ss" strategy id (forward contract in docs/ARCHITECTURE.md). All
@@ -2066,7 +2197,7 @@ export default function App() {
     breakEven:    ssBreakEven,           // null when no crossover within the horizon → "—"
     breakEvenContext: ssClaimingAge < SS_FRA ? "when FRA catches up"
                     : ssClaimingAge > SS_FRA ? "when delay pays off" : "claiming at FRA",
-    ssCoveragePct: effectiveExpenses > 0 ? Math.round((effectiveSS / effectiveExpenses) * 100) : null,
+    ssCoveragePct: retSpendBasis > 0 ? Math.round((effectiveSS / retSpendBasis) * 100) : null,
     // Delay-to-70 impact (gated exactly as Classic: only when delaying still helps)
     delayApplicable:  ss70DrawReduction > 0 && includeSS && ssClaimingAge < SS_MAX_CLAIM_AGE,
     delayGapYrs:  Math.max(0, SS_MAX_CLAIM_AGE - ssClaimingAge),   // years until age 70 (model-side, not JSX age math)
@@ -2077,13 +2208,19 @@ export default function App() {
     spouseSsBenefit,
     spouseAlt, spouseAltHigher,
     householdSSMonthly: Math.round(householdSS / ASSUMPTIONS.MONTHS_PER_YEAR),  // monthly split in the model (rule 10), not householdSS/12 in JSX
-    householdCoveragePct: effectiveExpenses > 0 ? Math.round((householdSS / effectiveExpenses) * 100) : null,
+    householdCoveragePct: retSpendBasis > 0 ? Math.round((householdSS / retSpendBasis) * 100) : null,
     // Pension applicability (a DERIVED value → the flag travels with the data, not a
-    // `> 0` comparison in JSX); effectivePension itself is read directly for display.
+    // `> 0` comparison in JSX); the applicability check stays on the raw (retirement-
+    // gated) effectivePension, but the DISPLAYED amount must be the retirement-year
+    // basis (retPensionBasis) — this "counts as $X/yr of retirement income" line
+    // describes the walk's own contribution, the same quantity the conversion
+    // planner's caption already shows via the correctly-converted basis (BUG-91
+    // review-fix round, PR #62 — this site had been missed).
     showEffectivePension: effectivePension > 0,
+    effectivePensionAnnual: retPensionBasis,
   }), [ssOverride, ssMonthlyBenefit, effectiveSS, ssAnnualBenefit, ssAIME, ssClaimingAge,
-       ssBreakEven, effectiveExpenses, ss70DrawReduction, includeSS, wr70, ssDelayGainYrs,
-       spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS, effectivePension]);
+       ssBreakEven, retSpendBasis, ss70DrawReduction, includeSS, wr70, ssDelayGainYrs,
+       spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS, effectivePension, retPensionBasis]);
 
   // WI-3.5 (#102): RMD outlook flow bundle. Sibling keyed by "rmd". firstRMD*
   // pre-extracted behind the same guard App uses (firstRMD may be undefined →
@@ -2092,7 +2229,14 @@ export default function App() {
   const rmdView = useMemo(() => ({
     firstRMDAmount: firstRMD ? firstRMD.rmd : null,
     firstRMDAge:    firstRMD ? firstRMD.age : null,
-    totalRMDs,
+    // BUG-96: totalRMDs (the tile) now matches the table's own scope (primary-
+    // only) — was the HOUSEHOLD total sitting over a primary-only table, up to
+    // 71% apart, and could show a nonzero total over an EMPTY table. The real
+    // household total is exposed separately as householdTotalRMDs, shown only
+    // when it actually differs (a spouse RMD schedule exists).
+    totalRMDs: primaryTotalRMDs,
+    householdTotalRMDs: totalRMDs,
+    showHouseholdTotal: totalRMDs > primaryTotalRMDs,
     rmdTaxBite,
     effectiveRMDTaxRate,
     // Preformatted so the screen never multiplies a model rate by 100 (rule 10).
@@ -2103,7 +2247,7 @@ export default function App() {
     activeTableLabel,                                // "Table II (Joint Life)" / "Table III (Uniform Lifetime)"
     qualifiesTable2: useTable2,
     spouseAgeGap:    currentAge - spouseCurrentAge, // meaningful only when isMarried (the flow gates it)
-  }), [firstRMD, totalRMDs, rmdTaxBite, effectiveRMDTaxRate, rmdData, safeRetAge,
+  }), [firstRMD, totalRMDs, primaryTotalRMDs, rmdTaxBite, effectiveRMDTaxRate, rmdData, safeRetAge,
        activeTableLabel, useTable2, currentAge, spouseCurrentAge]);
 
   // WI-3.6 (#103): Roth-conversion planner flow bundle. Sibling of strategiesView
@@ -2154,6 +2298,11 @@ export default function App() {
         ? `${fmt(convPeakTarget)} → ${fmt(convSteadyTarget)}`
         : fmt(bracketFillConversion),
       assumesPension: effectivePension > 0,
+      // Retirement-year-dollar pension figure (BUG-91) — the conversion floor
+      // itself (retIncomeFloor) stacks the converted amount, so the caption
+      // showing "assumes ... + pension ($X/yr)" must show the same figure, not
+      // the raw today's-dollar effectivePension.
+      pensionAmount: retPensionBasis,
     },
     outcome: {
       // Mode-gated (mirrors Classic's stat-row value, App.jsx ~3147): what the
@@ -2247,7 +2396,7 @@ export default function App() {
   }), [hasConvWindow, resolvedStartAge, resolvedEndAge, conversionWindowYrs,
        setConversionStartAge, setConversionEndAge, convWindowFloor, convWindowCeil,
        conversionStartAge, conversionEndAge,
-       convSteadyTarget, convPeakTarget, targetsVary, bracketFillConversion, effectivePension,
+       convSteadyTarget, convPeakTarget, targetsVary, bracketFillConversion, effectivePension, retPensionBasis,
        convTargetVaries, annualConversion, netConversionBenefit, conversionSim,
        acaCliffYears, householdSize, acaAnnualLoss, hasMarketplaceInsurance, safeRetAge,
        totalIRMAACost, healthcareExposure, personOnMedicare, hasMedicare,
@@ -3356,7 +3505,7 @@ export default function App() {
                 padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <span style={{ fontSize: 10, color: C.muted }}>Annual expenses</span>
-                  <span style={{ fontSize: 11, color: C.text, ...mono }}>{fmt(effectiveExpenses)}</span>
+                  <span style={{ fontSize: 11, color: C.text, ...mono }}>{fmt(retSpendBasis)}</span>
                 </div>
                 {effectiveSS > 0 && ssClaimingAge <= safeRetAge && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -3389,7 +3538,7 @@ export default function App() {
                 {effectivePension > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                     <span style={{ fontSize: 10, color: C.blue }}>− Pension income</span>
-                    <span style={{ fontSize: 11, color: C.blue, ...mono }}>− {fmt(effectivePension)}</span>
+                    <span style={{ fontSize: 11, color: C.blue, ...mono }}>− {fmt(retPensionBasis)}</span>
                   </div>
                 )}
                 {spouseIncomeAtRet > 0 && (
@@ -3508,7 +3657,7 @@ export default function App() {
         <h3 style={{ ...sectionTitle, marginBottom: 4 }}>Total Portfolio — Full Lifecycle</h3>
         <p style={{ margin: "0 0 16px", fontSize: 11, color: C.muted }}>
           Combined gross portfolio from today to life expectancy (age {safeLifeExp}).
-          Grows through retirement age {safeRetAge}, then draws down at {fmt(effectiveExpenses)}/yr.
+          Grows through retirement age {safeRetAge}, then draws down at {fmt(retSpendBasis)}/yr.
         </p>
         <ResponsiveContainer width="100%" height={320}>
           <LineChart data={totalChartData} margin={{ top: 10, right: 16, left: 16, bottom: 8 }}>
@@ -3627,7 +3776,7 @@ export default function App() {
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Annual Benefit</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>{fmt(effectiveSS > 0 ? effectiveSS : ssAnnualBenefit)}</p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>
-                    {!includeSS ? "excluded from calcs" : effectiveExpenses > 0 ? `${((effectiveSS / effectiveExpenses) * 100).toFixed(0)}% of expenses` : "—"}
+                    {!includeSS ? "excluded from calcs" : retSpendBasis > 0 ? `${((effectiveSS / retSpendBasis) * 100).toFixed(0)}% of expenses` : "—"}
                   </p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
@@ -3726,7 +3875,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>SS Coverage</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>
-                    {effectiveExpenses > 0 ? `${Math.round((householdSS / effectiveExpenses) * 100)}%` : "—"}
+                    {retSpendBasis > 0 ? `${Math.round((householdSS / retSpendBasis) * 100)}%` : "—"}
                   </p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>of annual expenses</p>
                 </div>
@@ -3855,7 +4004,8 @@ export default function App() {
                 <div style={{ opacity: isMarried && spouseIsSoleBenef ? 1 : 0.35, pointerEvents: isMarried && spouseIsSoleBenef ? "auto" : "none" }}>
                   <p style={{ margin: "0 0 5px", fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Spouse's current age</p>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <input type="range" min={18} max={currentAge - 1} step={1} value={spouseCurrentAge}
+                    <input type="range" min={18} max={80} step={1} value={spouseCurrentAge}
+                      aria-label="Spouse's current age"
                       onChange={e => setSpouseCurrentAgeCoupled(Number(e.target.value))}
                       style={{ flex: 1, accentColor: C.blue }} />
                     <span style={{ fontSize: 13, color: C.blue, ...mono, minWidth: 24 }}>{spouseCurrentAge}</span>
@@ -3920,16 +4070,23 @@ export default function App() {
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>mandatory withdrawal · taxed as income</p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
+                  {/* BUG-96: matches the table below exactly (primary-only) — was the
+                      HOUSEHOLD total sitting over a primary-only table, up to 71% apart. */}
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Lifetime RMD Total</p>
-                  <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(totalRMDs)}</p>
+                  <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(primaryTotalRMDs)}</p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>forced out of 401k · age 73 → {safeLifeExp}</p>
                 </div>
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px" }}>
-                  <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Est. Total Tax on RMDs</p>
+                  <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Est. Total Tax on RMDs (household)</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.orange, ...mono }}>{fmt(rmdTaxBite)}</p>
-                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {(effectiveRMDTaxRate*100).toFixed(1)}% effective rate (bracket-accurate)</p>
+                  <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at {(effectiveRMDTaxRate*100).toFixed(1)}% effective rate on household RMDs (bracket-accurate)</p>
                 </div>
               </div>
+            )}
+            {totalRMDs > primaryTotalRMDs && (
+              <p style={{ margin: "-8px 0 16px", fontSize: 10, color: C.muted }}>
+                Includes your spouse's own RMDs: household lifetime total {fmt(totalRMDs)} (their schedule isn't itemized in the table below yet).
+              </p>
             )}
             <p style={{ margin: "0 0 8px", fontSize: 11, color: C.muted, lineHeight: 1.6 }}>
               The table below shows your projected 401k balance each year, the RMD the IRS will require, and the estimated tax owed on it.
@@ -3939,7 +4096,10 @@ export default function App() {
             <div style={{ overflowX: "auto" }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, auto)", gap: "4px 20px",
                 fontSize: 11, minWidth: 440 }}>
-                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (~${(effectiveRMDTaxRate*100).toFixed(1)}% eff.)`].map(h => (
+                {/* BUG-96: labeled "household" — this column is the JOINT tax (primary +
+                    spouse RMD stacked in one bracket-accurate calc), not a rate on the
+                    primary-only RMD Amount column beside it. */}
+                {["Age", "IRS Divisor", "Est. 401k Balance", "RMD Amount", `Tax (household, ~${(effectiveRMDTaxRate*100).toFixed(1)}% eff.)`].map(h => (
                   <span key={h} style={{ fontSize: 10, color: C.muted, textTransform: "uppercase",
                     letterSpacing: "0.06em", borderBottom: `1px solid ${C.border}`, paddingBottom: 4 }}>{h}</span>
                 ))}
@@ -4054,7 +4214,7 @@ export default function App() {
                         </span>
                         {convTargetVaries
                           ? <span style={{ color: C.muted }}> · larger in early years before SS/pension start, tapering once they begin</span>
-                          : <span style={{ color: C.muted }}> · assumes SS ({fmt(householdSS)}/yr, 85% taxable){effectivePension > 0 ? ` + pension (${fmt(effectivePension)}/yr)` : ""} as other ordinary income</span>}
+                          : <span style={{ color: C.muted }}> · assumes SS ({fmt(householdSS)}/yr, 85% taxable){effectivePension > 0 ? ` + pension (${fmt(retPensionBasis)}/yr)` : ""} as other ordinary income</span>}
                       </p>
                     </div>
                   )}
@@ -4718,7 +4878,7 @@ export default function App() {
                     {effectivePension > 0 && (
                       <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>
                         <p style={{ margin: 0, fontSize: 9, color: C.muted }}>Pension</p>
-                        <p style={{ margin: 0, fontSize: 13, color: C.blue, ...mono }}>{fmt(effectivePension)}/yr</p>
+                        <p style={{ margin: 0, fontSize: 13, color: C.blue, ...mono }}>{fmt(retPensionBasis)}/yr</p>
                       </div>
                     )}
                     {spouseIncomeAtRet > 0 && (
@@ -4733,7 +4893,7 @@ export default function App() {
                     </div>
                     <div style={{ background: C.surface, borderRadius: 6, padding: "6px 12px" }}>
                       <p style={{ margin: 0, fontSize: 9, color: C.muted }}>Total Expenses</p>
-                      <p style={{ margin: 0, fontSize: 13, color: C.text, ...mono }}>{fmt(effectiveExpenses)}/yr</p>
+                      <p style={{ margin: 0, fontSize: 13, color: C.text, ...mono }}>{fmt(retSpendBasis)}/yr</p>
                     </div>
                   </div>
                 </div>

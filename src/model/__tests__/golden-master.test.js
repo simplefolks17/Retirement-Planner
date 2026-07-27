@@ -28,6 +28,38 @@
  *   • RMDs are computed on the LIVE 401k (real $, after conversions/draws), so
  *     firstRMD / rmdTaxBite drop sharply; the conversion benefit and longevity
  *     come from the same walk.
+ *
+ * BUG-91 (2026-07-27): the retirement engine walks in the PRIMARY's
+ * RETIREMENT-YEAR real dollars (rReal = (1+returnRate)/(1+inflationRate) - 1 —
+ * see BUG-90's proof), but effectiveExpenses/effectivePension are TODAY's
+ * dollars. App.jsx now converts every engine-facing quantity forward via
+ * toRetirementYearDollars before it reaches netPortfolioNeed/the engine; this
+ * file hand-builds those same inputs (it never mounts App), so it mirrors the
+ * SAME conversion here — otherwise this test would silently stop reflecting
+ * what the app actually computes. At the default (35 years to retirement, 4%
+ * inflation) the conversion factor is 1.04^35 ≈ 3.9461, moving every headline
+ * number substantially in the conservative direction (spend requirements
+ * rise): withdrawalRate 1.42% → 5.61% (now FAILING the app's own 4%
+ * SAFE_WITHDRAWAL_GUIDELINE_PCT instead of comfortably passing it),
+ * yearsSustained Infinity → 21.65 (isSustainable flips true → false,
+ * depletionAge 87), firstRMD/totalRMDs/rmdTaxBite drop sharply (conversions +
+ * the much larger spending draw deplete the Traditional 401k well before 73),
+ * netConversionBenefit drops (RMD tax savings shrink along with the RMDs).
+ * This is the fix working as intended — see docs/BUGS.md BUG-91.
+ *
+ * KNOWN LIMITATION (forward-compat audit, PR #62 review battery): because this
+ * file never mounts App, it can prove the underlying MODEL FUNCTIONS are
+ * correct in isolation, but it CANNOT catch a bug in App.jsx's own WIRING —
+ * e.g. passing the wrong variable into a call site (the exact shape of the
+ * pension-double-gating bug Qodo caught elsewhere in this same PR). A
+ * companion file, `src/__tests__/golden-master-app-wiring.test.js`, mounts
+ * the REAL App at this same default state and asserts a subset of these SAME
+ * locked values read from real horizonProps fields — verified (2026-07-27) to
+ * actually catch a wiring regression this file misses (reverted
+ * `netPortfolioNeed` to the pre-BUG-91 raw `effectiveExpenses` in App.jsx;
+ * this file stayed green, the companion file failed immediately). If you
+ * re-lock a value here, re-lock the matching value in that file too, in the
+ * SAME commit — see that file's own header for the full rationale.
  */
 
 import { describe, it, expect } from "vitest";
@@ -41,6 +73,7 @@ import { calcRetirementIncome } from "../retirement-income.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate } from "../drawdown.js";
 import { buildIncomeFloors, calcBracketFillTargets } from "../conversion-planning.js";
 import { buildRetirementPhase, buildConversionByAge } from "../retirement-phase.js";
+import { toRetirementYearDollars } from "../finance-math.js";
 import { TAX_DATA_2026, RETIREMENT_STATE_TAX, RMD_START_AGE } from "../../config/irs-2026.js";
 
 // ── Shared setup (mirrors App.jsx logic at default state) ────────────────────
@@ -85,6 +118,15 @@ const { effectiveLiving } = calcSavingsCapacity({
 });
 const effectiveExpenses = Math.round(effectiveLiving);
 
+// BUG-91: the engine walks in retirement-year real dollars (rReal); every
+// engine-facing quantity — App.jsx's retSpendBasis/retPensionBasis — is
+// effectiveExpenses/effectivePension inflated forward to that frame. Mirrors
+// App.jsx exactly (this file never mounts App, so it must apply the SAME
+// conversion by hand). ri.effectivePension is 0 at this default (no pension),
+// so retPensionBasis is inert here — included for parity with App.jsx.
+const yearsToRetForBasis = Math.max(0, safeRetAge - currentAge);
+const retSpendBasis = toRetirementYearDollars(effectiveExpenses, inflationRate, yearsToRetForBasis);
+
 const ssAIME = calcAIME(currentIncome, incomeGrowth, Math.max(1, safeRetAge - currentAge));
 const ssPIA  = calcPIA(ssAIME);
 const ri = calcRetirementIncome({
@@ -92,8 +134,9 @@ const ri = calcRetirementIncome({
   ssClaimingAge: 67, includeSS: true, ssOverride: null, spouseSsEstimate: 0,
   pensionMonthly: 0, pensionStartAge: 65, isMarried: false, spouseClaimingAge: 67, spouseBenefitBasis: "own",
 });
+const retPensionBasis = toRetirementYearDollars(ri.effectivePension, inflationRate, yearsToRetForBasis);
 const householdSS = ri.householdSS;
-const netPortfolioNeed = calcNetPortfolioNeed(effectiveExpenses, ri.ssAtRet, ri.effectivePension);
+const netPortfolioNeed = calcNetPortfolioNeed(retSpendBasis, ri.ssAtRet, retPensionBasis);
 
 // Conversion schedule (bracket-fill to 22%) → engine.
 const retTaxData = TAX_DATA_2026[filingStatus];
@@ -118,7 +161,7 @@ const retStateRate = RETIREMENT_STATE_TAX["TX"]?.rate ?? 0;
 const retPhase = buildRetirementPhase({
   tradGross: at.tradGross, roth: at["Roth IRA"], taxable: at["Taxable"], hsa: at["HSA"],
   startAge: safeRetAge, lifeExp: safeLifeExp, longevityHorizon: safeRetAge + 130,
-  rReal, effectiveExpenses,
+  rReal, effectiveExpenses: retSpendBasis,
   ssGross: householdSS, ssTaxable: ri.ssTaxableRet, ssClaimAge: 67,
   pension: 0, pensionStartAge: Infinity,
   filingStatus, retStateRate, conversionByAge, rmdStartAge: RMD_START_AGE,
@@ -144,17 +187,22 @@ const E = {
   retRoth:              659_072,     // AGI-net Roth MAGI: pre-tax deductions delay the phase-out → more in-band Roth (was 587_692)
   retTaxable:           836_477,
   retHSA:               420_280,
-  totalAtRet:           4_035_855,   // gross (+retRoth delta; was 3_964_475)
-  spendableAtRet:       3_654_179,   // larger portfolio (was 3_582_799)
-  effectiveExpenses:    57_377,      // current living spend (was ~104_525 = 3% of portfolio)
-  netPortfolioNeed:     57_377,      // ssAtRet = 0 (claims at 67, retires at 65)
-  withdrawalRate:       1.4216814033209817,  // lower draw % on the larger portfolio (AGI-net Roth)
-  yearsSustained:       Infinity,    // trivially sustainable at this spend (was 62.9)
-  firstRMD:             62_508,      // higher SS floor → less pre-RMD drawdown → higher trad bal at 73 (was 62_279)
-  totalRMDs:            1_152_878,   // higher trad bal at 73 → higher lifetime RMDs (was 1_148_650)
-  rmdTaxBite:           207_557,     // higher lifetime RMDs → higher RMD tax (was 204_864)
+  totalAtRet:           4_035_855,   // gross (+retRoth delta; was 3_964_475) — unaffected by BUG-91 (accumulation-side, not touched)
+  spendableAtRet:       3_763_788,   // BUG-91: effectiveRMDTaxRate drops (was 3_654_179) — much smaller lifetime RMD bite
+  effectiveExpenses:    57_377,      // current living spend, TODAY's dollars — unchanged, this is the raw user-facing figure
+  // BUG-91: netPortfolioNeed/withdrawalRate/yearsSustained now use retSpendBasis
+  // (effectiveExpenses inflated to the retirement-year frame the engine walks
+  // in — factor 1.04^35 ≈ 3.9461 at this default). This is the fix's own
+  // headline result: withdrawalRate now FAILS the app's 4% guideline instead
+  // of comfortably passing it, and the plan is no longer trivially sustainable.
+  netPortfolioNeed:     226_414.74822089862,  // = retSpendBasis (ssAtRet = 0, no pension) — was 57_377
+  withdrawalRate:       5.610081338920716,    // was 1.4216814033209817 — now fails SAFE_WITHDRAWAL_GUIDELINE_PCT (4%)
+  yearsSustained:       21.648529319276392,   // was Infinity — the honest spend is NOT trivially sustainable
+  firstRMD:             32_213,      // much larger draw depletes the Traditional 401k faster (was 62_508)
+  totalRMDs:            79_341,      // conversions + spending drain the 401k well before age 73 (was 1_152_878)
+  rmdTaxBite:           10_182,      // far fewer/smaller RMDs to tax (was 207_557)
   conversionWindowYrs:  7,
-  netConversionBenefit: -9_854,      // higher SS benefit shifts conversion economics (was -9_981)
+  netConversionBenefit: -70_844,     // RMD tax savings shrink along with the (now much smaller) RMDs (was -9_854)
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -189,9 +237,9 @@ describe("golden master — default state", () => {
   });
 
   it("drawdown metrics", () => {
-    expect(netPortfolioNeed).toBe(E.netPortfolioNeed);
+    expect(netPortfolioNeed).toBeCloseTo(E.netPortfolioNeed, 6);
     expect(calcWithdrawalRate(netPortfolioNeed, totalAtRet)).toBeCloseTo(E.withdrawalRate, 8);
-    expect(retPhase.yearsSustained).toBe(E.yearsSustained);
+    expect(retPhase.yearsSustained).toBeCloseTo(E.yearsSustained, 8);
   });
 
   it("RMD schedule (from the engine)", () => {

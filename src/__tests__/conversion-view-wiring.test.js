@@ -98,6 +98,13 @@ describe("conversionView wiring (WI-3.6)", () => {
     // Make the suggestion applicable: Medicare on (healthcare gate) + a $0
     // custom conversion (any positive optimum then differs by > $4,999).
     // Mode switch fired LAST so the (startAge, amount) search runs once.
+    // BUG-91: the default retirement spend (effectiveExpenses inflated to the
+    // retirement-year frame) makes aggressive Roth conversion economically
+    // unfavorable at the DEFAULT state, so the optimizer suggests $0 (matching
+    // the $0 current setting) and the Apply site never turns on. Pin a lower,
+    // comfortably-affordable spend so the optimizer has genuine room to
+    // suggest a nonzero conversion, which is what this test needs to observe.
+    app.fire(() => app.latest().spending.annualExpenses.set(40_000));
     app.fire(() => app.latest().conversion.annualConversionAmt.set(0));
     app.fire(() => app.latest().health.hasMedicare.set(true));
     app.fire(() => app.latest().conversion.conversionMode.set("custom"));

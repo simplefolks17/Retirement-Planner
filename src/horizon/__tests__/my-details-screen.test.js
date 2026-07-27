@@ -195,4 +195,34 @@ describe("MyDetailsScreen — spouse & household (#30)", () => {
     expect(props.spouseAccounts.trad401k.bal.set).toHaveBeenCalledWith(210_000); // 200k + 10k step
     act(() => app.r.unmount());
   });
+
+  // BUG-95: spouseCurrentAge drives the whole spouse engine (accumulation, gap
+  // window, Option-A hold-out, RMD age) but its only editor used to be buried
+  // behind an unrelated RMD-beneficiary toggle in the Strategies flow. Now it
+  // has its own always-reachable editor right here, alongside spouseRetirementAge.
+  it("renders an always-reachable spouse-age editor (BUG-95) and writes through the ss bundle", () => {
+    const props = {
+      ...makeProps(), spouseAccountsApplicable: true, entitlements: { isPremium: true },
+      spouseAccounts: spouseBundle(), ss: { spouseCurrentAge: num(48, 18, 80, 1) },
+    };
+    const app = mount(props);
+    app.click(n => textOf(n).startsWith("Spouse & household"));
+    expect(app.text()).toContain("Spouse's current age");
+    // Field order in the open card: 4 accounts (bal + contrib each = 8 "+"
+    // buttons), THEN "Spouse's current age" — the 9th "+" in DOM order.
+    // Filter to host <button> elements only — findAll also matches the
+    // wrapping StepBtn composite instance for each button, doubling the count.
+    const plusButtons = app.r.root.findAll(
+      n => n.type === "button" && typeof n.props?.onClick === "function" && textOf(n) === "+");
+    act(() => plusButtons[8].props.onClick());
+    expect(props.ss.spouseCurrentAge.set).toHaveBeenCalledWith(49);
+    act(() => app.r.unmount());
+  });
+
+  it("still renders the spouse card without the spouse-age editor when the ss bundle is absent (defensive)", () => {
+    const props = { ...makeProps(), spouseAccountsApplicable: true, entitlements: { isPremium: true }, spouseAccounts: spouseBundle() };
+    const app = mount(props);
+    expect(app.text()).not.toContain("Spouse's current age");
+    act(() => app.r.unmount());
+  });
 });
