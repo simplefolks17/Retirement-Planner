@@ -96,7 +96,9 @@ const minimalProps = {
   statementView,
   retirementWalk,
   householdSS:        45_924,    // props.householdSS (annual, displayed monthly)
-  effectivePension:   0,         // props.effectivePension — 0 → pension strip hidden
+  // ssView.showEffectivePension gates the pension pill (CodeRabbit review-fix,
+  // PR #62 — was a raw `effectivePension > 0` comparison in JSX); false → hidden.
+  ssView:             { showEffectivePension: false, effectivePensionAnnual: 0 },
   isSustainable:      true,
 };
 

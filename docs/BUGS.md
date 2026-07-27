@@ -699,6 +699,47 @@ default state or a pure refactor. Lint clean, build OK.
 `src/horizon/screens/JourneyScreen.jsx`, `src/model/what-if.js`, `src/__tests__/unit-contract.test.js`,
 `src/__tests__/pension-timing-wiring.test.js`, `CLAUDE.md`.
 
+**Round 2 — bot re-review after the above push (CodeRabbit, 2026-07-27, same day).** Both bots
+auto-re-reviewed once the fixes above were pushed. Qodo's original pension-double-gate finding showed
+as `✓ Resolved`. CodeRabbit found 2 more, both real:
+12. **`avgAnnualRMDHousehold` divided by the WRONG denominator (Major).** Fix #5 above (the
+    `avgAnnualRMD`/`projectRetirementBracket` scope-mismatch fix) introduced
+    `avgAnnualRMDHousehold = totalRMDs / rmdData.length` — but `rmdData` is the PRIMARY-only RMD
+    schedule, so a household where ONLY the spouse has RMDs (the primary's own Traditional 401k is
+    empty or never reaches RMD age) has `rmdData.length === 0`, taking the ternary's `: 0` branch and
+    silently dropping the spouse's entire real RMD income from the projected bracket — the exact bug
+    class fix #5 was supposed to close, reintroduced one line later. Same root cause for a second
+    reason CodeRabbit also named: even when both spouses have RMDs, their schedules can run different
+    LENGTHS (different ages, different account sizes), so `rmdData.length` was never the right
+    household year-count even in the two-RMD case. Fixed: new `householdRmdYears =
+    retPhase.rows.filter(r => r.rmd > 0 || (r.rmdSpouse ?? 0) > 0).length` — the UNION of years either
+    spouse has a nonzero RMD, read directly from the engine's own per-row `rmdSpouse` field (already
+    computed by `buildRetirementPhase`, just not previously consumed by this call site) —
+    `avgAnnualRMDHousehold = totalRMDs / householdRmdYears`. Verified against the pre-fix condition:
+    reverted to the `rmdData.length` denominator, confirmed the new regression test fails (0.1 vs 0.1,
+    no crossing — the spouse-only RMD income was invisible to the bracket projection), restored the fix.
+    New test: `pension-timing-wiring.test.js`'s "household RMD average denominator" describe block
+    (a primary with $0 Traditional 401k + a spouse with a large one, comparing the projected bracket
+    with vs. without the spouse's RMD — the household total is real, `rmdView.rows` — the primary-only
+    schedule — stays empty in both readings, proving this IS the exact edge case).
+13. **`JourneyScreen.jsx`'s pension pill gate (Minor).** The fix above (finding #3) swapped the
+    DISPLAYED value to the converted `ssView.effectivePensionAnnual` but left the GATE itself on a raw
+    `effectivePension > 0` comparison in JSX — a rule-10 violation (Horizon screens must read
+    model-provided applicability flags, never compare a raw prop). Fixed: gate now reads
+    `ssView.showEffectivePension` (the same flag `SSTimingFlow.jsx` already used, correctly, for the
+    identical pension-display pattern) — `effectivePension` is no longer referenced anywhere in this
+    file at all, removed from the destructure. CodeRabbit also flagged the page subtitle's "— in
+    today's dollars" claim as now inaccurate (most of Journey's figures, including this pill, are
+    `flowDown`/retirement-year-basis by design) — removed the qualifier rather than adding a caveat,
+    since the page has never been consistently one basis throughout. Fixed the same day the
+    describe-block's own fixture in `journey-screen.test.js` needed updating (it predated `ssView`
+    being a prop this screen reads) — added a synthetic `ssView: { showEffectivePension: false,
+    effectivePensionAnnual: 0 }` matching the existing "pension strip hidden" fixture intent.
+**Tests:** 1 more new (the household-RMD-denominator test above). **npm test: 1062 passed.** Golden
+master untouched; lint clean; build OK.
+**Where:** `src/App.jsx` (`avgAnnualRMDHousehold`/`householdRmdYears`), `src/horizon/screens/JourneyScreen.jsx`,
+`src/horizon/__tests__/journey-screen.test.js`, `src/__tests__/pension-timing-wiring.test.js`.
+
 ### BUG-91 — Model-wide real/nominal dollar-basis mismatch: `effectiveExpenses` is today's dollars, the retirement walk is retirement-year dollars (found 2026-07-26, adversarial review of BUG-82's PR #59; fixed 2026-07-27, spousal-engine stabilization session)
 
 **Owner:** me_theguy. **Severity: HIGH — the single largest input to every headline number the app

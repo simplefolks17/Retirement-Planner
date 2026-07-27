@@ -101,3 +101,49 @@ describe("pension timing — RMD floor and projected bracket (PR #62 review fix)
     app.unmount();
   });
 });
+
+describe("household RMD average denominator — spouse-only RMDs (CodeRabbit review-fix, PR #62)", () => {
+  // avgAnnualRMDHousehold (feeding projectRetirementBracket) originally divided
+  // household totalRMDs by rmdData.length — the PRIMARY's own row count. A
+  // household where only the SPOUSE has RMDs (primary's own Traditional 401k
+  // is empty, so rmdData = []) divided a real, positive totalRMDs by 0 → the
+  // ternary's `: 0` branch fired, silently dropping the spouse's entire RMD
+  // income from the projected bracket. Fixed to count retPhase.rows where
+  // EITHER r.rmd (primary) or r.rmdSpouse (spouse) is nonzero — the union of
+  // both schedules' years, not just the primary's.
+  function buildSpouseOnlyRmdHousehold(spouseTrad) {
+    const app = mount();
+    app.fire(() => app.latest().assumptions.currentAge.set(60));
+    app.fire(() => app.latest().assumptions.retirementAge.set(65));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(63)); // 68 at primary's retirement, 73 five years later — within the default 90 horizon
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(65)); // no gap window — isolates the RMD effect from the Option-A hold-out
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(spouseTrad));
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(0));
+    // Primary has NO Traditional 401k at all — rmdData (the primary-only RMD
+    // schedule) must stay empty for every value of spouseTrad below.
+    app.fire(() => app.latest().accounts.trad401k.bal.set(0));
+    app.fire(() => app.latest().accounts.trad401k.contrib.set(0));
+    app.fire(() => app.latest().accounts.taxable.bal.set(500_000)); // funds the primary's own spending, independent of the spouse bucket
+    app.fire(() => app.latest().spending.annualExpenses.set(40_000)); // leaves bracket room for the crossing to be visible
+    return app;
+  }
+
+  it("a real household with spouse-only RMDs projects a HIGHER bracket than an otherwise-identical household with none", () => {
+    const noSpouseRmd = buildSpouseOnlyRmdHousehold(0);
+    expect(noSpouseRmd.latest().rmdView.rows).toEqual([]); // precondition: primary's own schedule really is empty
+    const baselineBracket = noSpouseRmd.latest().taxView.projectedRetBracket;
+    noSpouseRmd.unmount();
+
+    const withSpouseRmd = buildSpouseOnlyRmdHousehold(1_500_000);
+    expect(withSpouseRmd.latest().rmdView.rows).toEqual([]); // still empty — this IS the exact edge case (rmdData=[], totalRMDs>0)
+    expect(withSpouseRmd.latest().retirementWalk.totalRMDs).toBeGreaterThan(0); // the household DOES have real RMDs (the spouse's)
+    const withRmdBracket = withSpouseRmd.latest().taxView.projectedRetBracket;
+    withSpouseRmd.unmount();
+
+    // Before the fix, dividing by rmdData.length (0) took the `: 0` branch —
+    // avgAnnualRMDHousehold was silently 0 regardless of spouseTrad, so this
+    // assertion would have failed (both brackets identical).
+    expect(withRmdBracket).toBeGreaterThan(baselineBracket);
+  });
+});

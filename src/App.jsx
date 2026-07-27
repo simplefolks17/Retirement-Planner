@@ -1212,7 +1212,15 @@ export default function App() {
   // tile's own purpose, but this consumer was accidentally narrowed along with
   // it, understating the projected bracket for any household where the spouse
   // also has RMDs — correctness-review finding, PR #62 review-fix round).
-  const avgAnnualRMDHousehold = rmdData.length > 0 ? Math.round(totalRMDs / rmdData.length) : 0;
+  // CodeRabbit review-fix: dividing by rmdData.length (primary-only row count)
+  // was WRONG here too — a spouse-only-RMD household has rmdData=[] (primary
+  // never hits an RMD), making this 0 even though totalRMDs > 0, and any
+  // household where the spouse's RMD years don't exactly match the primary's
+  // would average over the wrong year count. The correct household RMD-year
+  // count is the number of retPhase.rows where EITHER the primary or the
+  // spouse has a nonzero RMD that year (the union, not the primary's own count).
+  const householdRmdYears = retPhase.rows.filter(r => r.rmd > 0 || (r.rmdSpouse ?? 0) > 0).length;
+  const avgAnnualRMDHousehold = householdRmdYears > 0 ? Math.round(totalRMDs / householdRmdYears) : 0;
   const { bracketPct: projRetBracketPct } = projectRetirementBracket({
     avgAnnualRMD: avgAnnualRMDHousehold, householdSS, effectivePension: retPensionAtRMDAge, filingStatus,
   });
