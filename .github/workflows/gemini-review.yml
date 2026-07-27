@@ -1,0 +1,45 @@
+name: "Gemini PR Review"
+
+# Free replacement for the sunset "consumer" Gemini Code Assist GitHub App.
+# Calls the Gemini API directly with a free-tier API key from Google AI Studio
+# (https://aistudio.google.com/apikey) instead of relying on the discontinued
+# GitHub App integration. Requires a repo secret named GEMINI_API_KEY.
+
+on:
+  pull_request:
+    branches:
+      - main
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/gemini-review') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      statuses: write
+      checks: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number) }}
+
+      - name: Run Gemini Review Action
+        uses: derailed-dash/gemini-review-action@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          gemini_model: 'gemini-3.6-flash'
+          language: 'English (US)'

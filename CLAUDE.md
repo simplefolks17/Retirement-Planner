@@ -1677,6 +1677,31 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
   pre-existing backlog (BUG-84/85/92/98).
   1027 → **1030 tests** (BUG-97's fix only — everything else in this pass is documentation, filed
   bugs, and the new plan doc; no other code changed). Golden master untouched, lint clean, build OK.
+- **PR review bot survey + free Gemini fallback (2026-07-26, docs/CI only — no `src/` change,
+  1030 tests unchanged):** owner asked what's connected for automated PR review and to add free
+  alternatives alongside the existing CodeRabbit (Pro Plus, `.coderabbit.yaml`). Findings, verified
+  live against this repo's own PR history and a throwaway probe PR (#60, closed):
+  1. **`gemini-code-assist[bot]` is now fully dead.** It reviewed PRs through 2026-07-21 but its own
+     comment on the throwaway probe PR now reads *"The consumer version of Gemini Code Assist on
+     GitHub has been sunset. All code review activity has officially ceased."* Google killed the
+     free/individual GitHub integration; only the paid Standard/Enterprise editions (Google Cloud
+     billing account required) still work.
+  2. **GitHub Copilot code review verified NOT free on this account** — `request_copilot_review`
+     was called live against probe PR #60; no reviewer was added and no comment was posted (a silent
+     no-op, confirmed by inspecting the rendered PR page). PR-level Copilot review needs Copilot Pro
+     ($10/mo minimum) — the free Copilot tier only does in-editor selection review, not PR review.
+  3. **Added `.github/workflows/gemini-review.yml`** — a free drop-in replacement for the sunset
+     Gemini App (`derailed-dash/gemini-review-action`), calling the Gemini API directly with a
+     free-tier key from Google AI Studio. Single workflow file, no Docker, no GitHub App install.
+     **Requires an owner action to activate:** add a `GEMINI_API_KEY` repo secret (Settings → Secrets
+     and variables → Actions) — an agent session cannot create repo secrets. Inert (job simply won't
+     run) until the secret exists.
+  4. **Recommended, not yet installed** (both require the repo owner's own GitHub OAuth click — an
+     agent session cannot install a GitHub App on someone else's account): Qodo Merge Pro
+     (`github.com/marketplace/qodo-merge-pro`, free developer tier, ~30 PR reviews/org/month) as a
+     second opinion alongside CodeRabbit. Greptile ruled out (paid-only, per owner). Codex code
+     review to be done via Codex Cloud (chatgpt.com/codex, uses the owner's existing ChatGPT plan
+     instead of pay-per-token API billing) — also an owner-side sign-in/connect step.
 
 ## Commands
 
