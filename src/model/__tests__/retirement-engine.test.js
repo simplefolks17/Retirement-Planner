@@ -766,3 +766,86 @@ describe("buildRetirementWalkByAccount — depletion", () => {
     expect(yearsSustained).toBe(Infinity);
   });
 });
+
+// ── rRealByYear (Session B, Monte Carlo engine port) ────────────────────────
+// A per-year REAL return override, so the same engine that produces every
+// headline number can also be driven by a sampled return path — one call per
+// Monte Carlo iteration — instead of only the flat scalar rReal. Default null
+// must be perfectly inert; every non-default case below is what actually
+// proves the substitution reaches every account, including the spouse bucket
+// (the highest-probability silent slip flagged by both planning agents: the
+// `gTradSp` growth line is a separate statement from the other four, easy to
+// leave on the scalar `rReal` by accident, and invisible in any no-spouse
+// fixture).
+describe("buildRetirementWalkByAccount — rRealByYear (Session B engine change)", () => {
+  it("omitted rRealByYear is byte-identical to today's scalar walk (rich fixture: spouse + conversions + RMDs)", () => {
+    const rich = (over = {}) => base({
+      tradGross: 900_000, tradGrossSpouse: 400_000, spouseRmdStartAge: 73,
+      spouseCurrentAge: 60, currentAge: 65, rmdStartAge: 73,
+      conversionByAge: { 66: 20_000, 67: 20_000 },
+      spouseContribByAge: { 66: 10_000, 67: 10_000 },
+      spouseTaxableIncomeByAge: { 66: 40_000, 67: 40_000 },
+      spouseIncomeFloorByAge: { 66: 30_000, 67: 30_000 },
+      ...over,
+    });
+    const withoutParam = rich();
+    const explicitNull = rich({ rRealByYear: null });
+    expect(explicitNull).toEqual(withoutParam);
+  });
+
+  it("a scalar-filled rRealByYear array reproduces the scalar walk exactly (the real proof of the substitution, not just the inert-default case)", () => {
+    const nYears = 95 - 65;
+    const filled = new Array(nYears).fill(0.03); // matches base()'s rReal: 0.03
+    const a = base();
+    const b = base({ rRealByYear: filled });
+    expect(b).toEqual(a);
+  });
+
+  it("gTradSp uses the per-year rate: a spouse-only fixture where a distinct per-year override changes tradSpouse (not just trad)", () => {
+    const nYears = 95 - 65;
+    const scalarRun = base({ tradGrossSpouse: 300_000, spouseRmdStartAge: 999 });
+    // A per-year array that DIFFERS from the scalar rReal every year.
+    const varied = new Array(nYears).fill(0.08);
+    const variedRun = base({ tradGrossSpouse: 300_000, spouseRmdStartAge: 999, rRealByYear: varied });
+    // If gTradSp were left on the scalar rReal, tradSpouse would be identical
+    // across both runs despite the override — this must NOT be the case.
+    expect(variedRun.rows[0].tradSpouse).not.toBeCloseTo(scalarRun.rows[0].tradSpouse, 0);
+    // And it must grow FASTER at the higher rate (0.08 > 0.03), not merely differ.
+    expect(variedRun.rows[0].tradSpouse).toBeGreaterThan(scalarRun.rows[0].tradSpouse);
+  });
+
+  it("preserves the engine's own aggregate recurrence per row under a genuinely varying rate", () => {
+    const nYears = 95 - 65;
+    const varied = Array.from({ length: nYears }, (_, j) => 0.01 + 0.002 * j);
+    const { rows, depletionAge } = base({ rRealByYear: varied });
+    for (const r of rows) {
+      if (r.age === depletionAge) continue;
+      const yearReal = varied[r.age - 65 - 1];
+      const expected = r.balStart * (1 + yearReal) - r.draw - r.tax;
+      expect(Math.abs(r.balEnd - expected)).toBeLessThan(1e-6);
+    }
+  });
+
+  it("missing / non-finite entries in rRealByYear fall back to the scalar rReal for that year", () => {
+    const nYears = 95 - 65;
+    const sparse = new Array(nYears); // every entry undefined
+    sparse[2] = NaN;
+    sparse[3] = Infinity;
+    const a = base();
+    const b = base({ rRealByYear: sparse });
+    expect(b).toEqual(a);
+  });
+
+  it("index alignment: rRealByYear[0] applies at age === startAge + 1", () => {
+    const nYears = 95 - 65;
+    const arr = new Array(nYears).fill(0.03);
+    arr[0] = 0.20; // a large, unmistakable jolt on the very first walked year only
+    const { rows } = base({ rRealByYear: arr });
+    const baseline = base().rows;
+    expect(rows[0].age).toBe(66); // startAge(65) + 1
+    expect(rows[0].balEnd).toBeGreaterThan(baseline[0].balEnd);
+    // The SECOND walked year (index 1, back at 0.03) should track the baseline
+    // shape again (not still inflated by the same jolt).
+    expect(rows[1].balStart).toBe(rows[0].balEnd);
+  });
+});

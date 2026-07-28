@@ -18,10 +18,11 @@
 //   scenarioData [{age,total}] (optional dotted overlay on the arc view),
 //   rangeBands (optional) — real Monte Carlo percentile data for the Range (band)
 //     view: { series: [{age,p10,p25,p50,p75,p90}], successPct (int|null),
-//     note (string), medianDepletionAge (int|null), p10DepletionAge (int|null) }.
-//     When present, the Range view renders REAL percentile bands + a success-%
-//     caption; when null it falls back to the decorative illustrative cone.
-//     Affects the "band" view ONLY — every other view renders pixel-identical.
+//     successOk (bool|null), note (string), medianDepletionAge (int|null),
+//     p10DepletionAge (int|null) }. When present, the Range view renders REAL
+//     percentile bands + a success-% caption; when null it falls back to the
+//     decorative illustrative cone. Affects the "band" view ONLY — every other
+//     view renders pixel-identical.
 //   events [{age,label,isInflow,icon?}] (optional, WI-1.3/#90 upgraded) —
 //     committed moneyEvents shown as icon badges with a stem down to the curve;
 //     inflow = good token, outflow = warm. events=[] renders pixel-identical to
@@ -593,12 +594,6 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null })
             font: `400 9.5px ${HF}`, color: t.faint, marginTop: 6,
             maxWidth: 260, whiteSpace: "normal"
           }}>{rangeBands.note}</div>
-        )}
-        {rangeBands.spouseGapCaveat && (
-          <div style={{
-            font: `400 9.5px ${HF}`, color: t.warm, marginTop: 4,
-            maxWidth: 260, whiteSpace: "normal"
-          }}>{rangeBands.spouseGapCaveat}</div>
         )}
       </div>
     );

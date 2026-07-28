@@ -152,7 +152,7 @@ The signature visual — a full-life portfolio balance curve from today to `life
 | `arc` | Arc | Cubic bezier spline with milestone pills (Today · First Million · Retire · For life) |
 | `stacked` | Sources | Total arc + contributions band (market growth vs contributions split) |
 | `columns` | Decades | 5-year bar chart, green → amber at retirement |
-| `band` | Scenarios | Uncertainty cone (±28% spread growing with time). *Planned rename: "Scenarios" → "Range"; ships with WI-5.3/#114 when the cone becomes real Monte Carlo percentile data (`docs/ROADMAP.md` → SP-3). Dated correction (2026-07-12): the original justification — a name collision with Ideas' scenario cards — is now moot, since Ideas' "Scenarios" segment was retired the same day (see the Ideas screen section above). The rename itself is unaffected and stays planned; it's just no longer urgent for that reason.* |
+| `band` | Range | Real Monte Carlo percentile bands (p10–p90) + a success-% caption (WI-5.3/#114, shipped) when `rangeBands` data is supplied; falls back to a decorative illustrative cone (±28% spread growing with time) otherwise. The "Scenarios" → "Range" rename shipped alongside WI-5.3/#114 (`docs/ROADMAP.md` → SP-3). Session B (2026-07-28) ported the underlying Monte Carlo walk onto the per-account engine — same label/view, more accurate data (spouse bucket, hold-out, path-dependent tax now visible; see `docs/FINANCIAL-MODEL.md`'s Monte Carlo sections). |
 
 ### SVG coordinate system
 

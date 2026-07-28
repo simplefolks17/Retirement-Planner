@@ -259,12 +259,21 @@ see BUG-88 in `docs/BUGS.md` for the full mechanism and the fractional-year-calc
 **`buildRetirementDrawdown` survives as the SECONDARY, blended walk** — one combined pool
 grown at one real rate (no per-account split), still used for `calcWhatIfDelta` and
 `calcOptimizedScenario`'s deltas (documented BUG-36 scope: those consumers don't charge tax on
-the spending draw the way the engine does, and — pending Session B — don't yet see the
-spouse's per-account bucket at all; see the Monte Carlo row in Known Simplifications below).
-The Monte Carlo "Range" lens (`monte-carlo.js`) also still runs this blended walk via its
-`rRealByYear` override — porting it to the per-account engine is a separate, larger future
-session (Session B); until then an interim `rangeView.spouseGapCaveat` warns the user when a
-spouse's active gap window means the shaded range may understate their outlook.
+the spending draw the way the engine does). Its `rRealByYear` override parameter is now
+orphaned (see below) — kept, not removed, since the function itself is still live for these
+other consumers.
+
+**The Monte Carlo "Range" lens now walks the per-account engine (Session B, 2026-07-28).**
+`runMonteCarlo` (`monte-carlo.js`) used to run the blended walk above via its own
+`rRealByYear` override; it now calls `buildRetirementWalkByAccount` directly, via the SAME
+`rRealByYear` override this section describes (added to the per-account engine for exactly
+this purpose). Every sampled market-return path now sees the spouse's per-account bucket
+(hold-out during the gap, gap-year income/contributions, the shortfall-spillover escape hatch)
+and re-derives RMD/conversion/spending-draw tax per path instead of reusing a fixed baseline —
+so the Range lens can no longer disagree with the solid arc line about anything except return
+risk itself. This retired the interim `rangeView.spouseGapCaveat` outright (there is no longer
+a second, spouse-blind walk for a spouse household's outlook to silently disagree with) — see
+BUG-93/BUG-94 (Resolved) in `docs/BUGS.md`.
 
 **Why tax is subtracted (the gross-up).** To *spend* `draw` net, the retiree must
 withdraw enough to also pay that year's income tax, so the tax is a real leak out of
@@ -277,6 +286,84 @@ The old closed form (kept for reference / the tax-free estimate):
 if netPortfolioNeed ≤ 0 or portfolio × rReal ≥ netPortfolioNeed → Infinity
 else → log(1 − (portfolio × rReal / netPortfolioNeed)) / log(1 / (1 + rReal))
 ```
+
+### Monte Carlo Threshold Calibration (Session B, 2026-07-28)
+
+Porting the Range lens onto the per-account engine (previous section) changed WHAT
+`rangeView.successPct` measures — from the dispersion of a biased estimator (no spending-draw
+tax, a free-pooled spouse bucket) to the dispersion of the app's own headline walk under return
+risk. `MONTE_CARLO_SUCCESS_GUIDELINE_PCT`/`MONTE_CARLO_LOW_ODDS_PCT` (`irs-2026.js`, 80/70) were
+never re-examined against that changed meaning. Per the session's kickoff doc
+(`docs/SESSION-B-MONTE-CARLO-ENGINE-PORT-PLAN.md` §2(d)), that examination had to happen and be
+written down — including the possibility that the answer is "unchanged."
+
+**Decision rule, declared before measuring:** a *contradiction* is a household where the
+confidence driver's `ok` (the Plan screen's 4th driver row, `successPct ≥ 80`) disagrees with
+BOTH the withdrawal driver's `ok` (`withdrawalRate ≤ 4%`) and the longevity driver's `ok`
+(`isSustainable`), in the same direction. Move the thresholds only if **≥ 2 of 6** measured
+households contradict in the same direction — one household disagreeing is a household, not a
+calibration failure; a systematic pattern across several is.
+
+**The six fixtures, measured directly against this implementation** (`planView.drivers`,
+`rangeView.successPct`, at `ASSUMPTIONS.MONTE_CARLO_STD_DEV` = 0.12, `MONTE_CARLO_ITERATIONS` =
+600, default seed). The T-X.2/T-X.3 rows are hand-built approximations of those golden-master
+households' SHAPE for this probe, not calls to the exact fixture builders — their numbers
+therefore differ slightly from the exact-locked golden-master values (T-X.2 locks `rangeSuccessPct:
+100`, T-X.3 locks `60`; this table's own probe measured 95 for its T-X.2-shaped household). Both
+readings support the same conclusion below either way.
+
+| Household | successPct | withdrawal ok | longevity ok | confidence ok (≥80) | Contradiction? |
+|---|---|---|---|---|---|
+| No-spouse default | 24 | false (5.6%) | false | false | No — all agree |
+| T-X.2-shaped (17-yr spouse gap, well funded) | 95 | true (1.7%) | true | true | No — all agree |
+| T-X.3-shaped (8-yr gap, MFJ, pension, high spend) | 60 | true (3.3%) | true | **false** | **Yes** |
+| BUG-93 fixture (spouse rollover, no income) | 5 | false (5.7%) | false | false | No — all agree |
+| High-spend, short gap, stressed | 0 | false (11.4%) | false | false | No — all agree |
+| Early retiree (58), modest balances | 12 | false (4.9%) | false | false | No — all agree |
+
+**Result: 1 of 6 — below the ≥ 2 trigger. Decision: leave `MONTE_CARLO_SUCCESS_GUIDELINE_PCT`
+and `MONTE_CARLO_LOW_ODDS_PCT` unchanged at 80/70.**
+
+**Honest denominator (added after in-house interoperability-audit review, PR #64):** "1 of 6" is
+correct but understates how exercised the rule actually was. A contradiction can only appear in a
+household where the OTHER two drivers already agree with each other (all 6 rows above happen to
+have `withdrawal ok === longevity ok`) — but it is only REALISTICALLY likely to appear where those
+two already read "ok" (T-X.2, T-X.3): a household already failing on the deterministic withdrawal
+rate and longevity measures rarely gets rescued to ≥80% by return-risk variance alone, so the four
+"all agree, all false" rows above are low-information data points for this specific rule, not
+genuine near-misses. Read honestly, the rule was meaningfully tested on 2 of 6 households and found
+a contradiction in 1 of those 2 — still below the ≥2 trigger (which is a count of contradicting
+households, not a rate), so the decision is unchanged, but "1 of 6" alone would let a future reader
+underestimate how close T-X.3 actually is to being the second data point that flips it.
+
+T-X.3 is a real, explained single contradiction, not noise: it has a shorter spouse gap (8
+years) against a much larger household spend (MFJ, CA, $140k), so the port's new spending-draw
+tax mechanism roughly cancels the spouse-income benefit instead of being dwarfed by it — the
+household is genuinely on the edge of what 600 sampled return paths call "reliable" even though
+its withdrawal rate and headline longevity both look fine. That is exactly the kind of
+disagreement a return-risk lens is SUPPOSED to be able to surface (a plan can pass on the
+deterministic mean path and still be exposed to sequence-of-returns risk) — it is evidence the
+confidence driver is doing its job on a genuinely borderline household, not evidence the
+threshold is miscalibrated.
+
+**Commensurability with the app's own defaults, addressed directly** (flagged as a risk during
+plan review): at the app's default assumptions (`returnRate` 5%, `inflationRate` 4%), the mean
+sampled real return is only ≈ 0.96%, with `MONTE_CARLO_STD_DEV` = 0.12 applied to the *nominal*
+return — a real-return distribution roughly N(1%, 11.5%). An 80% success bar is genuinely hard
+to clear under that distribution unless a plan is comfortably overfunded (T-X.2 clears it at
+95%, funded by a large spouse-income offset; every underfunded fixture above scores low on
+ALL THREE drivers together, not just confidence). This is judged a feature, not evidence the
+guideline needs loosening: `withdrawalRate` and `isSustainable` are themselves deterministic
+mean-path measures, and a plan that only "works" on the mean path with no margin for a bad
+sequence of early returns is exactly what a stricter Monte Carlo bar is supposed to catch. The
+80/70 pair also preserves the ≥ 10-point hysteresis gap between "not ok" and "low odds" the Plan
+strip and Strategies strip both rely on — narrowing it would make the two fire together and
+lose the graduated signal.
+
+**Revisit trigger:** if a future session's own fixture work independently produces a second
+contradiction in the same direction as T-X.3 (a well-funded-looking household whose confidence
+driver disagrees with both other drivers), that reaches the ≥ 2 bar this decision set — recalibrate
+then, using this same table format, rather than deferring indefinitely.
 
 ### Withdrawal Rate
 ```
@@ -323,7 +410,7 @@ These are intentional modeling choices, not bugs. Document them so users and rev
 | A spillover year can both contribute to and raid the spouse's 401k bucket (BUG-88's escape hatch, accepted 2026-07-26) | Overstates the escape hatch's penalty cost, never understates it | Observed in a stressed fixture: the spouse's gap-year contribution lands in `tradSp` the same year the shortfall-spillover pulls a much larger amount back out at a 10% penalty. A real household would redirect that year's payroll deferral to cash first (taxed as wages, not penalized) before raiding the 401k. The current behavior is conservative (it overstates the penalty cost, never understates real insolvency) and creates no reconciliation contradiction, so it ships as-is. A refinement (cancel the year's contribution before spilling, route the freed dollars as taxable wages) is a genuine improvement with materially more moving parts — it would touch `spouseContrib`, the bracket floor, and every reconciliation surface BUG-82's Step 5 already extended. Deferred, not filed as a numbered bug (no user-facing contradiction, just an unnecessarily conservative cost estimate). |
 | Spouse gap-year HSA add-back isn't exactly dollar-conserving (found 2026-07-26, adversarial-correctness review of PR #59) | Overstates the household's gap-year spendable cash by a small, HSA-limit-bounded amount | `spouseIncomeFloorByAge`'s formula removes `cHSA` from `wages` (correctly excluding the pre-tax deferral from taxable income) but then adds it back at 100% cash value — crediting the HSA deduction's tax shield as spendable cash on TOP of the contribution itself, rather than netting it against the spouse's own net tax rate the way the rest of the floor does. Measured: $1,320 of extra credited cash on a $4,400 HSA contribution at a 0.7 net rate (`4400 × 0.3`, exactly the untaxed shield). Bounded by the HSA contribution limit (`HSA_FAMILY_LIMIT_2026`), so the maximum possible overstatement is small and fixed. Not fixed — logged as an accepted simplification pending BUG-98's broader defensive-contract pass, since the fix (netting the add-back at the spouse's own rate like the rest of the floor) is a one-line change but changes a value other tests may have implicitly locked. |
 | Duration-event income during the event is taxed on the **engine** path but not in the blended what-if delta walk | Slightly understates tax in *comparative* overlays only | **Resolved on the headline path (2026-07-20).** `applyMoneyEvents` adds `eventIncomeForYear` to `taxableIncomeAdjustment`, and the per-account engine (`buildRetirementWalkByAccount`) taxes it as ordinary income stacked on the SS/pension floor (`inflowTax`) — so chart / longevity / Flow-Down / RMD numbers are tax-honest for retirement-phase event income. The blended `buildRetirementDrawdown` (used only by `calcWhatIfDelta` / `calcOptimizedScenario`) consumes `eventNetForYear` directly and still doesn't charge it — the remaining BUG-36 residual. |
-| Single fixed return rate for the deterministic headline projection | Ignores sequence-of-returns risk on the primary chart | The headline arc/chart still uses one fixed return rate. Sequence-of-returns risk IS modeled separately in the Monte Carlo "Range" lens (#38/#114, shipped) — a deterministic seeded percentile engine showing p10–p90 balance bands and a success rate, one lens under the arc's Range view. It reuses baseline RMD/conversion tax estimates rather than re-deriving them per iteration (see BUG-78) and doesn't yet model withdrawal-order risk (pre-#47). **It also doesn't yet see the #30/BUG-82 spouse engine** — it still runs the older blended walk (`buildRetirementDrawdown`), which has no spouse bucket at all, so its shaded band can understate a spouse household's outlook during an active gap window; an interim `rangeView.spouseGapCaveat` surfaces this to the user until a future session ports the lens onto the per-account engine. **The caveat's own firing condition has a confirmed gap (BUG-94, open, 2026-07-26):** it keys on the gap-year maps having a nonzero value, not on the engine's actual hold-out condition, so it can read `null` on exactly the household where the Range lens and the engine disagree most (see BUG-93/94 in `docs/BUGS.md`). Also: the blended walk doesn't merely omit gap-year income (understating) — it also pools the held-out spouse bucket for free with no hold-out and no escape-hatch penalty (overstating) — the caveat's one-directional wording ("may understate") doesn't capture that the true error can go either way. |
+| Single fixed return rate for the deterministic headline projection | Ignores sequence-of-returns risk on the primary chart | The headline arc/chart still uses one fixed return rate. Sequence-of-returns risk IS modeled separately in the Monte Carlo "Range" lens (#38/#114, shipped) — a deterministic seeded percentile engine showing p10–p90 balance bands and a success rate, one lens under the arc's Range view. **Session B (2026-07-28) ported it onto the per-account engine** (`buildRetirementWalkByAccount`, the SAME engine behind the chart/RMD schedule/Flow-Down/conversion benefit) — it now re-derives RMD/conversion/spending-draw tax per sampled path instead of reusing a fixed baseline, and sees the full #30/BUG-82 spouse engine (hold-out, gap-year income, the shortfall-spillover escape hatch). The interim `rangeView.spouseGapCaveat` (BUG-93/94) is retired — there is no longer a second, spouse-blind walk for it to warn about. Remaining, unchanged limitations: it doesn't re-optimize withdrawal order under stress (pre-#47), and Roth-conversion amounts / bracket thresholds stay fixed at today's plan rather than re-optimizing per sampled path. See `docs/FINANCIAL-MODEL.md`'s Monte Carlo sections above and `docs/BUGS.md` → BUG-93/BUG-94 (Resolved, superseded note). |
 | `spouseCurrentAge` slider capped at 80 (accepted, 2026-07-27) | A spouse older than 80 can't be entered — undersized for a household where the spouse is already elderly (e.g. modeling a parent's plan) | Deliberate, not an oversight: chosen to MATCH the primary's own `currentAge` slider, which is also capped at `max: 80` (`App.jsx` — both are "how old is this person right now" inputs, distinct from `lifeExpect`'s `max: 115`, a projection horizon). Owner-reviewed and accepted as shipped (BUG-95's fix session, PR #62) — raise both bounds together if a use case needs it; there is no reason for the two to diverge. `src/App.jsx` (`ss.spouseCurrentAge` bundle, `assumptions.currentAge` bundle). |
 
 ## IRS Annual Update Procedure

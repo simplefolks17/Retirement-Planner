@@ -1,5 +1,19 @@
 # Session B — Port the Monte Carlo Range Lens onto the Per-Account Engine
 
+**Status: DONE — retired 2026-07-28.** Shipped on branch `claude/monte-carlo-engine-port-17l6gu`
+in five gated batches per §2's process below: Batch 1 (`rRealByYear` engine change, zero
+golden-master movement), Batch 2 (the port itself, merged with the caveat retirement per the
+Step 2 audit's finding that splitting them would ship a false user-facing caveat), Batch 4
+(threshold calibration — measured, decision: unchanged at 80/70, written up in
+`docs/FINANCIAL-MODEL.md`), Batch 5 (this doc reconciliation pass). All five items in §3's
+Definition of Done are met — see `CLAUDE.md` → Status for the full session entry and
+`docs/BUGS.md` → BUG-93/BUG-94 for the caveat's superseded-by note. This document's job —
+diagnosing the gap and sequencing the work — is done; it is kept only as a historical record of
+the diagnosis and the two-agent (plan → independent audit) process that preceded implementation.
+Do not add new work here; file it in `docs/BUGS.md` instead.
+
+---
+
 **Written:** 2026-07-27, at the close of PR #62 (spousal-engine stabilization + review battery,
 merged to `main` as `6c5d32c`). **Purpose:** the single "start here" document for the next session.
 "Session B" is a name this repo's docs have used since BUG-82 (see `docs/HISTORY.md`) for this exact

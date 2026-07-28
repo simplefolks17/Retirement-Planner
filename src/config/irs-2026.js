@@ -384,13 +384,27 @@ export const ASSUMPTIONS = {
   // Standard deviation of annual NOMINAL portfolio returns. ~12% is a common
   // illustrative proxy for a broad-equity / 60-40 blend's yearly volatility.
   MONTE_CARLO_STD_DEV:              0.12,
-  // Default number of simulated market paths per run.
+  // Default number of simulated market paths per run. Since Session B (PR #64)
+  // each path walks the full per-account engine (buildRetirementWalkByAccount),
+  // several times costlier per call than the older blended walk — raising this
+  // multiplies that cost directly, and it will rise further as the engine
+  // itself grows more accounts/features (BUG-85). No runtime budget/circuit
+  // breaker exists yet (forward-compat audit finding, PR #64); reconsider one
+  // before raising this materially.
   MONTE_CARLO_ITERATIONS:           600,
   // Success rate (%) at/above which the Plan confidence driver reads "ok" — a
   // planning heuristic, roughly the common 80–90% success band.
   MONTE_CARLO_SUCCESS_GUIDELINE_PCT: 80,
   // Success rate (%) below which the low-odds Plan signal fires.
   MONTE_CARLO_LOW_ODDS_PCT:          70,
+  // Floor on a single sampled NOMINAL annual return — a multi-sigma draw at
+  // MONTE_CARLO_STD_DEV could otherwise send a path to/below -100%, and the
+  // engine multiplies five account balances by (1 + yearReal) assuming a
+  // non-negative result. A modeling heuristic like its three siblings above,
+  // not an IRS/statutory value (reuse/duplication-audit finding, PR #64 —
+  // this clamp was inline in monte-carlo.js, breaking the convention this
+  // section itself establishes).
+  MONTE_CARLO_MIN_NOMINAL_RETURN:    -0.99,
 
   // ── Tax diversification (#56) ──────────────────────────────────────────────
   // Pre-tax (tax-deferred) share of the retirement portfolio, classified into
