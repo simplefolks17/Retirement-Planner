@@ -262,6 +262,43 @@ describe("runMonteCarlo — structural guards (a malformed walk must never score
     expect(r.limitation).toMatch(/withdrawal order/i);
     expect(r.limitation).not.toMatch(/reuses your baseline/i);
   });
+
+  // Bot-review finding (Qodo, PR #64): a non-finite monetary value anywhere
+  // inside `walk` propagates a NaN `total` through buildRetirementWalkByAccount
+  // without ever tripping its depletion check (NaN comparisons are always
+  // false), so rows.length still equals nYears with depletionAge still null —
+  // which the old, bare success test would have silently scored as 100%
+  // success with NaN bands. Verified directly against the engine first: a
+  // NaN effectiveExpenses walks its full 25 rows, depletionAge stays null,
+  // and the last row's total is NaN (this reproduces the exact failure the
+  // review flagged, not a hypothetical).
+  it("a NaN monetary input inside `walk` never scores as success and never leaks a NaN band", () => {
+    const r = runMonteCarlo(
+      { ...realistic, walk: { ...realistic.walk, effectiveExpenses: NaN } },
+      { seed: 1, iterations: 20 },
+    );
+    expect(r.successRate).toBe(0);
+    for (const b of r.bands) {
+      for (const key of ["p10", "p25", "p50", "p75", "p90"]) {
+        expect(Number.isFinite(b[key])).toBe(true);
+      }
+    }
+  });
+
+  // Bot-review finding (CodeRabbit, PR #64): fractional ages make `nYears`
+  // fractional, which throws RangeError from `new Array(nYears)`; a -100%
+  // (or lower) inflationRate divides by zero in `inflFactor`; a non-finite
+  // stdDev/non-safe-integer iterations count silently misbehaves rather than
+  // failing closed.
+  it("fractional ages, inflationRate <= -100, non-finite stdDev, and non-integer iterations all return the empty result instead of throwing or misbehaving", () => {
+    shape(runMonteCarlo({ ...realistic, walk: { ...realistic.walk, startAge: 65.5 } }));
+    shape(runMonteCarlo({ ...realistic, walk: { ...realistic.walk, endAge: 90.5 } }));
+    shape(runMonteCarlo({ ...realistic, inflationRate: -100 }));
+    shape(runMonteCarlo({ ...realistic, inflationRate: -150 }));
+    shape(runMonteCarlo(realistic, { stdDev: NaN }));
+    shape(runMonteCarlo(realistic, { iterations: 2.5 }));
+    shape(runMonteCarlo(realistic, { iterations: Infinity }));
+  });
 });
 
 describe("runMonteCarlo — perf guard (no double-walk, no buildRetirementPhase reuse)", () => {

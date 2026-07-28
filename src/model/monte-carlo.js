@@ -153,14 +153,24 @@ export function runMonteCarlo(inputs, options = {}) {
   // and strictly after startAge, or buildRetirementWalkByAccount's loop never
   // executes (rows: [], depletionAge: null) — which a bare `depletionAge ==
   // null` success test would silently score as 100% success on zero data.
+  // Ages are integers (walked year-by-year) — Number.isInteger, not just
+  // isFinite, or a fractional endAge/startAge makes `nYears` fractional and
+  // `new Array(nYears)` below throws RangeError. inflationRate <= -100 would
+  // divide by zero in `inflFactor` (bot-review finding, PR #64); stdDev must
+  // be finite or every sampled return is NaN; iterations must be a genuine
+  // positive integer or the `for` loop below runs a different count than the
+  // `iterations` this function reports.
   if (
     !walk ||
-    !Number.isFinite(startAge) ||
-    !Number.isFinite(endAge) ||
+    !Number.isInteger(startAge) ||
+    !Number.isInteger(endAge) ||
     endAge <= startAge ||
     !Number.isFinite(returnRate) ||
     !Number.isFinite(inflationRate) ||
-    !(iterations > 0)
+    inflationRate <= -100 ||
+    !Number.isFinite(stdDev) ||
+    !Number.isSafeInteger(iterations) ||
+    iterations <= 0
   ) {
     return emptyResult(seed, stdDev);
   }
@@ -200,23 +210,40 @@ export function runMonteCarlo(inputs, options = {}) {
     });
 
     // age → balance for this iteration; default 0 (walk stopped early or never ran).
+    // A non-finite row.total (a NaN/Infinity monetary input inside `walk`
+    // propagating through the engine — bot-review finding, PR #64) is treated
+    // as failure from that age forward: the engine's own depletion check is a
+    // numeric comparison (`balEnd <= 0`), which NaN always evaluates false
+    // against, so a NaN walk would otherwise run its full length and be
+    // silently scored a success with NaN bands. Sanitizing at this single
+    // choke point (rather than exhaustively validating every monetary field
+    // in `walk`) catches it regardless of which upstream input was bad.
+    let badAge = null;
     for (const r of rows) {
       const j = r.age - startAge - 1;
-      if (j >= 0 && j < nYears) balancesByYear[j][iter] = r.total;
+      if (j < 0 || j >= nYears) continue;
+      if (Number.isFinite(r.total)) {
+        balancesByYear[j][iter] = r.total;
+      } else {
+        badAge ??= r.age;
+        balancesByYear[j][iter] = 0;
+      }
     }
     for (let j = 0; j < nYears; j++) {
       if (balancesByYear[j][iter] === undefined) balancesByYear[j][iter] = 0;
     }
 
+    const effectiveDepletionAge = depletionAge ?? badAge;
+
     // Success requires the walk to have actually run its full course — depleted
     // rows.length < nYears; a malformed/absent endAge (rows.length 0, depletionAge
-    // null) must NOT count as success.
-    const success = depletionAge == null && rows.length === nYears;
+    // null) must NOT count as success; neither may a NaN-propagating walk.
+    const success = effectiveDepletionAge == null && rows.length === nYears;
     if (success) {
       successCount++;
       depletionAges[iter] = Number.POSITIVE_INFINITY;  // survived the whole horizon
     } else {
-      depletionAges[iter] = depletionAge ?? endAge;
+      depletionAges[iter] = effectiveDepletionAge ?? endAge;
     }
   }
 
