@@ -64,6 +64,17 @@ const E = {
   rmdTaxBite:           10_182,
   conversionWindowYrs:  7,
   netConversionBenefit: -70_844,
+  // Session B (Monte Carlo engine port): the no-spouse default's Range-lens
+  // success rate was locked by NOTHING at app level before this — a gap the
+  // port's own plan-audit process found. Locked PRE-port at 37 first
+  // (confirmed green against the still-blended-walk `runMonteCarlo`, per the
+  // repo's revert-and-confirm discipline — a lock never observed to fail
+  // isn't a lock), then observed to fail post-port as expected, and re-locked
+  // here at 24. Direction: DOWN, and this fixture is the "control" case — no
+  // spouse, so the port's ONLY live mechanism is that the engine charges real
+  // tax on 401k dollars drawn to fund spending (drawTax, on top of RMD/
+  // conversion tax), which the older blended walk never charged.
+  rangeSuccessPct: 24,
 };
 
 describe("golden master ↔ App wiring cross-check (default state)", () => {
@@ -83,5 +94,6 @@ describe("golden master ↔ App wiring cross-check (default state)", () => {
 
     expect(props.conversionWindowYrs).toBe(E.conversionWindowYrs);
     expect(props.netConversionBenefit).toBe(E.netConversionBenefit);
+    expect(props.rangeView.successPct).toBe(E.rangeSuccessPct);
   });
 });

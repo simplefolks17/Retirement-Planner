@@ -1,5 +1,5 @@
 import { ASSUMPTIONS } from "../config/irs-2026.js";
-import { buildRetirementDrawdown } from "./retirement-drawdown.js";
+import { buildRetirementWalkByAccount } from "./retirement-engine.js";
 
 // ── Monte Carlo "Range" lens ─────────────────────────────────────────────────
 //
@@ -13,25 +13,42 @@ import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 //
 // WHAT IT MODELS — RETURN RISK ONLY (honesty label). Each iteration keeps the
 // SAME fixed real spending path (expenses net of SS/pension, per-year gated) and
-// the SAME baseline year-by-year RMD/conversion tax estimates, and varies only
-// the annual market return: a fresh Gaussian draw per year (mean = returnRate,
-// sd = stdDev, both on the NOMINAL return), deflated to a real return. It does
-// NOT re-optimize withdrawal order under stress and does NOT re-derive taxes per
-// path. See MONTE_CARLO_LIMITATION_NOTE — surfaced to the user verbatim.
+// varies only the annual market return: a fresh Gaussian draw per year (mean =
+// returnRate, sd = stdDev, both on the NOMINAL return), deflated to a real
+// return. It does NOT re-optimize withdrawal order under stress — every path
+// draws in the same fixed Taxable → 401k → Roth → HSA order the headline walk
+// uses. See MONTE_CARLO_LIMITATION_NOTE — surfaced to the user verbatim.
 //
-// HOW IT WALKS. Every iteration reuses buildRetirementDrawdown — the blended
-// secondary retirement walk, the SAME walk the what-if delta uses — via its
-// optional `rRealByYear` per-year real-return override. So the lens is
-// consistent with those secondary surfaces. It is NOT the per-account engine
-// that produces headline numbers, and it never feeds any headline number — it is
-// a display-only confidence lens. Per-year SS/pension gating (CLAUDE.md rule 5b)
-// is inherited unchanged from buildRetirementDrawdown.
+// HOW IT WALKS (Session B port). Every iteration walks through
+// buildRetirementWalkByAccount — the SAME per-account engine that produces
+// every other headline number (chart, yearsSustained, RMD schedule, Flow-Down,
+// conversion benefit; CLAUDE.md rule 2b) — via its `rRealByYear` per-year
+// real-return override. So the Range lens can no longer disagree with the
+// solid arc line about anything except return risk itself: taxes, RMDs,
+// conversions, and the spouse bucket (hold-out + spillover) are re-derived
+// per sampled path, not reused from a fixed baseline. Per-year SS/pension/
+// spouse-gap-year gating (CLAUDE.md rule 5b) is inherited unchanged from the
+// engine, since `walk` is the same input bundle App feeds the headline walk.
+//
+// CONTRACT. `runMonteCarlo({ walk, returnRate, inflationRate }, options)` —
+// `walk` is a complete buildRetirementWalkByAccount parameter object PLUS
+// `endAge` (the success horizon; NOT the 130-year longevity cap — App passes
+// `safeLifeExp`). `walk.rReal` is not read for the mean path: this function
+// derives its own `rRealScalar` from `returnRate`/`inflationRate` (the values
+// it also uses to sample each path) and overrides `walk.rReal` with it before
+// calling the engine, so there is exactly ONE formula for the mean real return
+// feeding both the sampled paths and the stdDev-0 anchor test — no second,
+// silently-divergible source. The three spouse gap-year maps
+// (spouseContribByAge/spouseTaxableIncomeByAge/spouseIncomeFloorByAge) are
+// fixed real dollars (already deflated to the primary's retirement year, BUG-90)
+// and pass through UNCHANGED every iteration — a paycheck doesn't move with
+// the sampled market return.
 //
 // Constants (stdDev, iteration count, guideline thresholds) live in
 // ASSUMPTIONS (irs-2026.js, rule 1) — modeling heuristics, documented there.
 
 export const MONTE_CARLO_LIMITATION_NOTE =
-  "Models return risk only — a fixed real spending path with variable annual market returns. It does not re-optimize withdrawal order under stress, and it reuses your baseline year-by-year RMD and conversion tax estimates. A guide to the range of outcomes, not a guarantee.";
+  "Models return risk only — a fixed real spending path with variable annual market returns. It does not re-optimize withdrawal order under stress. Taxes, RMDs, and Roth conversions are re-derived on each simulated path, but bracket thresholds and Roth-conversion amounts stay fixed at today's plan. A guide to the range of outcomes, not a guarantee.";
 
 // mulberry32 — a tiny, fast, well-distributed 32-bit PRNG. Deterministic from a
 // single uint32 seed; returns a float in [0, 1). No global state.
@@ -93,26 +110,30 @@ function emptyResult(seed, stdDev) {
 
 // Run the Monte Carlo Range lens.
 //
-// inputs — provided entirely by the caller (App.jsx); this function reaches for
-//   nothing else:
-//     startBal            gross portfolio at retirement (totalAtRet)
-//     startAge            safeRetAge
-//     endAge              safeLifeExp — the band-series AND the success horizon
-//     returnRate          mean NOMINAL annual return, as a PERCENT (5 = 5%)
-//     inflationRate       as a PERCENT (4 = 4%)
-//     effectiveExpenses   fixed real annual spend
-//     ssAmount, ssClaimAge, pensionAmount, pensionStartAge  (rule 5b gated by the walk)
-//     rmdTaxByAge, conversionTaxByAge  baseline per-age tax maps
-//     moneyEvents         one-time / duration events
+// inputs:
+//   walk           a complete buildRetirementWalkByAccount parameter object
+//                   (startAge, tradGross/roth/taxable/hsa, tradGrossSpouse,
+//                   effectiveExpenses, ssGross/ssTaxable/ssClaimAge,
+//                   pension/pensionStartAge, filingStatus, retStateRate,
+//                   conversionByAge, rmdStartAge, useTable2, spouseCurrentAge,
+//                   currentAge, moneyEvents, spouseRetirementAge, and the
+//                   three spouse gap-year maps) PLUS `endAge` — the success
+//                   horizon (App passes safeLifeExp, not the longevity cap).
+//   returnRate     mean NOMINAL annual return, as a PERCENT (5 = 5%)
+//   inflationRate  as a PERCENT (4 = 4%)
 //
 // options — { iterations, seed, stdDev }.
 //
 // Returns { successRate, bands, depletionAgePercentiles, iterations, seed,
 //   stdDev, limitation }:
-//   successRate  fraction in [0,1] of paths still solvent at endAge.
-//   bands        [{ age, p10, p25, p50, p75, p90 }] for age in startAge+1..endAge
-//                — the balance distribution across paths at each age (depleted
-//                paths contribute 0). p10 ≤ … ≤ p90 by construction.
+//   successRate  fraction in [0,1] of paths that walked to endAge without
+//                depleting (rows.length === nYears AND depletionAge == null —
+//                a walk that never ran at all, e.g. a malformed endAge, must
+//                NOT be scored as success).
+//   bands        [{ age, p10, p25, p50, p75, p90 }] for age in
+//                walk.startAge+1..endAge — the balance distribution across
+//                paths at each age (depleted paths contribute 0).
+//                p10 ≤ … ≤ p90 by construction.
 //   depletionAgePercentiles  { p10, p25, p50, p75, p90 } of the depletion age;
 //                a null percentile means that share of paths NEVER deplete within
 //                the horizon (they were represented by +Infinity and mapped back
@@ -124,28 +145,21 @@ export function runMonteCarlo(inputs, options = {}) {
     stdDev = ASSUMPTIONS.MONTE_CARLO_STD_DEV,
   } = options;
 
-  const {
-    startBal,
-    startAge,
-    endAge,
-    returnRate,
-    inflationRate,
-    effectiveExpenses,
-    ssAmount = 0,
-    ssClaimAge = Infinity,
-    pensionAmount = 0,
-    pensionStartAge = Infinity,
-    rmdTaxByAge = {},
-    conversionTaxByAge = {},
-    moneyEvents = [],
-  } = inputs ?? {};
+  const { walk, returnRate, inflationRate } = inputs ?? {};
+  const startAge = walk?.startAge;
+  const endAge = walk?.endAge;
 
-  // Guard invalid inputs → well-formed empty result.
+  // Guard invalid inputs → well-formed empty result. `endAge` must be finite
+  // and strictly after startAge, or buildRetirementWalkByAccount's loop never
+  // executes (rows: [], depletionAge: null) — which a bare `depletionAge ==
+  // null` success test would silently score as 100% success on zero data.
   if (
-    !Number.isFinite(startBal) ||
+    !walk ||
     !Number.isFinite(startAge) ||
     !Number.isFinite(endAge) ||
     endAge <= startAge ||
+    !Number.isFinite(returnRate) ||
+    !Number.isFinite(inflationRate) ||
     !(iterations > 0)
   ) {
     return emptyResult(seed, stdDev);
@@ -154,7 +168,9 @@ export function runMonteCarlo(inputs, options = {}) {
   const nYears = endAge - startAge;                 // walked years: startAge+1 .. endAge
   const meanNominal = returnRate / 100;
   const inflFactor = 1 + inflationRate / 100;
-  // Scalar real return used as the per-year fallback and the deterministic mean path.
+  // The ONE formula for the mean real return — feeds both the per-path sampling
+  // below AND overrides walk.rReal, so there is no second, silently-divergible
+  // source for the scalar fallback the engine would otherwise use.
   const rRealScalar = (1 + meanNominal) / inflFactor - 1;
 
   const rand = mulberry32(seed);
@@ -168,42 +184,39 @@ export function runMonteCarlo(inputs, options = {}) {
   let successCount = 0;
 
   for (let iter = 0; iter < iterations; iter++) {
-    // Sample this path's per-year REAL returns.
+    // Sample this path's per-year REAL returns. Clamped so a multi-sigma draw
+    // can never send a nominal return to/below -100% — the engine multiplies
+    // five account balances by (1 + yearReal) and assumes non-negative results.
     const rRealByYear = new Array(nYears);
     for (let j = 0; j < nYears; j++) {
-      const rNominal = meanNominal + stdDev * gaussian();
+      const rNominal = Math.max(-0.99, meanNominal + stdDev * gaussian());
       rRealByYear[j] = (1 + rNominal) / inflFactor - 1;
     }
 
-    const { rows, depletionAge } = buildRetirementDrawdown({
-      startBal,
-      startAge,
-      endAge,
+    const { rows, depletionAge } = buildRetirementWalkByAccount({
+      ...walk,
       rReal: rRealScalar,
-      effectiveExpenses,
-      ssAmount,
-      ssClaimAge,
-      pensionAmount,
-      pensionStartAge,
-      rmdTaxByAge,
-      conversionTaxByAge,
-      moneyEvents,
       rRealByYear,
     });
 
-    // age → balance for this iteration; default 0 (walk stopped early).
-    const balByAge = new Map();
-    for (const r of rows) balByAge.set(r.age, r.total);
+    // age → balance for this iteration; default 0 (walk stopped early or never ran).
+    for (const r of rows) {
+      const j = r.age - startAge - 1;
+      if (j >= 0 && j < nYears) balancesByYear[j][iter] = r.total;
+    }
     for (let j = 0; j < nYears; j++) {
-      const age = startAge + 1 + j;
-      balancesByYear[j][iter] = balByAge.get(age) ?? 0;
+      if (balancesByYear[j][iter] === undefined) balancesByYear[j][iter] = 0;
     }
 
-    if (depletionAge == null) {
+    // Success requires the walk to have actually run its full course — depleted
+    // rows.length < nYears; a malformed/absent endAge (rows.length 0, depletionAge
+    // null) must NOT count as success.
+    const success = depletionAge == null && rows.length === nYears;
+    if (success) {
       successCount++;
       depletionAges[iter] = Number.POSITIVE_INFINITY;  // survived the whole horizon
     } else {
-      depletionAges[iter] = depletionAge;
+      depletionAges[iter] = depletionAge ?? endAge;
     }
   }
 

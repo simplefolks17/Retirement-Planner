@@ -117,69 +117,39 @@ describe("HSA family-HDHP shared ceiling (#30, rule 4)", () => {
   });
 });
 
-// #30 / BUG-82 interim (Session A): the Monte Carlo "Range" lens still runs the
-// older blended walk (no spouse bucket at all), so it needs a caveat whenever the
-// spouse has a real gap window — until the MC engine is ported to the per-account
-// walk (Session B), which removes this caveat entirely.
-describe("Monte Carlo Range lens — spouse-gap caveat (#30 / BUG-82 interim)", () => {
-  it("no caveat at the default (single, no spouse) state", () => {
-    const app = mount();
-    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
-    app.unmount();
-  });
-
-  it("no caveat when the spouse's retirement lands in the same calendar year as the primary's (no gap)", () => {
-    const app = mount();
-    app.fire(() => app.latest().ss.isMarried.set(true));
-    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
-    // currentAge 30, retirementAge 65 (defaults): spouse age at the primary's own
-    // retirement is 20 + (65 - 30) = 55 — setting the spouse's own retirement age
-    // to exactly that opens a zero-length gap window (byte generalization case).
-    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(55));
-    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
-    app.unmount();
-  });
-
-  it("shows the caveat once the spouse's own retirement age opens a real gap window WITH real income/contributions", () => {
+// #30 / BUG-82 interim (Session A) shipped a `rangeView.spouseGapCaveat` field
+// because the Range lens ran an older, spouse-blind walk. Session B (Monte
+// Carlo engine port) retired the mechanism entirely — the lens now walks
+// through the SAME per-account engine (spouse bucket, hold-out, spillover all
+// included) as every other headline number, so there is no second walk left
+// for a spouse household's outlook to silently disagree with. This describe
+// block (and its five caveat-firing-condition tests) is retired along with it;
+// see the BUG-93/94 describe block below for the caveat's engine-observable
+// successor test.
+describe("Monte Carlo Range lens — spouse bucket visible, no separate caveat mechanism (Session B)", () => {
+  it("the rangeView bundle no longer carries a spouseGapCaveat field at all (retired, not just silenced)", () => {
     const app = mount();
     app.fire(() => app.latest().ss.isMarried.set(true));
     app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
     app.fire(() => app.latest().profile.spouseIncome.set(80_000));
     app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
-    // Same setup, but the spouse now retires 7 years after the primary (age 62 vs.
-    // the 55 no-gap value above) — a real gap window opens.
     app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
-    const caveat = app.latest().rangeView.spouseGapCaveat;
-    expect(caveat).not.toBeNull();
-    expect(caveat).toContain("spouse");
+    expect(app.latest().rangeView.spouseGapCaveat).toBeUndefined();
     app.unmount();
   });
 
-  it("married with no spouse retirement-age override still opens a gap for an age-gap couple WITH real income (the default 'auto' case)", () => {
-    // effectiveSpouseRetAge defaults (null) to the PRIMARY's numeric retirement
-    // age (65) — for a 10-year-younger spouse that is 10 years AFTER the primary
-    // retires, so the gap is real even without the user touching the new slider.
+  it("a spouse-gap household still produces a well-formed Range lens (populated bands, a real successPct)", () => {
     const app = mount();
     app.fire(() => app.latest().ss.isMarried.set(true));
     app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
     app.fire(() => app.latest().profile.spouseIncome.set(80_000));
-    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(65); // resolved "auto" value
-    expect(app.latest().rangeView.spouseGapCaveat).not.toBeNull();
-    app.unmount();
-  });
-
-  // Adversarial-review finding (finding 4): buildSpouseRetirementSeed writes a
-  // map KEY for every gap year regardless of the dollar amount, so checking
-  // key presence alone (the pre-fix formula) produced a false-positive caveat
-  // for a married household with an age gap but $0 spouse income/contributions
-  // — a real, if inert-looking, household (e.g. a non-working spouse).
-  it("no caveat for a married age-gap household with $0 spouse income/contributions (false-positive fix)", () => {
-    const app = mount();
-    app.fire(() => app.latest().ss.isMarried.set(true));
-    app.fire(() => app.latest().ss.spouseCurrentAge.set(20));
-    // No spouseIncome, no spouseAccounts contributions set — gap window opens
-    // by age math alone, but nothing flows through it.
-    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62));
+    const rv = app.latest().rangeView;
+    expect(rv.series.length).toBeGreaterThan(0);
+    expect(rv.successPct).not.toBeNull();
+    expect(rv.successPct).toBeGreaterThanOrEqual(0);
+    expect(rv.successPct).toBeLessThanOrEqual(100);
     app.unmount();
   });
 });
@@ -239,25 +209,37 @@ describe("BUG-93/94 — Option-A hold-out gated on real spouse income, not just 
     app.unmount();
   });
 
-  it("BUG-94: the Range-lens caveat agrees with the engine — no caveat for the same pure-rollover household the engine now pools normally", () => {
+  // BUG-94's engine-observable successor (Session B): before the fix, the
+  // engine (hasSpouse-gated) walled the balance off and could force the
+  // escape hatch while the interim caveat (already hasActiveSpouseGap-gated)
+  // stayed null — a direct contradiction between two SEPARATE walks. The
+  // Monte Carlo port removed the second walk entirely, so this class of
+  // contradiction is now structurally impossible: the Range lens reads the
+  // SAME retPhaseBase (and therefore the SAME spillover behavior) as
+  // retirementWalk, not a second, spouse-blind model.
+  it("Range lens and retirementWalk can no longer disagree — same engine bundle, pure-rollover household pools normally in both", () => {
     const app = buildRolloverOnlyHousehold();
-    // Before the fix, the engine (hasSpouse-gated) walled the balance off and
-    // could force the escape hatch while the caveat (already hasActiveSpouseGap-
-    // gated) stayed null — a direct contradiction between the two surfaces.
-    // Now both key on the same condition, so they can't disagree.
-    expect(app.latest().retirementWalk.totalSpouseSpillover).toBe(0);
-    expect(app.latest().rangeView.spouseGapCaveat).toBeNull();
+    const latest = app.latest();
+    expect(latest.retirementWalk.totalSpouseSpillover).toBe(0);
+    expect(latest.rangeView.series.length).toBeGreaterThan(0);
+    expect(latest.rangeView.successPct).not.toBeNull();
+    // The old caveat mechanism is retired outright, not merely non-firing.
+    expect(latest.rangeView.spouseGapCaveat).toBeUndefined();
     app.unmount();
   });
 
-  it("a spouse with REAL gap-year income still gets Option A exactly as before (hasActiveSpouseGap true)", () => {
+  it("a spouse with REAL gap-year income still gets Option A exactly as before (hasActiveSpouseGap true) — the Range lens stays well-formed for it, reading the same engine", () => {
     const app = buildRolloverOnlyHousehold();
     app.fire(() => app.latest().profile.spouseIncome.set(60_000));
     app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+    const latest = app.latest();
     // Real income flowing through the gap window ⇒ hasActiveSpouseGap true ⇒
-    // Option A hold-out is genuinely active for this household (unchanged
-    // from before the fix) — the caveat should also reflect a real gap.
-    expect(app.latest().rangeView.spouseGapCaveat).not.toBeNull();
+    // Option A hold-out is genuinely active for this household (unit-tested at
+    // the engine level in retirement-engine.test.js's T2.x block). There is no
+    // longer a second, spouse-blind walk for the Range lens to disagree with.
+    expect(latest.rangeView.series.length).toBeGreaterThan(0);
+    expect(latest.rangeView.successPct).not.toBeNull();
+    expect(latest.rangeView.spouseGapCaveat).toBeUndefined();
     app.unmount();
   });
 });
@@ -501,7 +483,16 @@ describe("spouse-household golden master (T-X.2, exact-locked)", () => {
     convSteadyTarget:        110_856,
     effectiveExpenses:       95_000,     // TODAY's dollars — unchanged, this is the raw user-facing figure
     householdSS:             40_000,
-    rangeSuccessPct:         83,         // was 95 — Monte Carlo success drops at the honest spend
+    // Session B (Monte Carlo engine port, 2026-07-28): re-locked 83 -> 100.
+    // Direction: UP, strongly — this household's spouse gap-year income+
+    // contributions ($90k income + $15k/yr contributions over a 17-year gap)
+    // are now visible to the Range lens for the first time (the older blended
+    // walk had no spouse bucket at all); that inflow dwarfs the new spending-
+    // draw tax the port also introduces (totalDrawTax is only $83,566 lifetime
+    // per the walk locked above), and the hold-out/spillover mechanisms are
+    // inert here (totalSpouseSpillover: 0 above) since this household never
+    // needs the escape hatch.
+    rangeSuccessPct:         100,
   };
 
   it("locks the retirement-walk headline numbers", () => {
@@ -541,11 +532,11 @@ describe("spouse-household golden master (T-X.2, exact-locked)", () => {
     expect(latest.conversionView.targets.convPeakTarget).toBe(E.convPeakTarget);
     expect(latest.conversionView.targets.convSteadyTarget).toBe(E.convSteadyTarget);
     expect(latest.rangeView.successPct).toBe(E.rangeSuccessPct);
-    // The Range-lens spouse-gap caveat (BUG-94) is expected to fire for this
-    // household today — locked here as a fact, not a value judgment; BUG-94's
-    // own fix (plan §2 step 4) may change its firing condition/wording, at
-    // which point this assertion is re-examined alongside that fix.
-    expect(latest.rangeView.spouseGapCaveat).not.toBeNull();
+    // Session B (Monte Carlo engine port): the interim spouseGapCaveat is
+    // retired outright — the Range lens now reads the same per-account engine
+    // as retirementWalk, so there is no second, spouse-blind walk left for
+    // this household's outlook to disagree with.
+    expect(latest.rangeView.spouseGapCaveat).toBeUndefined();
 
     app.unmount();
   });
@@ -654,7 +645,17 @@ describe("spouse-household golden master (T-X.3, exact-locked — MFJ + pension 
     rmdTaxBite:            28_417,
     projectedRetBracket:  0.12,     // taxView.projectedRetBracket — exercises retPensionAtRMDAge (nonzero pension, MFJ brackets)
     wr70:                 1.4225852835455082,  // ssView.wr70 — exercises retPensionAt70
-    rangeSuccessPct:      61,
+    // Session B (Monte Carlo engine port, 2026-07-28): re-locked 61 -> 60.
+    // Direction: essentially FLAT (-1), not the "up" every other spouse
+    // fixture shows — and that's the expected, explained outcome, not a
+    // regression. This household's gap is short (8 years) against a large
+    // MFJ/CA household spend ($140k), so the port's new spending-draw tax
+    // (M1) roughly CANCELS the spouse gap-year income benefit (M2) instead of
+    // being dwarfed by it the way T-X.2's 17-year gap dwarfs it. This is the
+    // predicted "least certain" fixture from the pre-implementation plan
+    // audit, confirmed here by direct measurement rather than left as a
+    // surprise for a future session to rediscover.
+    rangeSuccessPct:      60,
   };
 
   it("locks the retirement-walk + conversion + Range-lens headline numbers for a pensioned MFJ spouse household", () => {

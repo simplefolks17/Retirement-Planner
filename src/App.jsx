@@ -627,19 +627,20 @@ export default function App() {
   const spouseIncomeScopeNote = spouseIncomeAtRet > 0
     ? `Includes your spouse's income through age ${effectiveSpouseRetAge}; the portfolio draw rises after that.`
     : null;
-  // #30 / BUG-82 interim (Session A, pending the Session B Monte Carlo engine
-  // port): true whenever the spouse has a real gap window (works past the
-  // primary's retirement, before their own) — read straight off the same maps
-  // spouseIncomeAtRet uses, not re-derived from ages, so it can't disagree.
-  // The Range lens still runs the OLDER blended walk (buildRetirementDrawdown),
-  // which has no spouse bucket at all, so its shaded band can silently
-  // understate a spouse household's outlook during the gap. Surfaced as a
-  // caption rather than left unstated (rule 10: missing applicability is not
-  // silence) until the MC engine is ported to the per-account walk.
+  // #30 / BUG-82: true whenever the spouse has a real gap window (works past
+  // the primary's retirement, before their own) — read straight off the same
+  // maps spouseIncomeAtRet uses, not re-derived from ages, so it can't
+  // disagree. Gates the engine's Option-A hold-out below (BUG-93's fix —
+  // `spouseRetirementAge: hasActiveSpouseGap ? effectiveSpouseRetAge : null`).
+  // Until the Session B Monte Carlo engine port, this also gated a Range-lens
+  // caveat (the lens ran the older blended walk, which had no spouse bucket
+  // at all); the port removed that caveat by giving the lens the SAME engine
+  // and the SAME hold-out this flag already gates, so the flag now has one
+  // job — the engine gate — not two.
   // Checks for an actual nonzero VALUE, not just key presence (adversarial-
   // review fix): buildSpouseRetirementSeed writes a key for every gap year
   // regardless of amount, so a married household with $0 spouse income/
-  // balances got a spurious caveat for a gap that offsets nothing.
+  // balances would otherwise wall off a balance for a gap that offsets nothing.
   const hasActiveSpouseGap = hasSpouse && (
     Object.values(spouseSeed?.spouseContribByAge ?? {}).some(v => v > 0)
     || Object.values(spouseSeed?.spouseIncomeFloorByAge ?? {}).some(v => v > 0)
@@ -911,28 +912,30 @@ export default function App() {
   // ── Monte Carlo "Range" lens (WI-5.3 / #114) ──────────────────────────────────
   // A DISPLAY-ONLY confidence lens — it never feeds any headline number (the
   // golden master locks none of this). runMonteCarlo is deterministic (seeded), so
-  // this is reproducible. RECOMPUTE CONTRACT: this useMemo re-runs ONLY when the
-  // committed plan's retirement-walk inputs change (retDrawShared, totalAtRet,
-  // ages, returnRate, inflationRate) — NOT on every render. Crucially the Plan
-  // "Try a change" lever previews are preview-only (they never touch real App
-  // state), so dragging those sliders does NOT re-run the ~14ms/600-iteration MC;
-  // it re-runs only when the user actually commits a plan change or edits a real
-  // assumption. Iterations stay at ASSUMPTIONS.MONTE_CARLO_ITERATIONS for
-  // sub-frame runtime.
+  // this is reproducible.
+  //
+  // Session B (Monte Carlo engine port): walks through the SAME per-account
+  // engine (retPhaseBase + conversionByAge) as the headline chart/RMD/Flow-Down/
+  // conversion-benefit numbers, instead of the older blended-pool walk — so the
+  // Range lens's spouse bucket (hold-out + gap-year income + spillover), RMDs,
+  // and conversion tax are re-derived per sampled path instead of reused from a
+  // fixed baseline. This retired the interim spouseGapCaveat (#30/BUG-82
+  // Session A): there is no longer a second, spouse-blind walk for a spouse
+  // household's outlook to silently disagree with.
+  //
+  // RECOMPUTE CONTRACT: this useMemo re-runs ONLY when the committed plan's
+  // retirement-walk inputs change (retPhaseBase, conversionByAge, safeLifeExp,
+  // returnRate, inflationRate) — NOT on every render. Crucially the Plan "Try a
+  // change" lever previews are preview-only (they never touch real App state),
+  // so dragging those sliders does NOT re-run the ~25-35ms/600-iteration MC (the
+  // per-account engine costs more per walk than the old blended walk — a
+  // measured, one-time, once-per-commit cost); it re-runs only when the user
+  // actually commits a plan change or edits a real assumption. Iterations stay
+  // at ASSUMPTIONS.MONTE_CARLO_ITERATIONS for sub-frame runtime.
   const rangeView = useMemo(() => {
     const mc = runMonteCarlo({
-      startBal: totalAtRet,
-      startAge: safeRetAge,
-      endAge: safeLifeExp,
+      walk: { ...retPhaseBase, conversionByAge, endAge: safeLifeExp },
       returnRate, inflationRate,
-      effectiveExpenses: retSpendBasis,
-      ssAmount: retDrawShared.ssAmount,
-      ssClaimAge: retDrawShared.ssClaimAge,
-      pensionAmount: retDrawShared.pensionAmount,
-      pensionStartAge: retDrawShared.pensionStartAge,
-      rmdTaxByAge: retDrawShared.rmdTaxByAge,
-      conversionTaxByAge: retDrawShared.conversionTaxByAge,
-      moneyEvents: retDrawShared.moneyEvents,
     });
     const hasData = mc.bands.length > 0;
     const successPct = hasData ? Math.round(mc.successRate * 100) : null;
@@ -944,23 +947,10 @@ export default function App() {
       successPct,
       successOk,
       note: mc.limitation,
-      // #30 / BUG-82 interim (Session A) — see hasActiveSpouseGap above. null
-      // (the normal case) renders nothing extra; the MC engine port (Session B)
-      // removes this caveat by giving the walk a real spouse bucket instead.
-      // BUG-94 wording fix: the blended walk's error isn't one-directional —
-      // it has no concept of the spouse's gap-year income/contributions
-      // (understating the outlook) but ALSO pools the engine's held-out
-      // spouse bucket for free, with no hold-out and no escape-hatch penalty
-      // (overstating it) — the net direction depends on which effect
-      // dominates for a given household, so the copy names both rather than
-      // asserting "understate."
-      spouseGapCaveat: hasActiveSpouseGap
-        ? "Doesn't yet fully model your spouse's working years — the shaded range may over- or understate your outlook until they retire."
-        : null,
       medianDepletionAge: mc.depletionAgePercentiles?.p50 ?? null,
       p10DepletionAge: mc.depletionAgePercentiles?.p10 ?? null,
     };
-  }, [totalAtRet, safeRetAge, safeLifeExp, returnRate, inflationRate, retSpendBasis, retDrawShared, hasActiveSpouseGap]);
+  }, [retPhaseBase, conversionByAge, safeLifeExp, returnRate, inflationRate]);
 
   // Scalar successPct extracted for V9 scalar-dep hygiene (fed to planView's
   // confidence driver + the low-odds signal; the whole rangeView object stays out
