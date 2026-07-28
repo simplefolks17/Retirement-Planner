@@ -33,6 +33,12 @@
 // that year's spending need, which would otherwise be an unlabeled inflow to
 // `rTax`). Reported per row so downstream reconciliation surfaces (Flow-Down,
 // Year-by-year) can close their identities completely, not just partially.
+//
+// `rRealByYear` (Session B, Monte Carlo engine port): an optional per-year REAL
+// return override, so the SAME engine that produces every headline number can
+// also be driven by a sampled return path (one call per Monte Carlo iteration)
+// instead of only the flat scalar `rReal`. Defaults to null — every existing
+// caller is byte-identical. See resolveYearReal below.
 
 import { calcTax } from "./taxes.js";
 import { getDivisor } from "./rmd.js";
@@ -48,10 +54,26 @@ import { EARLY_WITHDRAWAL_AGE, EARLY_WITHDRAWAL_PENALTY } from "../config/irs-20
 // internally; this is the matching guard on the read side.
 const nonNegOrZero = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
 
+// Session B (Monte Carlo engine port): resolve the REAL return applied for one
+// walked year. `rRealByYear` is an optional per-year override array, indexed by
+// (age - startAge - 1) — the same indexing convention buildRetirementDrawdown's
+// existing `rRealByYear` uses. A missing/non-finite entry (or no array at all)
+// falls back to the scalar `rReal`, so every existing caller (no array passed)
+// is byte-identical to before this parameter existed.
+const resolveYearReal = (rRealByYear, idx, rReal) => {
+  if (!rRealByYear) return rReal;
+  const v = rRealByYear[idx];
+  return Number.isFinite(v) ? v : rReal;
+};
+
 export function buildRetirementWalkByAccount({
   startAge,                 // safeRetAge
   endAge,                   // safeLifeExp (chart) or a high cap (longevity)
   rReal,
+  // OPTIONAL per-year REAL return override (Session B / Monte Carlo port) — see
+  // resolveYearReal above. null (default) ⇒ every walked year uses the scalar
+  // `rReal`, identical to the walk before this parameter existed.
+  rRealByYear = null,
   // GROSS balances at retirement (no after-tax haircut — that is the BUG-35 fix)
   tradGross = 0,
   roth = 0,
@@ -151,9 +173,11 @@ export function buildRetirementWalkByAccount({
   for (let age = startAge + 1; age <= endAge; age++) {
     const balStart = trad + tradSp + rRoth + rTax + rHsa;
 
-    // 1. Growth (real return) per account.
-    const gTrad = trad * rReal, gRoth = rRoth * rReal, gTax = rTax * rReal, gHsa = rHsa * rReal;
-    const gTradSp = tradSp * rReal;
+    // 1. Growth (real return) per account. yearReal is the scalar rReal unless
+    //    rRealByYear supplies a per-year override for this walked year (Session B).
+    const yearReal = resolveYearReal(rRealByYear, age - startAge - 1, rReal);
+    const gTrad = trad * yearReal, gRoth = rRoth * yearReal, gTax = rTax * yearReal, gHsa = rHsa * yearReal;
+    const gTradSp = tradSp * yearReal;
     trad += gTrad; rRoth += gRoth; rTax += gTax; rHsa += gHsa; tradSp += gTradSp;
     const growth = gTrad + gRoth + gTax + gHsa + gTradSp;
 
