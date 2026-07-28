@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 12 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 13 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,6 +15,7 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
+| **BUG-103** | Medium | Monte Carlo `successPct` counts paths rescued only by the penalized spouse-401k spillover hatch as plain successes, with no visibility (BUG-92's problem class, new surface) | `src/model/monte-carlo.js`, `src/App.jsx`, `src/components/ArcGraph.jsx` |
 | **BUG-102** | Medium | Lever-preview's spouse-gap gating inherited from the base plan, not the scenario's own re-seeded maps | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-101** | Low-Medium | Accumulation-phase `contrib401k` stays nominal (tracks `incomeGrowth`, not inflation) | `src/model/simulation.js` |
 | **BUG-100** | Low | Tax brackets aren't inflated forward — BUG-91's fix removed an error that was accidentally offsetting this | `src/model/taxes.js`, `src/model/retirement-engine.js` |
@@ -31,6 +32,40 @@ place this gets checked).
 ---
 
 ## Open Issues
+
+### BUG-103 — Monte Carlo `successPct` doesn't distinguish a path that survives cleanly from one rescued only by the penalized spouse-401k spillover hatch (found 2026-07-28, in-house interoperability audit, PR #64)
+
+**Owner:** me_theguy. **Severity: MEDIUM — BUG-92's exact problem class (a plan reads more comfortable
+than it actually is because it silently depends on the escape hatch), on a NEW surface BUG-92's own
+fix doesn't cover.**
+**What:** BUG-92 (Resolved, spousal-engine stabilization session) caps a what-if scenario's verdict
+at "tight" whenever `totalSpouseSpillover > 0`, so the headline Plan verdict can't overstate a plan
+that only works by repeatedly raiding a still-working spouse's held-out 401k at a 10% early-
+withdrawal penalty. Session B (PR #64) ported the Monte Carlo Range lens onto the SAME per-account
+engine — which means the escape hatch (Option-A hold-out + penalized spillover, BUG-88) is now live
+inside every one of the lens's 600 sampled paths for the first time. But `runMonteCarlo` only reports
+`successRate` (did the path reach `endAge` without depleting) — it has no equivalent of BUG-92's
+`totalSpouseSpillover` cap or label. A path that survives ONLY by firing the penalized spillover
+counts identically to a path that survives cleanly. Concrete shape: T-X.2's golden master
+(`rangeSuccessPct: 100`, `totalSpouseSpillover: 0` on its own deterministic walk) is unaffected, but a
+household whose MEAN path is clean while some sampled paths dip into stress could show a success rate
+that doesn't reveal how many of those "successes" were penalized rescues — exactly the caption gap
+BUG-92 closed on the headline verdict, reopened here on the confidence driver's own number.
+**Fix shape (sketched, not implemented):** thread a per-iteration spillover flag through
+`runMonteCarlo` (e.g. `rows.some(r => r.spouseSpillover > 0)`) into a new rollup — a
+`spilloverRate`-style field (fraction of paths that needed the hatch) — and surface it in `rangeView`
+alongside `successPct`, mirroring how BUG-92's fix surfaced `totalSpouseSpillover` in
+`calcWhatIfScenario`'s return. Deliberately NOT built in PR #64: it's new UI surface area (caption
+wording, a threshold/color decision, applicability gating) of the kind this codebase's review
+conventions defer for its own pass rather than bolting on under review-fix time pressure (see BUG-102/
+BUG-84's same treatment).
+**Where:** `src/model/monte-carlo.js` (`runMonteCarlo`'s return shape), `src/App.jsx` (`rangeView`),
+`src/components/ArcGraph.jsx` (the caption, if a decision is made to surface it there).
+**Inert whenever the escape hatch never fires** for a given household (the common case — golden
+masters T-X.2/T-X.3 both have `totalSpouseSpillover: 0` on their own deterministic walk, though
+individual sampled Monte Carlo PATHS under variance were not separately audited for this session).
+**Not fixed here.** Filed for a future session, per the same in-PR triage discipline used throughout
+this arc (fix what's small and contained, file what's a genuine separate product decision).
 
 ### BUG-102 — Lever-preview's spouse-gap gating is inherited from the BASE plan, not the scenario's own re-seeded maps — a retire-earlier preview can under-restrict relative to what Applying it actually produces (found 2026-07-27, interoperability review agent, PR #62)
 
@@ -470,6 +505,19 @@ this bug — both proposed fix shapes (route `optYS` through `buildRetirementPha
 `buildRetirementDrawdown` with a per-year spouse-income map) are genuine architecture changes to a
 walk shared by `calcWhatIfDelta`/`calcAffordabilityMax` too, not a spot patch. Fold into the
 eventual migration this bug already tracks rather than special-casing the spouse dimension.
+**Widened again by Session B (2026-07-28, PR #64, interoperability audit — flagged, not fixed.)**
+Porting the Monte Carlo Range lens onto the per-account engine means the accuracy spread this bug
+tracks is now the widest it has ever been: the engine side now includes the chart, `yearsSustained`,
+RMD schedule, Flow-Down, conversion benefit, AND the Range lens's `successPct`/bands, while the
+blended-walk side (`calcWhatIfDelta`, `calcOptimizedScenario`, `drawdown.js`) is unchanged. Concrete
+shape: for an MFJ household where the primary retires several years before the spouse, the Horizon
+Range view can show 100% confidence (spouse bucket, hold-out, and draw tax all modeled) while
+Classic's What-If "retire N years earlier" delta panel — which still calls `calcWhatIfDelta` — runs a
+walk with no spouse bucket, no hold-out, and no spending-draw tax, for the SAME household. Not a new
+mechanism, the same one this bug has tracked since 2026-06-15 — but the Monte Carlo port raises the
+stakes of leaving it unfixed, since a user comparing the Range view against a What-If delta for the
+same plan now sees the largest accuracy gap between the two the app has ever presented. No fix
+shape change; still tracked here, not split into a new bug number.
 
 ### BUG-37 — Engine ignores `conversionTaxSource` (accepted, owner-deferred 2026-06-15)
 

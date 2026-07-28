@@ -492,6 +492,11 @@ describe("spouse-household golden master (T-X.2, exact-locked)", () => {
     // per the walk locked above), and the hold-out/spillover mechanisms are
     // inert here (totalSpouseSpillover: 0 above) since this household never
     // needs the escape hatch.
+    // Revisit-trigger note: this is one of the two (of six calibration
+    // fixtures) where withdrawal/longevity both read "ok" — see
+    // docs/FINANCIAL-MODEL.md's "Monte Carlo Threshold Calibration" for why
+    // that pairing matters if this value is ever re-locked from a changed
+    // fixture.
     rangeSuccessPct:         100,
   };
 
@@ -655,6 +660,13 @@ describe("spouse-household golden master (T-X.3, exact-locked — MFJ + pension 
     // predicted "least certain" fixture from the pre-implementation plan
     // audit, confirmed here by direct measurement rather than left as a
     // surprise for a future session to rediscover.
+    // Revisit-trigger note: this household IS the one calibration
+    // contradiction found so far (successPct 60 < 80 while withdrawalRate and
+    // isSustainable both read "ok") — see docs/FINANCIAL-MODEL.md's "Monte
+    // Carlo Threshold Calibration". The decision was to keep the 80/70
+    // thresholds (1 contradiction is below the declared 2-household trigger),
+    // but if a FUTURE fixture ever produces a second same-direction
+    // contradiction, that decision should be revisited, not silently re-locked.
     rangeSuccessPct:      60,
   };
 

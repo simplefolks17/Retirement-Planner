@@ -27,19 +27,6 @@ import { eventNetForYear } from "./money-events.js";
 // waterfall can compute growth INDEPENDENTLY instead of as a balancing plug —
 // the anti-plug invariant that catches this bug class.
 //
-// `rRealByYear` (optional): an array of per-year REAL returns indexed by year
-// offset `age - startAge - 1` (so entry 0 is the first walked year, age
-// startAge+1). When provided it OVERRIDES the scalar `rReal` for that year
-// (falling back to `rReal` where the entry is missing/undefined). Default
-// null → behavior is byte-identical to the scalar walk (the golden master
-// depends on this). ORPHANED as of Session B (Monte Carlo engine port,
-// 2026-07-28): the Monte Carlo Range engine (monte-carlo.js) that used to be
-// this parameter's only caller now walks buildRetirementWalkByAccount's own
-// rRealByYear (retirement-engine.js) instead. No current caller passes this
-// parameter — kept (not removed) because buildRetirementDrawdown itself is
-// still live for its other consumers (what-if.js, optimization.js,
-// drawdown.js; BUG-36) and removing an unused-but-harmless optional parameter
-// is out of this session's scope.
 export function buildRetirementDrawdown({
   startBal,
   startAge,                 // safeRetAge
@@ -53,7 +40,6 @@ export function buildRetirementDrawdown({
   rmdTaxByAge = {},         // { [age]: tax }  — 0 where absent
   conversionTaxByAge = {},  // { [age]: tax }  — 0 where absent
   moneyEvents = [],         // one-time or duration events (see money-events.js) — applied per active year after draw
-  rRealByYear = null,       // optional per-year real returns, indexed by (age - startAge - 1); overrides rReal per year. Orphaned since Session B — see header comment.
 }) {
   const rows = [];
   let bal = startBal;
@@ -66,8 +52,7 @@ export function buildRetirementDrawdown({
     const yearPension = age >= pensionStartAge ? pensionAmount : 0;
     const draw        = Math.max(0, effectiveExpenses - yearSS - yearPension);
     const tax         = (rmdTaxByAge[age] ?? 0) + (conversionTaxByAge[age] ?? 0);
-    const yearReal    = rRealByYear ? (rRealByYear[age - startAge - 1] ?? rReal) : rReal;
-    const growth      = balStart * yearReal;
+    const growth      = balStart * rReal;
     const afterGrowth = balStart + growth;          // balStart*(1+rReal)
     // Money events (windfalls, purchases, duration events like a travel year)
     // applied after normal recurrence. eventNetForYear is the ONE per-year source

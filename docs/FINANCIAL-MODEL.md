@@ -306,19 +306,35 @@ calibration failure; a systematic pattern across several is.
 
 **The six fixtures, measured directly against this implementation** (`planView.drivers`,
 `rangeView.successPct`, at `ASSUMPTIONS.MONTE_CARLO_STD_DEV` = 0.12, `MONTE_CARLO_ITERATIONS` =
-600, default seed):
+600, default seed). The T-X.2/T-X.3 rows are hand-built approximations of those golden-master
+households' SHAPE for this probe, not calls to the exact fixture builders — their numbers
+therefore differ slightly from the exact-locked golden-master values (T-X.2 locks `rangeSuccessPct:
+100`, T-X.3 locks `60`; this table's own probe measured 95 for its T-X.2-shaped household). Both
+readings support the same conclusion below either way.
 
 | Household | successPct | withdrawal ok | longevity ok | confidence ok (≥80) | Contradiction? |
 |---|---|---|---|---|---|
 | No-spouse default | 24 | false (5.6%) | false | false | No — all agree |
-| T-X.2 (17-yr spouse gap, well funded) | 95 | true (1.7%) | true | true | No — all agree |
-| T-X.3 (8-yr gap, MFJ, pension, high spend) | 60 | true (3.3%) | true | **false** | **Yes** |
+| T-X.2-shaped (17-yr spouse gap, well funded) | 95 | true (1.7%) | true | true | No — all agree |
+| T-X.3-shaped (8-yr gap, MFJ, pension, high spend) | 60 | true (3.3%) | true | **false** | **Yes** |
 | BUG-93 fixture (spouse rollover, no income) | 5 | false (5.7%) | false | false | No — all agree |
 | High-spend, short gap, stressed | 0 | false (11.4%) | false | false | No — all agree |
 | Early retiree (58), modest balances | 12 | false (4.9%) | false | false | No — all agree |
 
 **Result: 1 of 6 — below the ≥ 2 trigger. Decision: leave `MONTE_CARLO_SUCCESS_GUIDELINE_PCT`
 and `MONTE_CARLO_LOW_ODDS_PCT` unchanged at 80/70.**
+
+**Honest denominator (added after in-house interoperability-audit review, PR #64):** "1 of 6" is
+correct but understates how exercised the rule actually was. A contradiction can only appear in a
+household where the OTHER two drivers already agree with each other (all 6 rows above happen to
+have `withdrawal ok === longevity ok`) — but it is only REALISTICALLY likely to appear where those
+two already read "ok" (T-X.2, T-X.3): a household already failing on the deterministic withdrawal
+rate and longevity measures rarely gets rescued to ≥80% by return-risk variance alone, so the four
+"all agree, all false" rows above are low-information data points for this specific rule, not
+genuine near-misses. Read honestly, the rule was meaningfully tested on 2 of 6 households and found
+a contradiction in 1 of those 2 — still below the ≥2 trigger (which is a count of contradicting
+households, not a rate), so the decision is unchanged, but "1 of 6" alone would let a future reader
+underestimate how close T-X.3 actually is to being the second data point that flips it.
 
 T-X.3 is a real, explained single contradiction, not noise: it has a shorter spouse gap (8
 years) against a much larger household spend (MFJ, CA, $140k), so the port's new spending-draw

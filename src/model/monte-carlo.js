@@ -194,12 +194,13 @@ export function runMonteCarlo(inputs, options = {}) {
   let successCount = 0;
 
   for (let iter = 0; iter < iterations; iter++) {
-    // Sample this path's per-year REAL returns. Clamped so a multi-sigma draw
-    // can never send a nominal return to/below -100% — the engine multiplies
-    // five account balances by (1 + yearReal) and assumes non-negative results.
+    // Sample this path's per-year REAL returns. Clamped (ASSUMPTIONS, rule 1)
+    // so a multi-sigma draw can never send a nominal return to/below -100% —
+    // the engine multiplies five account balances by (1 + yearReal) and
+    // assumes non-negative results.
     const rRealByYear = new Array(nYears);
     for (let j = 0; j < nYears; j++) {
-      const rNominal = Math.max(-0.99, meanNominal + stdDev * gaussian());
+      const rNominal = Math.max(ASSUMPTIONS.MONTE_CARLO_MIN_NOMINAL_RETURN, meanNominal + stdDev * gaussian());
       rRealByYear[j] = (1 + rNominal) / inflFactor - 1;
     }
 
@@ -243,7 +244,14 @@ export function runMonteCarlo(inputs, options = {}) {
       successCount++;
       depletionAges[iter] = Number.POSITIVE_INFINITY;  // survived the whole horizon
     } else {
-      depletionAges[iter] = effectiveDepletionAge ?? endAge;
+      // A non-null effectiveDepletionAge is the common case. The fallback
+      // chain only matters for a malformed/incomplete walk that reports
+      // neither a depletion age nor a bad row (e.g. zero rows) — reporting
+      // `endAge` there would bias it toward "survived to the horizon,"
+      // exactly backwards for a walk that didn't survive (CodeRabbit finding,
+      // PR #64). Fall back to the last row actually walked, or startAge if
+      // there were none.
+      depletionAges[iter] = effectiveDepletionAge ?? rows[rows.length - 1]?.age ?? startAge;
     }
   }
 

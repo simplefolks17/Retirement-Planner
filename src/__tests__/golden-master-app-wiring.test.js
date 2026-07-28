@@ -74,6 +74,12 @@ const E = {
   // spouse, so the port's ONLY live mechanism is that the engine charges real
   // tax on 401k dollars drawn to fund spending (drawTax, on top of RMD/
   // conversion tax), which the older blended walk never charged.
+  // If you're re-locking this value from a NEW household fixture (not just
+  // reproducing the default), also check docs/FINANCIAL-MODEL.md's "Monte
+  // Carlo Threshold Calibration" section's revisit trigger — a second
+  // same-direction contradiction between this number and the withdrawal/
+  // longevity drivers should prompt a re-look at MONTE_CARLO_SUCCESS_
+  // GUIDELINE_PCT/LOW_ODDS_PCT (irs-2026.js), not just a silent re-lock.
   rangeSuccessPct: 24,
 };
 

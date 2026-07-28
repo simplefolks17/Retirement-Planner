@@ -56,10 +56,17 @@ const nonNegOrZero = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
 
 // Session B (Monte Carlo engine port): resolve the REAL return applied for one
 // walked year. `rRealByYear` is an optional per-year override array, indexed by
-// (age - startAge - 1) — the same indexing convention buildRetirementDrawdown's
-// existing `rRealByYear` uses. A missing/non-finite entry (or no array at all)
-// falls back to the scalar `rReal`, so every existing caller (no array passed)
-// is byte-identical to before this parameter existed.
+// (age - startAge - 1) — this is the ONE such per-year-return contract in the
+// codebase (buildRetirementDrawdown's own former copy was removed once Monte
+// Carlo migrated to this one; see BUGS.md's superseded note). A missing/non-
+// finite entry (or no array at all) falls back to the scalar `rReal`, so every
+// existing caller (no array passed) is byte-identical to before this parameter
+// existed. Note the convention: an OFFSET-INDEXED ARRAY, unlike every other
+// per-year input this function takes (conversionByAge, spouseContribByAge,
+// spouseTaxableIncomeByAge, spouseIncomeFloorByAge — all AGE-KEYED MAPS). A
+// future caller following the map convention by habit would silently fall
+// back to the flat scalar for every year (forward-compat audit finding, PR
+// #64) — pass an array indexed from 0, not a map keyed by age.
 const resolveYearReal = (rRealByYear, idx, rReal) => {
   if (!rRealByYear) return rReal;
   const v = rRealByYear[idx];
