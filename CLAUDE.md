@@ -204,12 +204,14 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
      was called live against probe PR #60; no reviewer was added and no comment was posted (a silent
      no-op, confirmed by inspecting the rendered PR page). PR-level Copilot review needs Copilot Pro
      ($10/mo minimum) — the free Copilot tier only does in-editor selection review, not PR review.
-  3. **Added `.github/workflows/gemini-review.yml`** — a free drop-in replacement for the sunset
-     Gemini App (`derailed-dash/gemini-review-action`), calling the Gemini API directly with a
-     free-tier key from Google AI Studio. Single workflow file, no Docker, no GitHub App install.
-     **Requires an owner action to activate:** add a `GEMINI_API_KEY` repo secret (Settings → Secrets
-     and variables → Actions) — an agent session cannot create repo secrets. Inert (job simply won't
-     run) until the secret exists.
+  3. **Added, then removed, `.github/workflows/gemini-review.yml`** — a free drop-in replacement
+     for the sunset Gemini App (`derailed-dash/gemini-review-action`), calling the Gemini API
+     directly with a free-tier key from Google AI Studio. Once the `GEMINI_API_KEY` secret was
+     added, the workflow ran but failed on every PR of any real size with `429
+     RESOURCE_EXHAUSTED` (the free tier's 250k-input-token/model/minute quota) — including
+     repeatedly on PR #64's own pushes. A failing, non-blocking check that never actually
+     produces a review is pure CI noise, not a working second opinion — **removed 2026-07-28**,
+     owner request. CodeRabbit remains the primary automated reviewer.
   4. **Recommended, not yet installed** (both require the repo owner's own GitHub OAuth click — an
      agent session cannot install a GitHub App on someone else's account): Qodo Merge Pro
      (`github.com/marketplace/qodo-merge-pro`, free developer tier, ~30 PR reviews/org/month) as a
