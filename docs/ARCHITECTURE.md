@@ -318,6 +318,36 @@ The shared editable-field primitives live in `src/horizon/fields.jsx` (extracted
 MyDetailsScreen) and the flow presentation helpers in
 `src/horizon/screens/strategies/flow-ui.jsx`.
 
+### `horizonProps.rangeView` (WI-5.3 / #114) — Monte Carlo "Range" lens bundle
+
+**Added 2026-07** (documented retroactively 2026-07-28, Session B — a gap this session's own
+plan-audit process found: this bundle's shape had never been recorded here, unlike its sibling
+strategy-flow bundles above). A DISPLAY-ONLY confidence lens — `App.jsx`'s `rangeView` memo never
+feeds any headline number (no golden-master value depends on it besides its own locked
+`successPct`). Passed straight through to `ArcGraph`'s `rangeBands` prop by `PlanScreen.jsx`
+(`rangeBands={rangeView}`), which is where it renders — the arc chart's "Range" view (see
+`docs/HORIZON.md` → Views).
+
+- **`{ series, successPct, successOk, note, medianDepletionAge, p10DepletionAge }`.**
+  `series` — `[{age,p10,p25,p50,p75,p90}]`, the percentile balance bands from
+  `runMonteCarlo` (`src/model/monte-carlo.js`). `successPct` — integer % of sampled market
+  paths that fund the plan to life expectancy, or `null` when the lens produced no data.
+  `successOk` — `successPct >= ASSUMPTIONS.MONTE_CARLO_SUCCESS_GUIDELINE_PCT`, or `null` when
+  `successPct` is; the model's own comparison, so `ArcGraph` never re-derives the threshold
+  (rule 10). `note` — `MONTE_CARLO_LIMITATION_NOTE`, rendered verbatim under the caption.
+  `medianDepletionAge`/`p10DepletionAge` — from `depletionAgePercentiles`; currently computed
+  but not consumed by any screen (a documented dead field, same class as other
+  computed-but-unused display fields noted in `docs/BUGS.md`'s amendments — kept because the
+  bundle is a stable display contract and the cost of keeping them is negligible).
+- **Session B (2026-07-28):** `runMonteCarlo` now walks `buildRetirementWalkByAccount` (the
+  same per-account engine behind `retirementWalk`/the chart/RMD schedule/Flow-Down/conversion
+  benefit) instead of the older blended walk, via `{ walk: { ...retPhaseBase, conversionByAge,
+  endAge: safeLifeExp }, returnRate, inflationRate }`. There is no longer a
+  `spouseGapCaveat` field — the interim caveat (#30/BUG-82 Session A) was retired outright once
+  the lens stopped running a second, spouse-blind walk. See `docs/FINANCIAL-MODEL.md`'s Monte
+  Carlo sections for the full mechanism and `docs/BUGS.md` → BUG-93/BUG-94 for the caveat's
+  retirement.
+
 ### `horizonProps.conversionView` (WI-3.6 / #103) — Roth-conversion planner flow bundle
 
 **Added 2026-07-08.** Sibling keyed by the `"conversion"` strategy id (same forward contract

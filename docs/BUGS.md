@@ -892,6 +892,13 @@ spouse-household golden master (T-X.2, real spouse income) is also unaffected, s
 `hasActiveSpouseGap` was already true both before and after this fix.
 **Where:** `src/App.jsx` (the `spouseRetirementAge` pass-through in `retPhaseBase`, the
 `spouseGapCaveat` wording).
+**Superseded 2026-07-28 (Session B):** the Monte Carlo engine port retired `rangeGapCaveat`/
+`rangeView.spouseGapCaveat` outright — the Range lens now walks the same per-account engine as
+`retirementWalk`, so the class of engine/lens disagreement BUG-94 fixed here is now structurally
+impossible (there is only one walk left to disagree with itself). The three caveat-firing-
+condition tests this fix's Tests paragraph describes were replaced with engine-observable
+successors in the same commit; the BUG-93 hold-out gating itself (`hasActiveSpouseGap`) is
+unaffected and still governs the engine's Option-A hold-out.
 **Not fully closed:** BUG-92 (no verdict signal when a plan leans on the spillover escape hatch) remains
 Open — orthogonal to this fix (it's about the VERDICT machinery when the hatch genuinely does fire for a
 household with real gap-year income, which this fix doesn't change).
@@ -1297,6 +1304,9 @@ per-account engine is its own large, independently-risky piece of work (Session 
 Follow-ups below). Until then, `rangeView.spouseGapCaveat` (a boolean read off the same
 `spouseContribByAge` map, plus a caption) warns the user the shaded range may understate their
 outlook during an active gap, rather than silently disagreeing with the solid arc line.
+**Superseded 2026-07-28 (Session B):** the Monte Carlo Range lens now walks the per-account
+engine directly, and `rangeView.spouseGapCaveat` was retired outright (not merely silenced) —
+see the Session B entry in `CLAUDE.md` → Status and BUG-93/BUG-94's own superseded note below.
 **Files changed:** `src/model/retirement-engine.js` (the engine fix itself), `src/model/retirement-phase.js`
 (`buildSpouseRetirementSeed`, the shared age-frame helpers `spouseAgeAt`/`primaryAgeAt`,
 `buildRmdTaxByAge`), `src/model/simulation.js` (`c401kEmployee` row field, `spouseIncomeEndAge` param),

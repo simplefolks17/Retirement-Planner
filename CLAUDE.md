@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1062 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`).
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1074 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`).
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -332,11 +332,70 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
   throughout — every fix is inert at default or a pure refactor/addition. Lint clean, build OK.
   Full root cause / fix / verification detail for every item: `docs/BUGS.md` → "PR #62 review
   battery" (+ its "Round 2" addendum).
+- **Session B — Monte Carlo Range lens ported onto the per-account engine (2026-07-28, branch
+  `claude/monte-carlo-engine-port-17l6gu`).** The kickoff doc
+  (`docs/SESSION-B-MONTE-CARLO-ENGINE-PORT-PLAN.md`, written at the close of PR #62 once BUG-91
+  unblocked it) laid out a two-agent-then-implement process: a dedicated Opus agent wrote a
+  concrete implementation plan (the `rRealByYear` engine change, a measured build-vs-reuse-
+  vs-bespoke perf decision, the caveat-retirement inventory, the threshold-calibration method,
+  golden-master direction predictions, a batch sequence), then a SECOND, independent Opus agent
+  adversarially audited that plan's robustness before any code was written — mirroring the
+  BUG-82/BUG-88-89-90 plan-then-audit precedent. The audit found the plan's three load-bearing
+  decisions correct (reuse `buildRetirementWalkByAccount`, no fallback walk, retire the caveat
+  while keeping `hasActiveSpouseGap`) but caught a real, reproduced-against-the-live-default-
+  bundle bug before implementation started: the proposed contract had no guard against a
+  malformed/omitted `endAge`, which would silently score a zero-row walk as 100% success — plus
+  a wrong direction prediction for one of the two locked spouse fixtures (T-X.3, predicted "up,"
+  measured "flat"). Both were fixed in the plan before any code landed.
+  1. **Batch 1 — the engine change.** `buildRetirementWalkByAccount` gained an optional
+     `rRealByYear` per-year real-return override (mirroring `buildRetirementDrawdown`'s existing
+     contract), default `null` ⇒ byte-identical to the scalar walk. All five per-account growth
+     lines use the resolved per-year rate, including the spouse Traditional bucket (`gTradSp`) —
+     flagged by both planning agents as the highest-probability silent slip, since it is a
+     separate statement from the other four and invisible in any no-spouse fixture; a dedicated
+     regression test covers it. Zero golden-master movement (proof of inertness).
+  2. **Batch 2 — the port itself, merged with the caveat retirement.** The audit found that
+     landing the contract change alone (its own originally-proposed Batch 2) would have shipped a
+     real, false user-facing claim — the caveat still saying "doesn't yet fully model your
+     spouse's working years" over a lens that, as of that commit, did — so the two were merged
+     into one batch. `runMonteCarlo`'s contract changed from a flat field list to `{ walk,
+     returnRate, inflationRate }`, where `walk` is the SAME `retPhaseBase` + `conversionByAge` +
+     `endAge` bundle App already feeds the headline engine walk — so the Range lens can no longer
+     drift from the engine's dollar basis, spouse hold-out, or path-dependent RMD/conversion tax.
+     Two structural guards ship from the audit's own finding: `endAge` is validated
+     finite-and-greater-than-`startAge` before walking, and success additionally requires
+     `rows.length === nYears`. `hasActiveSpouseGap` is kept (it still gates the engine's Option-A
+     hold-out, BUG-93) — only its caveat consumer (`rangeView.spouseGapCaveat`) is retired, not
+     silenced; `spouseGapCaveat` no longer exists on the bundle at all.
+     `MONTE_CARLO_LIMITATION_NOTE` rewritten to drop the now-false "reuses your baseline RMD/
+     conversion tax estimates" claim.
+  3. **Batch 4 — threshold calibration.** Measured `rangeSuccessPct` beside the withdrawal/
+     longevity/confidence Plan drivers across 6 households against a pre-declared contradiction
+     rule (≥ 2 of 6 disagreeing in the same direction moves the thresholds). Result: 1 of 6
+     (T-X.3, explained by its gap-cancels-draw-tax mechanism) — below the trigger.
+     `MONTE_CARLO_SUCCESS_GUIDELINE_PCT`/`MONTE_CARLO_LOW_ODDS_PCT` stay at 80/70, decision and
+     full table written up in `docs/FINANCIAL-MODEL.md`'s new "Monte Carlo Threshold Calibration"
+     section (not just a commit message).
+  4. **Golden masters re-locked with per-fixture mechanism attribution, each confirmed by direct
+     measurement** (not assumed from the planning agents' estimates): no-spouse default
+     (`golden-master-app-wiring.test.js`, locked PRE-port at 37 first and confirmed to fail
+     post-port per the repo's revert-and-confirm discipline) 37 → **24** (down — the only live
+     mechanism for a no-spouse household is the new spending-draw tax); T-X.2 (17-year spouse
+     gap) 83 → **100** (up strongly — gap-year income dwarfs the new draw tax); T-X.3 (8-year
+     gap, MFJ, high spend) 61 → **60** (essentially flat — the shorter gap's income roughly
+     cancels the new draw tax instead of being dwarfed by it; this was the audit's flagged
+     "least certain" prediction, confirmed by measurement here rather than left for a future
+     session to rediscover).
+  1064 → **1074 tests**. Full root cause / fix / verification detail: `docs/BUGS.md` → BUG-93/
+  BUG-94 (superseded-by note added). `docs/SESSION-B-MONTE-CARLO-ENGINE-PORT-PLAN.md` marked
+  DONE and retained as a historical record (the `SPOUSAL-ENGINE-STABILIZATION-PLAN.md`
+  precedent). Golden master (no-spouse, no-Monte-Carlo-dependency assertions) otherwise
+  untouched; lint clean, build OK.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (1062 tests)
+- `npm test` — run model + formatter + render-smoke tests (1074 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
