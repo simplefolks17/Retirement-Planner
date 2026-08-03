@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
-import { StatCard, fmt, fmtMo, fmtMonthly, kbActivate } from "../shared.jsx";
+import { StatCard, Btn, Pill, fmt, fmtMo, fmtMonthly } from "../shared.jsx";
 import { RETIRE_JUMPS, resolveRetireJump } from "../presets.js";
 import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
@@ -35,14 +35,17 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
           flex: 1, display: "flex", alignItems: "stretch", gap: 4,
           borderRadius: 13, background: t.surf2, border: `1px solid ${t.line2}`,
         }}>
-          <div
+          {/* Was a `role="button"` div (keyboard-reachable via kbActivate, but
+              still not a real control). A native <button> gives it the button
+              role, Enter/Space, and the global focus ring for free. */}
+          <button
+            type="button"
             onClick={() => navigate(sig.target.screen, sig.target.subView)}
-            onKeyDown={kbActivate(() => navigate(sig.target.screen, sig.target.subView))}
-            role="button"
-            tabIndex={0}
             style={{
               flex: 1, display: "flex", alignItems: "center", gap: 12,
               minHeight: 44, padding: "10px 4px 10px 14px", cursor: "pointer", minWidth: 0,
+              background: "transparent", border: "1px solid transparent",
+              textAlign: "left", font: "inherit",
             }}>
             <span style={{
               font: `600 16px ${HM}`, flexShrink: 0,
@@ -56,17 +59,11 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
                 {sig.body} <span style={{ color: t.accent }}>→</span>
               </span>
             </span>
-          </div>
-          <span
+          </button>
+          <Btn t={t} size="sm" variant="ghost" tone="faint"
             onClick={() => dismiss(sig.id)}
-            onKeyDown={kbActivate(() => dismiss(sig.id))}
-            role="button"
-            tabIndex={0}
-            aria-label={`dismiss ${sig.id} signal`}
-            style={{
-              display: "flex", alignItems: "flex-start", padding: "10px 12px",
-              cursor: "pointer", color: t.faint, font: `400 13px ${HF}`,
-            }}>✕</span>
+            ariaLabel={`dismiss ${sig.id} signal`}
+            style={{ alignSelf: "stretch", padding: "10px 12px", borderRadius: 13 }}>✕</Btn>
         </div>
       ))}
     </div>
@@ -267,11 +264,6 @@ function TryAChangePanel({
   const rowLabel = { display: "flex", justifyContent: "space-between", marginBottom: 6 };
   const sliderInput = { width: "100%", cursor: "pointer", accentColor: t.accent, height: 6 };
 
-  const jumpChip = {
-    padding: "5px 11px", borderRadius: 999, cursor: "pointer",
-    border: `1px solid ${t.line2}`, background: "transparent",
-    font: `500 12px ${HF}`, color: t.mut,
-  };
   const applyJump = (jump) =>
     setRetireOffset(resolveRetireJump(jump, retirementAge, sliderBounds) - retirementAge);
 
@@ -280,9 +272,9 @@ function TryAChangePanel({
       {/* Quick-jump chips — pure nudges of the retire-at offset below. */}
       <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
         {RETIRE_JUMPS.map(jump => (
-          <button key={jump.k} type="button" onClick={() => applyJump(jump)} style={jumpChip}>
+          <Pill key={jump.k} t={t} onClick={() => applyJump(jump)}>
             {jump.label}
-          </button>
+          </Pill>
         ))}
       </div>
 
@@ -333,28 +325,14 @@ function TryAChangePanel({
             ))}
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button
-              type="button"
-              onClick={() => setShowApply(true)}
-              style={{
-                flex: 1, font: `600 13px ${HF}`, color: "#fff",
-                background: t.accent, border: `1px solid ${t.accent}`,
-                borderRadius: 10, padding: "9px 16px", cursor: "pointer",
-              }}
-            >
+            <Btn t={t} size="sm" variant="primary" onClick={() => setShowApply(true)}
+              style={{ flex: 1, borderRadius: 10 }}>
               Apply changes
-            </button>
-            <button
-              type="button"
-              onClick={discard}
-              style={{
-                font: `500 12px ${HF}`, color: t.mut, background: "transparent",
-                border: `1px solid ${t.line}`, borderRadius: 10, padding: "9px 14px",
-                cursor: "pointer", whiteSpace: "nowrap",
-              }}
-            >
+            </Btn>
+            <Btn t={t} size="sm" variant="quiet" onClick={discard}
+              style={{ borderRadius: 10 }}>
               Discard
-            </button>
+            </Btn>
           </div>
         </div>
       ) : (
@@ -381,28 +359,13 @@ function TryAChangePanel({
           background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 12,
           boxShadow: "0 6px 24px rgba(0,0,0,.18)",
         }}>
-          <button
-            type="button"
-            onClick={() => setShowApply(true)}
-            style={{
-              flex: 1, font: `600 13px ${HF}`, color: "#fff",
-              background: t.accent, border: `1px solid ${t.accent}`,
-              borderRadius: 9, padding: "9px 14px", cursor: "pointer",
-            }}
-          >
+          <Btn t={t} size="sm" variant="primary" onClick={() => setShowApply(true)}
+            style={{ flex: 1 }}>
             Apply changes
-          </button>
-          <button
-            type="button"
-            onClick={discard}
-            style={{
-              font: `500 12px ${HF}`, color: t.mut, background: "transparent",
-              border: `1px solid ${t.line}`, borderRadius: 9, padding: "9px 12px",
-              cursor: "pointer",
-            }}
-          >
+          </Btn>
+          <Btn t={t} size="sm" variant="quiet" onClick={discard}>
             Discard
-          </button>
+          </Btn>
         </div>
       )}
     </div>

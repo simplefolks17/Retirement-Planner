@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { HF, HM, HD } from "../ThemeContext.jsx";
-import { fmtMo } from "../shared.jsx";
+import { fmtMo, kbActivate } from "../shared.jsx";
 
 export const ACTIVITIES = [
   { k: "golf",    l: "Golf course",    sub: "18 holes whenever you want." },
@@ -42,8 +42,16 @@ export default function SomedayScreen({ t, props }) {
         style={{ display: "none" }}
         onChange={handleFileChange}
       />
+      {/* BUG-49: the photo well had no keyboard path. It genuinely cannot be a
+          <button> — it is a full-bleed layer wrapping an <img>, an <svg> and
+          absolutely-positioned children — so this is the case kbActivate exists
+          for (role + tabIndex + Enter/Space), not a Btn call site. */}
       <div
         onClick={() => fileInputRef.current?.click()}
+        onKeyDown={kbActivate(() => fileInputRef.current?.click())}
+        role="button"
+        tabIndex={0}
+        aria-label={customPhoto ? "Change your photo" : "Add a photo"}
         onMouseEnter={() => setPhotoHover(true)}
         onMouseLeave={() => setPhotoHover(false)}
         style={{
@@ -132,17 +140,26 @@ export default function SomedayScreen({ t, props }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ font: `400 12px ${HF}`, color: "rgba(255,255,255,.38)" }}>your thing:</span>
+          {/* BUG-49 + touch target: were `<div onClick>` chips ~25px tall. Real
+              buttons now, at the Pill tier (40px). NOT the shared Pill: these sit
+              on a user photo and use the screen's white-on-image scale rather
+              than theme tokens (a pre-existing, deliberate exception noted in the
+              design review — the raw rgba values are unchanged here). The 1px
+              border is present in BOTH states, only its colour changes. */}
           {ACTIVITIES.map((a) => {
             const on = a.k === activeAct.k;
             return (
-              <div key={a.k} onClick={() => setActivity(a.l.toLowerCase())}
+              <button key={a.k} type="button" aria-pressed={on}
+                onClick={() => setActivity(a.l.toLowerCase())}
                 style={{
-                  padding: "5px 12px", borderRadius: 999, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  minHeight: 40, boxSizing: "border-box", flexShrink: 0, whiteSpace: "nowrap",
+                  padding: "5px 14px", borderRadius: 999, cursor: "pointer",
                   border: `1px solid ${on ? "rgba(255,255,255,.70)" : "rgba(255,255,255,.22)"}`,
                   background: on ? "rgba(255,255,255,.16)" : "transparent",
                   font: `${on ? 600 : 400} 12.5px ${HF}`,
                   color: on ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.44)"
-                }}>{a.l}</div>
+                }}>{a.l}</button>
             );
           })}
         </div>

@@ -2,7 +2,7 @@ import React from "react";
 import { GhostArc } from "../../components/ArcGraph.jsx";
 import { PALETTES, HF, useTheme } from "../ThemeContext.jsx";
 import { ACTIVITIES } from "./SomedayScreen.jsx";
-import { kbActivate } from "../shared.jsx";
+import { Btn, Pill } from "../shared.jsx";
 
 export default function SettingsScreen({ t, activity, setActivity, onResetOnboarding }) {
   const { palKey, setPalKey, modePref, setModePref, arcStyle, setArcStyle } = useTheme();
@@ -25,18 +25,23 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
             {Object.entries(PALETTES).map(([key, pal]) => {
               const on = palKey === key;
               return (
-                <div key={key} onClick={() => setPalKey(key)}
-                  role="button" tabIndex={0} aria-pressed={on} onKeyDown={kbActivate(() => setPalKey(key))}
-                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <button key={key} type="button" onClick={() => setPalKey(key)}
+                  aria-pressed={on} aria-label={`Palette: ${pal.name}`}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                    cursor: "pointer", background: "transparent",
+                    border: "1px solid transparent", borderRadius: 12,
+                    padding: 4, minHeight: 44, flexShrink: 0,
+                  }}>
                   <div style={{
                     width: 44, height: 44, borderRadius: 999, background: pal.swatch,
                     border: `3px solid ${on ? t.ink : "transparent"}`,
                     boxShadow: `0 0 0 2px ${t.bg}`
                   }} />
-                  <span style={{ font: `${on ? 600 : 400} 12px ${HF}`, color: on ? t.ink : t.mut }}>
+                  <span style={{ font: `${on ? 600 : 400} 12px ${HF}`, color: on ? t.ink : t.mut, whiteSpace: "nowrap" }}>
                     {pal.name}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -47,20 +52,10 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
             Theme
           </div>
           <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 11, background: t.line, width: "fit-content" }}>
-            {[["light","Light"],["dark","Dark"],["auto","Auto"]].map(([k, l]) => {
-              const on = modePref === k;
-              return (
-                <div key={k} onClick={() => setModePref(k)}
-                  role="button" tabIndex={0} aria-pressed={on} onKeyDown={kbActivate(() => setModePref(k))}
-                  style={{
-                  padding: "8px 20px", borderRadius: 8, cursor: "pointer",
-                  background: on ? t.surf2 : "transparent",
-                  font: `${on ? 600 : 500} 13px ${HF}`,
-                  color: on ? t.ink : t.mut,
-                  boxShadow: on ? "0 1px 4px rgba(0,0,0,.10)" : "none"
-                }}>{l}</div>
-              );
-            })}
+            {[["light","Light"],["dark","Dark"],["auto","Auto"]].map(([k, l]) => (
+              <Btn key={k} t={t} size="sm" variant="seg" pressed={modePref === k}
+                onClick={() => setModePref(k)} style={{ padding: "8px 20px" }}>{l}</Btn>
+            ))}
           </div>
         </div>
 
@@ -69,20 +64,10 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
             Arc style
           </div>
           <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 11, background: t.line, width: "fit-content" }}>
-            {[["soft","Soft"],["vivid","Vivid"],["glow","Glow"]].map(([k, l]) => {
-              const on = arcStyle === k;
-              return (
-                <div key={k} onClick={() => setArcStyle(k)}
-                  role="button" tabIndex={0} aria-pressed={on} onKeyDown={kbActivate(() => setArcStyle(k))}
-                  style={{
-                  padding: "8px 20px", borderRadius: 8, cursor: "pointer",
-                  background: on ? t.surf2 : "transparent",
-                  font: `${on ? 600 : 500} 13px ${HF}`,
-                  color: on ? t.ink : t.mut,
-                  boxShadow: on ? "0 1px 4px rgba(0,0,0,.10)" : "none"
-                }}>{l}</div>
-              );
-            })}
+            {[["soft","Soft"],["vivid","Vivid"],["glow","Glow"]].map(([k, l]) => (
+              <Btn key={k} t={t} size="sm" variant="seg" pressed={arcStyle === k}
+                onClick={() => setArcStyle(k)} style={{ padding: "8px 20px" }}>{l}</Btn>
+            ))}
           </div>
           <div style={{ font: `400 12px ${HF}`, color: t.faint, marginTop: 8 }}>
             Vivid thickens the arc stroke. Glow adds a light bloom effect.
@@ -94,20 +79,12 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
             Your activity
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {ACTIVITIES.map(a => {
-              const on = a.k === activeAct.k;
-              return (
-                <div key={a.k} onClick={() => setActivity?.(a.l.toLowerCase())}
-                  style={{
-                    padding: "6px 14px", borderRadius: 999, cursor: "pointer",
-                    border: `1.5px solid ${on ? t.accent : t.line2}`,
-                    background: on ? `${t.accent}18` : "transparent",
-                    font: `${on ? 600 : 400} 12.5px ${HF}`,
-                    color: on ? t.accent : t.mut,
-                    transition: "all .15s",
-                  }}>{a.l}</div>
-              );
-            })}
+            {/* BUG-49: the only one of Settings' four groups with no keyboard
+                path at all (the other three already carried kbActivate). */}
+            {ACTIVITIES.map(a => (
+              <Pill key={a.k} t={t} pressed={a.k === activeAct.k}
+                onClick={() => setActivity?.(a.l.toLowerCase())}>{a.l}</Pill>
+            ))}
           </div>
           <div style={{ font: `400 12px ${HF}`, color: t.faint, marginTop: 8 }}>
             Drives the "Work optional, {activeAct.l.toLowerCase()} mandatory" tagline on Plan.
@@ -122,16 +99,9 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
             Horizon is a retirement planning tool that shows you the complete picture of your financial life —
             from today through retirement and beyond. All calculations use 2026 IRS limits.
           </p>
-          <button
-            onClick={onResetOnboarding}
-            style={{
-              font: `500 12px ${HF}`, color: t.faint,
-              background: "transparent", border: `1px solid ${t.line2}`,
-              borderRadius: 8, padding: "6px 14px", cursor: "pointer",
-            }}
-          >
+          <Btn t={t} size="sm" variant="quiet" tone="faint" onClick={onResetOnboarding}>
             Replay onboarding
-          </button>
+          </Btn>
         </div>
       </div>
 

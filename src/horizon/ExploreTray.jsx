@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { HF, HM } from "./ThemeContext.jsx";
+import { HM } from "./ThemeContext.jsx";
+import { Btn } from "./shared.jsx";
 
 // ── Explore tray ─────────────────────────────────────────────────────────────
 // The single arc-anchored control surface on the Plan screen. Both ways to
@@ -34,18 +35,16 @@ export default function ExploreTray({
   // visible on the collapsed bar, and one click reopens to Apply/Discard.
   const toggle = (k) => setOpen(effOpen === k ? "closed" : k);
 
+  // This tab was the model for the shared Btn primitive (a real
+  // `<button type="button">` carrying `aria-pressed`, with the border reserved
+  // and only its colour toggled). It now uses Btn itself, so the exemplar and
+  // the primitive can't drift — and it picks up the 44px touch target it was
+  // ~30px short of.
   const tab = (f) => {
     const on = effOpen === f.k;
     return (
-      <button key={f.k} type="button" onClick={() => toggle(f.k)} aria-pressed={on}
-        style={{
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "7px 13px", borderRadius: 9, cursor: "pointer",
-          border: `1px solid ${on ? t.accent : t.line2}`,
-          background: on ? `${t.accent}14` : "transparent",
-          font: `${on ? 600 : 500} 13px ${HF}`, color: on ? t.ink : t.mut,
-          transition: "all .12s",
-        }}>
+      <Btn key={f.k} t={t} onClick={() => toggle(f.k)} pressed={on}
+        style={{ justifyContent: "flex-start" }}>
         <span aria-hidden style={{ fontSize: 13 }}>{f.icon}</span>
         {f.label}
         {f.k === "change" && changeStaged && (
@@ -53,7 +52,7 @@ export default function ExploreTray({
             width: 6, height: 6, borderRadius: 999, background: t.accent, marginLeft: 1,
           }} />
         )}
-      </button>
+      </Btn>
     );
   };
 
@@ -65,14 +64,14 @@ export default function ExploreTray({
       {/* ── the quiet bar ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 7 }}>{FACETS.map(tab)}</div>
+        {/* Was the worst target in the app — a bare `<button>` with zero padding
+            (~14px tall). Btn's `ghost` variant keeps the quiet, link-like look
+            while giving it a real 44px hit area. */}
         {goalsCount > 0 && effOpen !== "goals" && (
-          <button type="button" onClick={() => toggle("goals")}
-            style={{
-              background: "transparent", border: "none", cursor: "pointer",
-              font: `500 12px ${HM}`, color: t.faint,
-            }}>
+          <Btn t={t} size="sm" variant="ghost" tone="faint" onClick={() => toggle("goals")}
+            style={{ fontFamily: HM }}>
             Goals · {goalsCount}
-          </button>
+          </Btn>
         )}
       </div>
 

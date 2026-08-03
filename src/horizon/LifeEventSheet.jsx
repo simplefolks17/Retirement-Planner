@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
-import { fmt } from "./shared.jsx";
+import { fmt, Btn, Pill } from "./shared.jsx";
+import { useDialogBehaviour } from "./useDialogBehaviour.js";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
 import { VerdictTickRail } from "./fields.jsx";
 
@@ -60,6 +61,9 @@ export default function LifeEventSheet({
   t, whatIfBundle, bounds, initial, onSave, onRemove, onCancel,
 }) {
   const isEdit = initial?.id != null;
+  // BUG-50: Escape-to-close + focus move/restore + role="dialog" (shared with
+  // ConfirmModal so all three overlays behave identically).
+  const { cardRef, escapeProps } = useDialogBehaviour(onCancel);
   // A seed is a duration event if it carries a monthly amount AND a span — either
   // a fixed durationMonths OR an open-ended untilAge (money-events extension: an
   // untilAge-only preset like "Mortgage paid off" has no durationMonths).
@@ -192,29 +196,31 @@ export default function LifeEventSheet({
     });
   };
 
-  const seg = (on, color = t.accent) => ({
-    flex: 1, padding: "7px 10px", borderRadius: 8, cursor: "pointer", textAlign: "center",
-    border: `1px solid ${on ? color : t.line2}`,
-    background: on ? `${color}16` : "transparent",
-    font: `${on ? 600 : 400} 12.5px ${HF}`, color: on ? t.ink : t.mut,
-    userSelect: "none",
-  });
+  // A full-width segment in one of the sheet's 2-up choice rows. Rendered as a
+  // Btn so it inherits the reserved-border / no-wrap / 44px invariants; `tone`
+  // carries the money-out (warm) vs money-in (good) accent the sheet uses.
+  const segStyle = { flex: 1, minWidth: 0 };
 
   const fieldLabel = { font: `500 11.5px ${HF}`, color: t.mut, marginBottom: 5 };
+  // No `outline: "none"` on either input below: an inline outline overrides the
+  // .hz-root :focus-visible rule (HorizonShell's one stylesheet), so suppressing
+  // it here removed the ONLY focus affordance a keyboard user gets on the two
+  // money-entry fields.
   const numInput = {
-    width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8,
+    width: "100%", boxSizing: "border-box", padding: "10px 10px", borderRadius: 8,
     border: `1px solid ${t.line2}`, background: t.bg, color: t.ink,
-    font: `600 14px ${HM}`, outline: "none",
-  };
-  const quickSetChip = {
-    padding: "4px 9px", borderRadius: 999, cursor: "pointer",
-    border: `1px solid ${t.line2}`, background: "transparent",
-    font: `400 10.5px ${HF}`, color: t.mut, whiteSpace: "nowrap",
+    font: `600 14px ${HM}`, minHeight: 40,
   };
 
   return (
     <div
       onClick={onCancel}
+      // Click-to-dismiss backdrop. NOT keyboard-focusable by design — the
+      // keyboard equivalent is Escape (useDialogBehaviour), and a focusable
+      // full-screen div would just add a dead stop to the tab order. The
+      // attribute is what keyboard-access.test.js keys its exemption on, so the
+      // exemption is declared at the element rather than hard-coded in the test.
+      data-dismiss-backdrop="true"
       style={{
         position: "fixed", inset: 0, zIndex: 1000,
         background: "rgba(0,0,0,0.38)",
@@ -222,6 +228,15 @@ export default function LifeEventSheet({
       }}
     >
       <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        // A static name, not the live `label` state: the sheet's only heading is
+        // an editable input, and re-announcing the dialog on every keystroke
+        // would be worse than no live name at all.
+        aria-label={isEdit ? "Edit this goal" : "Add a goal"}
+        tabIndex={-1}
+        {...escapeProps}
         onClick={e => e.stopPropagation()}
         style={{
           background: t.surf, border: `1px solid ${t.line2}`,
@@ -242,29 +257,33 @@ export default function LifeEventSheet({
             onChange={e => setLabel(e.target.value)}
             aria-label="Event name"
             style={{
-              flex: 1, border: "none", borderBottom: `1px dashed ${t.line2}`,
-              background: "transparent", color: t.ink, outline: "none",
-              font: `600 17px ${HF}`, padding: "2px 0",
+              // Border reserved on all four sides (transparent) so the dashed
+              // under-rule can't shift the field's box; no `outline: "none"`
+              // (see the numInput note above).
+              flex: 1, border: "1px solid transparent",
+              borderBottom: `1px dashed ${t.line2}`,
+              background: "transparent", color: t.ink,
+              font: `600 17px ${HF}`, padding: "2px 0", minHeight: 40,
             }}
           />
         </div>
 
         {/* direction + shape */}
         <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
-          <button type="button" onClick={() => setIsInflow(false)} aria-pressed={!isInflow} style={seg(!isInflow, t.warm)}>
+          <Btn t={t} size="sm" tint="warm" wrap pressed={!isInflow} onClick={() => setIsInflow(false)} style={segStyle}>
             Money out
-          </button>
-          <button type="button" onClick={() => setIsInflow(true)} aria-pressed={isInflow} style={seg(isInflow, t.good)}>
+          </Btn>
+          <Btn t={t} size="sm" tint="good" wrap pressed={isInflow} onClick={() => setIsInflow(true)} style={segStyle}>
             Money in
-          </button>
+          </Btn>
         </div>
         <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
-          <button type="button" onClick={() => setMode("once")} aria-pressed={mode === "once"} style={seg(mode === "once")}>
+          <Btn t={t} size="sm" wrap pressed={mode === "once"} onClick={() => setMode("once")} style={segStyle}>
             One-time
-          </button>
-          <button type="button" onClick={() => setMode("monthly")} aria-pressed={mode === "monthly"} style={seg(mode === "monthly")}>
+          </Btn>
+          <Btn t={t} size="sm" wrap pressed={mode === "monthly"} onClick={() => setMode("monthly")} style={segStyle}>
             Monthly, for a while
-          </button>
+          </Btn>
         </div>
 
         {/* amount fields */}
@@ -301,33 +320,33 @@ export default function LifeEventSheet({
                       ? "(you'd be retired — no salary)"
                       : fmt(usualPayAtAge)}
                   </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                    <button type="button" onClick={() => {
+                  <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                    <Pill t={t} onClick={() => {
                       setUserTouchedIncome(true);
                       setIncomeAnnual(usualPayAtAge);
-                    }} style={quickSetChip}>
+                    }}>
                       My usual pay
-                    </button>
-                    <button type="button" onClick={() => {
+                    </Pill>
+                    <Pill t={t} onClick={() => {
                       setUserTouchedIncome(true);
                       setIncomeAnnual(0);
-                    }} style={quickSetChip}>
+                    }}>
                       No income
-                    </button>
+                    </Pill>
                   </div>
                 </div>
               )}
             </div>
             {/* duration length: fixed months vs open-ended until-age */}
             <div style={{ display: "flex", gap: 7, marginBottom: 10 }}>
-              <button type="button" onClick={() => setDurationMode("months")}
-                aria-pressed={durationMode === "months"} style={seg(durationMode === "months")}>
+              <Btn t={t} size="sm" wrap pressed={durationMode === "months"}
+                onClick={() => setDurationMode("months")} style={segStyle}>
                 For a set time
-              </button>
-              <button type="button" onClick={() => setDurationMode("until")}
-                aria-pressed={durationMode === "until"} style={seg(durationMode === "until")}>
+              </Btn>
+              <Btn t={t} size="sm" wrap pressed={durationMode === "until"}
+                onClick={() => setDurationMode("until")} style={segStyle}>
                 Until an age
-              </button>
+              </Btn>
             </div>
             {durationMode === "months" ? (
               <div style={{ marginBottom: 12 }}>
@@ -467,28 +486,27 @@ export default function LifeEventSheet({
           </div>
         )}
 
-        {/* actions */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+        {/* actions — the row the confirmed button-misalignment bug lived in.
+            Two things were wrong and BOTH are now structural, not per-site:
+            "Cancel" carried a 1px border while its two siblings had
+            `border: "none"` (a 2px height difference that `alignItems: "center"`
+            exposed instead of absorbing), and none of the three set
+            `whiteSpace: "nowrap"`, so the taller box squeezed "Cancel" into
+            wrapping on a 390px phone. Btn reserves a 1px border on all three and
+            never wraps, so this row is aligned by construction — `flexWrap`
+            below lets the row break onto two lines rather than overflow if a
+            future label grows. */}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", flexWrap: "wrap" }}>
           {isEdit && onRemove && (
-            <button onClick={onRemove} style={{
-              font: `500 13px ${HF}`, color: t.warm, background: "transparent",
-              border: "none", cursor: "pointer", marginRight: "auto", padding: "8px 2px",
-            }}>
+            <Btn t={t} size="sm" variant="ghost" tone="warm" onClick={onRemove}
+              style={{ marginRight: "auto" }}>
               Remove from plan
-            </button>
+            </Btn>
           )}
-          <button onClick={onCancel} style={{
-            font: `500 13px ${HF}`, color: t.mut, background: "transparent",
-            border: `1px solid ${t.line}`, borderRadius: 8, padding: "8px 16px", cursor: "pointer",
-          }}>
-            Cancel
-          </button>
-          <button onClick={handleSave} style={{
-            font: `600 13px ${HF}`, color: "#fff", background: t.accent,
-            border: "none", borderRadius: 8, padding: "8px 16px", cursor: "pointer",
-          }}>
+          <Btn t={t} size="sm" variant="quiet" onClick={onCancel}>Cancel</Btn>
+          <Btn t={t} size="sm" variant="primary" onClick={handleSave}>
             {isEdit ? "Save changes" : "Add to plan"}
-          </button>
+          </Btn>
         </div>
       </div>
     </div>

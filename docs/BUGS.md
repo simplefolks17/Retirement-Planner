@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 13 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 11 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -22,8 +22,6 @@ place this gets checked).
 | **BUG-99** | Medium | Money events (Goals/LifeEventSheet) still entered/applied in nominal dollars against the now-corrected retirement-year walk | `src/model/money-events.js`, `src/model/retirement-engine.js`, `src/horizon/LifeEventSheet.jsx` |
 | **BUG-85** | Low-Medium | Spouse Roth/Taxable/HSA gap-year contributions dollar-conserving but not separately tracked (only Traditional 401k is, v1 scope) | `src/model/retirement-phase.js`, `src/model/retirement-engine.js` |
 | **BUG-84** | Major (owner tax-law call) | Withdrawal-order/conversion scalars (`retTrad`/`retRoth`/`retTaxable`) stay primary-only after #30 — needs an owner decision between two fix shapes, coupled to BUG-85 | `src/App.jsx` |
-| **BUG-50** | Low (polish) | `OnTrackPill` popover has no outside-click/Escape dismissal | `src/horizon/screens/HorizonShell.jsx` |
-| **BUG-49** | Medium (a11y, broad) | Most of Horizon's nav/Ideas controls are keyboard-unreachable — needs a dedicated `kbActivate`-pattern pass, not a single fix | `src/horizon/**` |
 | **BUG-39** | Low (accepted) | Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (the one documented exception to the no-residual-plug rule) | `src/model/flow-down.js` |
 | **BUG-38** | Low (accepted) | Engine charges only *incremental* tax above the SS/pension floor — SS/pension effectively tax-free | `src/model/retirement-engine.js` |
 | **BUG-37** | Low (accepted, owner-deferred) | Engine ignores `conversionTaxSource` — always funds conversion tax from the pool | `src/model/retirement-engine.js` |
@@ -289,97 +287,6 @@ spouse's own sequence) is **coupled to BUG-85**, not independent of it: sequenci
 Trad/Roth/Taxable/HSA draw order needs separately-tracked spouse Roth/Taxable/HSA buckets, which don't
 exist yet (only `tradSp` is split out). Recommend fixing BUG-85's buckets first; option 2 becomes a
 smaller add-on once they exist. Noted on `feature-tracker.html`'s #30 entry.
-
-### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
-
-**Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell,
-requested specifically to find "a few bugs worth fixing" in the UI as it stands (not scoped to
-this session's diff).
-**What:** the desktop `TabBar` and mobile bottom bar (`src/components/HorizonShell.jsx:130-148,
-604-638`), the `MoreSheet` rows (`:467-487`), `OnTrackPill` (`:73-80` — has `role="button"` but no
-`tabIndex`/`onKeyDown`), onboarding's next/back/save controls (`:345-390`), and in `IdeasScreen.jsx`
-the 6 mode buttons, both dial ± pairs, both "Show on arc" buttons, the life-event pills, the
-scenario cards, and "Make this my plan" (`:245, 280, 309-328, 333, 356, 388, 421` — line numbers as
-of the pre-fix commit; several shifted slightly after this session's dial-bounds fix) are all
-`<div>`/`<span onClick>` with no keyboard path (`tabIndex`, `onKeyDown`, or a real `<button>`). A
-keyboard-only user cannot change Horizon screens at all, let alone use most of Ideas.
-**Why not fixed this pass:** this is a broad, mechanical retrofit (dozens of call sites across the
-nav shell and Ideas) rather than a single contained bug — the session's other Fable-review findings
-were fixable as isolated, verifiable patches; this one needs its own dedicated pass to do properly
-(convert each surface to a real `<button>` or add `role="button"` + `tabIndex={0}` + a `kbActivate`
-Enter/Space handler, matching the pattern already used correctly elsewhere in this codebase —
-`StatCard`, `SignalsStrip`, per PR #38's fix 4). Doing it piecemeal here risked missing surfaces and
-under-delivering on what should be a complete, verifiable a11y pass.
-**Precedent this codebase already has for the fix:** `src/horizon/shared.jsx`'s `kbActivate` helper
-+ the `role`/`tabIndex` pattern already applied to `StatCard` and `SignalsStrip` — the fix is
-"apply the existing pattern everywhere it's missing," not invent a new one.
-**Fix path:** a dedicated WI/session auditing every interactive `<div>`/`<span onClick>` in
-`src/horizon/` and `src/components/HorizonShell.jsx` against the `kbActivate` pattern, with a
-render-smoke-style test asserting every clickable surface has a keyboard path.
-**Re-verified 2026-07-12 (Scenarios-removal + L3d-merge close-out) — scope narrowed, still open.**
-The `IdeasScreen.jsx` portion of this finding (6 mode buttons, dial ± pairs, "Show on arc" buttons,
-scenario cards, "Make this my plan") is **now moot** — that whole UI was replaced by #122's
-preview-first redesign + today's Scenarios removal: the mode segments are real `<button
-type="button">`s, the dials are native `<input type="range">` (keyboard-operable by construction),
-"Show on arc"/scenario cards/dial ± pairs don't exist anymore, and the life-event pills are real
-`<button>`s (confirmed in the current file). **The `HorizonShell.jsx` nav-shell portion still
-reproduces exactly as described** — confirmed against current code: `TabBar` (`:130-148`) is still
-`<div key={id} onClick={() => onChange(id)}>` with no `tabIndex`/`onKeyDown`; the mobile bottom bar,
-`MoreSheet` rows, and onboarding's next/back/save controls are likewise still bare
-`<div onClick>`/`<span onClick>`. Scope narrows to `HorizonShell.jsx` only; the fix path is
-unchanged.
-**Re-verified 2026-07-12 (session close-out, PR #52):** `TabBar`'s `<div key={id} onClick={() =>
-onChange(id)}` still at line 134, still no `tabIndex`/`onKeyDown`. `OnTrackPill`'s clickable span
-(`role="button"`, no `tabIndex`) still at line 73. Still reproduces; this session's work was
-CodeRabbit-review fixes in `App.jsx`/`what-if.js`/`IdeasScreen.jsx`/`AffordabilityPanel.jsx`/
-`LifeEventSheet.jsx`/`money-events.js`/`irs-2026.js` — `HorizonShell.jsx` was not touched.
-**Re-verified 2026-07-17 (PR #56 close-out) — scope narrows again, still open.** `IdeasScreen.jsx`
-was DELETED this PR (Ideas retired; its capabilities moved to Plan's Explore tray, whose new
-surfaces — facet tabs, goal rows/pills, quick-jump chips — are all native `<button>`s by
-construction). Every IdeasScreen reference in this entry is now historical. The `HorizonShell.jsx`
-nav-shell portion **still reproduces**: `TabBar` `<div key={id} onClick>` confirmed at line 134
-(no `tabIndex`/`onKeyDown`); mobile bar / `MoreSheet` rows / onboarding controls unchanged (PR #56
-touched HorizonShell only for the Ideas removal, the `navigate` guard, and formatter imports).
-**Re-verified 2026-07-23 (PR #57 session close-out):** `TabBar` still `<div key={id} onClick={() =>
-onChange(id)}>` (now line 142, no `tabIndex`/`onKeyDown`); `OnTrackPill`'s clickable span still
-`role="button"` with no `tabIndex` (now line 83). This session's `HorizonShell.jsx` edits (Batch 3
-— the arc band-view rename to "Range" and a new confidence driver row rendered INSIDE the pill's
-existing popover content) added content to the popover without touching the pill's own
-keyboard-focusability. Still reproduces; scope unchanged.
-**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** `TabBar` still
-`<div key={id} onClick={() => onChange(id)}` at line 143, no `tabIndex`/`onKeyDown`. This session's
-`HorizonShell.jsx` edit added a spouse-driver `note` string inside `OnTrackPill`'s existing rows map
-(withdrawal-rate driver, "temporary — includes your spouse's income through age N") — content only,
-no change to the nav shell's keyboard reachability. Still reproduces.
-
-### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
-
-**Owner:** me_theguy. **Found by:** the same Fable UI review as BUG-49.
-**What:** `HorizonShell.jsx:91-125`'s `OnTrackPill` popover closes only via its own ✕ button or by
-re-clicking the pill — clicking anywhere else in the app, including navigating to a different
-screen, leaves it pinned over the top-right corner. Every other overlay in the app (`ConfirmModal`,
-`ApplyPreviewModal`, `MoreSheet`) closes on backdrop click; this one doesn't have a backdrop at all.
-**Why not fixed this pass:** minor polish, not a correctness bug; lower priority than the findings
-fixed this session, and deferred rather than rushed.
-**Fix path:** add a document-level click listener (or a transparent full-screen backdrop matching
-`ConfirmModal`'s pattern) that closes the popover on any click outside it, plus an `Escape` key
-handler for keyboard parity (ties into BUG-49's broader keyboard-access gap).
-**Re-verified 2026-07-12 (session close-out, PR #52):** the popover (`open && (<div ...>`) still
-closes only via its own `✕` (line 102) — no outside-click or `Escape` handler. Still reproduces;
-`HorizonShell.jsx` untouched this session.
-**Re-verified 2026-07-17 (PR #56 close-out):** `✕`-only close confirmed at line 102. Still
-reproduces; PR #56's HorizonShell edits (Ideas removal, navigate guard, formatters) didn't touch
-the popover.
-**Re-verified 2026-07-23 (PR #57 session close-out):** confirmed no `addEventListener`/outside-click/
-`Escape` handling anywhere in `HorizonShell.jsx` (file-wide grep). This session's addition to the
-popover (Batch 3's confidence driver row) is new content rendered inside the existing `open && (…)`
-block — the dismissal mechanism itself is untouched. Still reproduces.
-**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** popover still closes
-only via its own `✕` (line 111-112) — no outside-click or `Escape` handler added. This session's only
-`HorizonShell.jsx` change was the spouse-driver note string inside the existing rows map (see BUG-49's
-same-day re-verification, above); the dismissal mechanism is untouched. Still reproduces.
-
----
 
 ### BUG-36 — What-if / optimized deltas not yet on the taxed-once engine (accepted, low)
 
@@ -652,6 +559,112 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 ---
+
+### BUG-49 — Primary Horizon navigation and most nav/shell controls were unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51; fixed 2026-08-03, Horizon design-review Slice 2)
+
+**Owner:** me_theguy. **Severity: MEDIUM (a11y, broad) — a keyboard-only user could not change
+Horizon screens at all, on either viewport, and could not complete first-run setup.**
+**Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell. Re-verified as still
+reproducing at five separate session close-outs (2026-07-12 ×2, 07-17, 07-23, 07-26), each time by
+hand — the scope narrowed twice as `IdeasScreen.jsx` was redesigned and then deleted, but the
+`HorizonShell.jsx` nav-shell portion never moved.
+**What (as last verified, pre-fix):** `TabBar` (`:143`) was `<div key={id} onClick={…}>` with no
+`tabIndex`/`onKeyDown`; the mobile bottom bar's four screen tabs (`:614`) and its **More** tab
+(`:630`) were the same; `MoreSheet`'s rows (`:475`) were the same — and on mobile that sheet is the
+ONLY route to Someday / My details / Settings, so three whole screens had no keyboard path at all.
+`OnTrackPill`'s trigger (`:82`) carried `role="button"` but neither `tabIndex` nor `onKeyDown` (worse
+than a plain div: announced as a button, then unusable), and its ✕ (`:111`) the same. The entire
+first-run onboarding wizard — both ± steppers, back, next, "Save as my plan", and both skip links
+(`:349, :352, :369, :371, :376, :382, :389`) — was `<div>`/`<span onClick>`, so a keyboard user could
+not get past the first question. Outside the shell: `SettingsScreen`'s activity pills (`:100`) had no
+keyboard path (its other three groups already carried `kbActivate`), and `SomedayScreen`'s
+photo-upload well (`:45`) and activity chips (`:138`) had none.
+**Why it stayed open for a year:** nothing checked it mechanically. Each re-verification had to
+re-read the shell by hand, and every newly authored `<div onClick>` silently re-opened it. The
+entry's own fix path names the missing piece — *"a render-smoke-style test asserting every clickable
+surface has a keyboard path"* — which is what finally shipped alongside the fix.
+**Fix:** every site above is now a real `<button type="button">` (or, in the one case where it
+genuinely cannot be — `SomedayScreen`'s full-bleed photo well, which wraps an `<img>`, an `<svg>` and
+absolutely-positioned children — `role` + `tabIndex` + the existing `kbActivate` Enter/Space
+handler). Most route through the new shared `Btn`/`Pill` primitives (`src/horizon/shared.jsx`), whose
+semantics are modelled on `ExploreTray.jsx:40` — the one pre-existing site that got BOTH the border
+trick and the button semantics right. **`TabBar` was deliberately NOT used as the exemplar** even
+though the design review originally cited it: it was itself one of the unreachable `<div onClick>`s,
+and copying it would have baked this bug into every future call site permanently.
+Two structural side-effects worth naming: the mobile bar and the desktop tab bar are now
+`<nav aria-label="Main">` landmarks with `aria-current="page"` on the active tab, and every toggle
+carries `aria-pressed` driven by the SAME prop as its visual state (`Btn`'s `pressed`), so the two
+cannot disagree.
+**Tests:** new `src/__tests__/keyboard-access.test.js` (4). It mounts the REAL app, walks every
+screen in `SCREENS` at **both** 1200px and 390px (the mobile bar and More sheet only exist under
+640px, and they were the worst offenders), and fails on any host element with an `onClick` that is
+neither a native control nor `role`+`tabIndex`+`onKeyDown`. Two exemptions, both declared **on the
+element** rather than hard-coded in the test: `data-dismiss-backdrop` (a modal backdrop, whose
+keyboard equivalent is Escape — see BUG-50) and `role="dialog"` (the card's `stopPropagation`
+guard). Separate cases assert the bottom bar renders five real buttons, the More sheet renders three,
+and that the onboarding wizard can be walked end-to-end — including the confirm dialog it raises —
+with no unreachable control at any step. **Revert-and-confirm:** reverting just the mobile bar's five
+tabs to `<div onClick>` fails the 390px sweep with 28 offenders and the bottom-bar case with
+`length 1, expected 5`; restored, green.
+**Golden master:** untouched — layout/semantics only, no model value moves.
+**Where:** `src/horizon/shared.jsx` (`Btn`/`Pill`), `src/components/HorizonShell.jsx` (`TabBar`,
+`OnTrackPill`, `MoreSheet`, the mobile bar, the whole onboarding wizard, "Classic view"),
+`src/horizon/ExploreTray.jsx`, `src/horizon/ConfirmModal.jsx`, `src/horizon/LifeEventSheet.jsx`,
+`src/horizon/screens/PlanScreen.jsx`, `src/horizon/screens/SettingsScreen.jsx`,
+`src/horizon/screens/SomedayScreen.jsx`, `src/__tests__/keyboard-access.test.js`.
+
+### BUG-50 — `OnTrackPill` popover had no outside-click or Escape dismissal — and neither did any of the three real modals (found 2026-07-09, Fable UI review of PR #51; fixed 2026-08-03, Horizon design-review Slice 2)
+
+**Owner:** me_theguy. **Severity: LOW (polish) as filed; the generalisation found on the way to
+fixing it is a11y, not polish.**
+**Found by:** the same Fable UI review as BUG-49. Re-verified as still reproducing at four session
+close-outs (2026-07-12, 07-17, 07-23, 07-26).
+**What (as filed):** `HorizonShell.jsx`'s `OnTrackPill` popover closed only via its own ✕ or by
+re-clicking the pill — clicking anywhere else in the app, including navigating to a different screen,
+left it pinned over the top-right corner. It is the one overlay in the app with **no backdrop**, so
+it could not inherit the backdrop-click every other overlay already had.
+**What the fix pass additionally found:** none of the three REAL overlays handled Escape either, and
+none carried `role="dialog"`/`aria-modal` or moved focus on open — so a keyboard user could open a
+modal and have focus stranded on the element behind the backdrop, with no key that closes it.
+`ApplyPreviewModal` had zero `aria-*` of any kind (it delegates all chrome to `ConfirmModal`, which
+had none to inherit).
+**Fix, in two parts:**
+1. *The pill.* An `open`-gated effect registers a document-level `pointerdown` listener (outside-click
+   → close, tested against a `ref.contains` inside/outside discrimination) plus an `Escape` listener.
+   Both are removed when the popover closes or unmounts. The pill itself became a real `<button>`
+   with `aria-expanded` in the same pass (BUG-49).
+2. *The modals.* New shared hook `src/horizon/useDialogBehaviour.js`, used by `ConfirmModal` and
+   `LifeEventSheet` (and therefore by `ApplyPreviewModal`, which renders through `ConfirmModal`). It
+   moves focus into the dialog card on open, closes on Escape, and restores focus to whatever was
+   focused before. The Escape path is deliberately BOTH the card's own React `onKeyDown` (the branch
+   that fires in practice, since focus is moved into the card) and a document-level listener (the
+   fallback for when focus has left it); the React handler calls `stopPropagation`, so `onClose` fires
+   exactly once, never twice. `role="dialog"` + `aria-modal="true"` are now on all three, named by
+   `aria-labelledby` (ConfirmModal/ApplyPreviewModal, pointing at the rendered title) or a STATIC
+   `aria-label` (LifeEventSheet — its only heading is an editable input, and labelling from live state
+   would re-announce the dialog on every keystroke).
+   The hook keeps `onClose` in a ref so its mount-only effect needs no dependency array: every call
+   site passes an inline arrow, and re-running the effect per render would re-focus the card on each
+   keystroke, yanking focus out of the sheet's own inputs.
+**Deliberately NOT done:** a full Tab-cycling focus trap. It needs a live DOM to enumerate tabbables,
+which this repo's `environment: "node"` test setup cannot exercise, so it would ship untested; the
+document-level Escape listener is what keeps a dialog dismissible if focus does leave it. Noted here
+rather than filed as a new bug — it is a nice-to-have on a surface that is now dismissible three ways
+(backdrop, Escape, Cancel).
+**Tests:** 4 new in `src/__tests__/horizon-shell-dismissal.test.js` (the pill: real button +
+`aria-expanded`; outside-click closes while an inside click does not; Escape closes; listeners are
+registered only while open and removed on close) and 6 new in
+`src/horizon/__tests__/dialog-dismissal.test.js` (each modal's `role`/`aria-modal`/name, Escape-only
+key discrimination, the backdrop still dismissing, and the footer-alignment invariants). The suite
+runs with `environment: "node"`, so the pill file installs the minimal `document` the listener needs
+and invokes the handlers it captured — the same thing a real click/keypress would do.
+**Revert-and-confirm:** deleting just the pill's dismissal effect fails 3 of its 4 tests (the
+"is a real button" case correctly still passes, since that is BUG-49's fix, not this one); restored,
+green.
+**Golden master:** untouched — behaviour/semantics only.
+**Where:** `src/components/HorizonShell.jsx` (`OnTrackPill`), `src/horizon/useDialogBehaviour.js`
+(new), `src/horizon/ConfirmModal.jsx`, `src/horizon/LifeEventSheet.jsx`,
+`src/__tests__/horizon-shell-dismissal.test.js`, `src/horizon/__tests__/dialog-dismissal.test.js`.
 
 ### BUG-104 — Taxes tab's composition bar had no colour for its `draw` segment, rendering the LARGEST tax component (78% of the bar at the shipped default) fully invisible (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-03, Horizon design-review Slice 1)
 
