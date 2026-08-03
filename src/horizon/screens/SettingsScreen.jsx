@@ -4,18 +4,26 @@ import { PALETTES, HF, useTheme } from "../ThemeContext.jsx";
 import { ACTIVITIES } from "./SomedayScreen.jsx";
 import { Btn, Pill } from "../shared.jsx";
 
-export default function SettingsScreen({ t, activity, setActivity, onResetOnboarding }) {
+// isMobile: this screen was one of two that HorizonShell never passed it to, so
+// it rendered its desktop two-column layout at every width — a 260px-minimum
+// controls column beside a fixed 300px preview, inside a 390px viewport, with
+// no wrap. Everything below the fold overflowed horizontally.
+export default function SettingsScreen({ t, activity, setActivity, isMobile = false, onResetOnboarding }) {
   const { palKey, setPalKey, modePref, setModePref, arcStyle, setArcStyle } = useTheme();
   const activeAct = ACTIVITIES.find(a => a.l.toLowerCase() === (activity ?? "golf course").toLowerCase())
     ?? ACTIVITIES[0];
 
   return (
     <div style={{
-      flex: 1, padding: "28px 36px",
-      display: "flex", gap: 44, overflow: "auto"
+      flex: 1, padding: isMobile ? "20px 16px 40px" : "28px 36px",
+      display: "flex", flexDirection: isMobile ? "column" : "row",
+      gap: isMobile ? 28 : 44, overflow: "auto"
     }}>
       {/* left: controls */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 28, minWidth: 260 }}>
+      <div style={{
+        flex: 1, display: "flex", flexDirection: "column", gap: 28,
+        minWidth: isMobile ? 0 : 260
+      }}>
 
         <div>
           <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 16 }}>
@@ -105,8 +113,8 @@ export default function SettingsScreen({ t, activity, setActivity, onResetOnboar
         </div>
       </div>
 
-      {/* right: live preview */}
-      <div style={{ width: 300, flexShrink: 0 }}>
+      {/* right: live preview (below the controls on a phone) */}
+      <div style={{ width: isMobile ? "100%" : 300, flexShrink: 0 }}>
         <div style={{ font: `600 13px ${HF}`, color: t.mut, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
           Preview
         </div>

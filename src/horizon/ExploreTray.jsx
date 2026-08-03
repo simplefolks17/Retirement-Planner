@@ -19,6 +19,12 @@ const FACETS = [
   { k: "goals",  label: "Goals",        icon: "✦" },
 ];
 
+// `isMobile` is accepted but deliberately unread: the tray owns only the quiet
+// bar, which already wraps, and both facet TABS are Btn call sites carrying the
+// shared 44px floor — there is no width-dependent decision left to make here.
+// Kept in the signature (rather than dropped) because the facet bodies passed in
+// as nodes are built by PlanScreen, which will hand this prop down if a mobile
+// branch is ever needed; a fake usage would be worse than a documented no-op.
 export default function ExploreTray({
   t, isMobile, goalsCount = 0, changeStaged = false, changeFacet, goalsFacet,
 }) {

@@ -11,7 +11,10 @@ export const ACTIVITIES = [
   { k: "family",  l: "The grandkids",  sub: "Fully present, zero distraction." },
 ];
 
-export default function SomedayScreen({ t, props }) {
+// isMobile: this screen was one of two HorizonShell never passed it to, so its
+// 62px display headline and 44px side padding rendered unchanged on a 390px
+// phone — "First class" alone is wider than the viewport at that size.
+export default function SomedayScreen({ t, props, isMobile = false }) {
   const { effectiveExpenses, retirementAge, isSustainable, activity, setActivity } = props;
   const activeAct = ACTIVITIES.find(a => a.l.toLowerCase() === (activity ?? "golf course").toLowerCase())
     ?? ACTIVITIES[0];
@@ -75,9 +78,16 @@ export default function SomedayScreen({ t, props }) {
               <line x1="0" y1="0" x2="100%" y2="100%" stroke="#fff" strokeWidth="1" />
               <line x1="100%" y1="0" x2="0" y2="100%" stroke="#fff" strokeWidth="1" />
             </svg>
+            {/* Dead-centred, it lands exactly on the headline block (which the
+                foreground's space-between puts in the middle of the screen) —
+                harmless on a tall desktop window, a collision on an 844px
+                phone. Moved up under the header row on mobile rather than
+                hidden: it is the only affordance saying the photo is tappable. */}
             <div style={{
               position: "absolute", inset: 0,
-              display: "flex", alignItems: "center", justifyContent: "center"
+              display: "flex", justifyContent: "center",
+              alignItems: isMobile ? "flex-start" : "center",
+              paddingTop: isMobile ? 84 : 0,
             }}>
               <span style={{
                 font: `400 13px ${HF}`,
@@ -109,7 +119,7 @@ export default function SomedayScreen({ t, props }) {
       <div style={{
         position: "absolute", inset: 0,
         display: "flex", flexDirection: "column", justifyContent: "space-between",
-        padding: "32px 44px", zIndex: 2
+        padding: isMobile ? "22px 20px 24px" : "32px 44px", zIndex: 2
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ font: `700 17px ${HF}`, color: "rgba(255,255,255,.80)" }}>Horizon</span>
@@ -124,18 +134,18 @@ export default function SomedayScreen({ t, props }) {
             letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10
           }}>work optional.</div>
           <div style={{
-            font: `700 62px/1 ${HD}`, color: "#ffffff",
+            font: `700 ${isMobile ? 40 : 62}px/1 ${HD}`, color: "#ffffff",
             textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: 2
           }}>{activeAct.l}</div>
           <div style={{
-            font: `400 62px/1 ${HD}`, color: "rgba(255,255,255,.75)",
-            textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: 22
+            font: `400 ${isMobile ? 40 : 62}px/1 ${HD}`, color: "rgba(255,255,255,.75)",
+            textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: isMobile ? 16 : 22
           }}>mandatory.</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={{ font: `600 36px ${HM}`, color: "rgba(255,255,255,.95)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ font: `600 ${isMobile ? 28 : 36}px ${HM}`, color: "rgba(255,255,255,.95)" }}>
               {fmtMo(effectiveExpenses)}
             </span>
-            <span style={{ font: `400 16px ${HF}`, color: "rgba(255,255,255,.50)" }}>a month, for life.</span>
+            <span style={{ font: `400 ${isMobile ? 14 : 16}px ${HF}`, color: "rgba(255,255,255,.50)" }}>a month, for life.</span>
           </div>
           <div style={{ font: `400 14px ${HF}`, color: "rgba(255,255,255,.38)", marginTop: 6 }}>
             {activeAct.sub}

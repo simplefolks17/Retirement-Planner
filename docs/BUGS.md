@@ -560,6 +560,47 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-109 — Two of the seven Horizon screens were never passed `isMobile`, so they rendered their desktop layouts at every width (found 2026-08-03, Horizon design-review rounds 1+2; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: MEDIUM — two whole screens unusable-to-awkward on a phone, and
+invisible to every existing test.**
+**What:** Horizon has **zero CSS media queries**; all responsiveness runs through one boolean,
+`isMobile = windowWidth < 640` (`HorizonShell.jsx`), threaded to each screen as a prop. Five of the
+seven screens got it. `SomedayScreen` and `SettingsScreen` did not (`HorizonShell.jsx`'s screen
+switch), so:
+- **Settings** rendered a hard-coded two-column row — a `minWidth: 260` controls column beside a fixed
+  `width: 300` preview with `gap: 44` and no wrap: **604px of declared minimum inside a 390px
+  viewport**, overflowing horizontally.
+- **Someday** rendered its `62px` display headline with `44px` side padding. "First class" alone is
+  wider than a 390px screen at that size. Its decorative photo-placeholder label is also dead-centred
+  in a full-bleed layer, which lands exactly on the headline block (the foreground's `space-between`
+  puts that block in the middle) — harmless in a tall desktop window, a collision at 844px.
+**Why:** each screen defaults its own prop (`isMobile = false`), so a missing prop is indistinguishable
+from a desktop render — no crash, no warning, and a screen-level unit test that doesn't pass the prop
+sees the same thing the shell was producing. Nothing checked the wiring.
+**Fix:** the shell passes `isMobile` to both. Settings stacks to one column (`flexDirection`,
+`minWidth: 0`, `width: "100%"`, tightened padding/gap); Someday drops to a 40px headline with 20px
+side padding, a 28px money figure, and moves the placeholder label up under the header row on mobile
+rather than hiding it — it is the only affordance saying the photo is tappable.
+**Two related hygiene items, deliberately NOT "fixed" by adding code:** `WithdrawalOrderFlow` and
+`WorkLongerFlow` are the only two of seven strategy flows that don't destructure the `isMobile` their
+parent passes. Both are read-only, have no `DetailField` (the only real consumer — it swaps to a
+stepper under 640px), and compose only wrapping primitives, so declaring the parameter would be the
+dead code, not the omission; each now carries a one-line note saying so and pointing at what would
+change that. `ExploreTray` accepts `isMobile` and never reads it: both its facet tabs are `Btn` call
+sites carrying the shared 44px floor and its bar already wraps, so there is no width-dependent decision
+left — documented as an intentional no-op rather than given a fake usage.
+**Tests:** 4 new in `src/__tests__/mobile-layout.test.js` (new file). They mount the **real App** at
+390px and at 1200px and assert the branch on each screen — the screen-level unit tests structurally
+cannot catch this, since they'd have to pass the prop the shell was forgetting (the same reasoning
+behind `golden-master-app-wiring.test.js`). **Revert-and-confirm:** removing `isMobile` from either
+screen's shell call site fails exactly that screen's 390px case and nothing else; both restored.
+**Golden master:** untouched — layout only.
+**Where:** `src/components/HorizonShell.jsx`, `src/horizon/screens/SettingsScreen.jsx`,
+`src/horizon/screens/SomedayScreen.jsx`, `src/horizon/ExploreTray.jsx`,
+`src/horizon/screens/strategies/{WithdrawalOrderFlow,WorkLongerFlow}.jsx`,
+`src/__tests__/mobile-layout.test.js` (new).
+
 ### BUG-107 — The arc chart's axis tick labels were clipped on every phone: the padding that reserves room for them is measured in units that shrink with the container, while the labels are fixed CSS pixels (reported 2026-08-03 by the app owner — the original bug of this review cycle; fixed 2026-08-03, Horizon design-review Slice 2.5)
 
 **Owner:** me_theguy. **Severity: HIGH — the app's single headline visual, broken on the device class
