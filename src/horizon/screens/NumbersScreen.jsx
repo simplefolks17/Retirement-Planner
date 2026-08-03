@@ -330,8 +330,18 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               borderBottom: `2px solid ${t.ink}`, paddingBottom: 10, marginBottom: 3
             }}>
               <span style={{ font: `700 22px ${SERIF}`, color: t.ink, letterSpacing: "0.04em" }}>HORIZON</span>
+              {/* No dollar-basis claim here (rule 11): this tab is deliberately
+                  mixed — "The bottom line" below reads effectiveExpenses (TODAY's
+                  dollars) while the "Income for life" ledger + its companion strip
+                  read statementView's monthly bands (the primary's RETIREMENT-YEAR
+                  real dollars, budget.js:194-205). The banner used to claim
+                  "today's dollars" for the whole tab, which was false for the
+                  ledger by roughly the full inflation factor. Same fix shape as
+                  JourneyScreen's stale "— in today's dollars" subtitle (BUGS.md,
+                  PR #62 round 2 finding 13): remove the claim rather than caveat
+                  it, since the page has never been consistently one basis. */}
               <span style={{ font: `400 12px ${SERIF}`, color: t.mut, textAlign: "right" }}>
-                Statement of your plan · today's dollars
+                Statement of your plan
               </span>
             </div>
             <div style={{ height: 2.5, background: t.ink, marginBottom: 16 }} />
@@ -350,8 +360,22 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
 
             {/* Plan-health verdict badge */}
             {planView?.drivers && (() => {
-              const DRIVER_LABELS = { withdrawal: "withdrawal rate", longevity: "longevity", savings: "savings rate" };
-              const badIssues = planView.drivers.filter(d => d.ok === false).map(d => DRIVER_LABELS[d.id] ?? d.id);
+              // One label per calcPlanDrivers row id (retirement-drawdown.js:163-197).
+              // `confidence` is the 4th row — always present, since App always
+              // passes monteCarloSuccessPct (App.jsx:1558). Wording matches
+              // OnTrackPill's own name for the same driver (HorizonShell.jsx:62),
+              // lower-cased to match this list's sibling entries.
+              const DRIVER_LABELS = {
+                withdrawal: "withdrawal rate",
+                longevity: "longevity",
+                savings: "savings rate",
+                confidence: "market confidence",
+              };
+              const labelFor = d => DRIVER_LABELS[d.id] ?? d.id;
+              const badIssues = planView.drivers.filter(d => d.ok === false).map(labelFor);
+              // Derived from the SAME rows, never a hardcoded list — a hardcoded
+              // one silently omitted `confidence` when that driver was added.
+              const allDrivers = planView.drivers.map(labelFor).join(" · ");
               const allOk = badIssues.length === 0;
               const color = allOk ? t.good : t.warm;
               return (
@@ -365,9 +389,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     {allOk ? "✓ On track" : `${badIssues.length} area${badIssues.length > 1 ? "s" : ""} to review`}
                   </span>
                   <span style={{ font: `400 11px ${HF}`, color: t.mut }}>
-                    {allOk
-                      ? "withdrawal rate · longevity · savings rate"
-                      : badIssues.join(" · ")}
+                    {allOk ? allDrivers : badIssues.join(" · ")}
                   </span>
                 </div>
               );
@@ -1170,7 +1192,14 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           </div>
                         );
                       }
-                      const segColor = { working: t.warm, rmd: t.accent, conv: t.good };
+                      // One entry per key emitted by taxViewBundle.composition
+                      // (App.jsx:2068-2072): rmd · conv · draw. `draw` was missing,
+                      // so the largest segment rendered fully transparent. The
+                      // dead `working` key it used to sit beside is gone — working-
+                      // year tax is deliberately excluded from this bar. `?? t.mut`
+                      // makes any FUTURE missing key fail visibly (a muted grey
+                      // segment) instead of invisibly.
+                      const segColor = { rmd: t.accent, conv: t.good, draw: t.warm };
                       return (
                         <>
                           <div style={{
@@ -1181,7 +1210,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                             {segments.map((seg, i) => (
                               <div key={seg.key} style={{
                                 flex: seg.val / total,
-                                background: segColor[seg.key], opacity: 0.72,
+                                background: segColor[seg.key] ?? t.mut, opacity: 0.72,
                                 borderRight: i < segments.length - 1
                                   ? `1px solid ${t.surf}` : "none",
                                 display: "flex", alignItems: "center",
@@ -1203,7 +1232,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                               }}>
                                 <span style={{
                                   width: 8, height: 8, borderRadius: 999,
-                                  background: segColor[seg.key], flexShrink: 0,
+                                  background: segColor[seg.key] ?? t.mut, flexShrink: 0,
                                 }} />
                                 {seg.label} · {fmt(seg.val)}
                               </span>

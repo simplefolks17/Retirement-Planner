@@ -124,12 +124,17 @@ const budgetSurplus = {
 };
 
 // ── planView shape (savings driver used by Budget tab) ───────────────────────
+// NOTE: calcPlanDrivers emits FOUR rows in the real app — App always passes
+// monteCarloSuccessPct (App.jsx:1558), so the `confidence` row is always
+// present. This fixture used to stop at three, which is part of why the
+// missing `confidence` label in NumbersScreen went unnoticed.
 const planView = {
   progressPct: 78,
   drivers: [
     { id: "withdrawal", ok: true,  withdrawalRatePct: 3.4, guidelinePct: 4 },
     { id: "longevity",  ok: true,  sustainedYears: null,   horizonYears: 25 },
     { id: "savings",    ok: false, savingsRatePct: 31,     guidelinePct: 15 },
+    { id: "confidence", ok: true,  successPct: 88,         guidelinePct: 80 },
   ],
 };
 
@@ -247,6 +252,16 @@ const minimalProps = {
 function textOf(node) {
   if (typeof node === "string") return node;
   return (node.children ?? []).map(textOf).join("");
+}
+
+// Walks a react-test-renderer JSON tree collecting every node matching `pred`.
+// Used by the tax-composition colour tests — a text-only assertion cannot see a
+// transparent bar segment, which is exactly how the missing `draw` key hid.
+function collect(node, pred, out = []) {
+  if (!node || typeof node === "string") return out;
+  if (pred(node)) out.push(node);
+  (node.children ?? []).forEach(c => collect(c, pred, out));
+  return out;
 }
 
 function mountTab(tab, propsOverride = {}) {
@@ -514,6 +529,53 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
+  // ── Regression: segColor was missing a `draw` entry ────────────────────────
+  // taxViewBundle.composition emits rmd/conv/draw (App.jsx:2068-2072) but
+  // NumbersScreen's segColor map only had rmd/conv (+ a dead `working`), so the
+  // draw segment rendered `background: undefined` — fully transparent — hiding
+  // the LARGEST tax component and its legend dot. Text assertions can't see
+  // this, so these walk the style props.
+  it("composition bar: every segment has a real colour, none falls through to the ?? fallback", () => {
+    const renderer = mountTab("taxes");
+    const segs = collect(renderer.toJSON(), n => n.props?.style?.opacity === 0.72);
+    expect(segs).toHaveLength(3);   // rmd + conv + draw
+    segs.forEach(s => {
+      expect(typeof s.props.style.background).toBe("string");
+      // t.mut is the `?? t.mut` fallback — reaching it means a key is missing.
+      expect(s.props.style.background).not.toBe(t.mut);
+    });
+    act(() => renderer.unmount());
+  });
+
+  it("composition legend: the 401k-draw dot is coloured (the segment that was invisible)", () => {
+    const renderer = mountTab("taxes");
+    const legendItem = collect(
+      renderer.toJSON(),
+      n => n.props?.style?.gap === 6 && textOf(n).includes("401k draw tax"),
+    );
+    expect(legendItem).toHaveLength(1);
+    const dot = collect(legendItem[0], n => n.props?.style?.width === 8 && n.props?.style?.height === 8);
+    expect(dot).toHaveLength(1);
+    expect(dot[0].props.style.background).toBe(t.warm);
+    act(() => renderer.unmount());
+  });
+
+  it("an UNKNOWN composition key fails visibly (muted grey), never transparent", () => {
+    const renderer = mountTab("taxes", {
+      taxView: {
+        ...taxView,
+        composition: {
+          total: 100_000,
+          segments: [{ label: "Mystery tax", val: 100_000, key: "mystery", pct: 100 }],
+        },
+      },
+    });
+    const segs = collect(renderer.toJSON(), n => n.props?.style?.opacity === 0.72);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].props.style.background).toBe(t.mut);
+    act(() => renderer.unmount());
+  });
+
   it("null taxView renders graceful empty state", () => {
     const renderer = mountTab("taxes", { taxView: null });
     expect(renderer.toJSON()).toBeTruthy();
@@ -578,6 +640,51 @@ describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
     const renderer = mountTab("statement", { planView: allOkPlanView });
     const allText = textOf(renderer.root);
     expect(allText).toContain("On track");
+    act(() => renderer.unmount());
+  });
+
+  // ── Regression: DRIVER_LABELS was missing a `confidence` entry ─────────────
+  // calcPlanDrivers always emits a 4th "confidence" row, so a plan whose Monte
+  // Carlo success rate falls under the guideline used to print the RAW ID
+  // "confidence" verbatim in the badge. Live at the shipped default (mcSuccessPct
+  // 24 < 80). Wording must match OnTrackPill's "Market confidence".
+  it("plan-health badge labels a failing confidence driver, not its raw id", () => {
+    const failingConfidence = {
+      ...planView,
+      drivers: planView.drivers.map(d =>
+        d.id === "confidence" ? { ...d, ok: false, successPct: 62 }
+          : { ...d, ok: true }),
+    };
+    const renderer = mountTab("statement", { planView: failingConfidence });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("1 area to review");
+    expect(allText).toContain("market confidence");
+    // The bare id must never leak through the `?? d.id` fallback.
+    expect(allText).not.toMatch(/(?<!market )confidence/);
+    act(() => renderer.unmount());
+  });
+
+  it("plan-health badge's on-track list is derived from the driver rows (all four)", () => {
+    const allOkPlanView = {
+      ...planView,
+      drivers: planView.drivers.map(d => ({ ...d, ok: true })),
+    };
+    const renderer = mountTab("statement", { planView: allOkPlanView });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("withdrawal rate · longevity · savings rate · market confidence");
+    act(() => renderer.unmount());
+  });
+
+  // ── Regression: the Statement banner claimed one basis for a mixed tab ─────
+  // "The bottom line" is today's dollars; the "Income for life" ledger below it
+  // is retirement-year dollars (budget.js:194-205). The banner's blanket
+  // "today's dollars" claim was false for the ledger — removed, per the
+  // JourneyScreen precedent (BUGS.md, PR #62 round 2 finding 13).
+  it("Statement banner makes no blanket dollar-basis claim", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Statement of your plan");
+    expect(allText).not.toContain("today's dollars");
     act(() => renderer.unmount());
   });
 

@@ -653,6 +653,130 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-104 — Taxes tab's composition bar had no colour for its `draw` segment, rendering the LARGEST tax component (78% of the bar at the shipped default) fully invisible (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-03, Horizon design-review Slice 1)
+
+**Owner:** me_theguy. **Severity: HIGH — live at the shipped default, and it hides the single biggest
+number on the surface whose entire job is to show where retirement tax goes.**
+**Found by:** the Horizon UI design review's round-2 sweep for "hardcoded lookup maps whose keys have
+drifted from their data source" (Pattern 7), then verified against the live default bundle.
+**What:** `NumbersScreen.jsx`'s "Retirement-phase tax composition" bar coloured its segments from a
+local `segColor` map — `{ working: t.warm, rmd: t.accent, conv: t.good }`. Its data source,
+`taxViewBundle.composition.segments` (`App.jsx:2068-2072`), emits three keys: `rmd`, `conv` and
+**`draw`** (the 401k-draw-tax segment BUG-40 added). `draw` had no entry, so `segColor[seg.key]`
+evaluated to `undefined` and React emitted `background: undefined` — a transparent segment. The
+legend dot beside "401k draw tax" was transparent for the same reason. Measured at the shipped
+default state (mounting the real App): RMD tax $10,182 (2%) · Conversion tax $109,393 (20%) ·
+**401k draw tax $434,207 (78%)** of a $553,782 total — so 78% of the bar was blank, and even the
+`78%` label inside it was invisible (it renders in `t.surf`, the card's own background colour, which
+only reads against a filled segment). A user saw a bar that appeared to be ~22% full and a legend
+whose third entry had no dot. The dead `working` key sitting next to the two live ones is what made
+the map *look* complete: working-year tax is deliberately excluded from this bar (`App.jsx:2062`),
+so that key had never been reachable.
+**Why:** classic lookup-map/data-source drift. When BUG-40 added the third segment to the model side,
+the display-side colour map wasn't updated — and because a missing key degrades to `undefined`
+(transparent) rather than to anything visible, the failure produced no error, no console warning, and
+no obviously-wrong pixel; it just silently removed the largest bar.
+**Fix:** (1) `segColor` now carries one entry per key the model actually emits —
+`{ rmd: t.accent, conv: t.good, draw: t.warm }` — with a comment naming `App.jsx:2068-2072` as the
+contract it must track. `t.warm` is the natural third accent token and was already free: the dead
+`working` entry that used to hold it is **removed outright** (provably unreachable — the same
+treatment `buildRetirementDrawdown`'s orphaned `rRealByYear` param got in PR #64), so the map now has
+exactly the three live keys and nothing that disguises a gap. (2) **Both** lookup sites — the bar
+segment background and the legend dot — now read `segColor[seg.key] ?? t.mut`, so any FUTURE key
+drift fails **visibly** (a muted grey segment a reviewer or user will notice) instead of invisibly.
+The fallback is a safety net, not a substitute for the map: the tests below assert no live segment
+ever reaches it.
+**Tests:** 3 new in `numbers-tabs.test.js` (Taxes tab). Text assertions structurally cannot see this
+bug, so these walk the rendered style props via a new `collect()` tree-walker helper: (a) all three
+segments have a string `background` and none equals the `?? t.mut` fallback; (b) the legend item whose
+text contains "401k draw tax" has exactly one dot and its background is `t.warm`; (c) a synthetic
+unknown segment key renders `t.mut`, never `undefined`. **Revert-and-confirm:** removing just the
+`draw: t.warm` entry (leaving the fallback) fails (a) and (b); removing just the `?? t.mut` fallbacks
+(leaving the entry) fails (c). Both reverted, confirmed failing, and restored.
+**Golden master:** untouched — display-only, no model value moves.
+**Where:** `src/horizon/screens/NumbersScreen.jsx` (the `segColor` map + both lookup sites),
+`src/horizon/__tests__/numbers-tabs.test.js`.
+
+### BUG-105 — Statement tab's plan-health badge printed the raw driver id `"confidence"` instead of a label, live at the shipped default (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-03, Horizon design-review Slice 1)
+
+**Owner:** me_theguy. **Severity: MEDIUM — cosmetic in impact but reachable at the shipped default,
+on the screen that presents itself as a formal statement.**
+**Found by:** the same round-2 lookup-map sweep as BUG-104 (Pattern 7), cross-checked against
+`calcPlanDrivers`' actual row set.
+**What:** `NumbersScreen.jsx`'s plan-health badge mapped failing drivers to prose via
+`DRIVER_LABELS = { withdrawal, longevity, savings }` and fell back to `?? d.id`. But
+`calcPlanDrivers` (`retirement-drawdown.js:186-197`) emits a **fourth** `"confidence"` row whenever
+the caller passes `monteCarloSuccessPct` — and App always passes it (`App.jsx:1558` passes the key
+unconditionally; the row is omitted only when the param is `undefined`, which never happens). So any
+plan whose Monte Carlo success rate falls under the 80% guideline rendered the bare string
+**`confidence`** in the "N areas to review" pill. This is live at the shipped default, not an edge
+case: the locked golden master has `rangeSuccessPct = 24` (< 80) and `withdrawalRate = 5.61%` (> the
+4% guideline), and `longevity` also fails, so the default state's badge read
+"3 areas to review · withdrawal rate · longevity · **confidence**".
+A second, same-root-cause symptom in the same 20 lines: the *all-OK* branch printed a **hardcoded**
+`"withdrawal rate · longevity · savings rate"` — three names for four evaluated drivers, so a healthy
+plan was told market confidence hadn't been checked when it had.
+**Why:** the same drift as BUG-104 — the `confidence` driver was added on the model side (and wired
+correctly into `HorizonShell.jsx`'s `OnTrackPill`, which has always labelled it "Market confidence")
+without the second consumer's label map being updated. The `?? d.id` fallback meant it degraded to
+something renderable, so nothing crashed and nothing warned.
+**Fix:** (1) `DRIVER_LABELS` gains `confidence: "market confidence"` — the same wording `OnTrackPill`
+already uses for this driver (`HorizonShell.jsx:62`), lower-cased to match this list's sibling
+entries, so the two surfaces name the same driver identically. (2) the all-OK branch no longer
+hardcodes a list: a shared `labelFor` maps the rows and the branch renders
+`planView.drivers.map(labelFor).join(" · ")`, derived from the SAME array the failing branch filters —
+so this list can never desync from the model's row set again (a pure display derivation over
+model-provided rows; no arithmetic, rule 10 clean).
+**Tests:** 2 new in `numbers-tabs.test.js` (Statement tab): a failing-confidence fixture renders
+"1 area to review · market confidence" and a lookbehind regex asserts the bare id never leaks; an
+all-OK fixture asserts the derived list reads
+"withdrawal rate · longevity · savings rate · market confidence". The file's shared `planView`
+fixture was also corrected to carry all **four** driver rows — it had stopped at three, which is part
+of why this went unnoticed there (the fixture couldn't reproduce the app's real shape). **Revert-and-
+confirm:** removing the `confidence` entry fails both new tests, with the pre-fix render captured
+verbatim (`1 area to reviewconfidence`); restored.
+**Golden master:** untouched — display-only.
+**Where:** `src/horizon/screens/NumbersScreen.jsx` (`DRIVER_LABELS`, `labelFor`, `allDrivers`),
+`src/horizon/__tests__/numbers-tabs.test.js`.
+
+### BUG-106 — Statement tab's banner claimed "today's dollars" for a tab that is deliberately mixed-basis, contradicting its own ledger by roughly the full inflation factor (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-03, Horizon design-review Slice 1)
+
+**Owner:** me_theguy. **Severity: MEDIUM — a false unit declaration on the app's most
+statement-like surface; CLAUDE.md rule 11's exact bug class.**
+**Found by:** the Horizon design review's round-2 basis sweep (Pattern 6), reading the tab top-to-
+bottom against each figure's declared basis.
+**What:** the Statement tab's page banner read `Statement of your plan · today's dollars`,
+unconditionally, for the whole tab. "The bottom line" immediately under it honours that
+(`effectiveExpenses` is today's dollars per rule 11). But the **"Income for life" ledger** a few lines
+down (`sv.monthlyHHSS` / `monthlyPension` / `monthlyPortDraw` / `monthlyTotal`) and its companion
+"Where retirement income comes from" strip are built by `calcStatementView`
+(`src/model/budget.js:194-205`, whose own code comment says so) in the **primary's retirement-year
+real dollars** — the basis BUG-90 proved the retirement walk uses and BUG-91 converted the rest of the
+app into. So the banner's claim was false for the ledger by the full `(1+inflation)^yearsToRetirement`
+factor, with the two figures roughly 4× apart in the same screenful and nothing on the ledger flagging
+the switch.
+**Why:** the banner copy predates BUG-90/BUG-91 (it comes verbatim from the original design-handoff
+wireframes, which carried a "figures in today's dollars" line). It was a global claim written when the
+page was assumed to be single-basis; it was never revisited as retirement-year figures were added
+beneath it.
+**Fix:** the `· today's dollars` qualifier is **removed**, not caveated — the banner now reads
+`Statement of your plan`. This is the same fix shape this codebase already applied once to the exact
+same class of stale claim: `JourneyScreen.jsx`'s "— in today's dollars" subtitle (PR #62 review
+battery, round 2 finding 13, above), removed on the reasoning that *the page has never been
+consistently one basis throughout*. A comment at the site now records which figures on this tab carry
+which basis, so a future contributor re-adding a blanket claim has to read the mismatch first.
+**Deliberately NOT done:** re-basing the ledger itself. The underlying today's-vs-retirement-year
+choice for these surfaces is entangled with a planned user-facing dollar-basis toggle (the owner's
+decision in the design review's round 2.5: default to today's dollars, but expose a visible switch),
+which is its own scoped piece of work. Removing a false claim is strictly correct in the meantime;
+adding a *different* claim before that decision ships would just be a new thing to unwind.
+**Tests:** 1 new in `numbers-tabs.test.js` (Statement tab) — the banner renders "Statement of your
+plan" and the tab makes no blanket "today's dollars" claim. **Revert-and-confirm:** restoring the
+qualifier fails it; restored.
+**Golden master:** untouched — copy-only.
+**Where:** `src/horizon/screens/NumbersScreen.jsx` (Statement banner),
+`src/horizon/__tests__/numbers-tabs.test.js`.
+
 ### PR #62 review battery — adversarial code review + interoperability/forward-compat audits (2026-07-27, spousal-engine stabilization session)
 
 **Owner:** me_theguy. **Process:** after the Qodo/CodeRabbit bot review round (which found the pension
