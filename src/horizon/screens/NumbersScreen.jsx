@@ -1386,6 +1386,9 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           display: "grid", gridTemplateColumns: GRID_COLS,
                           gap: 4, alignItems: "center",
                           padding: "7px 14px",
+                          // Tap-to-expand on a retirement row: a real control,
+                          // so it carries the same 44px floor as a <button>.
+                          minHeight: isRet ? 44 : undefined,
                           borderBottom: `1px solid ${t.line}`,
                           borderTop: isRetStart ? `1.5px solid ${t.warm}88` : "none",
                           background: wrHigh

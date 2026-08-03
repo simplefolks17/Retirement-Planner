@@ -15,7 +15,8 @@ import { SCREENS } from "../components/HorizonShell.jsx";
 //
 // Slice 2 migrated them onto the shared Btn (44px) / Pill (40px) primitives.
 // This guard keeps them there. It walks the REAL app at a phone viewport, on
-// every screen, and requires every rendered <button> to DECLARE a height floor.
+// every screen, and requires every rendered control — real <button>s AND the
+// sanctioned `role="button"` + tabIndex div pattern — to DECLARE a height floor.
 //
 // "Declare" is the deliberate bar. react-test-renderer has no layout engine, so
 // a computed height is not available — but requiring the declaration is stricter
@@ -51,15 +52,21 @@ function clickByText(root, label) {
   act(() => { target.props.onClick(); });
 }
 
+// Real <button>s AND the sanctioned div-control pattern (role="button" +
+// tabIndex + onKeyDown, shared.jsx's kbActivate). Checking only <button> would
+// leave a hole exactly where the codebase's one documented exception lives.
+const isControl = (n) =>
+  n.type === "button" || (n.props?.role === "button" && n.props?.tabIndex != null);
+
 function undersized(root) {
-  return root.findAll(n => n.type === "button")
+  return root.findAll(isControl)
     .filter(n => {
       const st = n.props?.style ?? {};
       // A fixed `height` counts: the square ± steppers set both.
       const h = typeof st.minHeight === "number" ? st.minHeight : st.height;
       return !(typeof h === "number" && h >= FLOOR);
     })
-    .map(n => `"${textOf(n).trim().slice(0, 40)}" (${n.props?.style?.minHeight ?? "none"})`);
+    .map(n => `<${n.type}> "${textOf(n).trim().slice(0, 40)}" (${n.props?.style?.minHeight ?? "none"})`);
 }
 
 function mountApp() {

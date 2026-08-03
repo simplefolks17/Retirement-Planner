@@ -56,6 +56,9 @@ export default function SomedayScreen({ t, props }) {
         onMouseLeave={() => setPhotoHover(false)}
         style={{
           position: "absolute", inset: 0, cursor: "pointer",
+          // Inert here (inset:0 already fills the screen) but declared anyway —
+          // the touch-target guard checks the CONTRACT, not the current layout.
+          minHeight: 44,
           background: customPhoto ? "transparent" : "linear-gradient(135deg, #2a2018 0%, #3d3020 40%, #2a2820 100%)",
         }}
       >
