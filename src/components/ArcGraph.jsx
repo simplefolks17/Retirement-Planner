@@ -32,6 +32,7 @@
 
 import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
+import { Btn } from "../horizon/shared.jsx";
 import { fmt as fmtMoney } from "../formatters.js";
 
 const VW = 1200;
@@ -743,6 +744,19 @@ export default function ArcGraph({
   const s = useMemo(() => makeScales(vbH, pad, ageMin, ageMax, vmax),
     [vbH, pad, ageMin, ageMax, vmax]);
 
+  // Money-event badge hit radius, in viewBox units. The visible badge is r=13,
+  // but the SVG is drawn in a 1200-unit-wide coordinate space scaled to the
+  // container, so on a 390px phone one unit is ~0.33px and the badge's real tap
+  // target is ~8.5px across — far worse than the ~26px a 1:1 reading suggests,
+  // and it is the tap target for EDITING a life event. This converts a 44px
+  // on-screen target back into viewBox units so the invisible hit circle is 44px
+  // wide at any container width (floored so a wide desktop container doesn't
+  // shrink it below the visible badge). Pure layout math on measured pixels —
+  // no model value is involved.
+  const eventHitR = useMemo(
+    () => Math.max(14, (22 * VW) / Math.max(w, 1)),
+    [w]);
+
   const gid = `arc-${uid}-${activeView}`;
 
   // ── Tap-to-scrub (WI-2.7) ───────────────────────────────────────────────────
@@ -794,16 +808,11 @@ export default function ArcGraph({
     <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: fillHeight ? 1 : "none", minHeight: 0 }}>
       {showToggle && (
         <div style={{ display: "flex", gap: 1, padding: 3, borderRadius: 10, background: t.line, alignSelf: "flex-start" }}>
-          {VIEWS.map(({ key, label }) => {
-            const on = activeView === key;
-            return (
-              <button key={key} onClick={() => onViewChange?.(key)} style={{
-                padding: "4px 13px", borderRadius: 7, border: "none", cursor: "pointer",
-                background: on ? t.surf2 : "transparent", font: `${on ? 600 : 500} 12px ${HF}`,
-                color: on ? t.ink : t.mut, boxShadow: on ? "0 1px 4px rgba(0,0,0,.10)" : "none", transition: "all .12s"
-              }}>{label}</button>
-            );
-          })}
+          {VIEWS.map(({ key, label }) => (
+            <Btn key={key} t={t} size="sm" variant="seg" pressed={activeView === key}
+              onClick={() => onViewChange?.(key)}
+              style={{ padding: "4px 13px", borderRadius: 7, fontSize: 12 }}>{label}</Btn>
+          ))}
         </div>
       )}
 
@@ -872,6 +881,11 @@ export default function ArcGraph({
                   vectorEffect="non-scaling-stroke" />
                 <circle cx={cx} cy={cy} r="3.5" fill={color} stroke={t.surf}
                   strokeWidth="1.5" opacity="0.9" vectorEffect="non-scaling-stroke" />
+                {/* Invisible 44px-on-screen hit area, concentric with the badge.
+                    Painted first so it sits UNDER the visible circle. */}
+                {onEventTap && (
+                  <circle cx={cx} cy={by} r={eventHitR} fill="transparent" stroke="none" />
+                )}
                 <circle cx={cx} cy={by} r="13" fill={t.surf} stroke={color}
                   strokeWidth="2" vectorEffect="non-scaling-stroke">
                   <title>{ev.label} · age {ev.age}</title>

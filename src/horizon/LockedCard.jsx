@@ -14,7 +14,7 @@ export default function LockedCard({ t, title, teaser, teaserValue = null, chipL
       type="button"
       onClick={onClick}
       style={{
-        display: "block", width: "100%", textAlign: "left",
+        display: "block", width: "100%", textAlign: "left", minHeight: 44,
         background: t.surf, border: `1px solid ${t.line}`, borderRadius: 14,
         padding: "16px 18px", cursor: "pointer", font: `400 14px ${HF}`,
       }}

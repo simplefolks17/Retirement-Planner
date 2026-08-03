@@ -10,6 +10,7 @@
 
 import React from "react";
 import { HF, HM } from "./ThemeContext.jsx";
+import { Btn } from "./shared.jsx";
 import { fmtFull } from "../formatters.js";
 
 // ── display-only formatters (shared so screens format values identically) ──────
@@ -34,16 +35,6 @@ export function FieldRow({ t, label, hint, children }) {
       <div style={{ flexShrink: 0 }}>{children}</div>
     </div>
   );
-}
-
-export function seg(t, on) {
-  return {
-    font: `${on ? 600 : 500} 12.5px ${HF}`,
-    color: on ? t.accent : t.mut,
-    background: on ? `${t.accent}18` : "transparent",
-    border: `1px solid ${on ? t.accent : t.line2}`,
-    borderRadius: 8, padding: "6px 12px", cursor: "pointer", whiteSpace: "nowrap",
-  };
 }
 
 // ── Verdict tick rail ────────────────────────────────────────────────────────
@@ -94,7 +85,10 @@ export function StepBtn({ t, children, onClick, disabled, ariaLabel }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled} aria-label={ariaLabel}
       style={{
-        width: 34, height: 34, flexShrink: 0, borderRadius: 8,
+        // 44px: this is the ONLY way to change a numeric field on mobile
+        // (DetailField switches to the stepper under 640px), so it is a primary
+        // control, not a nudge.
+        width: 44, height: 44, minHeight: 44, flexShrink: 0, borderRadius: 8, padding: 0,
         border: `1.5px solid ${t.line2}`, background: t.surf,
         font: `600 17px ${HF}`, color: disabled ? t.faint : t.accent,
         cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1,
@@ -130,9 +124,9 @@ export function DetailField({ t, label, hint, field, isMobile, format = String, 
       <FieldRow t={t} label={label} hint={hint}>
         <div style={{ display: "flex", gap: 6 }}>
           {options.map(o => (
-            <button key={String(o.value)} type="button" aria-pressed={o.value === value}
-              aria-label={`${label}: ${o.label}`}
-              onClick={() => set(o.value)} style={seg(t, o.value === value)}>{o.label}</button>
+            <Btn key={String(o.value)} t={t} size="sm" pressed={o.value === value}
+              ariaLabel={`${label}: ${o.label}`}
+              onClick={() => set(o.value)}>{o.label}</Btn>
           ))}
         </div>
       </FieldRow>
@@ -145,9 +139,9 @@ export function DetailField({ t, label, hint, field, isMobile, format = String, 
       <FieldRow t={t} label={label} hint={hint}>
         <div style={{ display: "flex", gap: 6 }}>
           {[["Yes", true], ["No", false]].map(([l, v]) => (
-            <button key={l} type="button" aria-pressed={value === v}
-              aria-label={`${label}: ${l}`}
-              onClick={() => set(v)} style={seg(t, value === v)}>{l}</button>
+            <Btn key={l} t={t} size="sm" pressed={value === v}
+              ariaLabel={`${label}: ${l}`}
+              onClick={() => set(v)}>{l}</Btn>
           ))}
         </div>
       </FieldRow>

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { HF, HM } from "./ThemeContext.jsx";
+import { Btn, Pill } from "./shared.jsx";
 import { fmtFull } from "../formatters.js";
 import { isDurationEvent, MAX_MONEY_EVENTS } from "../model/money-events.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
@@ -40,12 +41,6 @@ export default function GoalsPanel({ t, moneyEvents, onNewGoal, onEditGoal, onRe
 
   const presets = showAll ? LIFE_EVENTS : LIFE_EVENTS.slice(0, DEFAULT_VISIBLE);
 
-  const pill = (extra) => ({
-    padding: "6px 13px", borderRadius: 999, cursor: "pointer",
-    border: `1px solid ${t.line2}`, background: "transparent",
-    font: `400 13px ${HF}`, color: t.mut, textAlign: "left", ...extra,
-  });
-
   const startCustom = () =>
     onNewGoal({ ...CUSTOM_GOAL_SEED, age: bounds?.retirementAge });
 
@@ -60,13 +55,18 @@ export default function GoalsPanel({ t, moneyEvents, onNewGoal, onEditGoal, onRe
               border: `1px solid ${t.line}`, borderRadius: 11,
               background: t.surf2, padding: "9px 11px",
             }}>
+              {/* Border reserved (transparent) so this row and the ✕ beside it
+                  can never differ in height, and minHeight 44 so the tap-to-edit
+                  region clears the guideline — it sits immediately beside a
+                  destructive control, where a mis-tap is expensive. */}
               <button
                 type="button"
                 onClick={() => onEditGoal(ev)}
                 aria-label={`Edit goal ${i + 1}: ${ev.label}`}
                 style={{
                   flex: 1, display: "flex", alignItems: "center", gap: 10,
-                  background: "transparent", border: "none", cursor: "pointer",
+                  background: "transparent", border: "1px solid transparent",
+                  cursor: "pointer", minHeight: 44,
                   textAlign: "left", padding: 0, minWidth: 0,
                 }}>
                 <span style={{ font: `600 11px ${HM}`, color: t.faint, width: 46, flexShrink: 0 }}>
@@ -82,15 +82,10 @@ export default function GoalsPanel({ t, moneyEvents, onNewGoal, onEditGoal, onRe
                   </span>
                 </span>
               </button>
-              <button
-                type="button"
+              <Btn t={t} size="sm" variant="quiet" tone="faint"
                 onClick={() => onRemoveGoal(ev.id)}
-                aria-label={`Remove goal ${i + 1}: ${ev.label}`}
-                style={{
-                  flexShrink: 0, background: "transparent", border: `1px solid ${t.line}`,
-                  borderRadius: 8, color: t.faint, cursor: "pointer",
-                  font: `400 13px ${HF}`, padding: "4px 9px",
-                }}>✕</button>
+                ariaLabel={`Remove goal ${i + 1}: ${ev.label}`}
+                style={{ padding: "4px 11px", borderRadius: 8, alignSelf: "stretch" }}>✕</Btn>
             </div>
           ))}
         </div>
@@ -108,23 +103,23 @@ export default function GoalsPanel({ t, moneyEvents, onNewGoal, onEditGoal, onRe
           </div>
           <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
             {presets.map((ev) => (
-              <button key={ev.l} type="button"
-                onClick={() => onNewGoal(presetSeed(ev))}
-                style={pill()}>
+              <Pill key={ev.l} t={t} onClick={() => onNewGoal(presetSeed(ev))}>
                 {ev.icon}  {ev.l}
-              </button>
+              </Pill>
             ))}
+            {/* The dashed borders stay — same 1px width as Pill's own, so the
+                row's boxes remain identical in height, only the style differs. */}
             {!showAll && LIFE_EVENTS.length > DEFAULT_VISIBLE && (
-              <button type="button" onClick={() => setShowAll(true)}
-                style={pill({ color: t.accent, border: `1px dashed ${t.line2}` })}>
+              <Pill t={t} onClick={() => setShowAll(true)} tone="accent"
+                style={{ border: `1px dashed ${t.line2}` }}>
                 + Add more goals
-              </button>
+              </Pill>
             )}
             {showAll && (
-              <button type="button" onClick={startCustom}
-                style={pill({ color: t.accent, border: `1px dashed ${t.accent}` })}>
+              <Pill t={t} onClick={startCustom} tone="accent"
+                style={{ border: `1px dashed ${t.accent}` }}>
                 + Custom goal
-              </button>
+              </Pill>
             )}
           </div>
         </div>

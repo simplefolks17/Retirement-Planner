@@ -39,7 +39,7 @@ function Logo({ t }) {
 // COPY + FORMATTING ONLY here: every number, comparison, and ok flag comes from
 // the model rows (rule 10); null edge states (sustainedYears, savingsRatePct,
 // ok) are rendered as designed text, never synthesized numbers.
-function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
+function OnTrackPill({ t, isSustainable, drivers }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   const color = isSustainable ? t.good : t.warm;
@@ -109,8 +109,11 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
         aria-expanded={open}
         aria-label={`Plan status: ${label}. What drives this`}
         style={{
+          // Unconditional 44px: the header's other two controls are 44px now,
+          // so there is no longer a desktop-density reason to make this the one
+          // exception (it used to be `isMobile ? 44 : undefined`).
           display: "inline-flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", minHeight: isMobile ? 44 : undefined,
+          cursor: "pointer", minHeight: 44,
           background: "transparent", border: "1px solid transparent",
           borderRadius: 999, padding: 0, flexShrink: 0,
         }}>
@@ -301,7 +304,7 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
   // BUG-49: the ± steppers were `<span onClick>` — a keyboard user could not
   // change a single answer. Real buttons now, and 44px square instead of 36.
   const stepBtnStyle = {
-    width: 44, height: 44, flexShrink: 0, borderRadius: 9,
+    width: 44, height: 44, minHeight: 44, flexShrink: 0, borderRadius: 9,
     border: `1.5px solid ${t.line2}`, background: t.surf,
     display: "inline-flex", alignItems: "center", justifyContent: "center",
     font: `600 18px ${HF}`, color: t.accent, cursor: "pointer", userSelect: "none",
@@ -642,8 +645,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             <Logo t={t} />
             {!isMobile && <TabBar t={t} tabs={SCREENS} active={screen} onChange={navigate} />}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <OnTrackPill t={t} isSustainable={isSustainable}
-                drivers={planView.drivers} isMobile={isMobile} />
+              <OnTrackPill t={t} isSustainable={isSustainable} drivers={planView.drivers} />
               <Btn t={t} size="sm" variant="quiet" tone="faint" onClick={onShowClassic}
                 style={{ fontSize: 11, padding: "6px 10px", borderRadius: 7 }}>
                 Classic view

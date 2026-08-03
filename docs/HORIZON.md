@@ -15,9 +15,11 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 | File | Purpose |
 |---|---|
 | `src/horizon/ThemeContext.jsx` | Design token system, palette context, `useTheme()` hook; exports `safeGet`/`safeSet` |
+| `src/horizon/shared.jsx` | **The shared interactive primitives** — `Btn` / `Pill` (see "Interactive primitives" below) + `StatCard` + `kbActivate`; re-exports `fmt`/`fmtMo`/`fmtMonthly` |
+| `src/horizon/useDialogBehaviour.js` | Shared modal behaviour: focus-in on open, Escape-to-close, focus restore. Used by `ConfirmModal` + `LifeEventSheet` (and so by `ApplyPreviewModal`) |
 | `src/horizon/ConfirmModal.jsx` | Shared confirm dialog + toast pattern (used by PlanScreen and IdeasScreen) |
 | `src/horizon/ApplyPreviewModal.jsx` | Apply-with-preview shell (WI-3.9): pure renderer of a model-computed before/after payload, wraps `ConfirmModal`; exports `PreviewMetricRow` + `VerdictBadge`. Contract in `ARCHITECTURE.md` |
-| `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape |
+| `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape. (The local `seg` style helper was retired 2026-08-03 — its call sites now use `Btn`.) |
 | `src/horizon/AffordabilityPanel.jsx` | [DELETED 2026-07-13] "Biggest affordable expense" solver (WI-3.8, Ideas' "Solvers" mode) — called `calcAffordabilityMax` directly (sanctioned in-screen pattern), fed by `affordView` + `whatIfSimInputs`. Solvers tab and the panel were removed by owner decision (Dials + Events cover the job; `calcAffordabilityMax` retained for Classic's WhatIfPanel). |
 | `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views, scenario overlay, event markers, tap-to-scrub |
 | `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard + mobile bar/MoreSheet; exports `SCREENS`; imports per-screen files |
@@ -92,6 +94,61 @@ const { t, palKey, setPalKey, modePref, setModePref, resolvedMode, arcStyle, set
 ```
 
 `t` is the active `ThemeTokens` object for the current palette/mode.
+
+---
+
+## Interactive Primitives — `Btn` / `Pill` (2026-08-03, binding)
+
+**Source of truth: `src/horizon/shared.jsx`.** Before these existed, every button
+in Horizon was a one-off inline style object. Three properties had to be
+remembered independently at ~40 call sites, and weren't — each omission caused a
+real, shipped bug. `Btn` and `Pill` make all three structural.
+
+| # | Invariant | The bug it prevents |
+|---|---|---|
+| 1 | **A `1px solid` border is always emitted; only its COLOUR changes** (`"transparent"` for the borderless look) | A row mixing `1px solid` with `border: "none"` siblings makes the bordered box 2px taller. Invisible under flexbox `stretch`, visible under `alignItems: "center"` — the confirmed `LifeEventSheet` footer bug, where the mismatch squeezed "Cancel" into wrapping at 390px |
+| 2 | **`whiteSpace: "nowrap"` + `flexShrink: 0`** | The other half of the same bug: a shrinking flex row wrapping a two-word label |
+| 3 | **`minHeight: 44` (Btn) / `40` (Pill)** | ~35 controls under the touch-target guideline, the worst at ~14px |
+
+**Use a real `<button>`.** The exemplar is `ExploreTray`'s facet tab, not the nav
+`TabBar` — `TabBar` was itself one of BUG-49's keyboard-unreachable
+`<div onClick>`s. Where an element genuinely cannot be a button (a full-bleed
+layer wrapping an `<img>`, e.g. Someday's photo well), use `kbActivate` +
+`role` + `tabIndex`; that is the only sanctioned alternative.
+
+**API.** `Btn`: `variant` (`primary` | `quiet` | `ghost` | `seg`), `size`
+(`md` | `sm`), `tint` / `tone` (theme-token NAMES, never raw colours), `pressed`,
+`disabled`, `full`, `wrap`, `ariaLabel` / `ariaExpanded`, `style`.
+`Pill`: the same minus `variant`/`size`, at radius 999 and the 40px tier.
+
+- **`pressed` is one prop driving BOTH the visual "on" state and `aria-pressed`**,
+  so they cannot desync. Omit it entirely for a plain action button — no
+  `aria-pressed` attribute is emitted, because an action is not a toggle.
+- **`variant="seg"`** is the segment-inside-a-track skin (the Numbers tab strip,
+  the arc's view toggle, Settings' theme/arc rows, the desktop `TabBar`).
+- **`wrap`** is the ONE documented opt-out of invariant 2, and only for
+  full-width segments in a `flex: 1` row: there every segment is the same width
+  under `stretch`, so a two-line label makes them ALL two lines and heights stay
+  equal — which is the property the invariant protects. In an
+  `alignItems: "center"` action row it would reintroduce the original bug.
+- **`style` is for layout only** (`flex`, `margin`, `width`, `padding`,
+  `borderRadius`). Colours belong in `tint`/`tone` so they stay theme tokens.
+
+**Two tests enforce this, both walking the REAL mounted app:**
+`src/__tests__/keyboard-access.test.js` (no clickable element without a keyboard
+path, on every screen, at 1200px and 390px) and
+`src/__tests__/touch-targets.test.js` (every `<button>` DECLARES a ≥40px height
+floor). `src/horizon/__tests__/shared-primitives.test.js` covers the primitives
+themselves. Declaring the floor — rather than measuring it — is deliberate: a
+card that happens to be 80px tall today can shrink when its content changes.
+
+**Global `:focus-visible`.** Horizon is 100% inline styles and an inline style
+cannot express a pseudo-class, so the focus ring lives in the ONE `<style>` block
+in the Horizon render path (`HorizonShell.jsx`, alongside the font `@import`).
+It is theme-aware — the template literal is evaluated inside the component, where
+`t` is in scope — and scoped to `.hz-root` so Classic is untouched. **Never set
+`outline: "none"` on a Horizon control:** an inline outline overrides that rule,
+and three inputs that did so were the only elements it could not reach.
 
 ---
 

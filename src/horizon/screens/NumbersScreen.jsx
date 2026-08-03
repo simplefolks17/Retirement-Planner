@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
-import { fmt, fmtMo } from "../shared.jsx";
+import { fmt, fmtMo, Btn, Pill } from "../shared.jsx";
 import { fmtFull, fmtPct } from "../../formatters.js";
 
 // A deduction row: "−$12,400" for a finite value, plain "—" when missing.
@@ -300,19 +300,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         background: t.line, alignSelf: "flex-start", marginBottom: 12, flexShrink: 0,
         flexWrap: "wrap",
       }}>
-        {NUMBERS_TABS.map(([k, l]) => {
-          const on = tab === k;
-          return (
-            <button key={k} type="button" aria-pressed={on} onClick={() => setTab(k)} style={{
-              padding: "6px 16px", borderRadius: 8, cursor: "pointer",
-              border: "none",
-              background: on ? t.surf2 : "transparent",
-              font: `${on ? 600 : 400} 13px ${HF}`,
-              color: on ? t.ink : t.mut,
-              boxShadow: on ? "0 1px 4px rgba(0,0,0,.09)" : "none"
-            }}>{l}</button>
-          );
-        })}
+        {NUMBERS_TABS.map(([k, l]) => (
+          <Btn key={k} t={t} size="sm" variant="seg" pressed={tab === k}
+            onClick={() => setTab(k)} style={{ padding: "6px 16px" }}>{l}</Btn>
+        ))}
       </div>
 
       {/* tab body */}
@@ -480,17 +471,12 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     {" "}of your working paycheck deposit.
                   </div>
                   {navigate && (
-                    <button
-                      type="button"
+                    <Btn t={t} size="sm" variant="ghost" tone="accent"
                       onClick={() => navigate("numbers", "yearly")}
-                      style={{
-                        background: "none", border: "none", cursor: "pointer",
-                        font: `400 12px ${SERIF}`, color: t.accent,
-                        padding: "4px 0", textDecoration: "underline",
-                      }}
+                      style={{ fontFamily: SERIF, textDecoration: "underline", padding: "4px 8px" }}
                     >
                       → Explore all years
-                    </button>
+                    </Btn>
                   )}
                 </div>
               );
@@ -1323,19 +1309,19 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         Jump to:
                       </span>
                       {visibleMarkers.map(([age, label]) => (
-                        <button
+                        <Pill
                           key={age}
-                          type="button"
+                          t={t}
+                          tone="accent"
                           onClick={() => rowRefs.current[Number(age)]?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
                           style={{
                             background: `${t.accent}14`, border: `1px solid ${t.accent}44`,
-                            borderRadius: 6, cursor: "pointer",
-                            font: `500 11px ${SERIF}`, color: t.accent,
-                            padding: "3px 10px",
+                            borderRadius: 6, padding: "3px 10px",
+                            fontFamily: SERIF, fontSize: 11, fontWeight: 500,
                           }}
                         >
                           {label}
-                        </button>
+                        </Pill>
                       ))}
                     </div>
                   );
@@ -1514,13 +1500,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   whole life · {allRetirementRows.length} years · balances and growth shown gross; taxes appear in the Tax and Draw columns
                 </span>
                 {allRetirementRows.length > YEAR_CAP && (
-                  <button onClick={() => setShowAllYears(v => !v)} style={{
-                    font: `500 12px ${HF}`, color: t.accent,
-                    background: "transparent", border: `1px solid ${t.accent}55`,
-                    borderRadius: 7, padding: "4px 12px", cursor: "pointer", flexShrink: 0,
-                  }}>
+                  <Btn t={t} size="sm" variant="quiet" tone="accent"
+                    onClick={() => setShowAllYears(v => !v)}
+                    style={{ border: `1px solid ${t.accent}55`, borderRadius: 7, padding: "4px 12px" }}>
                     {showAllYears ? "Show first 50" : `Show all ${allRetirementRows.length} years`}
-                  </button>
+                  </Btn>
                 )}
               </div>
             </div>

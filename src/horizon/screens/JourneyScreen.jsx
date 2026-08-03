@@ -15,7 +15,7 @@
 import React, { useState } from "react";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 import { HF, HM } from "../ThemeContext.jsx";
-import { fmt, fmtMo } from "../shared.jsx";
+import { fmt, fmtMo, Btn } from "../shared.jsx";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
 
@@ -112,15 +112,13 @@ function ToggleDetail({ t, children }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <button
+      <Btn t={t} size="sm" variant="ghost" tone="accent"
+        ariaExpanded={open}
         onClick={() => setOpen(o => !o)}
-        style={{
-          background: "transparent", border: "none", cursor: "pointer",
-          font: `500 12px ${HF}`, color: t.accent, padding: "6px 0", display: "flex", alignItems: "center", gap: 4,
-        }}
+        style={{ padding: "6px 8px", marginLeft: -8, justifyContent: "flex-start" }}
       >
         {open ? "Hide detail ↑" : "Show detail ↓"}
-      </button>
+      </Btn>
       {open && <div style={{ marginTop: 4 }}>{children}</div>}
     </div>
   );
