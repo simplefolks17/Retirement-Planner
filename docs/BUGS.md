@@ -560,6 +560,64 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-107 — The arc chart's axis tick labels were clipped on every phone: the padding that reserves room for them is measured in units that shrink with the container, while the labels are fixed CSS pixels (reported 2026-08-03 by the app owner — the original bug of this review cycle; fixed 2026-08-03, Horizon design-review Slice 2.5)
+
+**Owner:** me_theguy. **Severity: HIGH — the app's single headline visual, broken on the device class
+it is most used on, and the first thing the owner reported.**
+**Found by:** the owner, on a phone ("the big arc chart's axis is cut off by its container"), then
+root-caused by the design review's first research pass and re-verified by direct read here.
+**What:** `ArcGraph`'s chart box is `overflow: hidden` (`ArcGraph.jsx`, the `boxRef` div). Its bottom
+padding `pad.b` reserved 40 viewBox units on mobile / 46 on desktop for the axis tick row. But the
+viewBox HEIGHT is derived from the container's WIDTH (`vbH = VW * h / w`, so `preserveAspectRatio="none"`
+scales x and y equally and circles stay round) — which makes one viewBox unit worth `w / VW` CSS
+pixels, ~0.33px on a 390px phone. The tick labels themselves (`ArcLabels`, `DecadesLabels`) are a
+sibling **HTML overlay in fixed CSS pixels** and do not shrink. Net clearance below the plot floor was
+`(pad.b − 16) * w / VW` ≈ **7.8px at 390px** for a 10px mono label whose line box is ~12px — so the
+bottom third of every age tick was cut off by the container's own `overflow: hidden`. At ≥900px the
+same formula yields 20-30px and the chart is fine, which is why this read as "mobile only".
+**Why:** a units mismatch between two coordinate systems that look interchangeable — the SVG's
+1200-unit space and the overlay's CSS pixels — with nothing in the code naming which was which. The
+same class as the money-event badge's real tap size (PR fb0dc19), where a 1:1 reading of a viewBox
+number gave an answer 3× off.
+**Fix:** `pad.b` now reserves a real CSS-**pixel** budget converted back into viewBox units:
+`axisPadBottom(w, floor) = max(floor, AXIS_TICK_OFFSET + AXIS_LABEL_PX * (VW / w))`, with
+`AXIS_TICK_OFFSET = 16` now a named constant **shared with the two label components that position the
+tick row at `s.bot + 16`** (previously a bare literal in three places, so the padding formula and the
+label position could drift apart). `w` joins the memo's deps; `makeScales` already listed `pad`.
+Keeping the old constants as a `floor` means nothing gets tighter than it was, and desktop is
+bit-for-bit unchanged (at 900px+ the formula asks for ~34, below the 46 floor).
+**Tests:** 5 new in `src/components/__tests__/arcgraph-geometry.test.js` — clearance ≥ a 12px line box
+at nine container widths from 288px to 1180px, for both floors; the OLD constant explicitly asserted
+to FAIL at 390px (7.8px), so the regression is documented in the suite rather than only in prose;
+desktop unchanged; never returns less than its floor (including for `w` of 0 / negative / NaN); and
+monotonically grows as the container narrows. **Revert-and-confirm:** replacing the body with
+`return floor` fails 2 of the 5; restored, green.
+**Golden master:** untouched — pure layout geometry, no model value involved.
+**Where:** `src/components/ArcGraph.jsx` (`axisPadBottom`/`axisLabelClearancePx`, the `pad` memo,
+`ArcLabels`, `DecadesLabels`), `src/components/__tests__/arcgraph-geometry.test.js` (new).
+
+### BUG-108 — The end-of-plan badge is centred on the curve's own end point, so a plan that depletes to $0 hangs half the badge off the bottom of the chart (found 2026-08-03, Horizon design-review round 1 as a secondary risk of the clipping bug; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: MEDIUM — only reachable for a plan that runs out of money, i.e.
+exactly the user who most needs to read the number the badge is showing.**
+**What:** `ArcLabels`' "$X at age Y" card is positioned `top: py(endPos.yEnd)` with
+`transform: translate(-100%,-50%)` — vertically centred on the curve's final y. For a sustainable
+plan that point is well inside the plot. For a plan that depletes, `yEnd` **is** `s.bot` (the plot
+floor), so half of a ~48px-tall card sat below the floor: over the axis tick row BUG-107 was already
+fighting for, and past the container's clipped edge. `BandLabels`' lean-market card has the same
+construction and the same failure when the lower cone reaches $0.
+**Fix:** a shared `clampOverlayY(y, top, bot, halfPx, u)` keeps the badge's centre at least half its
+own on-screen height inside the plot, converting that pixel half-height into viewBox units through
+the same `u = VW / w` factor BUG-107 introduced (the badge is fixed-size HTML; the plot is not). It
+falls back to the plot midpoint if the plot is ever too short to honour either bound, rather than
+producing an inverted clamp. Applied to both cards.
+**Tests:** 4 new in `arcgraph-geometry.test.js` — the depleted case ($0 end, badge's lower edge proven
+to land above the floor), the top-edge case, an ordinary mid-plot position left exactly where it was
+(so this can't silently move healthy plans), and the too-short-plot fallback.
+**Golden master:** untouched — display-only.
+**Where:** `src/components/ArcGraph.jsx` (`clampOverlayY`, `ArcLabels`, `BandLabels`),
+`src/components/__tests__/arcgraph-geometry.test.js`.
+
 ### BUG-49 — Primary Horizon navigation and most nav/shell controls were unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51; fixed 2026-08-03, Horizon design-review Slice 2)
 
 **Owner:** me_theguy. **Severity: MEDIUM (a11y, broad) — a keyboard-only user could not change
