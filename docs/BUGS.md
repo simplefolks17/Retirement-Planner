@@ -560,6 +560,43 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-111 — Three small polish items closing out Slice 2.5: raw model field names leaking into the Journey UI, a depletion sentence sitting in a headline's number slot, and no `box-sizing` reset anywhere in the Horizon render path (found 2026-08-03, Horizon design-review round 2 sweep; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: LOW — cosmetic/consistency, no data or layout-breaking impact on
+their own, but each is the kind of thing that compounds.**
+**What, three sites:**
+1. **`JourneyScreen.jsx`'s `DetailRow`** printed its `source` prop (a raw model field path, e.g.
+   `flowDown.portPreRMD`) unconditionally next to every detail-row label, in every build — there was no
+   dev/prod gate anywhere in the file, or the codebase, for this affordance.
+2. **Chapter 3's headline** put the whole sentence `"portfolio runs to age 87"` in `Headline`'s `value`
+   slot — the same slot Chapters 1 and 2 use for a short dollar figure (`$49k`, `$3.5M`) — so the one
+   real number in that sentence could wrap onto its own orphaned line at narrow widths, and the
+   chapter's headline read as prose instead of a figure.
+3. **No `box-sizing: border-box` reset exists in the Horizon render path.** Classic UI has one, but it's
+   declared inside the Classic-only branch of `App.jsx` and never reaches Horizon. Every Horizon element
+   has been `content-box` by default since the shell was built — at least one component
+   (`LifeEventSheet.jsx`) already had to set it by hand on an input to avoid it overflowing its own
+   container.
+**Fix:** `DetailRow`'s source breadcrumb is now gated behind `import.meta.env.DEV`. Chapter 3's headline
+value is now a short `"Age 87"` / `"Funded for life"` / `"—"`, with the sentence context moved into the
+`sub` caption (`"the age your portfolio runs out"` / `"how long the portfolio sustains you"`) —
+matching Ch1/Ch2's value+sub shape. Added `.hz-root, .hz-root * { box-sizing: border-box; }` to
+`HorizonShell.jsx`'s existing scoped `<style>` block (the same one Slice 2 added the `:focus-visible`
+rule to) — scoped to `.hz-root` so Classic UI, which shares the document, is unaffected.
+**Tests:** 1 new in `journey-screen.test.js` — the unsustainable-plan case now asserts the headline
+value is `"Age 87"` (not the old sentence) and the sentence context survives in the sub caption.
+**Revert-and-confirm:** reverting the Chapter 3 split fails exactly this new test (`toContain("Age 87")`
+fails against the un-split sentence) and no other; restored. The `DetailRow` DEV-gate and the
+`box-sizing` reset are declarative/CSS changes with no jsdom-observable behavior difference under the
+test environment (`import.meta.env.DEV` is `true` under vitest, same as a dev build) — verified by
+direct code read instead: `source && import.meta.env.DEV && (...)` and the scoped selector both
+compile and lint clean.
+**Golden master:** untouched — display-only.
+**Where:** `src/horizon/screens/JourneyScreen.jsx`, `src/components/HorizonShell.jsx`,
+`src/horizon/__tests__/journey-screen.test.js`.
+
+---
+
 ### BUG-110 — Six more "fixed-size content inside a box that shrinks" failures on the Numbers screen, all invisible to existing tests because none of them touch a dollar value (found 2026-08-03, Horizon design-review round 2 sweep; fixed 2026-08-03, Slice 2.5)
 
 **Owner:** me_theguy. **Severity: MEDIUM — same failure shape as BUG-107 (the arc's clipped axis),

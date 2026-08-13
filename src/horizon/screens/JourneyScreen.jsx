@@ -52,7 +52,13 @@ function DetailRow({ t, label, value, muted, source }) {
       padding: "6px 0", borderBottom: `1px solid ${t.line}`,
     }}>
       <span style={{ font: `400 13px ${SERIF}`, color: muted ? t.faint : t.mut }}>
-        {label}{source && <span style={{ font: `400 10px ${HF}`, color: t.faint, marginLeft: 4 }}>({source})</span>}
+        {label}
+        {/* Dev-only provenance breadcrumb — a raw model field name ("flowDown.portPreRMD")
+            reads as a bug to a real user; it's only useful while tracing a value back
+            to its source during development. */}
+        {source && import.meta.env.DEV && (
+          <span style={{ font: `400 10px ${HF}`, color: t.faint, marginLeft: 4 }}>({source})</span>
+        )}
       </span>
       <span style={{ font: `500 13px ${HM}`, color: muted ? t.faint : t.ink, whiteSpace: "nowrap", marginLeft: 12 }}>
         {value}
@@ -169,11 +175,21 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
   // flowDown fields: distStartVal, distDraws, distRMDTax, distGrowth,
   //   distEndVal, actualSustainedYrs, depletionAge
   // retirementWalk.depletionAge — model-provided, no screen math
-  const depletionLabel = isSustainable
-    ? "funded for life"
+  // Headline's `value` slot is sized for a short answer (Ch1/Ch2 put a dollar
+  // figure there) — the full sentence used to go in `value` itself, so the
+  // depletion age wrapped onto its own orphaned line at narrow widths and the
+  // one real number in this chapter's headline read as prose, not a figure.
+  // `sub` carries the sentence context instead, matching Ch1/Ch2's shape.
+  const depletionValue = isSustainable
+    ? "Funded for life"
     : retirementWalk?.depletionAge != null
-      ? `portfolio runs to age ${retirementWalk.depletionAge}`
+      ? `Age ${retirementWalk.depletionAge}`
       : "—";
+  const depletionSub = isSustainable
+    ? "how long the portfolio sustains you"
+    : retirementWalk?.depletionAge != null
+      ? "the age your portfolio runs out"
+      : "how long the portfolio sustains you";
 
   // actualSustainedYrs null/0 means the plan sustains beyond the projection horizon
   const sustainedLabel = flowDown.actualSustainedYrs > 0
@@ -262,8 +278,8 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
       <ChapterCard t={t}>
         <Headline t={t}
           label="Chapter 3 — Retirement years"
-          value={depletionLabel}
-          sub="how long the portfolio sustains you"
+          value={depletionValue}
+          sub={depletionSub}
         />
 
         {/* Income floor strip */}

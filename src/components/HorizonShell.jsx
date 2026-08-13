@@ -610,6 +610,7 @@ export default function HorizonShell({ onShowClassic, ...props }) {
           ring after a MOUSE click while leaving the keyboard ring intact. */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&display=swap');
+        .hz-root, .hz-root * { box-sizing: border-box; }
         .hz-root :focus-visible {
           outline: 2px solid ${t.accent};
           outline-offset: 2px;
