@@ -285,10 +285,19 @@ Right side of nav: "On track" / "Needs attention" status pill + "Classic view" b
 ### Plan screen
 
 - Headline: `"On track to retire at {retirementAge}."` or fallback
-- Sub-headline: `"Work optional, {activity} mandatory."` — `activity` comes from shell state (user picks in Someday or Settings)
+- Sub-headline (2026-08-13, Slice 4 — strictly either/or): the earned tagline
+  `"Work optional, {activity} mandatory."` when `planView.outlastsPlan`, otherwise the honest
+  verdict sentence — depletion age + `yearsShortOfPlan` + `workLongerView.minYearsToSustain`,
+  with a "Try a change →" link that opens the Explore tray's levers in place.
+  `activity` comes from shell state (user picks in Someday or Settings)
 - Progress bar toward sustainable retirement
 - ArcGraph (height 280 desktop / 200 mobile, with 4-view toggle, glow from `arcStyle`, strokeWidth from `arcStyle`)
-- Stats row: You keep / mo · Retire at · Income for life · Left at 90 (4-wide desktop → 2×2 grid mobile)
+- Today anchor (2-up): Your paycheck / Household paycheck · Portfolio at retirement
+- Retirement income meter (full width) — carries the **dollar-basis toggle** (today's money by
+  default / at-retirement dollars), which drives the meter and the "Spending each month" card and
+  nothing else: ages, percentages and totals are basis-invariant (BUG-114)
+- Stats row: Retire at · Spending each month · Guaranteed for life · Money lasts to ·
+  Tax in retirement (5-wide desktop → 2-col grid mobile)
 - **"Make this my plan"** button → ConfirmModal → calls `commitPlan({ retirementAge, annualExpenses })` → 2-second "✓ Plan saved" toast
 
 ### Ideas screen
@@ -376,7 +385,7 @@ path) and the LifeEventSheet's Save/Remove (one path, upsert-by-id).
 
 **3 tabs (original):**
 
-- **Statement** — editorial 3-column layout (Income & tax / What you're building / Income for life), each column with a proportion bar. Footnotes with real effective federal rate.
+- **Statement** — editorial 3-column layout (Income & tax / What you're building / Where the money comes from — the third was headed "Income for life" until BUG-117), each column with a proportion bar. Footnotes with real effective federal rate.
 - **Year by year** — full scrollable table sourced from `retirementWalk.rows` (retirement phase). Columns: Age | Year | Portfolio | Draw | Growth | Tax. Year computed as `currentYear + (row.age − currentAge)`. First 50 rows shown; "Show all N years" toggle renders the rest. Zebra rows with `t.surf`/`t.line` alternating, `HM` monospace for all numbers.
 - **Money flow** — inline SVG `IncomeSankey` component. Left column: Gross income node. Bezier-filled bands fan out to three right-column nodes: Tax (`t.line2`), Savings (`t.warm`), Take-home (`t.good`). Heights proportional to dollar amounts. HTML labels with formatted values beside the SVG. Legend chips below. No external charting library.
 

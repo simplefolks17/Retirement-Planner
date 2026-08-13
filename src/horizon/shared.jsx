@@ -193,6 +193,14 @@ export function StatCard({ t, label, value, accent, warm, large, onClick, sub })
       onKeyDown={onClick ? kbActivate(onClick) : undefined}
       style={{
         flex: 1,
+        // A grid/flex item's default `min-width: auto` is its CONTENT width, so
+        // a card whose label doesn't fit pushes its whole track wider and the
+        // row overflows instead of the label wrapping. Every StatCard sits in a
+        // `1fr`-track grid, so this belongs here once rather than at each call
+        // site — needed the moment a label got longer than "Retire at"
+        // ("Guaranteed for life", "Spending each month"). `boxSizing` keeps the
+        // 15px padding + 1px border inside that track.
+        minWidth: 0, boxSizing: "border-box",
         background: warm ? `${t.warm}12` : t.surf,
         border: `1px solid ${warm ? `${t.warm}40` : t.line}`,
         borderRadius: 13, padding: 15,
@@ -201,10 +209,13 @@ export function StatCard({ t, label, value, accent, warm, large, onClick, sub })
       }}>
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "baseline",
+        gap: 6,
         font: `500 11px ${HF}`, color: warm ? t.warm : t.mut, marginBottom: 9
       }}>
-        <span>{label}</span>
-        {onClick && <span style={{ font: `400 13px ${HF}`, color: t.faint }}>›</span>}
+        {/* Wraps to a second line rather than overflowing the card; the chevron
+            keeps its own width (flexShrink: 0 below). */}
+        <span style={{ minWidth: 0 }}>{label}</span>
+        {onClick && <span style={{ font: `400 13px ${HF}`, color: t.faint, flexShrink: 0 }}>›</span>}
       </div>
       <div style={{
         font: `500 ${large ? 26 : 23}px ${HM}`,

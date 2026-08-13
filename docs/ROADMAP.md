@@ -130,7 +130,7 @@ Sibling to the parity-audit table: every backlog item that had no obvious home, 
 | 49 | HSA funding method + coverage | My details → Accounts & match | Numbers → Budget (FICA note) | — | Free |
 | 50 | Health insurance source wizard | My details → Health & Medicare | conversion flow healthcare impact | — | Free |
 | 11 | Work gap / zero-earning years | My details → Income & job (timeline) | accum chart; SS AIME effect in ssView | — | Free |
-| 9 | Legacy / estate goal | My details → Family & estate | Plan ("Left at 90" card gains target state); Journey ch. 3 | — | Free |
+| 9 | Legacy / estate goal | My details → Family & estate | Plan ("Money lasts to" card gains target state — was "Left at 90" until Slice 4); Journey ch. 3 | — | Free |
 | 47 | Withdrawal sequencing in engine | — (model engine) | Year-by-year per-account draw columns (SP-5) | upgrades Withdrawal-order card to Apply | Free |
 | 30 | Spouse account engine | My details → Spouse & household | scope toggle surfaces (SP-6) | household-scope strategy flows | Premium |
 | 31 | Household dashboard | — | the Household segment of SP-6's toggle | — | Premium |

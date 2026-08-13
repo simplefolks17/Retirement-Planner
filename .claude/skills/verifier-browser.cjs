@@ -53,7 +53,7 @@ function resolveChromium() {
 
 // ── Screen list + proof-of-render markers (mirror the jsdom smoke) ─────────────
 const SCREENS = [
-  { id: 'plan',     label: 'Plan',        marker: 'Income for life'        },
+  { id: 'plan',     label: 'Plan',        marker: 'Guaranteed for life'    },
   { id: 'journey',  label: 'Journey',     marker: 'Building years'         },
   // Ideas retired 2026-07-16 — levers + goals moved onto Plan's Explore tray.
   { id: 'numbers',  label: 'The numbers', marker: 'Year by year'           },
@@ -166,7 +166,7 @@ const info = (l)    => console.log(`  🔍 ${l}`);
               : fail('Classic dashboard: tab bar missing', `tab-btn count ${tabN}`);
     await page.getByText(/Horizon view/).first().click();  // return to Horizon
     await page.waitForTimeout(400);
-    (await markerVisible('Income for life'))
+    (await markerVisible('Guaranteed for life'))
       ? pass('Returned to Horizon')
       : fail('Did not return to Horizon after Classic round-trip');
   } catch (e) {

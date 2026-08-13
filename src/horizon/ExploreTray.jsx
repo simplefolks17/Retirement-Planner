@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { HM } from "./ThemeContext.jsx";
 import { Btn } from "./shared.jsx";
 
@@ -25,21 +25,31 @@ const FACETS = [
 // Kept in the signature (rather than dropped) because the facet bodies passed in
 // as nodes are built by PlanScreen, which will hand this prop down if a mobile
 // branch is ever needed; a fake usage would be worse than a documented no-op.
+// CONTROLLED as of the Plan-content redesign: `open`/`onOpenChange` replace what
+// used to be this component's own useState. The state moved up to PlanScreen
+// because two stat cards ("Retire at", "Spending each month") now open the
+// "Try a change" facet and scroll to it — the levers those cards describe live
+// in this tray, one scroll up on the same screen, and a card cannot open a tray
+// whose state it can't reach.
+//
+// The lifted value keeps the EXACT tri-state contract it had as local state —
+// see the `effOpen` note below. Anything that collapses it to a plain boolean
+// reintroduces the collapse-does-nothing bug recorded there.
 export default function ExploreTray({
   t, isMobile, goalsCount = 0, changeStaged = false, changeFacet, goalsFacet,
+  open = null, onOpenChange,
 }) {
   // Tri-state: null = auto (falls back to "change" while a change is staged,
   // so a staged Apply/Discard is never silently hidden by default), "closed" =
   // the user explicitly collapsed (wins over the staged fallback — without
   // this sentinel the fallback re-opened the tray on every render and the
   // collapse click silently did nothing), or a facet key.
-  const [open, setOpen] = useState(null);
   const effOpen = open === "closed" ? null : (open ?? (changeStaged ? "change" : null));
 
   // Collapsing while a change is staged is allowed: the offsets live in
   // PlanScreen (nothing is lost), the staged dot on the facet tab stays
   // visible on the collapsed bar, and one click reopens to Apply/Discard.
-  const toggle = (k) => setOpen(effOpen === k ? "closed" : k);
+  const toggle = (k) => onOpenChange?.(effOpen === k ? "closed" : k);
 
   // This tab was the model for the shared Btn primitive (a real
   // `<button type="button">` carrying `aria-pressed`, with the border reserved

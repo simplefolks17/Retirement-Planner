@@ -594,6 +594,160 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-114 — The Plan screen showed the same figure in two different dollar bases, ~20px apart, differing by the full inflation factor (~4× at the shipped default) (found 2026-08-03, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: HIGH — live at the shipped default, on the app's landing screen,
+and the two numbers are the same concept under two labels a user reads in one glance.**
+**Found by:** the round-2.5 pre-mortem's sweep of CLAUDE.md rule 11's basis axis, re-verified here
+against the live default bundle by mounting the real App.
+**What:** `PlanScreen.jsx`'s Income Meter headline read `planHighlights.retIncomeFlow.expenses`,
+built from `retSpendBasis` — the primary's RETIREMENT-YEAR dollars, correct for the walk it
+reconciles with (BUG-91). The "Income for life" stat card, one card row below it, read the raw
+`effectiveExpenses` prop — TODAY's dollars, never converted. Same quantity, same screen, no label
+on either saying which frame it was in. Measured at the shipped default (retire at 65 from 30,
+3% inflation): the meter said **$18,868/mo** and the card said **$4,800/mo** — a 3.95× gap. This is
+the identical shape as the Classic chart-caption mismatch found in the PR #62 review round
+($57,377 vs $226,415); rule 11 exists precisely because of it, and this instance predates the rule.
+**Why:** BUG-91's basis conversion landed in the engine and in `retIncomeFlow`, but the stat card
+was reading a raw App prop rather than the converted bundle, so it was never part of that fix's
+call-site sweep. Nothing in the code or the tests forced the two to agree: `plan-screen.test.js`
+asserted the card's SUB-copy (`"82% replaced"`) and never its dollar value.
+**Fix:** rather than silently picking one basis (the owner's explicit decision), the model now
+builds **both** and the user chooses. `planHighlights.incomeFlowByBasis` is `{ today, retirement }`
+— two `calcRetIncomeFlow` results over the same four income streams — plus
+`dollarBasisOptions` (id/label/caption/cardSub, so no basis copy or age arithmetic lives in JSX)
+and `dollarBasisApplicable` (false once there are no years left to inflate over, i.e. already
+retired: the bases coincide and the screen renders no control at all). The today basis reads
+`effectiveExpenses`/`effectivePension` RAW — they are the user's own entered numbers, already
+today's dollars — and deflates SS and the spouse's gap-year pay with `inflationRebaseFactor` at a
+NEGATIVE year count, since those two have no today's-dollar source figure.
+`toRetirementYearDollars` would have been wrong there: it clamps negative years to a no-op and
+would have left both in the retirement-year frame silently. The Plan screen holds one local,
+unpersisted `dollarBasis` state ("today" by default) that drives the Income Meter (headline + all
+four bars) and the "Spending each month" card TOGETHER, so the two can no longer disagree by
+construction. Scope is deliberately limited to genuinely dollar-denominated figures: ages,
+percentages, `guaranteed.pct`, "Money lasts to", the tax total and `incomeReplacementPct` are
+basis-invariant and are NOT wired to the toggle.
+**Tests:** 4 new in `plan-screen.test.js` (a "dollar-basis toggle" describe): the default shows the
+today figure in BOTH surfaces and the retirement figure in neither; switching moves both together;
+four named basis-invariant values are byte-identical before and after switching; and the control
+plus its caption disappear when the model says the bases coincide. **Revert-and-confirm:** pinning
+the meter back to the retirement basis (the pre-fix state) reproduces the bug exactly — the
+rendered text contained `$10,000/mo` in the meter and `$5,800` in the card simultaneously — and
+failed 2 of the 4. Reverted, confirmed, restored.
+**Golden master:** untouched (all three), confirmed by running them — `incomeFlowByBasis.retirement`
+is value-identical to the `retIncomeFlow` it replaces, and no locked field reads the new today basis.
+**Where:** `src/App.jsx` (`planHighlights`, + the `inflationRebaseFactor` import),
+`src/horizon/screens/PlanScreen.jsx` (`DollarBasisToggle`, `IncomeMeter`, the spending card),
+`src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
+### BUG-115 — Plan's "Retirement taxes" card showed a number 4.6× smaller than the total on the screen it navigates to, under near-identical wording (found 2026-08-03, Horizon design-review round 2 content audit; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — live at the shipped default; tapping the card is
+what makes the discrepancy visible, so the user is walked into it deliberately.**
+**Found by:** the round-2 Plan-content audit's per-card destination trace, verified against the live
+default bundle.
+**What:** the card read `planHighlights.lifetimeTaxBurden = rmdTaxBite + conversionCost`. Its own
+`onClick` navigates to Numbers → Taxes, whose composition bar and headline read
+`taxView.composition.total = rmdTax + convTax + drawTax` — the same two components **plus** the
+401k-draw tax BUG-40 added. At the shipped default: card **$119,575**, destination **$553,782**.
+The destination's own callout text literally reads "RMD, conversion & 401k draws", so the larger
+number is the honest one; the card's "RMDs + conversions" sub-copy was accurate about what it was
+summing and gave no hint that it was a subset.
+**Why:** two independent definitions of one concept — the BUG-31 class. `lifetimeTaxBurden` was
+added for this card in the WI-1 stat-card pass and was never revisited when BUG-40 added the third
+tax component to `taxViewBundle`; nothing referenced both, so nothing forced them to agree.
+**Fix:** `planHighlights.lifetimeTaxBurden` is **deleted outright** rather than re-summed to match —
+keeping two fields in sync is what failed here. The card reads `taxView.composition.total`, the
+exact object its destination renders, so the two are now the same value by construction. Relabelled
+"Tax in retirement" with sub "total, across all your retirement years" (a 25-year cumulative figure
+sitting in a row of monthly ones needed its unit stated).
+**Not fixed here (unchanged scope):** what that total *should* be is still shaped by two open,
+pre-existing bugs — **BUG-38** (the engine charges only incremental tax above the SS/pension floor,
+so SS/pension is effectively tax-free) and **BUG-36** (what-if deltas don't charge the spending-draw
+tax). This fix makes the card agree with its own destination; it does not change either number.
+**Tests:** 1 new in `plan-screen.test.js` asserting the card renders the value passed in
+`taxView.composition.total` (a distinct fixture value, so it cannot pass by coincidence), plus the
+basis-invariance test above which pins the same total across a toggle switch.
+**Revert-and-confirm:** replacing the card's value expression with a placeholder failed both.
+Reverted, confirmed, restored.
+**Golden master:** untouched — no golden master ever locked `lifetimeTaxBurden` (checked, not
+assumed: it appeared in exactly two files, `App.jsx` and `plan-screen.test.js`), and
+`taxView.composition.total` is unchanged by this fix. All three golden masters re-run green.
+**Where:** `src/App.jsx` (`planHighlights` — field removed, `retPhase` dropped from its deps),
+`src/horizon/screens/PlanScreen.jsx`, `src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
+### BUG-116 — Plan's paycheck card was unconditionally primary-voiced ("You keep") over a figure that is HOUSEHOLD-scoped for MFJ filers (found 2026-08-03, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: MEDIUM — silently wrong for every married-filing-jointly household
+with a working spouse; invisible for everyone else, which is why it survived.**
+**Found by:** the round-2.5 pre-mortem's sweep of CLAUDE.md rule 11's *other* axis — primary-only vs.
+household scope — which the earlier rounds had searched only for basis mismatches.
+**What:** `PlanScreen.jsx`'s first stat card read `takeHome` under the label "You keep / mo".
+`takeHome` is `householdIncome − fedTax − stateTax − fica − safeDeduc` (`tax-basis.js`), and
+`householdIncome` is the COMBINED primary + spouse income when `filingStatus === "mfj"` (rule 9).
+So for an MFJ household the card showed both earners' take-home under a label that names one.
+**Why:** the same scope-declaration gap BUG-96 fixed on the RMD screen. Two correct reference
+patterns already existed in-repo — Classic's conditional label (`App.jsx:2927`,
+`spouseIncome > 0 ? "Est. Household Paycheck Deposit" : "Est. Paycheck Deposit"`) and BUG-96's
+model-provided `showHouseholdTotal` boolean — but the Horizon card predated both and was never
+revisited.
+**Fix:** a new pre-gated model boolean `planHighlights.takeHomeIsHousehold`
+(`filingStatus === "mfj" && spouseIncome > 0` — the exact condition under which `takeHome` widens),
+and the card label switches on it: "Your paycheck" / "Household paycheck". The test lives in the
+model boolean, not in JSX (rule 8): the screen never inspects `filingStatus` or `spouseIncome`.
+The card also moved out of the five-card retirement row into a two-up "today" pairing with
+"Portfolio at retirement" and gained "· today" in its sub-copy — a today's-paycheck figure sitting
+in a row of four retirement-labelled stats was the other half of what the content audit flagged.
+**Tests:** 2 new in `plan-screen.test.js` — the default renders "Your paycheck" and neither
+"Household paycheck" nor the retired "You keep", and flipping only `takeHomeIsHousehold` flips the
+label. **Revert-and-confirm:** hardcoding the label back to "Your paycheck" fails the second.
+Reverted, confirmed, restored.
+**Golden master:** untouched — a label, not a value.
+**Where:** `src/App.jsx` (`planHighlights.takeHomeIsHousehold`),
+`src/horizon/screens/PlanScreen.jsx` (`PaycheckCard`), `src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
+### BUG-117 — Four ungated "for life" guarantees rendered over a spending TARGET, one of them directly above a "Runs dry at" row in the same column (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: MEDIUM — the claim is false for any plan that depletes, which is
+the shipped default (it runs dry at 87 against a plan to 90).**
+**Found by:** the round-2 sweep for undeclared/overclaiming copy (Pattern 6), cross-checked against
+two correct in-repo reference implementations.
+**What:** four sites asserted "for life" unconditionally over `effectiveExpenses`, which is the
+user's retirement SPENDING target, not a guaranteed income stream:
+`PlanScreen.jsx`'s "Income for life" stat-card label; `NumbersScreen.jsx`'s Statement headline
+(`"/ month, for life"`); `NumbersScreen.jsx`'s Statement ledger column heading (also "Income for
+life" — whose own fifth row is **"Runs dry at"**, so the column disproved its own heading two lines
+later); and `SomedayScreen.jsx`'s hero line (`"a month, for life."`). The contrast that makes this a
+bug rather than a style preference: `JourneyScreen.jsx:184`, `WorkLongerFlow.jsx:35`,
+`LifeEventSheet.jsx:478` and `ArcGraph.jsx:390` all make the SAME claim correctly — each gated on a
+model sustainability boolean (`isSustainable` / `row.sustainable`). Those four are untouched.
+**Why:** the ungated four were written as fixed display copy rather than as a claim with a
+truth condition, so no gate was ever wired and nothing could fail when the plan didn't support it.
+**Fix:** removed the claim rather than gating it (the same shape as BUG-106, which deleted a stale
+basis claim rather than caveating it): "Income for life" → **"Spending each month"** (Plan card, now
+showing the monthly spend plainly, in the selected dollar basis) and → **"Where the money comes
+from"** (Statement column, which is what the column actually is); `"/ month, for life"` → `"/ month
+in retirement"`; `"a month, for life."` → `"a month in retirement."`. No new basis claim was added
+at the Statement headline — that tab is deliberately mixed-basis and its banner note says so.
+**Tests:** the Plan-card half is asserted in `plan-screen.test.js` (the five-card test asserts the
+new labels AND `not.toContain("Income for life")`). `horizon-screens-smoke.test.js`'s Plan
+proof-of-render marker moved from "Income for life" to "Guaranteed for life", and the same marker
+was updated in `.claude/skills/verifier-browser.cjs` (its documented mirror of that file) —
+the browser verifier was re-run and passes on the real rendered page.
+**Golden master:** untouched — copy only.
+**Where:** `src/horizon/screens/PlanScreen.jsx`, `src/horizon/screens/NumbersScreen.jsx`,
+`src/horizon/screens/SomedayScreen.jsx`, `src/__tests__/horizon-screens-smoke.test.js`,
+`.claude/skills/verifier-browser.cjs`.
+
+---
+
 ### BUG-112 — Horizon's design tokens fail WCAG AA across all 12 palette/mode combinations, worst on the tokens that render real dollar figures (found 2026-08-13, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 3)
 
 **Owner:** me_theguy. **Severity: MEDIUM-HIGH — a readability defect on every screen at once, and the
