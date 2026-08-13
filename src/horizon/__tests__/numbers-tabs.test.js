@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
-import NumbersScreen from "../screens/NumbersScreen.jsx";
+import NumbersScreen, { wrapBarLabel } from "../screens/NumbersScreen.jsx";
 
 // Stub browser APIs (ResizeObserver is used by IncomeWaterfall inside NumbersScreen).
 beforeAll(() => {
@@ -928,3 +928,132 @@ describe("NumbersScreen — Year by year (Session-4: deeper numbers)", () => {
   });
 });
 
+
+// ── Horizon design review, Slice 2.5 — narrow-viewport rendering ──────────────
+// Three separate "fixed-size text inside a box that shrinks" failures on this
+// screen. react-test-renderer has no layout engine, so each is asserted at the
+// point where the DECISION is made (a pure helper, or a declared style/branch)
+// rather than by measuring pixels — the same approach as touch-targets.test.js.
+
+describe("IncomeWaterfall — bar labels wrap instead of overrunning their slot", () => {
+  it("wrapBarLabel splits a two-word label at its space", () => {
+    expect(wrapBarLabel("Pre-tax savings")).toEqual(["Pre-tax", "savings"]);
+    expect(wrapBarLabel("After-tax savings")).toEqual(["After-tax", "savings"]);
+    expect(wrapBarLabel("Gross income")).toEqual(["Gross", "income"]);
+  });
+
+  it("leaves a single-word label alone", () => {
+    expect(wrapBarLabel("Taxes")).toEqual(["Taxes"]);
+  });
+
+  it("breaks a three-word label at the space nearest its middle", () => {
+    expect(wrapBarLabel("after all saving")).toEqual(["after all", "saving"]);
+  });
+
+  it("never drops or reorders a word", () => {
+    for (const l of ["Gross income", "Taxes", "Pre-tax savings", "After-tax savings",
+                     "Spending budget", "after all saving"]) {
+      expect(wrapBarLabel(l).join(" ")).toBe(l);
+    }
+  });
+
+  // The narrow branch itself. Two things have to be arranged for it: the
+  // waterfall measures its own width (a node mock, since refs are null under
+  // react-test-renderer, so it otherwise keeps its 520px default), and it needs
+  // its full five bars — the shared fixture has no pre/post-tax savings, so it
+  // renders three wide ones and is never narrow at any realistic width.
+  const fiveBarView = {
+    ...statementView,
+    showPreTaxBar: true, showPostTaxBar: true, showPaycheckLine: true,
+    takeHomePay: 49_150, afterTaxSavings: 7_000,
+  };
+  function mountWaterfallAt(width) {
+    let renderer;
+    act(() => {
+      renderer = create(
+        React.createElement(NumbersScreen, {
+          t, props: { ...minimalProps, statementView: fiveBarView }, initialTab: "statement",
+        }),
+        { createNodeMock: () => ({ offsetWidth: width }) },
+      );
+    });
+    return renderer;
+  }
+
+  it("drops the sub-labels at a phone width and keeps them at desktop width", () => {
+    const narrow = mountWaterfallAt(330);   // 5 bars → 66px slots
+    expect(textOf(narrow.root)).not.toContain("fed · FICA");
+    act(() => narrow.unmount());
+
+    const wide = mountWaterfallAt(900);     // 180px slots
+    expect(textOf(wide.root)).toContain("fed · FICA");
+    act(() => wide.unmount());
+  });
+
+  it("renders the wrapped label as tspans at a phone width, one line at desktop", () => {
+    const narrow = mountWaterfallAt(330);
+    expect(collect(narrow.toJSON(), n => n.type === "tspan").length).toBeGreaterThan(0);
+    act(() => narrow.unmount());
+
+    const wide = mountWaterfallAt(900);
+    expect(collect(wide.toJSON(), n => n.type === "tspan")).toEqual([]);
+    act(() => wide.unmount());
+  });
+});
+
+describe("Statement bar segments hide a label they are too narrow to hold", () => {
+  // The bar's own segments, not the ledger rows above it (which name the same
+  // income sources in prose and would make a page-wide text assertion useless).
+  const segText = (renderer) => collect(renderer.toJSON(),
+    n => n.props?.style?.opacity === 0.7).map(textOf).join("|");
+
+  it("a segment under 12% of the bar renders no label; the others keep theirs", () => {
+    // Pension is 4% of this income bar — under the guard.
+    const renderer = mountTab("statement", {
+      statementView: {
+        ...statementView,
+        monthlyHHSS: 3_000, monthlyPension: 250, monthlyPortDraw: 3_000,
+      },
+    });
+    const segs = segText(renderer);
+    expect(segs).toContain("Soc Sec");
+    expect(segs).toContain("Portfolio");
+    expect(segs).not.toContain("Pension");
+    act(() => renderer.unmount());
+  });
+
+  it("the same segment keeps its label once it is wide enough", () => {
+    const renderer = mountTab("statement", {
+      statementView: {
+        ...statementView,
+        monthlyHHSS: 3_000, monthlyPension: 3_000, monthlyPortDraw: 3_000,
+      },
+    });
+    expect(segText(renderer)).toContain("Pension");
+    act(() => renderer.unmount());
+  });
+});
+
+describe("Year-by-year table declares a scroll affordance on mobile only", () => {
+  const maskOf = (renderer) => collect(renderer.toJSON(),
+    n => typeof n.props?.style?.WebkitMaskImage === "string");
+
+  it("mobile gets the edge fade and the swipe hint", () => {
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(NumbersScreen, {
+        t, props: minimalProps, initialTab: "yearly", isMobile: true,
+      }));
+    });
+    expect(maskOf(renderer).length).toBe(1);
+    expect(textOf(renderer.root)).toContain("Swipe the table sideways");
+    act(() => renderer.unmount());
+  });
+
+  it("desktop gets neither — the card is wide enough to show the whole grid", () => {
+    const renderer = mountTab("yearly");
+    expect(maskOf(renderer)).toEqual([]);
+    expect(textOf(renderer.root)).not.toContain("Swipe the table sideways");
+    act(() => renderer.unmount());
+  });
+});

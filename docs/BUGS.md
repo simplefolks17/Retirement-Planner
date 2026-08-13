@@ -560,6 +560,59 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-110 — Six more "fixed-size content inside a box that shrinks" failures on the Numbers screen, all invisible to existing tests because none of them touch a dollar value (found 2026-08-03, Horizon design-review round 2 sweep; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: MEDIUM — same failure shape as BUG-107 (the arc's clipped axis),
+now confirmed to recur across the app's densest screen rather than being a one-off.**
+**What, six sites, all in `NumbersScreen.jsx` except one:**
+1. **Paycheck waterfall bar labels overrun their slot and clip at the viewBox edge.** `IncomeWaterfall`'s
+   5-column `text-anchor: middle` SVG labels ("Pre-tax savings", "After-tax savings") have no wrap of
+   any kind; at a phone-width slot (~66px) they're wider than their own column and the outer two get
+   cut by the chart's edge.
+2. **The same chart's "Paycheck deposit" annotation was drawn on top of the Gross-income bar**, not
+   beside it — `x={6}` sits inside `bx(0)` (≈4% of the plot width) at every container size, so ~150px of
+   green text overlaid the tallest bar rather than sitting in the empty strip above the plot.
+3. **The Statement tab's three account-flow bars (`StmtCol`) had no minimum-label-width guard at all** —
+   the Taxes tab's composition bar (a near-identical component) already hides a segment's label under
+   12% of the bar; these three didn't, so a small segment (e.g. a modest pension next to Social Security
+   and a portfolio draw) rendered a truncated label fragment instead of no label.
+4. **The 5-tab strip (Statement/Budget/Accounts/Taxes/Year by year) wrapped into a lopsided two-row
+   block on a phone** (`flexWrap: wrap`, no `isMobile` branch) — the fifth tab alone on its own row
+   inside a track that then read as two stacked controls.
+5. **A 1.5×26px divider in the "the engine is working" banner had no `isMobile` guard** and, when that
+   row wrapped on a phone, was stranded alone on a line separating nothing from nothing.
+6. **The Accounts tab's bucket-header row (label + longer descriptive note) shared one flex row with no
+   `whiteSpace`/`flexShrink` guard on the label**, so on a phone the label was squeezed until it broke
+   at its own hyphen — "TAX-" / "DEFERRED".
+
+Separately, the **Year-by-year table** (a 9-column, 720px-min-width grid inside a ~340px viewport) was
+already correctly horizontally scrollable, but nothing signalled that — a column was simply severed at
+the right edge, reading as broken rather than swipeable.
+**Why:** all six are the same mechanism as BUG-107 — fixed-size text or a fixed-size row inside a
+container whose available space shrinks with viewport width, with no guard or branch for the narrow
+case. None of them move a dollar value, which is exactly why nothing caught them: every existing test
+on this screen asserts *what number appears*, and all six bugs are about *whether text overlaps, clips,
+or reflows* — a dimension text-content assertions cannot see.
+**Fix:** waterfall labels wrap onto two `tspan` lines below an 80px slot width (`wrapBarLabel`, a pure
+word-break helper, unit-tested directly since there's no layout engine under `react-test-renderer` to
+observe wrapping any other way) and drop their secondary sub-label at that same width; the paycheck
+annotation moved into the plot's own top margin; `StmtCol` segments now hide their label under the same
+12%-of-bar threshold the Taxes tab already used; the tab strip becomes a single `overflowX: auto`
+scrolling row on mobile instead of wrapping; the divider and the bucket-header note are `isMobile`-gated
+the same way; the year-by-year scroller gets a right-edge `mask-image` fade plus an explicit "Swipe the
+table sideways…" hint line, both mobile-only.
+**Tests:** 9 new, `src/horizon/__tests__/numbers-tabs.test.js` — `wrapBarLabel`'s word-break behaviour
+(4 cases, including "never drops or reorders a word"), the narrow-vs-wide branch of the waterfall render
+(sub-labels present/absent, tspans present/absent, mounted via a `createNodeMock` width override since
+refs are null under `react-test-renderer`), the `StmtCol` label guard at both sides of the 12% threshold,
+and the year-by-year scroll affordance present on mobile / absent on desktop. **Revert-and-confirm** on
+each: reverting the wrap logic, the two guards, or either mobile-only branch individually fails exactly
+its own new test and nothing else; all restored.
+**Golden master:** untouched — every fix is layout/display only, no model or dollar value touched.
+**Where:** `src/horizon/screens/NumbersScreen.jsx`, `src/horizon/__tests__/numbers-tabs.test.js`.
+
+---
+
 ### BUG-109 — Two of the seven Horizon screens were never passed `isMobile`, so they rendered their desktop layouts at every width (found 2026-08-03, Horizon design-review rounds 1+2; fixed 2026-08-03, Slice 2.5)
 
 **Owner:** me_theguy. **Severity: MEDIUM — two whole screens unusable-to-awkward on a phone, and

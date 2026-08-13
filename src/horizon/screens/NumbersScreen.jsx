@@ -17,7 +17,20 @@ const SERIF = "Georgia, 'Times New Roman', serif";
 const GRID_COLS = "44px 52px 1.1fr 1fr 1fr 1fr 0.9fr 1fr 1fr";
 const GRID_MIN_W = 720;
 
+// A segment narrower than this share of the bar cannot hold its own label: the
+// label is `whiteSpace: nowrap` inside an `overflow: hidden` flex segment, so it
+// renders a truncated fragment ("Ta", "Portfo") rather than disappearing. The
+// Taxes tab's composition bar already hides labels under 12%; this bar — three
+// of them, on the Statement tab — had no guard at all, which is worse.
+const SEG_LABEL_MIN_SHARE_PCT = 12;
+
 function StmtCol({ t, title, items, bar }) {
+  // Share of the bar, for the label guard only: this is the flex ratio the row
+  // is already laid out by (pure layout proportion, no financial meaning — the
+  // same thing the Accounts tab's bars compute for their widths).
+  const barTotal = (bar?.segs ?? []).reduce((s, g) => s + Math.max(0, g.f ?? 0), 0);
+  const fitsLabel = (seg) =>
+    barTotal > 0 && (Math.max(0, seg.f ?? 0) / barTotal) * 100 >= SEG_LABEL_MIN_SHARE_PCT;
   return (
     <div style={{ flex: 1 }}>
       <div style={{
@@ -50,7 +63,7 @@ function StmtCol({ t, title, items, bar }) {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 font: `600 10px ${HF}`, color: t.surf,
                 minWidth: 0, overflow: "hidden", whiteSpace: "nowrap"
-              }}>{seg.l}</div>
+              }}>{fitsLabel(seg) ? seg.l : ""}</div>
             ))}
           </div>
           <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 4, fontStyle: "italic" }}>{bar.cap}</div>
@@ -71,6 +84,27 @@ function StmtCol({ t, title, items, bar }) {
 //
 // PIXEL/LAYOUT GEOMETRY ONLY (rule 10): all dollar levels and percentages come
 // from statementView; this component only converts values to pixels.
+// Below this slot width a bar's label no longer fits on one line: the labels are
+// `text-anchor: middle` SVG text with no wrapping of any kind, so "After-tax
+// savings" (~88px at 10.5px) inside a ~66px slot runs into its neighbours and
+// the outermost two get clipped by the viewBox edge.
+const NARROW_SLOT_PX = 80;
+
+// Break a bar label into at most two lines, at the space nearest its middle.
+// Exported for its own unit test — the wrap decision is the fix, and there is no
+// layout engine under react-test-renderer to observe it any other way.
+export function wrapBarLabel(label) {
+  const words = String(label).split(" ");
+  if (words.length < 2) return [label];
+  let best = 1, bestDist = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const left = words.slice(0, i).join(" ").length;
+    const dist = Math.abs(left - (label.length - left));
+    if (dist < bestDist) { bestDist = dist; best = i; }
+  }
+  return [words.slice(0, best).join(" "), words.slice(best).join(" ")];
+}
+
 function IncomeWaterfall({ t, view }) {
   const wrapRef = useRef(null);
   const [w, setW] = useState(520);
@@ -114,6 +148,7 @@ function IncomeWaterfall({ t, view }) {
 
   const COLS = bars.length;
   const slot = w / COLS;
+  const narrow = slot < NARROW_SLOT_PX;
   const barW = Math.min(slot * 0.60, 110);
   const cx = i => slot * i + slot / 2;
   const bx = i => cx(i) - barW / 2;
@@ -137,7 +172,14 @@ function IncomeWaterfall({ t, view }) {
           <>
             <line x1={0} x2={w} y1={y(paycheck)} y2={y(paycheck)}
               stroke={t.good} strokeWidth={1} strokeDasharray="4 4" opacity={0.45} />
-            <text x={6} y={y(paycheck) - 5}
+            {/* The caption used to sit at the LINE's own height, at x=6 — which
+                is inside the first bar (bx(0) is only 0.04w), so ~150px of green
+                text was drawn over the full-height Gross income bar at every
+                width, and worst on a phone. It lives in the empty strip above
+                the plot instead; the shared colour ties it to its dashed line.
+                PADT (32) reserves that strip, and the highest bar-top figure
+                sits at baseline 23, so nothing else is up here. */}
+            <text x={2} y={11}
               style={{ font: `700 10px ${HM}` }} fill={t.good}>
               Paycheck deposit: {fmt(paycheck)}
             </text>
@@ -162,12 +204,23 @@ function IncomeWaterfall({ t, view }) {
                 style={{ font: `600 11.5px ${HM}` }} fill={t.ink}>
                 {(b.full ? "" : "−") + fmt(b.val)}
               </text>
-              {/* label */}
-              <text x={cx(b.i)} y={H - 38} textAnchor="middle"
-                style={{ font: `500 10.5px ${HF}` }} fill={t.mut}>{b.label}</text>
-              {/* sub-label (account types or context) */}
-              <text x={cx(b.i)} y={H - 22} textAnchor="middle"
-                style={{ font: `400 9.5px ${HF}` }} fill={t.faint}>{b.sub}</text>
+              {/* label — wrapped onto two lines when the slot is too narrow for
+                  it on one (SVG text does not wrap on its own) */}
+              <text x={cx(b.i)} y={H - (narrow ? 42 : 38)} textAnchor="middle"
+                style={{ font: `500 10.5px ${HF}` }} fill={t.mut}>
+                {narrow
+                  ? wrapBarLabel(b.label).map((ln, li) => (
+                      <tspan key={ln} x={cx(b.i)} dy={li === 0 ? 0 : 12}>{ln}</tspan>
+                    ))
+                  : b.label}
+              </text>
+              {/* sub-label (account types or context) — dropped on a narrow
+                  slot, where the wrapped label needs that line's room and the
+                  sub-label is the least load-bearing of the three rows */}
+              {!narrow && (
+                <text x={cx(b.i)} y={H - 22} textAnchor="middle"
+                  style={{ font: `400 9.5px ${HF}` }} fill={t.faint}>{b.sub}</text>
+              )}
               {/* percentage of gross */}
               <text x={cx(b.i)} y={H - 7} textAnchor="middle"
                 style={{ font: `400 9.5px ${HM}` }} fill={t.faint}>{pctLabel(b.pct)}</text>
@@ -275,7 +328,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         marginBottom: 12, flexShrink: 0, flexWrap: "wrap"
       }}>
         <span style={{ font: `600 13px ${HF}`, color: t.accent }}>✦ The engine is working</span>
-        <span style={{ width: 1.5, height: 26, background: t.line2, flexShrink: 0 }} />
+        {/* A vertical rule separating the banner's title from its two figures.
+            When the row wraps on a phone it ends up stranded on a line of its
+            own, a 26px tick separating nothing from nothing. */}
+        {!isMobile && <span style={{ width: 1.5, height: 26, background: t.line2, flexShrink: 0 }} />}
         <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
           <span style={{ font: `600 18px ${HM}`, color: t.good }}>
             {yr1TaxSavings > 0 ? fmt(yr1TaxSavings) : "—"}
@@ -294,11 +350,18 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         </span>
       </div>
 
-      {/* tab strip — 5 tabs: Statement | Budget | Accounts | Taxes | Year by year */}
+      {/* tab strip — 5 tabs: Statement | Budget | Accounts | Taxes | Year by year.
+          `flexWrap` broke it into a lopsided 3+2 block on a phone (the fifth tab
+          alone on its own row, inside a track that then looked like two stacked
+          controls). One scrolling row instead: the segmented track stays one
+          control, and the tabs keep their full labels. */}
       <div style={{
         display: "flex", gap: 3, padding: 3, borderRadius: 11,
-        background: t.line, alignSelf: "flex-start", marginBottom: 12, flexShrink: 0,
-        flexWrap: "wrap",
+        background: t.line, alignSelf: isMobile ? "stretch" : "flex-start",
+        marginBottom: 12, flexShrink: 0,
+        ...(isMobile
+          ? { overflowX: "auto", flexWrap: "nowrap" }
+          : { flexWrap: "wrap" }),
       }}>
         {NUMBERS_TABS.map(([k, l]) => (
           <Btn key={k} t={t} size="sm" variant="seg" pressed={tab === k}
@@ -839,9 +902,20 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               if (bucketTotal === 0) return null;
               return (
                 <div key={bucket.key} style={{ marginBottom: 20 }}>
-                  {/* Bucket header */}
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-                    <span style={{ font: `600 12px ${HF}`, color: t.ink, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                  {/* Bucket header. The label and its (much longer) note shared
+                      one flex row, so on a phone the label got squeezed and
+                      broke mid-word at its hyphen — "TAX-" / "DEFERRED". The
+                      label never wraps now, and the note drops below it on
+                      mobile instead of competing for the same line. */}
+                  <div style={{
+                    display: "flex", flexDirection: isMobile ? "column" : "row",
+                    alignItems: isMobile ? "flex-start" : "baseline",
+                    gap: isMobile ? 2 : 10, marginBottom: 6,
+                  }}>
+                    <span style={{
+                      font: `600 12px ${HF}`, color: t.ink, textTransform: "uppercase",
+                      letterSpacing: "0.07em", whiteSpace: "nowrap", flexShrink: 0,
+                    }}>
                       {bucket.label}
                     </span>
                     <span style={{ font: `400 12px ${SERIF}`, color: t.faint }}>{bucket.note}</span>
@@ -1292,7 +1366,28 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 9 columns → the table scrolls horizontally so each stays readable
                 on desktop and mobile (rule 15 — renders + usable on small screens).
                 signed and null cells are formatted only; all values come from yearlyRows. */}
-            <div ref={tableScrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+            {/* Scroll affordance (mobile). The 9-column grid is 720px wide
+                inside a ~340px viewport, so it scrolls — but a column was simply
+                severed at the right edge with nothing saying it was swipeable.
+                The mask fades that edge so it reads as "there is more this way",
+                and the line below says so outright for anyone who doesn't read
+                the fade. Both are mobile-only: the desktop card is wide enough
+                to show the whole grid, where a fade would be a lie. */}
+            {isMobile && (
+              <div style={{
+                font: `400 11px ${SERIF}`, color: t.faint, fontStyle: "italic",
+                marginBottom: 6, flexShrink: 0,
+              }}>
+                Swipe the table sideways for growth, draws, tax and conversions →
+              </div>
+            )}
+            <div ref={tableScrollRef} style={{
+              flex: 1, overflow: "auto", minHeight: 0,
+              ...(isMobile ? {
+                maskImage: "linear-gradient(to right, #000 calc(100% - 26px), transparent 100%)",
+                WebkitMaskImage: "linear-gradient(to right, #000 calc(100% - 26px), transparent 100%)",
+              } : {}),
+            }}>
               <div style={{ minWidth: GRID_MIN_W }}>
                 {/* Jump bar — scroll-to-lifecycle shortcuts (Session 4) */}
                 {(() => {
