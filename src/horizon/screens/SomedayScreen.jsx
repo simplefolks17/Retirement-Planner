@@ -145,7 +145,10 @@ export default function SomedayScreen({ t, props, isMobile = false }) {
             <span style={{ font: `600 ${isMobile ? 28 : 36}px ${HM}`, color: "rgba(255,255,255,.95)" }}>
               {fmtMo(effectiveExpenses)}
             </span>
-            <span style={{ font: `400 ${isMobile ? 14 : 16}px ${HF}`, color: "rgba(255,255,255,.50)" }}>a month, for life.</span>
+            {/* Was "a month, for life." — an ungated guarantee over a spending
+                target (the gated "for life" claims elsewhere condition on a
+                model sustainability boolean; this one didn't). */}
+            <span style={{ font: `400 ${isMobile ? 14 : 16}px ${HF}`, color: "rgba(255,255,255,.50)" }}>a month in retirement.</span>
           </div>
           <div style={{ font: `400 14px ${HF}`, color: "rgba(255,255,255,.38)", marginTop: 6 }}>
             {activeAct.sub}

@@ -386,7 +386,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               <span style={{ font: `700 22px ${SERIF}`, color: t.ink, letterSpacing: "0.04em" }}>HORIZON</span>
               {/* No dollar-basis claim here (rule 11): this tab is deliberately
                   mixed — "The bottom line" below reads effectiveExpenses (TODAY's
-                  dollars) while the "Income for life" ledger + its companion strip
+                  dollars) while the "Where the money comes from" ledger + its companion strip
                   read statementView's monthly bands (the primary's RETIREMENT-YEAR
                   real dollars, budget.js:194-205). The banner used to claim
                   "today's dollars" for the whole tab, which was false for the
@@ -405,7 +405,15 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               </div>
               <div style={{ font: `700 32px/1 ${SERIF}`, color: t.ink }}>
                 {fmtMo(effectiveExpenses)}{" "}
-                <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month, for life</span>
+                {/* Was "/ month, for life" — an unconditional guarantee over a
+                    spending target, on a tab whose own ledger below lists a
+                    "Runs dry at" row. The gated "for life" claims elsewhere
+                    (JourneyScreen, WorkLongerFlow, ArcGraph) condition on a
+                    model sustainability boolean and are correct as they stand;
+                    this one had no gate at all. No new basis claim is made here
+                    either — see the banner note above on this tab's deliberately
+                    mixed bases. */}
+                <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month in retirement</span>
               </div>
               <div style={{ font: `400 13px ${SERIF}`, color: t.mut, marginTop: 5 }}>
                 with <span style={{ color: t.warm, fontWeight: 700 }}>{fmt(balAt90)}</span> remaining at age 90.
@@ -504,7 +512,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   the column visibly reconciles to the bolded total (the model
                   guarantees the bands sum — per-row $100 rounding broke that
                   identity by up to ~$200; adversarial review, PR #56 F3). */}
-              <StmtCol t={t} title="Income for life" items={[
+              {/* Renamed from "Income for life": this column is a BREAKDOWN of
+                  where retirement spending comes from — it even carries its own
+                  "Runs dry at" row — so the old heading promised a guarantee the
+                  column itself disproves two lines later. */}
+              <StmtCol t={t} title="Where the money comes from" items={[
                 ["Social Security",   `${fmtFull(sv.monthlyHHSS)}/mo`, "3",  false],
                 ...(sv.monthlyPension > 0 ? [["Pension", `${fmtFull(sv.monthlyPension)}/mo`, null, false]] : []),
                 ["Portfolio draw",    `${fmtFull(sv.monthlyPortDraw)}/mo`, null, false],
