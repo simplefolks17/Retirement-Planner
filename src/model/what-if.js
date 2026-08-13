@@ -1438,12 +1438,27 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
 // Render-ready headline/sub (rule 10): when the base plan already lasts for life
 // the "runway" framing is dishonest (infinite runway), so it switches to a
 // portfolio framing. The card face reads headline/sub directly.
+//
+// coversPlan / minYearsToSustain (Plan screen's honest verdict sentence): a row
+// `coversPlan` when its scenario funds the WHOLE plan horizon from its own,
+// later retirement age — the same test App itself uses for `isSustainable`
+// (`years >= lifeExpect − retirementAge`), not the stricter `sustainable`
+// (never depletes at all). The two differ in practice and the difference is the
+// whole point of the sentence: at the documented default fixture, no offset is
+// `sustainable` (all three still deplete eventually), but +3 years pushes
+// depletion past life expectancy — so "working 3 more years would make it last"
+// is TRUE and reporting "later retirement won't fix it" would be false.
+// minYearsToSustain is the SMALLEST tested offset that coversPlan, or null when
+// none of them do (the screen must then render a designed "retiring later alone
+// won't close the gap" state — never a fallback number). It is only ever one of
+// the offsets actually simulated: this function does not interpolate, so a
+// household fixed by +2 with offsets [1,3,5] reports 3, never 2.
 export function calcWorkLongerBreakEven({
   bundle, safeRetAge, currentAge, includeSS = true, ssInputs = {}, offsets = [1, 3, 5],
 }) {
   if (!bundle || safeRetAge == null || currentAge == null || safeRetAge <= currentAge) return null;
 
-  const { baseTotalAtRet, baseYearsSustained, baseDepletionAge } = bundle;
+  const { baseTotalAtRet, baseYearsSustained, baseDepletionAge, safeLifeExp } = bundle;
   const baseSustainable = baseYearsSustained === Infinity;
 
   const { currentIncome = 0, incomeGrowth = 0, incomeGrowthEndAge = null, ssClaimingAge = SS_FRA } = ssInputs;
@@ -1471,14 +1486,23 @@ export function calcWorkLongerBreakEven({
         : depletionAge - baseDepletionAge;
     const ssAnnual = ssAnnualAt(retAge);
     const window = windowAt(retAge);
+    // See the header note: the plan-horizon test, not the never-depletes test.
+    const coversPlan = scenSustainable || (
+      Number.isFinite(safeLifeExp) && scenario.scenarioYears >= (safeLifeExp - retAge)
+    );
     return {
       years: k, retAge,
       portfolioAtRet, portfolioDelta: portfolioAtRet - baseTotalAtRet,
-      depletionAge, sustainable: scenSustainable, longevityDeltaYears,
+      depletionAge, sustainable: scenSustainable, coversPlan, longevityDeltaYears,
       ssAnnual, ssDelta: ssAnnual - baseSSAnnual,
       conversionWindowYrs: window, conversionWindowDelta: window - baseWindow,
     };
   }).filter(Boolean);
+
+  // Smallest tested offset that funds the whole plan — rows are re-sorted rather
+  // than trusting the caller's `offsets` to be ascending.
+  const minYearsToSustain =
+    [...rows].sort((a, b) => a.years - b.years).find(r => r.coversPlan)?.years ?? null;
 
   // Representative row for the card face — prefer +3, else the middle, else first.
   const rep = rows.find(r => r.years === 3) ?? rows[Math.floor(rows.length / 2)] ?? rows[0] ?? null;
@@ -1496,6 +1520,6 @@ export function calcWorkLongerBreakEven({
   return {
     applicable: true,
     baseRetAge: safeRetAge, baseSustainable, baseSSAnnual, baseWindow, includeSS,
-    rows, headline, sub,
+    rows, headline, sub, minYearsToSustain,
   };
 }

@@ -58,6 +58,64 @@ describe("calcRetIncomeFlow (WI-2.6)", () => {
   });
 });
 
+// ── guaranteedPct — Plan's "Guaranteed for life" card ────────────────────────
+// The card exists to stop the page overclaiming; the field's whole job is that
+// a spouse's TEMPORARY gap-year paycheck can never be counted as permanent
+// income. That is the property these tests pin, not just the arithmetic.
+describe("calcRetIncomeFlow — guaranteedPct (SS + pension only)", () => {
+  it("is (ss + pension) / expenses", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: 10_000 });
+    expect(f.guaranteedIncome).toBe(40_000);
+    expect(f.guaranteedPct).toBe(50);
+  });
+
+  it("EXCLUDES a spouse's gap-year income from the numerator but keeps it in the denominator", () => {
+    // Same household, same $80k spend, same $20k SS. The only difference is a
+    // spouse still working. Their pay reduces the PORTFOLIO draw — it must not
+    // move the guaranteed share, because it stops at their own retirement.
+    const withoutSpouse = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 20_000, pension: 0 });
+    const withSpouse = calcRetIncomeFlow({
+      effectiveExpenses: 80_000, ss: 20_000, pension: 0, spouseIncome: 40_000,
+    });
+    expect(withSpouse.portfolioDraw).toBe(20_000);   // spouse pay did reduce the draw
+    expect(withSpouse.spouseIncome).toBe(40_000);
+    expect(withSpouse.guaranteedIncome).toBe(20_000); // …and not the guarantee
+    expect(withSpouse.guaranteedPct).toBe(25);
+    expect(withSpouse.guaranteedPct).toBe(withoutSpouse.guaranteedPct);
+    // The "everything that isn't portfolio draw" definition this replaces would
+    // have read 75% here — the exact overclaim the card is meant to prevent.
+    const naive = Math.round(((80_000 - withSpouse.portfolioDraw) / 80_000) * 100);
+    expect(naive).toBe(75);
+    expect(withSpouse.guaranteedPct).not.toBe(naive);
+  });
+
+  it("a spouse-income-only household is 0% guaranteed, not 100%", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 60_000, ss: 0, pension: 0, spouseIncome: 60_000 });
+    expect(f.portfolioDraw).toBe(0);       // nothing drawn from savings that year…
+    expect(f.guaranteedPct).toBe(0);       // …and nothing guaranteed for life either
+  });
+
+  it("uses the SCALED bands on the over-funded edge, so it can never exceed 100", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 40_000, ss: 30_000, pension: 30_000 });
+    expect(f.guaranteedPct).toBe(100);
+  });
+
+  it("is null — a designed '—', never 0 — when there are no expenses to take a share of", () => {
+    expect(calcRetIncomeFlow({ effectiveExpenses: 0, ss: 20_000, pension: 0 }).guaranteedPct).toBeNull();
+  });
+
+  it("is basis-INVARIANT: inflating every input by the same factor leaves it unchanged", () => {
+    // The Plan screen's dollar-basis toggle must not move this number, which is
+    // only true because numerator and denominator scale together.
+    const factor = 1.03 ** 35;
+    const today = calcRetIncomeFlow({ effectiveExpenses: 57_377, ss: 24_000, pension: 6_000 });
+    const retYear = calcRetIncomeFlow({
+      effectiveExpenses: 57_377 * factor, ss: 24_000 * factor, pension: 6_000 * factor,
+    });
+    expect(retYear.guaranteedPct).toBe(today.guaranteedPct);
+  });
+});
+
 describe("calcNetPortfolioNeed", () => {
   it("subtracts SS and pension from expenses", () => {
     expect(calcNetPortfolioNeed(80_000, 30_000, 10_000)).toBe(40_000);

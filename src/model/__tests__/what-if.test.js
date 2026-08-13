@@ -2004,4 +2004,70 @@ describe("calcWorkLongerBreakEven", () => {
       expect(sorted[i].conversionWindowYrs).toBeLessThanOrEqual(sorted[i - 1].conversionWindowYrs);
     }
   });
+
+  // ── coversPlan / minYearsToSustain — the Plan screen's verdict sentence ─────
+  // The distinction these pin is the whole reason the field isn't just
+  // `rows.find(r => r.sustainable)`: a plan can fund every year of its horizon
+  // while still depleting eventually, and calling that "not fixed by working
+  // longer" would be false.
+  it("coversPlan uses the PLAN-HORIZON test, not the stricter never-depletes test", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    for (const row of result.rows) {
+      expect(typeof row.coversPlan).toBe("boolean");
+      // Never-depletes always implies covers-the-plan; the converse may not hold.
+      if (row.sustainable) expect(row.coversPlan).toBe(true);
+      // The same comparison App itself makes for isSustainable, re-derived from
+      // the row's own depletion age rather than trusting the field.
+      if (!row.sustainable && row.depletionAge != null) {
+        expect(row.coversPlan).toBe(row.depletionAge > safeLifeExp);
+      }
+    }
+  });
+
+  it("minYearsToSustain is the SMALLEST offset that covers the plan", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    const covering = result.rows.filter(r => r.coversPlan).map(r => r.years);
+    if (covering.length === 0) {
+      expect(result.minYearsToSustain).toBeNull();
+    } else {
+      expect(result.minYearsToSustain).toBe(Math.min(...covering));
+    }
+  });
+
+  it("picks the smallest even when the caller's offsets arrive out of order", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [9, 1, 5],
+    });
+    const covering = result.rows.filter(r => r.coversPlan).map(r => r.years);
+    expect(covering.length).toBeGreaterThan(0);           // this bundle is fixable
+    expect(result.minYearsToSustain).toBe(Math.min(...covering));
+  });
+
+  it("is null — a designed 'later retirement alone won't fix it' state — when no offset covers the plan", () => {
+    // One year of extra work on a plan that runs dry decades early can't close it.
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [1],
+    });
+    expect(result.rows).toHaveLength(1);
+    if (!result.rows[0].coversPlan) expect(result.minYearsToSustain).toBeNull();
+  });
+
+  it("falls back to the never-depletes test when the bundle carries no life expectancy", () => {
+    // Defensive: a bundle without safeLifeExp must not make every row read as
+    // covering the plan (NaN comparisons are false, but the guard is explicit).
+    const { safeLifeExp: _drop, ...noLifeExp } = depletingArgs;
+    const result = calcWorkLongerBreakEven({
+      bundle: noLifeExp, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    for (const row of result.rows) {
+      expect(row.coversPlan).toBe(row.sustainable);
+    }
+  });
 });

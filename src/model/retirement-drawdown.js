@@ -97,10 +97,40 @@ export function buildRetirementDrawdown({
 // otherwise capped at 99 so an unsustainable plan never reads as "done".
 // The Math.max(1, …) guards the zero/negative-horizon edge (retiring at or past
 // life expectancy).
-export function calcPlanProgress({ yearsSustained, isSustainable, lifeExpect, retirementAge }) {
-  if (isSustainable || yearsSustained === Infinity) return { progressPct: 100 };
+//
+// The three "money lasts to" fields (Plan screen's 4th stat card + the honest
+// verdict sentence) live here rather than in the screen because rule 10 forbids
+// the arithmetic — and because the card and the sentence must never disagree
+// about the same plan. All three are pre-gated so the screen never compares an
+// age (rule 8 / principle 10):
+//   outlastsPlan     — true when the portfolio covers the whole plan horizon
+//                      (isSustainable, incl. yearsSustained === Infinity).
+//   depletionAge     — the age the portfolio runs dry, passed straight THROUGH
+//                      from the shared retirement walk. Never re-derived as
+//                      retirementAge + yearsSustained (the derivation lands a
+//                      year early — see NumbersScreen's own warning at its
+//                      `runsOutLabel`). null when outlastsPlan, when the caller
+//                      has no walk depletion age, or when it isn't finite.
+//   yearsShortOfPlan — lifeExpect − depletionAge, i.e. how many years of the
+//                      plan the money does NOT cover. null when outlastsPlan,
+//                      when depletionAge is unknown, or when the walk depletes
+//                      at/after lifeExpect anyway (a sub-year edge where
+//                      yearsSustained misses the horizon but the depletion age
+//                      does not — "0 years short" would be a false precision,
+//                      so the screen gets a designed null instead).
+export function calcPlanProgress({
+  yearsSustained, isSustainable, lifeExpect, retirementAge, depletionAge = null,
+}) {
+  const outlastsPlan = isSustainable === true || yearsSustained === Infinity;
+  const runsDryAt = (!outlastsPlan && Number.isFinite(depletionAge)) ? depletionAge : null;
+  const yearsShortOfPlan = (runsDryAt !== null && lifeExpect > runsDryAt)
+    ? lifeExpect - runsDryAt
+    : null;
   const horizon = Math.max(1, lifeExpect - retirementAge);
-  return { progressPct: Math.min(99, Math.round((yearsSustained / horizon) * 100)) };
+  const progressPct = outlastsPlan
+    ? 100
+    : Math.min(99, Math.round((yearsSustained / horizon) * 100));
+  return { progressPct, outlastsPlan, depletionAge: runsDryAt, yearsShortOfPlan };
 }
 
 // ── On-track drivers (WI-1.1 / #88 — the pill's "why this verdict" popover) ──
