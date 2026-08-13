@@ -70,8 +70,38 @@ Auto mode resolves to light/dark via `window.matchMedia("(prefers-color-scheme: 
 | `accent` | Palette signature color (CTAs, active state, highlights) |
 | `warm` | Golden amber — retirement payoff, income numbers, retirement phase |
 | `good` | Green/teal — on-track, savings, accumulation phase |
+| `onAccent` | Label colour for text on a filled `accent` background (the primary CTA) |
 
 **Rule:** Never use a raw hex value in any Horizon component. Derive tints with opacity suffix: `${t.accent}22` = 13% accent tint.
+
+**Rule: never put a raw `#fff` on an accent fill — use `onAccent`.** `onAccent` exists because no
+single literal works in both modes: light-mode accents are mid-tones that white reads against, but
+dark-mode accents are deliberately *light* (their main job is being text on a dark ground), and white
+on them measured 1.76–3.01:1 before BUG-112. Dark-mode `onAccent` is the palette's own `bg`.
+
+### Contrast contract (BUG-112)
+
+Every text token is held to a WCAG AA bar against **all three** grounds it can land on (`bg`, `surf`,
+`surf2`) — not just the one it was designed against — in all 6 palettes × 2 modes.
+`src/horizon/__tests__/palette-contrast.test.js` recomputes the ratios from the token values on every
+`npm test`, so a palette tweak cannot silently regress them.
+
+| Token | Bar | Why |
+|---|---|---|
+| `ink` | 7.0:1 | Primary text (AAA — it was already there) |
+| `mut` | **5.5:1** | Secondary text. Deliberately a step above `faint`: holding both to 4.5 collapses the `ink > mut > faint` ladder (the first pass made `faint` *darker* than `mut` in Apricot) |
+| `faint` | 4.5:1 | Tertiary text. Held to the full text bar, not the 3:1 decorative bar — 75 of its ~80 call sites are real informational text, including dollar cells in the year-by-year table |
+| `accent` | 4.5:1 | Used as **text** at 60 sites, not just as a fill |
+| `good` / `warm` | 4.5:1 | Render real dollar figures at 11px bold (the Plan screen's Income Meter) |
+| `onAccent` | 4.5:1 | Against `accent` — the filled-CTA label |
+
+Tint tokens (`accent`/`warm`/`good`) additionally have to stay perceptually distinct from each other
+(CIE76 ΔE > 5). Sage is exempted for `accent`/`good`, which it deliberately shares. Note that
+**contrast ratio is the wrong tool** for that check — it is luminance-only, so Slate's blue `accent`
+and orange `warm` sit at a 1.00:1 ratio while being obviously different colours.
+
+When retuning a token, hold its **HSL hue and saturation constant** and search only lightness, so the
+palette still reads as itself.
 
 ### Font stack
 
@@ -517,6 +547,9 @@ Full plan with per-work-item targets, actions, and done-metrics: **`docs/ROADMAP
 1. Add an entry to `PALETTES` in `src/horizon/ThemeContext.jsx` with both `light` and `dark` token sets.
 2. Add it to the `PaletteKey` union type (TypeScript annotation in `design-tokens.ts` reference file).
 3. The Settings screen swatch grid renders automatically from `Object.entries(PALETTES)`.
+4. Run `npm test` — `palette-contrast.test.js` enumerates `PALETTES`, so a new palette is held to the
+   contrast contract above automatically. Expect to iterate on the token values until it passes; the
+   failure message names the exact pair and ratio.
 
 ### Adding a new screen
 1. Create a function component `FooScreen({ t, props })` in `HorizonShell.jsx`.

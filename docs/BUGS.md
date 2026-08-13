@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 11 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 12 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,6 +15,7 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
+| **BUG-113** | Low-Medium | Journey's flow-bar `%` labels are 9px white on an `opacity:.72` composited fill — 1.54–3.45:1, a compositing failure the flat-token contrast contract (BUG-112) structurally can't cover | `src/horizon/screens/JourneyScreen.jsx` |
 | **BUG-103** | Medium | Monte Carlo `successPct` counts paths rescued only by the penalized spouse-401k spillover hatch as plain successes, with no visibility (BUG-92's problem class, new surface) | `src/model/monte-carlo.js`, `src/App.jsx`, `src/components/ArcGraph.jsx` |
 | **BUG-102** | Medium | Lever-preview's spouse-gap gating inherited from the base plan, not the scenario's own re-seeded maps | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-101** | Low-Medium | Accumulation-phase `contrib401k` stays nominal (tracks `incomeGrowth`, not inflation) | `src/model/simulation.js` |
@@ -30,6 +31,39 @@ place this gets checked).
 ---
 
 ## Open Issues
+
+### BUG-113 — Journey's flow-bar percentage labels are 9px white text on an `opacity: 0.72` composited fill (1.54–3.45:1), a compositing failure the flat-token contrast contract structurally cannot cover (found 2026-08-13, Horizon design-review Slice 3)
+
+**Owner:** me_theguy. **Severity: LOW-MEDIUM — small, decorative-ish labels, but they are the only
+place the flow percentages are stated numerically, and the failure is worst in dark mode (1.54:1)
+where it is essentially illegible.**
+**What:** `JourneyScreen.jsx:81-91` renders the Keep/Save/Tax flow bar as a row of segments, each
+`background: s.color` (a `good`/`warm`/`accent` token) with `opacity: 0.72` and a hardcoded
+`color: "#fff"` `600 9px` label inside. Because `opacity` composites the whole subtree, BOTH the
+white label and the token fill blend against the card surface behind them, so the effective pair is
+`mix(#fff, surf, .72)` on `mix(token, surf, .72)` — not `#fff` on `token`. Measured across all 12
+palette/mode combinations, that lands at **1.54–3.45:1** (light mode 2.96–3.45, dark mode
+1.54–2.57), against a 4.5:1 bar for 9px text.
+**Why the Slice-3 contrast work does not cover it:** BUG-112 fixed and locked *flat token pairs*
+(`token` on `bg`/`surf`/`surf2`, `onAccent` on `accent`). This site's colours are produced at render
+time by alpha compositing, so neither operand is a token value and `palette-contrast.test.js` cannot
+see it — enforcing it needs the test to model the component's own `opacity`, i.e. a per-call-site
+contract rather than a token contract. BUG-112's token darkening *improved* the light-mode numbers
+(a darker fill gives white more to work against) but nowhere near enough, and it does not touch dark
+mode, where dark-mode accents are light by design.
+**Not caused by BUG-112 — pre-existing, and materially improved by it in one mode.** Verified by
+computing the same composited ratios against the pre-fix token values: light mode was **1.55–2.89**
+and is now **2.96–3.45**; dark mode was **1.54–2.57** and is unchanged (BUG-112 moved only `faint`
+in dark mode, and this site uses `good`/`warm`/`accent`). So the fix roughly halves the light-mode
+deficit as a side effect but closes neither mode.
+**Fix shapes (a design decision, hence not folded into Slice 3):** (a) drop `opacity` and use a
+pre-mixed token so the label sits on a known colour, (b) switch the label to `t.onAccent`-style
+per-mode text instead of a hardcoded `#fff`, or (c) move the `%` out of the bar into the legend
+below it (which already exists, at `t.faint`, and is now compliant). (c) is the smallest and also
+removes the `pct >= 12` hide-the-label guard the current design needs.
+**Where:** `src/horizon/screens/JourneyScreen.jsx:81-91`.
+
+---
 
 ### BUG-103 — Monte Carlo `successPct` doesn't distinguish a path that survives cleanly from one rescued only by the penalized spouse-401k spillover hatch (found 2026-07-28, in-house interoperability audit, PR #64)
 
@@ -557,6 +591,97 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+---
+
+### BUG-112 — Horizon's design tokens fail WCAG AA across all 12 palette/mode combinations, worst on the tokens that render real dollar figures (found 2026-08-13, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 3)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — a readability defect on every screen at once, and the
+worst-affected tokens (`good`/`warm`) are the ones the Plan screen's Income Meter uses for actual
+dollar amounts at 11px bold. Not a model bug: no number is wrong, they are just hard to read.**
+
+**What.** `ThemeContext.jsx` defines 6 palettes × light/dark = 12 token sets. The tokens were tuned by
+eye and nothing ever measured them. Recomputing WCAG 2.1 relative luminance over the shipped values
+(all six palettes; range shown as min–max across them):
+
+| pair | light mode, before | dark mode, before | bar |
+|---|---|---|---|
+| `faint` on `surf` | 2.15 – 2.38 | 3.38 – 3.78 | 4.5 |
+| `faint` on `bg` | 1.93 – 2.16 | 3.79 – 4.23 | 4.5 |
+| `faint` on `surf2` | 1.96 – 2.05 | 3.07 – 3.37 | 4.5 |
+| `mut` on `surf` | 3.78 – 4.15 | 6.20 – 6.70 | 5.5 |
+| `mut` on `bg` | 3.39 – 3.76 | 6.95 – 7.50 | 5.5 |
+| `good` on `surf` | 2.31 – 3.11 | 5.80 – 7.23 | 4.5 |
+| `warm` on `surf` | 1.82 – 2.32 | 7.00 – 9.18 | 4.5 |
+| `accent` on `surf` | 2.48 – 4.78 | 5.18 – 8.46 | 4.5 |
+| `#fff` on `accent` | 2.53 – 4.90 | 1.76 – 3.01 | 4.5 |
+
+`faint` never reached even the 3:1 non-text bar in any light palette. `mut` — every 11px card label —
+failed 4.5:1 in all six. `warm` at 1.82:1 is barely distinguishable from its background. The failures
+concentrate in light mode, which is the **default** (`modePref` defaults to `"light"`).
+
+**Two findings beyond the original report.** (1) `accent` is used as **text** at 60 `color: t.accent`
+sites, not only as a button fill, so it needed the text bar too — it was failing in 5 of 6 light
+palettes. (2) White-on-accent could not be fixed by moving `accent` in dark mode: dark-mode accents
+are deliberately **light** because their primary job is being text on a dark ground (5.18–8.46:1),
+and `ink` on them is no better (1.49–2.51:1). No single literal works for both modes, which
+falsified the premise written into `shared.jsx` at the time — *"every accent in PALETTES is a
+mid-tone that white reads against in both modes."*
+
+**Fix.**
+1. **New `onAccent` palette token** (10th token, all 12 sets) — the label colour for a filled-accent
+   CTA. Light mode: `#ffffff`. Dark mode: the palette's own `bg`, so the CTA label stays in-family.
+   Replaces the hardcoded `ON_ACCENT = "#fff"` in `shared.jsx` (`Btn variant="primary"`) and the two
+   hand-rolled accent buttons that never went through `Btn` (`SurplusDeploymentFlow.jsx:77`,
+   `ConversionPlannerFlow.jsx:345`). Now 4.52–9.54:1 across all 12.
+2. **`mut`/`faint`/`good`/`warm`/`accent` retuned** in every failing combination, holding each token's
+   **HSL hue and saturation constant** and searching only lightness, so each palette still reads as
+   itself (Apricot's accent is a deeper terracotta `#cd6f4f` → `#ad5131`, not a generic dark red).
+   Every token is measured against **all three** grounds it can land on — `bg`, `surf` AND `surf2` —
+   not just the one it was eyeballed against.
+3. **Tiered bars, not one flat bar.** `mut` is held to **5.5:1** and `faint` to 4.5:1. Solving both to
+   4.5 collapsed the `ink > mut > faint` reading ladder the palettes are designed around — in the
+   first pass `faint` came out *darker* than `mut` in Apricot (4.56 vs 4.54), inverting the
+   hierarchy. The tiering was a finding of the work, not a preset.
+4. **`faint` held to the full 4.5 text bar, not the 3:1 decorative bar.** Call-site survey: 75 of its
+   ~80 uses are real informational text (year-by-year table dollar cells, hints, captions, axis
+   ticks, empty states); only ~3 are decorative (StatCard's `›` chevron, one dashed SVG gridline).
+   A single bar is correct for the overwhelming majority and cannot be applied to the wrong site by
+   a future author.
+5. **Honey's accent deepened past its bar, deliberately** (5.65:1 vs the 4.5 the other five use).
+   Honey's `accent` and `warm` are the same gold hue, so solving both to 4.5 landed them at `#8a6717`
+   and `#8b6714` — **ΔE 1.22, imperceptibly different** — erasing the brand-vs-attention distinction.
+   Bronze `#785914` restores a visible two-step (ΔE 8.7) without leaving the honey family.
+
+**After:** every one of the 12 combinations clears every bar. `faint` 4.52–4.56 (was 1.93), `mut`
+5.52–5.97 (was 3.39), `good` 4.52–6.43, `warm` 4.52–8.15, `accent` 4.52–7.51, `onAccent` 4.52–9.54.
+
+**Tests:** new `src/horizon/__tests__/palette-contrast.test.js`, **125 tests**. It reimplements WCAG
+relative luminance + contrast ratio from the spec rather than importing a helper (a token file and its
+own checker sharing code would let one bug hide the other), self-checks that implementation against
+the spec's reference values (`#000`/`#fff` = 21:1, `#767676` on white = 4.54:1), then asserts every
+token/ground pair, `onAccent` on `accent`, the ink>mut>faint ladder, and token presence, across all 12
+sets. Tint separation is checked with **CIE76 ΔE over CIELAB, not contrast ratio** — a first draft used
+the ratio and produced false failures, because ratio is luminance-only and cannot tell Slate's blue
+accent from its orange warm (1.00:1 contrast, ΔE 63).
+**Revert-and-confirm:** restored the pre-fix Apricot light/dark values and Honey's colliding accent;
+the new file failed with exactly 9 assertions naming exactly those regressions (`mut` 3.50, `faint`
+2.08, `accent` 3.08, `good` 2.73, `warm` 2.08, `onAccent` 3.51 and 2.55, dark `faint` 3.89, Honey
+ΔE 1.2) and no others; restored.
+**Visual verification:** rendered a 12-combination before/after swatch sheet and reviewed it directly
+before committing to the values, then ran `verifier-browser.cjs` across all 7 screens + 5 Numbers
+sub-tabs + the Classic round-trip — all render. The verifier's 2 console errors (blocked Google Fonts
+CDN, sandbox egress policy) were confirmed byte-identical on a `git stash` of this change, i.e.
+pre-existing and unrelated.
+**Golden master:** untouched — all three (`golden-master.test.js`, `golden-master-app-wiring.test.js`,
+`spouse-household.test.js`) pass unchanged. Colours are not model inputs; confirmed rather than assumed.
+**Filed, not fixed:** **BUG-113** (Open) — Journey's flow-bar `%` labels are white on an
+`opacity: 0.72` composited fill, a compositing failure this flat-token contract structurally cannot
+cover.
+**Where:** `src/horizon/ThemeContext.jsx`, `src/horizon/shared.jsx`,
+`src/horizon/screens/strategies/SurplusDeploymentFlow.jsx`,
+`src/horizon/screens/strategies/ConversionPlannerFlow.jsx`,
+`src/horizon/__tests__/palette-contrast.test.js` (new).
 
 ---
 

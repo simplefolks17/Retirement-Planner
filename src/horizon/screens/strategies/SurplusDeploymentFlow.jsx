@@ -73,7 +73,7 @@ export default function SurplusDeploymentFlow({ t, props, isMobile = false }) {
             Deploying your surplus this way changes your contributions to the targets above.
           </NoteBox>
           <button type="button" onClick={() => setPreviewOpen(true)}
-            style={{ alignSelf: "flex-start", minHeight: 44, font: `600 13px ${HF}`, color: "#fff",
+            style={{ alignSelf: "flex-start", minHeight: 44, font: `600 13px ${HF}`, color: t.onAccent,
               background: t.accent, border: "none", borderRadius: 8, padding: "9px 18px", cursor: "pointer" }}>
             Apply optimized allocation
           </button>

@@ -48,11 +48,15 @@ export const kbActivate = (fn) => (e) => {
 // `aria-pressed`, so the two can never disagree. Leave it undefined for a plain
 // action button (no `aria-pressed` attribute is emitted at all).
 
-// Text on a filled accent button. A raw literal is deliberate here and is the
-// existing convention at every primary-button site (ConfirmModal, LifeEventSheet,
-// onboarding): the palette has no "on-accent" token, and every accent in
-// PALETTES is a mid-tone that white reads against in both modes.
-const ON_ACCENT = "#fff";
+// Text on a filled accent button. This USED to be a hardcoded "#fff", justified
+// by "every accent in PALETTES is a mid-tone that white reads against in both
+// modes" — which measurement disproved (BUG-112): white on a dark-mode accent
+// ran 1.76–3.01:1, because dark-mode accents are deliberately light (they are
+// text on a dark ground). `onAccent` is now a real palette token that each
+// palette/mode picks for itself, and `palette-contrast.test.js` holds all 12 to
+// 4.5:1. The `?? "#fff"` is a defensive fallback for a hand-built theme object
+// in a test that predates the token, not a live path.
+const onAccent = (t) => t.onAccent ?? "#fff";
 
 const BTN_SIZES = {
   md: { padding: "10px 16px", fontSize: 13,   radius: 9 },
@@ -67,7 +71,7 @@ function btnSkin(t, variant, on, hue) {
   switch (variant) {
     // Filled call-to-action. Border matches the fill so the 1px is reserved
     // and invisible rather than absent.
-    case "primary": return { bg: hue, border: hue, fg: ON_ACCENT, weight: 600 };
+    case "primary": return { bg: hue, border: hue, fg: onAccent(t), weight: 600 };
     // Link-like / low-chrome. Border reserved but transparent.
     case "ghost":   return { bg: "transparent", border: "transparent", fg: t.mut, weight: 500 };
     // A segment inside a track (`background: t.line` + small padding) — the
