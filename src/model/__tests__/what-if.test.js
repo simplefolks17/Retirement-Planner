@@ -2136,15 +2136,58 @@ describe("calcWorkLongerBreakEven", () => {
     }
   });
 
-  it("falls back to the never-depletes test when the bundle carries no life expectancy", () => {
-    // Defensive: a bundle without safeLifeExp must not make every row read as
-    // covering the plan (NaN comparisons are false, but the guard is explicit).
+  // Item 18 (BUG-122 batch, CodeRabbit round 2): the test above only reaches
+  // retAge STRICTLY GREATER than safeLifeExp (89/91/93 against a 90 horizon,
+  // never exactly 90) — the guard is `retAge >= safeLifeExp` (via
+  // marginForScenario's own `>=` check, BUG-123), so the EXACT-equality
+  // boundary was never actually exercised. offset 2 lands retAge exactly on
+  // lateSafeLifeExp here.
+  it("coversPlan reads false at the EXACT boundary retAge === safeLifeExp, not just strictly past it", () => {
+    const lateSafeRetAge = 88, lateSafeLifeExp = 90, lateCurrentAge = 80;
+    const lateSimInputs = {
+      ...simInputs, currentAge: lateCurrentAge, totalYears: lateSafeLifeExp - lateCurrentAge + 15,
+    };
+    const lateBase = 800_000;
+    const { yearsSustained: lateBaseYears } = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: lateBase, startAge: lateSafeRetAge, endAge: lateSafeRetAge + 130,
+    });
+    const lateRetPhaseBase = {
+      ...depletingRetPhaseBase,
+      taxable: lateBase, startAge: lateSafeRetAge, lifeExp: lateSafeLifeExp,
+      longevityHorizon: lateSafeRetAge + 130, currentAge: lateCurrentAge,
+    };
+    const lateArgs = {
+      simInputs: lateSimInputs, fedMarginal, retDrawShared: depletingRetDrawShared,
+      safeRetAge: lateSafeRetAge, safeLifeExp: lateSafeLifeExp,
+      baseTotalAtRet: lateBase, baseYearsSustained: lateBaseYears,
+      retPhaseBase: lateRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
+    };
+    const result = calcWorkLongerBreakEven({
+      bundle: lateArgs, safeRetAge: lateSafeRetAge, currentAge: lateCurrentAge, includeSS: false, ssInputs,
+      offsets: [2],
+    });
+    expect(result).not.toBeNull();
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    // The fixture must actually land exactly on the boundary, or this proves nothing.
+    expect(row.retAge).toBe(lateSafeLifeExp);
+    if (!row.sustainable) expect(row.coversPlan).toBe(false);
+  });
+
+  // Item 17 (BUG-122 batch, CodeRabbit round 2): this used to claim a
+  // graceful "fall back to the never-depletes test" — but `calcWhatIfScenario`
+  // (called once per offset, below) returns null for EVERY offset whenever
+  // `safeLifeExp == null` (its own guard), so `rows` was silently EMPTY the
+  // whole time and this test's own loop never ran a single iteration — a
+  // vacuous pass, not a real one (confirmed live: `rows.length` was 0 and the
+  // old code returned `applicable: true` with a `"—"` headline anyway).
+  // calcWorkLongerBreakEven now matches calcWhatIfScenario's own convention
+  // for this exact missing input: null, not a placeholder-populated object.
+  it("returns null when the bundle carries no life expectancy, matching calcWhatIfScenario's own convention for the same missing input (regression: used to silently return `applicable: true` with an EMPTY rows array and a vacuously-passing test)", () => {
     const { safeLifeExp: _drop, ...noLifeExp } = depletingArgs;
     const result = calcWorkLongerBreakEven({
       bundle: noLifeExp, safeRetAge, currentAge, includeSS: false, ssInputs,
     });
-    for (const row of result.rows) {
-      expect(row.coversPlan).toBe(row.sustainable);
-    }
+    expect(result).toBeNull();
   });
 });

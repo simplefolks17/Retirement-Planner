@@ -29,13 +29,20 @@ describe("Btn — the invariants", () => {
     act(() => r.unmount());
   });
 
-  it("reserves a 1px border in EVERY variant and state — never `none`", () => {
+  it("reserves a 1px solid border in EVERY variant and state — never `none`", () => {
     for (const variant of ["primary", "quiet", "ghost", "seg"]) {
       for (const pressed of [undefined, false, true]) {
         const r = render(React.createElement(Btn, { t, variant, pressed }, "x"));
-        const border = btnOf(r).props.style.border;
-        expect(border, `${variant}/${pressed}`).toMatch(/^1px solid /);
-        expect(border, `${variant}/${pressed}`).not.toContain("none");
+        const st = btnOf(r).props.style;
+        // Longhand, not the `border` shorthand — mixing the two in one style
+        // object triggers React's own "conflicting style property" dev
+        // warning the instant a caller's `style` also touches a border-family
+        // longhand (which `borderWidth` below always does). No `border` key
+        // should exist on this object at all.
+        expect(st.border, `${variant}/${pressed}`).toBeUndefined();
+        expect(st.borderWidth, `${variant}/${pressed}`).toBe(1);
+        expect(st.borderStyle, `${variant}/${pressed}`).toBe("solid");
+        expect(st.borderColor, `${variant}/${pressed}`).not.toBe("none");
         act(() => r.unmount());
       }
     }
@@ -46,8 +53,9 @@ describe("Btn — the invariants", () => {
     // button next to an outlined one must occupy the same box.
     const ghost = render(React.createElement(Btn, { t, variant: "ghost" }, "x"));
     const quiet = render(React.createElement(Btn, { t, variant: "quiet" }, "x"));
-    expect(btnOf(ghost).props.style.border).toBe("1px solid transparent");
-    expect(btnOf(quiet).props.style.border).toBe(`1px solid ${t.line2}`);
+    expect(btnOf(ghost).props.style.borderColor).toBe("transparent");
+    expect(btnOf(quiet).props.style.borderColor).toBe(t.line2);
+    expect(btnOf(ghost).props.style.borderWidth).toBe(btnOf(quiet).props.style.borderWidth);
     expect(btnOf(ghost).props.style.minHeight).toBe(btnOf(quiet).props.style.minHeight);
     expect(btnOf(ghost).props.style.boxSizing).toBe("border-box");
     act(() => { ghost.unmount(); quiet.unmount(); });
@@ -70,7 +78,8 @@ describe("Btn — the invariants", () => {
     expect(st.whiteSpace).toBe("normal");
     expect(st.minHeight).toBe(44);
     expect(st.flexShrink).toBe(0);
-    expect(st.border).toMatch(/^1px solid /);
+    expect(st.borderWidth).toBe(1);
+    expect(st.borderStyle).toBe("solid");
     act(() => r.unmount());
   });
 
@@ -81,8 +90,8 @@ describe("Btn — the invariants", () => {
     const on  = render(React.createElement(Btn, { t, pressed: true }, "x"));
     expect(btnOf(off).props["aria-pressed"]).toBe(false);
     expect(btnOf(on).props["aria-pressed"]).toBe(true);
-    expect(btnOf(on).props.style.border).toBe(`1px solid ${t.accent}`);
-    expect(btnOf(off).props.style.border).toBe(`1px solid ${t.line2}`);
+    expect(btnOf(on).props.style.borderColor).toBe(t.accent);
+    expect(btnOf(off).props.style.borderColor).toBe(t.line2);
 
     // Omitting it emits no attribute at all — a plain action button is not a
     // toggle and must not be announced as one.
@@ -93,12 +102,12 @@ describe("Btn — the invariants", () => {
 
   it("`tint` re-hues the pressed/filled state without touching the invariants", () => {
     const warm = render(React.createElement(Btn, { t, tint: "warm", pressed: true }, "Money out"));
-    expect(btnOf(warm).props.style.border).toBe(`1px solid ${t.warm}`);
+    expect(btnOf(warm).props.style.borderColor).toBe(t.warm);
     expect(btnOf(warm).props.style.minHeight).toBe(44);
     // An unknown token name falls back to accent rather than rendering
-    // `1px solid undefined`.
+    // a `borderColor: undefined`.
     const bogus = render(React.createElement(Btn, { t, tint: "nope", pressed: true }, "x"));
-    expect(btnOf(bogus).props.style.border).toBe(`1px solid ${t.accent}`);
+    expect(btnOf(bogus).props.style.borderColor).toBe(t.accent);
     act(() => { warm.unmount(); bogus.unmount(); });
   });
 
@@ -107,7 +116,8 @@ describe("Btn — the invariants", () => {
     const st = btnOf(r).props.style;
     expect(st.flex).toBe(1);
     expect(st.marginRight).toBe("auto");
-    expect(st.border).toMatch(/^1px solid /);
+    expect(st.borderWidth).toBe(1);
+    expect(st.borderStyle).toBe("solid");
     act(() => r.unmount());
   });
 
@@ -122,6 +132,46 @@ describe("Btn — the invariants", () => {
     expect(st.flexShrink).toBe(0);
     expect(st.boxSizing).toBe("border-box");
     act(() => r.unmount());
+  });
+
+  // CodeRabbit (PR #66 round 2): border STYLE/COLOUR is deliberately
+  // overridable (GoalsPanel's dashed pills), but the earlier fix left the
+  // WIDTH itself overridable through the same `style.border` shorthand —
+  // `style={{ border: "none" }}` silently zeroed a button's border, the exact
+  // misalignment class invariant #1 exists to prevent. Even a stray shorthand
+  // override (not the sanctioned `borderColor`/`borderStyle` longhand this
+  // codebase's own call sites use) cannot win against the locked `borderWidth`.
+  it("a per-call-site `style.border` CANNOT change the border WIDTH — borderWidth stays locked at 1 even when border is overridden to \"none\"", () => {
+    const r = render(React.createElement(Btn, { t, style: { border: "none" } }, "x"));
+    expect(btnOf(r).props.style.borderWidth).toBe(1);
+    act(() => r.unmount());
+  });
+
+  it("borderWidth is locked at 1 in every ordinary render too, not just the override case", () => {
+    const r = render(React.createElement(Btn, { t }, "x"));
+    expect(btnOf(r).props.style.borderWidth).toBe(1);
+    act(() => r.unmount());
+  });
+
+  // A live-browser check (item 14/15's verification pass, docs/BUGS.md) found
+  // that mixing the `border` SHORTHAND with the `borderWidth` LONGHAND in one
+  // style object — which the original borderWidth-lock fix did, unconditionally,
+  // on every render — trips React's own "conflicting style property" dev
+  // warning. Fixed by dropping the `border` shorthand entirely in favour of
+  // borderStyle/borderColor/borderWidth, all longhand, no ambiguity. Proven
+  // here at the object level: no ordinary render (or override using the
+  // sanctioned longhand) ever produces a `border` key at all.
+  it("never emits the `border` shorthand key — only borderStyle/borderColor/borderWidth longhand, so React's shorthand-vs-longhand conflict warning can never fire from an ordinary call site", () => {
+    const plain  = render(React.createElement(Btn, { t }, "x"));
+    const tinted = render(React.createElement(Btn, {
+      t, style: { borderColor: "red", borderStyle: "dashed" },
+    }, "x"));
+    expect(btnOf(plain).props.style.border).toBeUndefined();
+    expect(btnOf(tinted).props.style.border).toBeUndefined();
+    expect(btnOf(tinted).props.style.borderColor).toBe("red");
+    expect(btnOf(tinted).props.style.borderStyle).toBe("dashed");
+    expect(btnOf(tinted).props.style.borderWidth).toBe(1);
+    act(() => { plain.unmount(); tinted.unmount(); });
   });
 
   it("disabled blocks activation and is announced", () => {
@@ -143,7 +193,9 @@ describe("Pill — the compact tier", () => {
       expect(st.borderRadius).toBe(999);
       expect(st.whiteSpace).toBe("nowrap");
       expect(st.flexShrink).toBe(0);
-      expect(st.border).toMatch(/^1px solid /);
+      expect(st.border).toBeUndefined();
+      expect(st.borderWidth).toBe(1);
+      expect(st.borderStyle).toBe("solid");
       act(() => r.unmount());
     }
   });
@@ -151,19 +203,25 @@ describe("Pill — the compact tier", () => {
   it("`pressed` drives both the tint and aria-pressed, and is absent when unset", () => {
     const on = render(React.createElement(Pill, { t, pressed: true }, "x"));
     expect(btnOf(on).props["aria-pressed"]).toBe(true);
-    expect(btnOf(on).props.style.border).toBe(`1px solid ${t.accent}`);
+    expect(btnOf(on).props.style.borderColor).toBe(t.accent);
     const plain = render(React.createElement(Pill, { t }, "x"));
     expect(btnOf(plain).props["aria-pressed"]).toBeUndefined();
-    expect(btnOf(plain).props.style.border).toBe(`1px solid ${t.line2}`);
+    expect(btnOf(plain).props.style.borderColor).toBe(t.line2);
     act(() => { on.unmount(); plain.unmount(); });
   });
 
   it("a dashed border override keeps the same 1px width (GoalsPanel's presets)", () => {
     // GoalsPanel's "+ Add more goals" / "+ Custom goal" are visually dashed but
-    // must not change box height relative to the solid pills beside them.
+    // must not change box height relative to the solid pills beside them —
+    // via the sanctioned borderStyle/borderColor longhand, not the shorthand
+    // (which would trip React's shorthand-vs-longhand conflict warning
+    // against the locked borderWidth below).
     const r = render(React.createElement(
-      Pill, { t, style: { border: `1px dashed ${t.accent}` } }, "+ Custom goal"));
-    expect(btnOf(r).props.style.border).toBe(`1px dashed ${t.accent}`);
+      Pill, { t, style: { borderStyle: "dashed", borderColor: t.accent } }, "+ Custom goal"));
+    expect(btnOf(r).props.style.border).toBeUndefined();
+    expect(btnOf(r).props.style.borderStyle).toBe("dashed");
+    expect(btnOf(r).props.style.borderColor).toBe(t.accent);
+    expect(btnOf(r).props.style.borderWidth).toBe(1);
     expect(btnOf(r).props.style.minHeight).toBe(40);
     act(() => r.unmount());
   });
@@ -178,6 +236,30 @@ describe("Pill — the compact tier", () => {
     expect(st.whiteSpace).toBe("nowrap");
     expect(st.flexShrink).toBe(0);
     expect(st.boxSizing).toBe("border-box");
+    act(() => r.unmount());
+  });
+
+  // CodeRabbit (PR #66 round 2) — same fix as Btn's matching test above.
+  it("a per-call-site `style.border` CANNOT change the border WIDTH — borderWidth stays locked at 1, even alongside a dashed-style override", () => {
+    const none = render(React.createElement(Pill, { t, style: { border: "none" } }, "x"));
+    expect(btnOf(none).props.style.borderWidth).toBe(1);
+    act(() => none.unmount());
+
+    // The dashed-override test above proves `borderStyle`/`borderColor` still
+    // carry the dashed style/colour through; this proves borderWidth is ALSO
+    // locked on that same call, so both hold true simultaneously, not just in
+    // isolation.
+    const dashed = render(React.createElement(
+      Pill, { t, style: { borderStyle: "dashed", borderColor: t.accent } }, "+ Custom goal"));
+    expect(btnOf(dashed).props.style.borderStyle).toBe("dashed");
+    expect(btnOf(dashed).props.style.borderColor).toBe(t.accent);
+    expect(btnOf(dashed).props.style.borderWidth).toBe(1);
+    act(() => dashed.unmount());
+  });
+
+  it("never emits the `border` shorthand key, matching Btn's own contract", () => {
+    const r = render(React.createElement(Pill, { t }, "x"));
+    expect(btnOf(r).props.style.border).toBeUndefined();
     act(() => r.unmount());
   });
 });

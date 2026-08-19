@@ -167,7 +167,13 @@ describe("the sheet's footer row can no longer produce mismatched button boxes",
       // The original bug: "Cancel" had `1px solid …` while its siblings had
       // `border: "none"`, a 2px height difference that alignItems:"center"
       // exposed and that squeezed the label into wrapping on a 390px phone.
-      expect(b.props.style.border, textOf(b)).toMatch(/^1px solid /);
+      // Longhand (borderWidth/borderStyle), not the `border` shorthand — Btn
+      // dropped the shorthand entirely (item 15/BUG-122 batch) since mixing it
+      // with the locked `borderWidth` invariant tripped React's own
+      // "conflicting style property" dev warning, caught by a live-browser check.
+      expect(b.props.style.border, textOf(b)).toBeUndefined();
+      expect(b.props.style.borderWidth, textOf(b)).toBe(1);
+      expect(b.props.style.borderStyle, textOf(b)).toBe("solid");
       expect(b.props.style.whiteSpace, textOf(b)).toBe("nowrap");
       expect(b.props.style.flexShrink, textOf(b)).toBe(0);
       expect(b.props.style.minHeight, textOf(b)).toBe(44);

@@ -1478,7 +1478,17 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
 export function calcWorkLongerBreakEven({
   bundle, safeRetAge, currentAge, includeSS = true, ssInputs = {}, offsets = [1, 3, 5],
 }) {
-  if (!bundle || safeRetAge == null || currentAge == null || safeRetAge <= currentAge) return null;
+  // Item 17 (BUG-122 batch, CodeRabbit round 2): `bundle` is passed straight
+  // through to `calcWhatIfScenario` for every offset below, which returns
+  // null whenever `safeLifeExp == null` (its own guard, ~line 533) — so a
+  // bundle missing `safeLifeExp` silently produced ZERO rows from EVERY
+  // offset while this function still returned `applicable: true` with
+  // placeholder values (`rows: []`, `headline: "—"`) instead of also
+  // signalling "not computable," the same convention `calcWhatIfScenario`
+  // itself uses for this exact missing input. Checked here explicitly,
+  // matching that convention, instead of discovering it row-by-row.
+  if (!bundle || safeRetAge == null || currentAge == null || safeRetAge <= currentAge
+      || bundle.safeLifeExp == null) return null;
 
   const { baseTotalAtRet, baseYearsSustained, baseDepletionAge, safeLifeExp } = bundle;
   const baseSustainable = baseYearsSustained === Infinity;

@@ -265,12 +265,24 @@ export const SEG_LABEL_MIN_SHARE_PCT = 12;
 // negative/non-finite for a genuinely empty segment (e.g. no pension), which
 // is real 0 width for this purpose, checked explicitly rather than coerced
 // with `?? 0` (rule 10). Returns the same segments with `showLabel` added.
+//
+// CodeRabbit (PR #66 round 2): `total`/`showLabel` were computed from the
+// SANITIZED `share(seg.f)` (negative/non-finite → 0), but the returned
+// segment still carried the ORIGINAL, unsanitized `seg.f` via the `...seg`
+// spread — so a caller rendering `flex: seg.f` for a malformed segment (e.g.
+// a negative value that showLabel already treated as 0) would still feed the
+// negative raw number straight into CSS `flex`, disagreeing with the very
+// threshold decision this function just made. `f` is now the SAME sanitized
+// value `total`/`showLabel` are computed from, so a segment's flex-basis and
+// its label-visibility decision can never disagree about what its own share
+// actually is.
 export function buildBarSegments(segs) {
   const list = segs ?? [];
   const share = (f) => (Number.isFinite(f) && f > 0) ? f : 0;
   const total = list.reduce((s, seg) => s + share(seg.f), 0);
   return list.map((seg) => ({
     ...seg,
+    f: share(seg.f),
     showLabel: total > 0 && (share(seg.f) / total) * 100 >= SEG_LABEL_MIN_SHARE_PCT,
   }));
 }

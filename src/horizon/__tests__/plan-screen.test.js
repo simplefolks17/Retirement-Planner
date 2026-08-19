@@ -204,13 +204,13 @@ const statCard = (root, label) =>
   root.findAll(n => n.props?.role === "button" && typeof n.props?.onClick === "function"
     && textOf({ children: n.children }).startsWith(label))[0];
 
-function mount(overrides = {}) {
+function mount(overrides = {}, isMobile = false) {
   const props = makeMockProps(overrides);
   const navigate = vi.fn();
   let renderer;
   act(() => {
     renderer = create(
-      React.createElement(PlanScreen, { t, props, navigate, isMobile: false }),
+      React.createElement(PlanScreen, { t, props, navigate, isMobile }),
     );
   });
   return { renderer, props, navigate };
@@ -282,6 +282,21 @@ describe("PlanScreen — command center survivors", () => {
     expect(text).not.toContain("Retirement taxes");
     expect(text).not.toContain("Left at");
     act(() => renderer.unmount());
+  });
+
+  // Item 11 (BUG-122 batch): 5 cards in a 2-column mobile grid leaves the
+  // last one ("Tax in retirement") alone on its own row, half-width — an
+  // orphan. It should span the full row on mobile only.
+  it("the 5th stat card spans the full row on mobile, and is untouched on desktop", () => {
+    const mobile = mount({}, true);
+    const mobileCard = statCard(mobile.renderer.root, "Tax in retirement");
+    expect(mobileCard.props.style.gridColumn).toBe("1 / -1");
+    act(() => mobile.renderer.unmount());
+
+    const desktop = mount({}, false);
+    const desktopCard = statCard(desktop.renderer.root, "Tax in retirement");
+    expect(desktopCard.props.style.gridColumn).toBeUndefined();
+    act(() => desktop.renderer.unmount());
   });
 
   // The card's number must match the number its own destination (Numbers →

@@ -649,6 +649,61 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-126 — `useDialogBehaviour` had no Tab/Shift+Tab focus trap, and implementing the fix straightforwardly reintroduced a shorthand/longhand CSS conflict a live-browser check caught (found + fixed 2026-08-19, Batch B of the BUG-122 review-fix batch, CodeRabbit round 2 + own live verification)
+
+**Owner:** me_theguy. **Severity: Medium — every Horizon dialog (ConfirmModal, LifeEventSheet,
+ApplyPreviewModal) was affected; a keyboard user could Tab past the dialog's own last control and
+land on a background element still "under" the open modal, able to activate it while the dialog
+sat on top.**
+**Found by:** CodeRabbit's PR #66 round-2 review, flagged as the one documented gap left after the
+initial Escape/focus-in pass (`useDialogBehaviour.js`'s own header comment had explicitly deferred
+it, reasoning it "needs a live DOM to enumerate tabbables, which this repo's `environment: "node"`
+test setup cannot exercise, so it would ship untested").
+
+**Part 1 — the trap itself.** `useDialogBehaviour`'s `onKeyDown` now also handles `Tab`: it
+enumerates the card's own focusable elements (`button`/`[href]`/`input`/`select`/`textarea`/
+`[tabindex]` that aren't `disabled` and have a non-null `offsetParent`, i.e. actually visible) and
+wraps at the edges — `Shift+Tab` from the first tabbable (or from outside the tracked list
+entirely, e.g. still on the card's own `tabIndex={-1}` root right after open) goes to the last;
+`Tab` from the last goes to the first. Every Tab in between is untouched native behaviour. Verified
+with a LIVE Chromium session against the running dev server (this repo's `environment: "node"`
+`npm test` suite cannot exercise real Tab order or `offsetParent`, and jsdom's layout stubs make it
+an unconvincing substitute — MDN/jsdom both document `offsetParent`/`getBoundingClientRect` as
+unreliable there): opened LifeEventSheet's "+ Custom goal" sheet (9 real tabbable elements), Tabbed
+11 times forward (past the boundary) and landed back inside the dialog at the first element, then
+Shift+Tabbed 11 times and landed at the last — focus never once left `[role="dialog"]`'s subtree in
+either direction, and Escape still closed it afterward (the trap doesn't interfere with the
+existing dismissal mechanism).
+
+**Part 2 — a real regression the SAME live-browser check caught before it shipped.** Implementing
+Part 1 exposed that `Btn`/`Pill`'s existing `borderWidth: 1` invariant (BUG-122 batch, item 15 —
+locked separately from the `border` shorthand so a call site's `style.border` override couldn't
+zero out the width) was sitting in the SAME style object as the `border: "1px solid …"` shorthand.
+React logs its own "conflicting style property... don't mix shorthand and non-shorthand properties"
+dev warning the instant BOTH are present in one style update, because the DOM's `CSSStyleDeclaration`
+doesn't guarantee which one wins across a rerender — confirmed firing on every `Btn` render in the
+live session's console, traced to `shared.jsx`'s `Btn`. **Fix:** dropped the `border` shorthand
+entirely from both `Btn` and `Pill`, replaced with `borderStyle`/`borderColor` (colour/style, still
+overridable per call site) + the already-locked `borderWidth` — all three longhand, no shorthand key
+anywhere, so the ambiguity can't arise from the primitive's own defaults. The two real call sites
+that used to retint via the shorthand (`GoalsPanel.jsx`'s dashed goal-preset pills, `NumbersScreen.jsx`'s
+translucent "show all years" toggle) were migrated to the same longhand pattern. Re-ran the live
+Chromium session after the fix: the warning is gone, the focus trap still passes every assertion.
+**Tests:** `src/horizon/__tests__/shared-primitives.test.js` — every Btn/Pill assertion touching
+`border` rewritten to the longhand fields, plus a new explicit assertion that `style.border` is
+`undefined` on every ordinary render AND on a longhand-override render (proving the shorthand key
+never reappears). `src/horizon/__tests__/dialog-dismissal.test.js`'s footer-button border assertion
+updated the same way (LifeEventSheet's real footer, not a synthetic fixture). No dedicated jsdom test
+for the Tab-trap mechanics itself — see the live-verification note above for why; the mechanism is
+exercised for real by the Chromium session, not simulated.
+**Golden master:** untouched — pure interaction/accessibility behaviour and a CSS property-shape
+change, no dollar value or model output touched.
+**Where:** `src/horizon/useDialogBehaviour.js`, `src/horizon/shared.jsx` (`Btn`, `Pill`),
+`src/horizon/GoalsPanel.jsx`, `src/horizon/screens/NumbersScreen.jsx`,
+`src/horizon/__tests__/shared-primitives.test.js`, `src/horizon/__tests__/dialog-dismissal.test.js`.
+
+---
+
 ### BUG-123 — `calcWorkLongerBreakEven`'s `coversPlan` was a SIXTH inline copy of `marginForScenario`'s formula, and the shared formula itself shared the same latent bug BUG-118 patched only locally (found 2026-08-19, Opus adversarial review of PR #66; fixed same day)
 
 **Owner:** me_theguy. **Severity: Medium — the shared-formula bug affects `evaluateLifeEvent`,
@@ -877,7 +932,7 @@ built from `retSpendBasis` — the primary's RETIREMENT-YEAR dollars, correct fo
 reconciles with (BUG-91). The "Income for life" stat card, one card row below it, read the raw
 `effectiveExpenses` prop — TODAY's dollars, never converted. Same quantity, same screen, no label
 on either saying which frame it was in. Measured at the shipped default (retire at 65 from 30,
-3% inflation): the meter said **$18,868/mo** and the card said **$4,800/mo** — a 3.95× gap. This is
+4% inflation): the meter said **$18,868/mo** and the card said **$4,800/mo** — a 3.95× gap. This is
 the identical shape as the Classic chart-caption mismatch found in the PR #62 review round
 ($57,377 vs $226,415); rule 11 exists precisely because of it, and this instance predates the rule.
 **Why:** BUG-91's basis conversion landed in the engine and in `retIncomeFlow`, but the stat card

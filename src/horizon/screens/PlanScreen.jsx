@@ -148,7 +148,7 @@ function DollarBasisToggle({ t, options, activeId, onChange }) {
       {options.map(o => (
         <Btn key={o.id} t={t} size="sm" variant="seg" pressed={o.id === activeId}
           onClick={() => onChange(o.id)}
-          style={{ minHeight: 40, padding: "6px 10px" }}>
+          style={{ padding: "6px 10px" }}>
           {o.label}
         </Btn>
       ))}
@@ -767,7 +767,11 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
           and leaves the row below unambiguously about retirement. */}
       <div style={{
         display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-        gap: isMobile ? 10 : 14, marginTop: 14, flexShrink: 0,
+        // Item 11 (BUG-122 batch): was 14px here vs the stat-card grid's flat
+        // 10px below — two adjacent card rows in the same visual system with
+        // different gaps. Normalized to the same 10px both grids already
+        // agree on at mobile width.
+        gap: 10, marginTop: 14, flexShrink: 0,
       }}>
         <PaycheckCard t={t} takeHome={takeHome} keepPct={statementView?.keepPct}
           isHousehold={planHighlights?.takeHomeIsHousehold === true} />
@@ -829,11 +833,15 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
             construction, not actually complete. Softened, and given its own
             basis note (a retirement-year-dollar cumulative sum) — see BUG-124
             for why it's not wired to the toggle. */}
+        {/* Item 11 (BUG-122 batch): 5 cards in a 2-column mobile grid leaves
+            this last one alone on its own row, half-width — an orphan. Full
+            width on mobile only; desktop's 5-column row is unaffected. */}
         <StatCard t={t} label="Tax in retirement"
           value={taxView?.composition?.total != null ? fmt(taxView.composition.total) : "—"}
           sub="across your retirement years, in retirement-year dollars"
           accent={t.mut}
-          onClick={() => navigate("numbers", "taxes")} />
+          onClick={() => navigate("numbers", "taxes")}
+          style={isMobile ? { gridColumn: "1 / -1" } : undefined} />
       </div>
 
       {/* ── signals strip ────────────────────────────────────────────────────── */}

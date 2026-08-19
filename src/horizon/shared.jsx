@@ -128,26 +128,50 @@ export function Btn({
         background: skin.bg,
         font: `${skin.weight} ${sz.fontSize}px ${HF}`,
         color: fg,
-        // Border is deliberately NOT in the locked invariants block below — a
-        // few call sites intentionally retint/redash it (GoalsPanel's dashed
-        // goal-preset pills, Numbers' translucent "show all years" toggle)
-        // while keeping it 1px, which is all invariant #1 actually requires
-        // (see the module comment above: reserve the border, not its colour).
-        border: `1px solid ${skin.border}`,
+        // Border STYLE/COLOUR are deliberately NOT in the locked invariants
+        // block below — a few call sites intentionally retint/redash it
+        // (GoalsPanel's dashed goal-preset pills, Numbers' translucent "show
+        // all years" toggle) while keeping it 1px, which is all invariant #1
+        // actually requires (see the module comment above: reserve the
+        // border, not its colour). WIDTH is the always-locked invariant below.
+        //
+        // Split into LONGHAND properties (borderStyle/borderColor here,
+        // borderWidth below) rather than the `border` shorthand — a live
+        // browser check (item 14/15's verification pass) caught React's own
+        // "conflicting style property" dev warning the shorthand triggers the
+        // instant a call site's `style` ALSO sets a `border`-family longhand
+        // (which item 15's `borderWidth` invariant does, unconditionally, on
+        // every Btn): React can't guarantee which of a shorthand and its own
+        // longhand wins across a rerender. No shorthand key anywhere in this
+        // object avoids the ambiguity entirely, for every call site, not just
+        // the two that override colour/style.
+        borderStyle: "solid",
+        borderColor: skin.border,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transition: "background .12s, border-color .12s",
         // `...style` sits BEFORE the invariants below so a call site can still
-        // adjust shape/skin/colour (flex, margin, width, border colour, …) but
-        // can never win over the 44px floor or the no-wrap guarantee — a call
-        // site passing `style={{ minHeight: 40 }}` used to silently shrink the
-        // touch target (found live in PlanScreen's DollarBasisToggle).
+        // adjust shape/skin/colour (flex, margin, width, border style/colour,
+        // …) but can never win over the 44px floor or the no-wrap guarantee —
+        // a call site passing `style={{ minHeight: 40 }}` used to silently
+        // shrink the touch target (found live in PlanScreen's
+        // DollarBasisToggle). A call site's own `style.border` shorthand (if
+        // any survive a future edit) would still be overridden below by the
+        // longhand `borderWidth`, but per the note above, no current call
+        // site uses the shorthand any more — border overrides are
+        // `borderStyle`/`borderColor` longhand too (GoalsPanel, NumbersScreen).
         ...style,
         // ── invariants (never overridable per call site) ──
         minHeight: 44,
         whiteSpace: wrap ? "normal" : "nowrap",
         flexShrink: 0,
         boxSizing: "border-box",
+        // CodeRabbit (PR #66 round 2): the border-style/colour exception above
+        // still let a call site's own override change the WIDTH too (e.g. a
+        // stray `border: "none"` or a 2px value) — reintroducing the exact
+        // misalignment bug invariant #1 exists to prevent. Locked separately,
+        // after `...style`, same as every other invariant here.
+        borderWidth: 1,
       }}>
       {children}
     </button>
@@ -180,8 +204,10 @@ export function Pill({
         font: `${on ? 600 : 400} 12.5px ${HF}`,
         color: fg,
         // See Btn's comment: border keeps its width invariant but not its
-        // colour/style, so GoalsPanel's dashed presets can retint it.
-        border: `1px solid ${on ? t.accent : t.line2}`,
+        // style/colour, so GoalsPanel's dashed presets can retint it — split
+        // into longhand (no `border` shorthand) for the same reason.
+        borderStyle: "solid",
+        borderColor: on ? t.accent : t.line2,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transition: "background .12s, border-color .12s",
@@ -191,13 +217,17 @@ export function Pill({
         whiteSpace: "nowrap",
         flexShrink: 0,
         boxSizing: "border-box",
+        // CodeRabbit (PR #66 round 2) — see Btn's matching comment above: the
+        // border-colour exception still let a call site's `style.border`
+        // shorthand override the WIDTH too. Locked separately.
+        borderWidth: 1,
       }}>
       {children}
     </button>
   );
 }
 
-export function StatCard({ t, label, value, accent, warm, large, onClick, sub }) {
+export function StatCard({ t, label, value, accent, warm, large, onClick, sub, style }) {
   return (
     <div
       onClick={onClick}
@@ -219,6 +249,11 @@ export function StatCard({ t, label, value, accent, warm, large, onClick, sub })
         borderRadius: 13, padding: 15,
         cursor: onClick ? "pointer" : "default",
         minHeight: onClick ? 44 : undefined,
+        // Item 11 (BUG-122 batch): a call site's own grid-placement override
+        // (e.g. spanning a 5th card full-width on a 2-column mobile grid so it
+        // isn't a half-width orphan) — layout only, same spirit as Btn/Pill's
+        // `style` prop, and StatCard has no locked invariants for it to fight.
+        ...style,
       }}>
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "baseline",

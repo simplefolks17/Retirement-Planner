@@ -305,6 +305,29 @@ describe("buildBarSegments", () => {
     expect(buildBarSegments(undefined)).toEqual([]);
   });
 
+  // CodeRabbit (PR #66 round 2): total/showLabel were computed from the
+  // SANITIZED f, but the returned segment leaked the ORIGINAL unsanitized f —
+  // so a caller rendering `flex: seg.f` for a negative/non-finite segment
+  // would feed the raw bad value straight into CSS, disagreeing with the
+  // showLabel decision this same function just made about that segment.
+  it("returns the SANITIZED f, not the original — a caller's flex: seg.f can never disagree with showLabel about the same segment's real share", () => {
+    const segs = buildBarSegments([
+      { f: 90, c: "a", l: "Real" },
+      { f: null, c: "b", l: "Missing" },
+      { f: -5, c: "c", l: "Negative" },
+      { f: NaN, c: "d", l: "NotANumber" },
+    ]);
+    expect(segs.find(s => s.l === "Real").f).toBe(90);
+    expect(segs.find(s => s.l === "Missing").f).toBe(0);
+    expect(segs.find(s => s.l === "Negative").f).toBe(0);
+    expect(segs.find(s => s.l === "NotANumber").f).toBe(0);
+    // No segment's returned f is ever negative or non-finite.
+    for (const s of segs) {
+      expect(Number.isFinite(s.f)).toBe(true);
+      expect(s.f).toBeGreaterThanOrEqual(0);
+    }
+  });
+
   it("SEG_LABEL_MIN_SHARE_PCT is the single source of the threshold (12)", () => {
     expect(SEG_LABEL_MIN_SHARE_PCT).toBe(12);
   });

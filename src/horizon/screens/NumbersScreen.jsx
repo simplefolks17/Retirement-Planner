@@ -1622,7 +1622,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 {allRetirementRows.length > YEAR_CAP && (
                   <Btn t={t} size="sm" variant="quiet" tone="accent"
                     onClick={() => setShowAllYears(v => !v)}
-                    style={{ border: `1px solid ${t.accent}55`, borderRadius: 7, padding: "4px 12px" }}>
+                    style={{ borderColor: `${t.accent}55`, borderRadius: 7, padding: "4px 12px" }}>
                     {showAllYears ? "Show first 50" : `Show all ${allRetirementRows.length} years`}
                   </Btn>
                 )}

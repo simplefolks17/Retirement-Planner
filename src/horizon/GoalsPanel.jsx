@@ -111,13 +111,13 @@ export default function GoalsPanel({ t, moneyEvents, onNewGoal, onEditGoal, onRe
                 row's boxes remain identical in height, only the style differs. */}
             {!showAll && LIFE_EVENTS.length > DEFAULT_VISIBLE && (
               <Pill t={t} onClick={() => setShowAll(true)} tone="accent"
-                style={{ border: `1px dashed ${t.line2}` }}>
+                style={{ borderStyle: "dashed", borderColor: t.line2 }}>
                 + Add more goals
               </Pill>
             )}
             {showAll && (
               <Pill t={t} onClick={startCustom} tone="accent"
-                style={{ border: `1px dashed ${t.accent}` }}>
+                style={{ borderStyle: "dashed", borderColor: t.accent }}>
                 + Custom goal
               </Pill>
             )}
