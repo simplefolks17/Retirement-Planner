@@ -119,12 +119,6 @@ export function Btn({
       aria-expanded={ariaExpanded}
       title={title}
       style={{
-        // ── invariants (never overridable per call site) ──
-        minHeight: 44,
-        whiteSpace: wrap ? "normal" : "nowrap",
-        flexShrink: 0,
-        border: `1px solid ${skin.border}`,
-        boxSizing: "border-box",
         // ── shape ──
         display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
         padding: sz.padding, borderRadius: sz.radius,
@@ -134,10 +128,26 @@ export function Btn({
         background: skin.bg,
         font: `${skin.weight} ${sz.fontSize}px ${HF}`,
         color: fg,
+        // Border is deliberately NOT in the locked invariants block below — a
+        // few call sites intentionally retint/redash it (GoalsPanel's dashed
+        // goal-preset pills, Numbers' translucent "show all years" toggle)
+        // while keeping it 1px, which is all invariant #1 actually requires
+        // (see the module comment above: reserve the border, not its colour).
+        border: `1px solid ${skin.border}`,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transition: "background .12s, border-color .12s",
+        // `...style` sits BEFORE the invariants below so a call site can still
+        // adjust shape/skin/colour (flex, margin, width, border colour, …) but
+        // can never win over the 44px floor or the no-wrap guarantee — a call
+        // site passing `style={{ minHeight: 40 }}` used to silently shrink the
+        // touch target (found live in PlanScreen's DollarBasisToggle).
         ...style,
+        // ── invariants (never overridable per call site) ──
+        minHeight: 44,
+        whiteSpace: wrap ? "normal" : "nowrap",
+        flexShrink: 0,
+        boxSizing: "border-box",
       }}>
       {children}
     </button>
@@ -164,20 +174,23 @@ export function Pill({
       aria-label={ariaLabel}
       title={title}
       style={{
-        minHeight: 40,
-        whiteSpace: "nowrap",
-        flexShrink: 0,
-        border: `1px solid ${on ? t.accent : t.line2}`,
-        boxSizing: "border-box",
         display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
         padding: "7px 14px", borderRadius: 999,
         background: on ? `${t.accent}18` : "transparent",
         font: `${on ? 600 : 400} 12.5px ${HF}`,
         color: fg,
+        // See Btn's comment: border keeps its width invariant but not its
+        // colour/style, so GoalsPanel's dashed presets can retint it.
+        border: `1px solid ${on ? t.accent : t.line2}`,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transition: "background .12s, border-color .12s",
         ...style,
+        // ── invariants (never overridable per call site) ──
+        minHeight: 40,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        boxSizing: "border-box",
       }}>
       {children}
     </button>

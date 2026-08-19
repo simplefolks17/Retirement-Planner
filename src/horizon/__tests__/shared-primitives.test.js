@@ -111,6 +111,19 @@ describe("Btn — the invariants", () => {
     act(() => r.unmount());
   });
 
+  it("a per-call-site `style` CANNOT shrink the touch target, unwrap, or unstick — the invariants always win (regression: PlanScreen's DollarBasisToggle shipped `style={{ minHeight: 40 }}` on a Btn and silently shrank it)", () => {
+    const r = render(React.createElement(Btn, {
+      t,
+      style: { minHeight: 10, whiteSpace: "normal", flexShrink: 1, boxSizing: "content-box" },
+    }, "x"));
+    const st = btnOf(r).props.style;
+    expect(st.minHeight).toBe(44);
+    expect(st.whiteSpace).toBe("nowrap");
+    expect(st.flexShrink).toBe(0);
+    expect(st.boxSizing).toBe("border-box");
+    act(() => r.unmount());
+  });
+
   it("disabled blocks activation and is announced", () => {
     const onClick = vi.fn();
     const r = render(React.createElement(Btn, { t, disabled: true, onClick }, "x"));
@@ -152,6 +165,19 @@ describe("Pill — the compact tier", () => {
       Pill, { t, style: { border: `1px dashed ${t.accent}` } }, "+ Custom goal"));
     expect(btnOf(r).props.style.border).toBe(`1px dashed ${t.accent}`);
     expect(btnOf(r).props.style.minHeight).toBe(40);
+    act(() => r.unmount());
+  });
+
+  it("a per-call-site `style` CANNOT shrink the 40px tier, unwrap, or unstick", () => {
+    const r = render(React.createElement(Pill, {
+      t,
+      style: { minHeight: 8, whiteSpace: "normal", flexShrink: 1, boxSizing: "content-box" },
+    }, "x"));
+    const st = btnOf(r).props.style;
+    expect(st.minHeight).toBe(40);
+    expect(st.whiteSpace).toBe("nowrap");
+    expect(st.flexShrink).toBe(0);
+    expect(st.boxSizing).toBe("border-box");
     act(() => r.unmount());
   });
 });
