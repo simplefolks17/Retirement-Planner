@@ -110,9 +110,14 @@ export default function SomedayScreen({ t, props, isMobile = false }) {
           </div>
         )}
       </div>
-      {/* dark gradient overlay */}
+      {/* dark gradient overlay — purely decorative, painted AFTER the photo-
+          upload div above (so it reads correctly over a photo), which put it
+          on top in paint order with no pointerEvents: it silently swallowed
+          every mouse/touch tap on the photo well (the keyboard path still
+          worked, since Enter/Space fire on the div itself, not through this
+          layer) until this was set. */}
       <div style={{
-        position: "absolute", inset: 0,
+        position: "absolute", inset: 0, pointerEvents: "none",
         background: "linear-gradient(135deg, rgba(18,14,10,.80) 0%, rgba(18,14,10,.20) 55%, rgba(18,14,10,.60) 100%)"
       }} />
       {/* foreground */}
@@ -149,6 +154,12 @@ export default function SomedayScreen({ t, props, isMobile = false }) {
                 target (the gated "for life" claims elsewhere condition on a
                 model sustainability boolean; this one didn't). */}
             <span style={{ font: `400 ${isMobile ? 14 : 16}px ${HF}`, color: "rgba(255,255,255,.50)" }}>a month in retirement.</span>
+          </div>
+          {/* Rule 11: effectiveExpenses is today's dollars — a scoped, local
+              caption on the figure itself, not a page banner (this screen has
+              no other dollar figure to disagree with it). */}
+          <div style={{ font: `400 12px ${HF}`, color: "rgba(255,255,255,.32)", fontStyle: "italic", marginTop: 2 }}>
+            in today's dollars
           </div>
           <div style={{ font: `400 14px ${HF}`, color: "rgba(255,255,255,.38)", marginTop: 6 }}>
             {activeAct.sub}

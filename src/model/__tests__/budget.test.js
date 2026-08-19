@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "../budget.js";
+import {
+  calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth,
+  calcStatementView, buildBarSegments, SEG_LABEL_MIN_SHARE_PCT,
+} from "../budget.js";
 
 describe("calcGrossAfterTax", () => {
   it("subtracts all taxes from income", () => {
@@ -206,5 +209,81 @@ describe("calcStatementView", () => {
     // missing income behaves the same as 0
     const v2 = calcStatementView({ ...base, currentIncome: null });
     expect(v2.keepPct).toBeNull();
+  });
+});
+
+// ── buildBarSegments (rule 10) ───────────────────────────────────────────────
+// The Statement tab's three composition bars (NumbersScreen.jsx's StmtCol)
+// used to compute "is this segment wide enough for its own label" inline in
+// the render, with a `?? 0` fallback — arithmetic on model values inside
+// src/horizon/, against rule 10. Moved here so the screen only reads a
+// pre-computed `showLabel` boolean.
+describe("buildBarSegments", () => {
+  it("marks every segment showLabel when all comfortably clear the threshold", () => {
+    const segs = buildBarSegments([
+      { f: 50, c: "a", l: "Keep" },
+      { f: 30, c: "b", l: "Tax" },
+      { f: 20, c: "c", l: "Save" },
+    ]);
+    expect(segs.map(s => s.showLabel)).toEqual([true, true, true]);
+    // Original fields pass through untouched.
+    expect(segs.map(s => s.l)).toEqual(["Keep", "Tax", "Save"]);
+  });
+
+  it("hides a segment below SEG_LABEL_MIN_SHARE_PCT of the bar's total", () => {
+    // 5 / (80+15+5) = 5%, under the 12% threshold; the other two clear it.
+    const segs = buildBarSegments([
+      { f: 80, c: "a", l: "Big" },
+      { f: 15, c: "b", l: "Mid" },
+      { f: 5,  c: "c", l: "Tiny" },
+    ]);
+    expect(segs.find(s => s.l === "Big").showLabel).toBe(true);
+    expect(segs.find(s => s.l === "Mid").showLabel).toBe(true);
+    expect(segs.find(s => s.l === "Tiny").showLabel).toBe(false);
+  });
+
+  it("is exact at the threshold boundary (>= 12%, not > 12%)", () => {
+    // 12 / 100 = exactly 12%.
+    const segs = buildBarSegments([
+      { f: 12, c: "a", l: "Exact" },
+      { f: 88, c: "b", l: "Rest" },
+    ]);
+    expect(segs.find(s => s.l === "Exact").showLabel).toBe(true);
+    // Just under.
+    const under = buildBarSegments([
+      { f: 11.9, c: "a", l: "Under" },
+      { f: 88.1, c: "b", l: "Rest" },
+    ]);
+    expect(under.find(s => s.l === "Under").showLabel).toBe(false);
+  });
+
+  it("treats missing/negative/non-finite f as real 0 — never coerced with ?? 0 (rule 10)", () => {
+    const segs = buildBarSegments([
+      { f: 90, c: "a", l: "Real" },
+      { f: null, c: "b", l: "Missing" },
+      { f: -5, c: "c", l: "Negative" },
+      { f: NaN, c: "d", l: "NotANumber" },
+    ]);
+    expect(segs.find(s => s.l === "Real").showLabel).toBe(true);
+    for (const l of ["Missing", "Negative", "NotANumber"]) {
+      expect(segs.find(s => s.l === l).showLabel, l).toBe(false);
+    }
+  });
+
+  it("every segment reads false, never true, when the bar total is 0", () => {
+    const segs = buildBarSegments([
+      { f: 0, c: "a", l: "A" },
+      { f: null, c: "b", l: "B" },
+    ]);
+    expect(segs.every(s => s.showLabel === false)).toBe(true);
+  });
+
+  it("an empty/missing seg list returns an empty array, not a throw", () => {
+    expect(buildBarSegments([])).toEqual([]);
+    expect(buildBarSegments(undefined)).toEqual([]);
+  });
+
+  it("SEG_LABEL_MIN_SHARE_PCT is the single source of the threshold (12)", () => {
+    expect(SEG_LABEL_MIN_SHARE_PCT).toBe(12);
   });
 });

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo, Btn, Pill } from "../shared.jsx";
 import { fmtFull, fmtPct } from "../../formatters.js";
+import { buildBarSegments } from "../../model/budget.js";
 
 // A deduction row: "−$12,400" for a finite value, plain "—" when missing.
 // Negation goes THROUGH the canonical formatter (never a hand-prepended "−",
@@ -17,20 +18,7 @@ const SERIF = "Georgia, 'Times New Roman', serif";
 const GRID_COLS = "44px 52px 1.1fr 1fr 1fr 1fr 0.9fr 1fr 1fr";
 const GRID_MIN_W = 720;
 
-// A segment narrower than this share of the bar cannot hold its own label: the
-// label is `whiteSpace: nowrap` inside an `overflow: hidden` flex segment, so it
-// renders a truncated fragment ("Ta", "Portfo") rather than disappearing. The
-// Taxes tab's composition bar already hides labels under 12%; this bar — three
-// of them, on the Statement tab — had no guard at all, which is worse.
-const SEG_LABEL_MIN_SHARE_PCT = 12;
-
 function StmtCol({ t, title, items, bar }) {
-  // Share of the bar, for the label guard only: this is the flex ratio the row
-  // is already laid out by (pure layout proportion, no financial meaning — the
-  // same thing the Accounts tab's bars compute for their widths).
-  const barTotal = (bar?.segs ?? []).reduce((s, g) => s + Math.max(0, g.f ?? 0), 0);
-  const fitsLabel = (seg) =>
-    barTotal > 0 && (Math.max(0, seg.f ?? 0) / barTotal) * 100 >= SEG_LABEL_MIN_SHARE_PCT;
   return (
     <div style={{ flex: 1 }}>
       <div style={{
@@ -63,7 +51,7 @@ function StmtCol({ t, title, items, bar }) {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 font: `600 10px ${HF}`, color: t.surf,
                 minWidth: 0, overflow: "hidden", whiteSpace: "nowrap"
-              }}>{fitsLabel(seg) ? seg.l : ""}</div>
+              }}>{seg.showLabel ? seg.l : ""}</div>
             ))}
           </div>
           <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 4, fontStyle: "italic" }}>{bar.cap}</div>
@@ -384,16 +372,20 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               borderBottom: `2px solid ${t.ink}`, paddingBottom: 10, marginBottom: 3
             }}>
               <span style={{ font: `700 22px ${SERIF}`, color: t.ink, letterSpacing: "0.04em" }}>HORIZON</span>
-              {/* No dollar-basis claim here (rule 11): this tab is deliberately
-                  mixed — "The bottom line" below reads effectiveExpenses (TODAY's
-                  dollars) while the "Where the money comes from" ledger + its companion strip
-                  read statementView's monthly bands (the primary's RETIREMENT-YEAR
-                  real dollars, budget.js:194-205). The banner used to claim
-                  "today's dollars" for the whole tab, which was false for the
-                  ledger by roughly the full inflation factor. Same fix shape as
-                  JourneyScreen's stale "— in today's dollars" subtitle (BUGS.md,
-                  PR #62 round 2 finding 13): remove the claim rather than caveat
-                  it, since the page has never been consistently one basis. */}
+              {/* No BLANKET dollar-basis claim here (rule 11): this tab is
+                  deliberately mixed — "The bottom line" below reads
+                  effectiveExpenses (TODAY's dollars) while the "Where the money
+                  comes from" ledger + its companion strip read statementView's
+                  monthly bands (the primary's RETIREMENT-YEAR real dollars,
+                  budget.js:194-205). The banner used to claim "today's dollars"
+                  for the whole tab, which was false for the ledger by roughly
+                  the full inflation factor. Same fix shape as JourneyScreen's
+                  stale "— in today's dollars" subtitle (BUGS.md, PR #62 round 2
+                  finding 13): removing a page-wide claim isn't the same as
+                  declaring the true, mixed basis, though — each of the two
+                  figures now carries its OWN scoped, local caption instead (see
+                  "in today's dollars" below the bottom line, and the ledger
+                  bar's "in retirement-year dollars" caption further down). */}
               <span style={{ font: `400 12px ${SERIF}`, color: t.mut, textAlign: "right" }}>
                 Statement of your plan
               </span>
@@ -410,13 +402,18 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     "Runs dry at" row. The gated "for life" claims elsewhere
                     (JourneyScreen, WorkLongerFlow, ArcGraph) condition on a
                     model sustainability boolean and are correct as they stand;
-                    this one had no gate at all. No new basis claim is made here
-                    either — see the banner note above on this tab's deliberately
-                    mixed bases. */}
+                    this one had no gate at all. */}
                 <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month in retirement</span>
               </div>
               <div style={{ font: `400 13px ${SERIF}`, color: t.mut, marginTop: 5 }}>
                 with <span style={{ color: t.warm, fontWeight: 700 }}>{fmt(balAt90)}</span> remaining at age 90.
+              </div>
+              {/* Rule 11: a scoped, LOCAL basis note — the removed banner above
+                  claimed one basis for the whole tab, which was false for the
+                  ledger further down; this figure specifically reads
+                  effectiveExpenses, today's dollars, so it says so right here. */}
+              <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 3, fontStyle: "italic" }}>
+                in today's dollars
               </div>
             </div>
 
@@ -484,11 +481,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["Pre-tax savings", negFull(sv.preTaxDeductions), null, false],
                 ["Paycheck deposit", fmtFull(takeHome),       null, true],
               ]} bar={sv.keepPct == null ? null : {
-                segs: [
+                segs: buildBarSegments([
                   { f: sv.keepPct, c: t.good, l: `Keep ${sv.keepPct}%` },
                   { f: sv.taxPct,  c: t.line2, l: `Tax ${sv.taxPct}%` },
                   { f: sv.savePct, c: t.warm,  l: `Save ${sv.savePct}%` },
-                ],
+                ]),
                 cap: "of every dollar earned"
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
@@ -499,12 +496,12 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["HSA",               fmt(hsa),     null, false],
                 [`Nest egg by ${retirementAge}`, fmt(totalAtRet), null, true],
               ]} bar={{
-                segs: [
+                segs: buildBarSegments([
                   { f: trad401, c: t.good,   l: "401k" },
                   { f: roth,    c: t.accent,  l: "Roth" },
                   { f: taxable, c: t.warm,    l: "Taxable" },
                   { f: hsa,     c: t.line2,   l: "HSA" },
-                ],
+                ]),
                 cap: `${fmt(totalAtRet)} across four buckets`
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
@@ -524,12 +521,16 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["Runs dry at",       runsOutLabel,  null, false],
                 ["Total monthly",     `${fmtFull(sv.monthlyTotal)}/mo`, null, true],
               ]} bar={{
-                segs: [
+                segs: buildBarSegments([
                   { f: sv.monthlyHHSS,     c: t.warm,   l: "Soc Sec" },
                   ...(sv.monthlyPension > 0 ? [{ f: sv.monthlyPension, c: t.accent, l: "Pension" }] : []),
                   { f: sv.monthlyPortDraw, c: t.good,   l: "Portfolio" },
-                ],
-                cap: "blended monthly income"
+                ]),
+                // Rule 11: this column's own local basis note (the removed
+                // page-wide banner above — see its comment — was false for this
+                // ledger; a scoped note here is the correct fix, not a re-added
+                // blanket claim).
+                cap: "blended monthly income, in retirement-year dollars"
               }} />
             </div>
 

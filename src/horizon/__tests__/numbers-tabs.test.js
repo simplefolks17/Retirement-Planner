@@ -13,6 +13,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
 import NumbersScreen, { wrapBarLabel } from "../screens/NumbersScreen.jsx";
+import { fmtMo } from "../shared.jsx";
 
 // Stub browser APIs (ResizeObserver is used by IncomeWaterfall inside NumbersScreen).
 beforeAll(() => {
@@ -676,15 +677,35 @@ describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
   });
 
   // ── Regression: the Statement banner claimed one basis for a mixed tab ─────
-  // "The bottom line" is today's dollars; the "Income for life" ledger below it
-  // is retirement-year dollars (budget.js:194-205). The banner's blanket
-  // "today's dollars" claim was false for the ledger — removed, per the
-  // JourneyScreen precedent (BUGS.md, PR #62 round 2 finding 13).
-  it("Statement banner makes no blanket dollar-basis claim", () => {
+  // "The bottom line" is today's dollars; the "Where the money comes from"
+  // ledger below it is retirement-year dollars (budget.js:194-205). The
+  // banner's blanket "today's dollars" claim was false for the ledger —
+  // removed, per the JourneyScreen precedent (BUGS.md, PR #62 round 2 finding
+  // 13). Removing a false claim isn't the same as declaring the true, mixed
+  // basis, though (rule 11) — each figure now carries its OWN scoped, local
+  // caption instead, so the banner itself must stay silent on basis while the
+  // tab as a whole legitimately mentions both bases, each next to the figure
+  // it actually describes.
+  it("the banner itself makes no blanket dollar-basis claim", () => {
+    const renderer = mountTab("statement");
+    const banner = renderer.root.findAll(n => textOf(n) === "Statement of your plan")[0];
+    expect(banner, "banner text not found").toBeTruthy();
+    expect(textOf(banner)).not.toContain("dollars");
+    act(() => renderer.unmount());
+  });
+
+  it("'the bottom line' carries its own scoped today's-dollars caption", () => {
     const renderer = mountTab("statement");
     const allText = textOf(renderer.root);
-    expect(allText).toContain("Statement of your plan");
-    expect(allText).not.toContain("today's dollars");
+    expect(allText).toContain(fmtMo(minimalProps.effectiveExpenses)); // sanity: the figure itself
+    expect(allText).toContain("in today's dollars");
+    act(() => renderer.unmount());
+  });
+
+  it("the 'Where the money comes from' ledger carries its own scoped retirement-year-dollars caption", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("in retirement-year dollars");
     act(() => renderer.unmount());
   });
 
@@ -711,6 +732,54 @@ describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
     });
     const allText = textOf(renderer.root);
     expect(allText).not.toContain("compounding multiplier");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Regression: StmtCol's label-fit guard was inline arithmetic (rule 10) ───
+// StmtCol used to compute `barTotal`/`fitsLabel` itself, with a `?? 0`
+// fallback — arithmetic on model values inside src/horizon/. Moved into
+// budget.js's buildBarSegments (a real >= 0 guard, no `?? 0`); StmtCol now
+// only reads the pre-computed `seg.showLabel` boolean. These tests exercise
+// the wiring end to end (App → NumbersScreen → StmtCol), not just the model
+// function in isolation (covered separately in budget.test.js).
+describe("NumbersScreen — Statement tab composition bars: label-fit comes from the model", () => {
+  // Segment divs share one structural fingerprint (opacity: 0.7) across all
+  // three StmtCol bars — distinct from the Taxes tab's own composition bar
+  // (opacity: 0.72), so this can't accidentally collect the wrong bar's segs.
+  const segsOf = (renderer) => collect(renderer.toJSON(), n => n.props?.style?.opacity === 0.7);
+
+  it("the account-mix bar hides HSA's label (≈5.3% share, under the 12% threshold) but shows the other three", () => {
+    // retVals: 1.8M/900k/600k/184,197 → HSA is 184,197 / 3,484,197 ≈ 5.29%.
+    const renderer = mountTab("statement");
+    const segs = segsOf(renderer);
+    // 3 (Income & tax: Keep/Tax/Save) + 4 (account mix) + 2 (Soc Sec/Portfolio,
+    // no pension in this fixture) = 9 total segments across the three bars.
+    expect(segs).toHaveLength(9);
+    const texts = segs.map(textOf);
+    expect(texts).toContain("401k");
+    expect(texts).toContain("Roth");
+    expect(texts).toContain("Taxable");
+    expect(texts).not.toContain("HSA");
+    act(() => renderer.unmount());
+  });
+
+  it("HSA's label reappears once its share crosses back over 12% — a live model field, not a value baked in once", () => {
+    // HSA grown to 1.0M against the other three unchanged (3.3M) → 1.0M/4.3M ≈ 23.3%.
+    const renderer = mountTab("statement", {
+      retVals: { ...minimalProps.retVals, HSA: 1_000_000 },
+    });
+    const texts = segsOf(renderer).map(textOf);
+    expect(texts).toContain("HSA");
+    act(() => renderer.unmount());
+  });
+
+  it("every segment shows its label when a bar gives all of them room (Income & tax: 49/26/25%)", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Keep 49%");
+    expect(allText).toContain("Tax 26%");
+    expect(allText).toContain("Save 25%");
     act(() => renderer.unmount());
   });
 });

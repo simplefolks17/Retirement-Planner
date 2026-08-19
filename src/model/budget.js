@@ -241,3 +241,27 @@ export function calcStatementView({
     lifetimeContribROI,
   };
 }
+
+// A composition bar's segment is too narrow to hold its own text label: the
+// label is `whiteSpace: nowrap` inside an `overflow: hidden` flex segment, so
+// a segment under the threshold renders a truncated fragment ("Ta", "Portfo")
+// rather than disappearing cleanly. Below is the ONE place that decides this —
+// NumbersScreen's Statement tab (three bars: paycheck split, account mix,
+// retirement income mix) all build their segs through this, rather than
+// re-deriving the share/threshold check inline in the render (rule 10 — a
+// screen formats and lays out, it does not compute).
+export const SEG_LABEL_MIN_SHARE_PCT = 12;
+
+// segs: array of { f, c, l } (flex share, colour, label) — f may be missing/
+// negative/non-finite for a genuinely empty segment (e.g. no pension), which
+// is real 0 width for this purpose, checked explicitly rather than coerced
+// with `?? 0` (rule 10). Returns the same segments with `showLabel` added.
+export function buildBarSegments(segs) {
+  const list = segs ?? [];
+  const share = (f) => (Number.isFinite(f) && f > 0) ? f : 0;
+  const total = list.reduce((s, seg) => s + share(seg.f), 0);
+  return list.map((seg) => ({
+    ...seg,
+    showLabel: total > 0 && (share(seg.f) / total) * 100 >= SEG_LABEL_MIN_SHARE_PCT,
+  }));
+}
