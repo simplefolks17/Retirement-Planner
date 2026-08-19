@@ -177,9 +177,12 @@ describe("tint tokens stay distinguishable from each other", () => {
   it.each(combos)("%s (%s) / %s", (key, name, mode, t) => {
     const pairs = [["accent", "warm"], ["accent", "good"], ["warm", "good"]];
     for (const [a, b] of pairs) {
-      // Sage deliberately shares one green between accent and good (its dark mode
-      // sets them to the same literal), so it is exempted rather than forced apart.
-      if (key === "sage" && a === "accent" && b === "good") continue;
+      // Sage LIGHT's accent/good (#517555 / #53754f) sit close (dE 3.5) but were
+      // never byte-identical like dark's were — a separate, smaller, lower-
+      // severity gap that CodeRabbit's review of PR #66 did not flag, out of
+      // scope for that fix. Still exempted here pending its own look; dark's
+      // exemption is gone now that accent/good are genuinely distinct colours.
+      if (key === "sage" && mode === "light" && a === "accent" && b === "good") continue;
       const d = deltaE(t[a], t[b]);
       expect(
         d,

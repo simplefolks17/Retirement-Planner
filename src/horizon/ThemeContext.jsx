@@ -69,8 +69,16 @@ export const PALETTES = {
     name: "Sage", swatch: "#5f8a64",
     light: { bg:"#edf1ea", surf:"#fafdf7", surf2:"#eef3e9", line:"#e2e8dd", line2:"#cdd8c6",
              ink:"#2d332b",  mut:"#5a6252",  faint:"#657159", accent:"#517555", warm:"#a45a1f", good:"#53754f", onAccent:"#ffffff" },
+    // dark good was byte-identical to accent (#84ad7c) — a reader couldn't
+    // distinguish an interactive accent from a positive dollar figure in this
+    // one palette/mode (the same collision class Honey's accent-vs-warm fix
+    // addressed, deepening accent to bronze there). Sage's own brand hue is
+    // green, so accent stays put; good shifts toward the teal-leaning green
+    // the other five palettes already use for it (Slate #7fb0a4, Blush
+    // #73bb9d, Periwinkle #6fc6a6) — a small, on-brand hue shift (dE ≈ 10.3
+    // from accent, still clearing 4.5:1 on bg/surf/surf2), not a new hue.
     dark:  { bg:"#181e19", surf:"#222a23", surf2:"#2a332b", line:"#354036", line2:"#475448",
-             ink:"#e8efe5",  mut:"#a3b09d",  faint:"#919b8c", accent:"#84ad7c", warm:"#e3a672", good:"#84ad7c", onAccent:"#181e19" },
+             ink:"#e8efe5",  mut:"#a3b09d",  faint:"#919b8c", accent:"#84ad7c", warm:"#e3a672", good:"#7ab894", onAccent:"#181e19" },
   },
   periwinkle: {
     name: "Periwinkle", swatch: "#6f7bd6",
