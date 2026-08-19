@@ -8,6 +8,7 @@ import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
 import { fmt, fmtFull } from "../formatters.js";
 import { Btn } from "../horizon/shared.jsx";
+import { useDialogBehaviour } from "../horizon/useDialogBehaviour.js";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
 import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
 import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
@@ -491,25 +492,47 @@ const tabBtnStyle = (t, on) => ({
 // ── MoreSheet — mobile bottom sheet for overflow screens ──────────────────────
 // Shown when the user taps the "More" tab in the mobile bottom bar.
 // Renders a slide-up overlay listing MORE_SCREENS; tap any to navigate.
+//
+// On mobile this sheet is the ONLY route to Someday / My details / Settings —
+// three whole screens — so it gets the same real dialog behaviour every other
+// Horizon overlay already has (ConfirmModal, LifeEventSheet, ApplyPreviewModal):
+// Escape-to-close and focus move/restore via useDialogBehaviour (BUG-50), plus
+// `role="dialog"`/`aria-modal` so assistive tech announces it as one. It was
+// the one overlay left declaring `aria-haspopup="dialog"` on its trigger
+// (below) without actually being one.
 function MoreSheet({ t, active, onNavigate, onClose }) {
+  const { cardRef, escapeProps } = useDialogBehaviour(onClose);
   return (
     <>
       {/* backdrop */}
       <div
         onClick={onClose}
+        // Click-to-dismiss backdrop. NOT keyboard-focusable by design — the
+        // keyboard equivalent is Escape (useDialogBehaviour), and a focusable
+        // full-screen div would just add a dead stop to the tab order. Same
+        // convention as ConfirmModal/LifeEventSheet's backdrops.
+        data-dismiss-backdrop="true"
         style={{
           position: "fixed", inset: 0, zIndex: 110,
           background: "rgba(0,0,0,.32)",
         }}
       />
       {/* sheet */}
-      <div style={{
-        position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 120,
-        background: t.surf, borderTop: `1px solid ${t.line2}`,
-        borderRadius: "16px 16px 0 0",
-        padding: "12px 0 8px",
-        boxShadow: "0 -8px 32px rgba(0,0,0,.18)",
-      }}>
+      <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="More"
+        tabIndex={-1}
+        {...escapeProps}
+        onClick={e => e.stopPropagation()}
+        style={{
+          position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 120,
+          background: t.surf, borderTop: `1px solid ${t.line2}`,
+          borderRadius: "16px 16px 0 0",
+          padding: "12px 0 8px",
+          boxShadow: "0 -8px 32px rgba(0,0,0,.18)",
+        }}>
         <div style={{
           width: 36, height: 4, borderRadius: 999, background: t.line2,
           margin: "0 auto 12px",
