@@ -2059,6 +2059,45 @@ describe("calcWorkLongerBreakEven", () => {
     if (!result.rows[0].coversPlan) expect(result.minYearsToSustain).toBeNull();
   });
 
+  it("coversPlan is never trivially true at/after safeLifeExp — a scenario retiring AFTER the plan already ends must not read as covering it (regression: retAge >= safeLifeExp made `safeLifeExp - retAge` <= 0, satisfied by any non-negative scenarioYears)", () => {
+    // retirementAge close enough to lifeExpect that offsets [1,3,5] push retAge
+    // to/past safeLifeExp (88+3=91, 88+5=93, both >= 90) — the task's own repro
+    // shape. currentAge/totalYears widened so the re-sim covers those late ages.
+    const lateSafeRetAge = 88, lateSafeLifeExp = 90, lateCurrentAge = 80;
+    const lateSimInputs = {
+      ...simInputs, currentAge: lateCurrentAge, totalYears: lateSafeLifeExp - lateCurrentAge + 15,
+    };
+    const lateBase = 800_000;
+    const { yearsSustained: lateBaseYears } = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: lateBase, startAge: lateSafeRetAge, endAge: lateSafeRetAge + 130,
+    });
+    const lateRetPhaseBase = {
+      ...depletingRetPhaseBase,
+      taxable: lateBase, startAge: lateSafeRetAge, lifeExp: lateSafeLifeExp,
+      longevityHorizon: lateSafeRetAge + 130, currentAge: lateCurrentAge,
+    };
+    const lateArgs = {
+      simInputs: lateSimInputs, fedMarginal, retDrawShared: depletingRetDrawShared,
+      safeRetAge: lateSafeRetAge, safeLifeExp: lateSafeLifeExp,
+      baseTotalAtRet: lateBase, baseYearsSustained: lateBaseYears,
+      retPhaseBase: lateRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
+    };
+    const result = calcWorkLongerBreakEven({
+      bundle: lateArgs, safeRetAge: lateSafeRetAge, currentAge: lateCurrentAge, includeSS: false, ssInputs,
+      offsets: [1, 3, 5],
+    });
+    expect(result).not.toBeNull();
+    const overshoot = result.rows.filter(r => r.retAge >= lateSafeLifeExp);
+    // The fixture must actually reach the degenerate case, or this test proves nothing.
+    expect(overshoot.length).toBeGreaterThan(0);
+    for (const row of overshoot) {
+      // A row past the plan horizon can only cover the plan by literally never
+      // depleting (scenSustainable) — never by the year-count comparison, which
+      // is undefined/moot once retAge >= safeLifeExp.
+      if (!row.sustainable) expect(row.coversPlan).toBe(false);
+    }
+  });
+
   it("falls back to the never-depletes test when the bundle carries no life expectancy", () => {
     // Defensive: a bundle without safeLifeExp must not make every row read as
     // covering the plan (NaN comparisons are false, but the guard is explicit).

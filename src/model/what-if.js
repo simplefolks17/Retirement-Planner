@@ -1487,8 +1487,16 @@ export function calcWorkLongerBreakEven({
     const ssAnnual = ssAnnualAt(retAge);
     const window = windowAt(retAge);
     // See the header note: the plan-horizon test, not the never-depletes test.
+    // `retAge < safeLifeExp` is required before the year-count comparison:
+    // safeLifeExp is the BASE plan's horizon and never moves with the offset,
+    // but retAge does — at a large enough offset (or a retirementAge already
+    // close to lifeExpect) retAge can reach or pass safeLifeExp, making
+    // `safeLifeExp - retAge` zero or negative, which any non-negative
+    // scenarioYears trivially satisfies. Without this guard a scenario that
+    // retires AFTER the plan already ends read coversPlan: true.
     const coversPlan = scenSustainable || (
-      Number.isFinite(safeLifeExp) && scenario.scenarioYears >= (safeLifeExp - retAge)
+      Number.isFinite(safeLifeExp) && retAge < safeLifeExp
+        && scenario.scenarioYears >= (safeLifeExp - retAge)
     );
     return {
       years: k, retAge,
