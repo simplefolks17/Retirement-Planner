@@ -372,6 +372,45 @@ describe("PlanScreen — command center survivors", () => {
     expect(text).toContain("the rest comes from your savings and your spouse's pay");
     act(() => renderer.unmount());
   });
+
+  // BUG-122 (item 2): "savings cover you until then" used to render whenever
+  // startsAtAge was set, with no check that savings actually last that long —
+  // it could contradict "Money lasts to" directly. g.savingsCoverUntilStart is
+  // the pre-computed truth condition (App.jsx, from calcPlanProgress).
+  it("shows 'savings cover you until then' when savingsCoverUntilStart is true", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 0, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: true,
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Social Security starts at 67 — savings cover you until then");
+    act(() => renderer.unmount());
+  });
+
+  it("does NOT claim savings cover you until then when savingsCoverUntilStart is false — the false-reassurance repro (BUG-122): retire 60, spend $300k/yr, SS starts at 67, savings run out at 61", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 0, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: false,
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).not.toContain("savings cover you until then");
+    expect(text).toContain("Social Security starts at 67");
+    // Still tells the honest story — points at "Money lasts to" instead.
+    expect(text.toLowerCase()).toContain("may not stretch");
+    act(() => renderer.unmount());
+  });
 });
 
 // ── Dollar-basis toggle (owner decision: today's money by default) ───────────

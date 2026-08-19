@@ -46,6 +46,16 @@ export function calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePe
 // numerator can never exceed the denominator.
 // guaranteedPct is null (a designed "—", never 0) when there are no expenses to
 // take a share of.
+//
+// BUG-122: guaranteedPct is computed from the RAW (unscaled) ssRaw/penRaw, NOT
+// the scaled ssBand/penBand. The scale factor is derived from incomeTotal,
+// which includes the spouse's gap-year income — so multiplying a spouse-income
+// household's ss/pension bands by that scale dilutes the percentage by income
+// that has nothing to do with what share of spending SS+pension cover. The
+// scaled ssBand/penBand/guaranteedIncome are still exactly right for the
+// meter's bars (which must sum to exp) — only the standalone percentage needs
+// the unscaled source. Explicitly capped at 100 since ssRaw+penRaw can exceed
+// exp on the over-funded edge (the scaled bands can't, by construction).
 export function calcRetIncomeFlow({ effectiveExpenses, ss, pension, spouseIncome = 0 }) {
   const exp = Math.max(0, effectiveExpenses);
   const ssRaw = Math.max(0, ss);
@@ -66,7 +76,7 @@ export function calcRetIncomeFlow({ effectiveExpenses, ss, pension, spouseIncome
     spouseIncome: spRaw * scale,
     portfolioDraw,
     guaranteedIncome,
-    guaranteedPct: exp > 0 ? Math.round((guaranteedIncome / exp) * 100) : null,
+    guaranteedPct: exp > 0 ? Math.min(100, Math.round(((ssRaw + penRaw) / exp) * 100)) : null,
   };
 }
 

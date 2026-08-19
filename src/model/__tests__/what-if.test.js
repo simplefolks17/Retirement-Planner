@@ -1565,6 +1565,44 @@ describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-7
       { verdict: "unaffordable", label: `runs out before ${safeLifeExp}` },
     ]);
   });
+
+  // ── BUG-123 — depletion-basis margin can't be inflated by retAge >= safeLifeExp
+  it("marginForScenario never inflates margin for a scenario retiring AT/AFTER safeLifeExp (regression: retAge 75 >= safeLifeExp 70 made `safeLifeExp - retAge` negative, which only ever ADDED to marginYears)", () => {
+    // The adversarial-review repro: retires 5 yrs past the plan's own horizon,
+    // sustains only half a year — must never read as margin-positive.
+    const scenario = { scenarioYears: 0.5, scenarioRetAge: 75 };
+    const { marginYears, marginBasis } = marginForScenario(scenario, 70);
+    expect(marginBasis).toBe("depletion");
+    expect(marginYears).toBeLessThan(0);
+    expect(verdictForMargin(marginYears)).not.toBe("comfortable");
+    expect(verdictForScenarioResult(scenario, 70)).toBe("unaffordable");
+  });
+
+  it("BUG-123 guard reaches every marginForScenario consumer, not just calcWorkLongerBreakEven's coversPlan — buildLeverRail/buildDurationRail/evaluateLifeEvent all route through verdictForScenarioResult", () => {
+    // Same degenerate shape, exercised through the rail builders directly
+    // (buildLeverRail sweeps a lever's own values, not retirement age, so
+    // simulate the same effect verdictForScenarioResult would see).
+    const scenario = { scenarioYears: 0.5, scenarioRetAge: 75 };
+    expect(verdictForScenarioResult(scenario, 70)).toBe("unaffordable");
+    // At retAge === safeLifeExp exactly (the boundary), the guard still fires
+    // (>=, not >) — zero years of horizon left is still "nothing to cover".
+    const boundary = { scenarioYears: 4, scenarioRetAge: 70 };
+    expect(verdictForScenarioResult(boundary, 70)).toBe("unaffordable");
+  });
+
+  it("buildMarginLabel gives the -Infinity sentinel an honest label, not 'runs out Infinity yrs early'", () => {
+    const info = verdictInfoForScenario({ scenarioYears: 0.5, scenarioRetAge: 75 }, 70);
+    expect(info.marginLabel).toBe("doesn't cover the plan by 70");
+    expect(info.marginLabel).not.toContain("Infinity");
+  });
+
+  it("a scenario retiring BEFORE safeLifeExp is unaffected by the guard (only the degenerate case changes)", () => {
+    // Same numbers as the very first depletion-basis assertion in this describe
+    // block (line ~1541) — proves the guard is inert for the ordinary case.
+    const ok = marginForScenario({ scenarioYears: 28, scenarioRetAge: 65 }, safeLifeExp);
+    expect(ok.marginYears).toBe(3);
+    expect(verdictForMargin(ok.marginYears)).toBe("tight");
+  });
 });
 
 // ── evaluateLifeEvent — edit mode (H1 double-count regression) ────────────────

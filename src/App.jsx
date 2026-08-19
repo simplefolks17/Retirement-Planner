@@ -1628,6 +1628,23 @@ export default function App() {
       effectiveExpenses, ss: ssAtRet * toTodayFactor, pension: effectivePension,
       spouseIncome: spouseIncomeAtRet * toTodayFactor,
     }));
+    // BUG-122 (Findings 3+4): "Guaranteed for life" is a LIFETIME claim, so its
+    // headline percentage must come from the EVENTUAL (ungated) SS + pension
+    // streams — householdSS / retPensionAnnualBasis, the same ungated fields
+    // budget.js's calcStatementView already reads for the Statement screen's
+    // "Where the money comes from" ledger (~budget.js lines 194-210) — never
+    // the retirement-year-GATED ssAtRet/retPensionBasis snapshot flowRetirement
+    // uses for its bands (that snapshot is correctly 0 before SS/pension have
+    // actually started, which is right for the bands but wrong for a lifetime
+    // percentage: it read 0% for every new user whose SS simply hasn't started
+    // YET). Reusing calcRetIncomeFlow (not a bespoke formula) keeps this the
+    // one place guaranteedPct is computed. Both householdSS and
+    // retPensionAnnualBasis are already in the retirement-year frame
+    // retSpendBasis is in (see the comment above), so the ratio is exact.
+    const flowGuaranteedPct = calcRetIncomeFlow({
+      effectiveExpenses: retSpendBasis, ss: householdSS, pension: retPensionAnnualBasis,
+      spouseIncome: spouseIncomeAtRet,
+    });
     // Lifetime-income sources that have NOT started by the primary's retirement
     // (rule 5b start gates), earliest first — see `guaranteed.startsAtAge` below.
     const nextGuaranteedStart = [
@@ -1650,33 +1667,41 @@ export default function App() {
       incomeFlowByBasis: { today: flowToday, retirement: flowRetirement },
       // "Guaranteed for life" card. A RATIO, so it is basis-INVARIANT — both
       // flows above scale numerator and denominator by the same inflation
-      // factor and agree exactly; it is read off ONE flow (the retirement
-      // basis, the frame the engine itself reconciles in) so the toggle can
-      // never make it flicker by a rounding step. Deliberately NOT wired to
-      // the toggle for the same reason ages and percentages aren't.
-      //   pct — (SS + pension) / spending. calcRetIncomeFlow keeps the spouse's
-      //     gap-year pay OUT of the numerator on purpose (see its comment): it
-      //     stops at the spouse's own retirement age, so it is real income but
-      //     not guaranteed-for-life income.
+      // factor and agree exactly. Deliberately NOT wired to the toggle for the
+      // same reason ages and percentages aren't.
+      //   pct — (SS + pension) / spending, read off `flowGuaranteedPct`
+      //     (BUG-122, above) — the UNGATED eventual streams, because this is a
+      //     lifetime claim, not a snapshot of this year. calcRetIncomeFlow
+      //     keeps the spouse's gap-year pay OUT of the numerator on purpose
+      //     (see its comment): it stops at the spouse's own retirement age, so
+      //     it is real income but not guaranteed-for-life income.
+      //   hasSS / hasPension / hasSpouseIncome — deliberately still read off
+      //     `flowRetirement`, the GATED retirement-year snapshot: these drive
+      //     the sub-copy's TIMING narrative ("has this actually started by
+      //     retirement"), a different question from the lifetime pct above.
       //   hasSpouseIncome — true when that excluded pay is part of the
       //     denominator, so the card's sub-copy can name where "the rest" comes
       //     from honestly instead of implying it is all portfolio.
-      //   startsAtAge / startsLabel — rule 5b makes this card's snapshot a
-      //     RETIREMENT-YEAR one: ssAtRet/effectivePension are already gated to
-      //     what has actually begun by then, which is what keeps this card, the
-      //     Income Meter's bars, and netPortfolioNeed describing the same year
-      //     (the BUG-31 "two implementations of one concept" trap). A plan that
-      //     retires at 65 and claims SS at 67 therefore reads 0% — TRUE for the
-      //     year shown and false-sounding without a reason, so the pending
-      //     source and its start age are surfaced for the sub-copy. null when
-      //     nothing further is pending.
+      //   startsAtAge / startsLabel — the next pending gated source (rule 5b),
+      //     null when nothing further is pending.
+      //   savingsCoverUntilStart (BUG-122 Item 2) — whether the plan's own
+      //     savings actually last until startsAtAge, from calcPlanProgress's
+      //     already-computed outlastsPlan/depletionAge (never a fresh age
+      //     comparison here — rule 10 lives in the screen, this is the model
+      //     layer, but the SAME "don't re-derive, read the one computed
+      //     answer" discipline applies). null when there's no pending source
+      //     to cover (startsAtAge is null) — the claim doesn't apply.
       guaranteed: {
-        pct: flowRetirement.guaranteedPct,
+        pct: flowGuaranteedPct.guaranteedPct,
         hasSS: flowRetirement.hasSS,
         hasPension: flowRetirement.hasPension,
         hasSpouseIncome: flowRetirement.hasSpouseIncome,
         startsAtAge: nextGuaranteedStart?.age ?? null,
         startsLabel: nextGuaranteedStart?.label ?? null,
+        savingsCoverUntilStart: nextGuaranteedStart == null
+          ? null
+          : (planView.outlastsPlan === true
+              || (planView.depletionAge != null && planView.depletionAge >= nextGuaranteedStart.age)),
       },
       // The toggle's own options, with their captions, so no age arithmetic or
       // basis copy lives in JSX. `dollarBasisApplicable` is false once there are
@@ -1711,10 +1736,10 @@ export default function App() {
       spouseSpilloverNote,
     };
   }, [currentSaved, totalAtRet, takeHome, effectiveExpenses, retSpendBasis,
-      ssAtRet, retPensionBasis, effectivePension, inflationRate, yearsToRetForBasis,
+      ssAtRet, retPensionBasis, retPensionAnnualBasis, effectivePension, inflationRate, yearsToRetForBasis,
       safeRetAge, safeLifeExp, currentAge, filingStatus, spouseIncome,
       includeSS, householdSS, ssClaimingAge, pensionMonthly, pensionStartAge,
-      spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote]);
+      spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote, planView]);
 
   // Plan screen "Try a change" slider bounds — age/financial math extracted from the screen (rule 10).
   // canTuneRothConversion: pre-gated eligibility boolean so the screen never does > 0 check.

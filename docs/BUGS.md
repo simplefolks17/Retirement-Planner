@@ -594,6 +594,113 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-123 — `calcWorkLongerBreakEven`'s `coversPlan` was a SIXTH inline copy of `marginForScenario`'s formula, and the shared formula itself shared the same latent bug BUG-118 patched only locally (found 2026-08-19, Opus adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium — the shared-formula bug affects `evaluateLifeEvent`,
+`buildLeverPreview`, `buildLeverRail`, and `buildDurationRail` too, not just the one call site
+BUG-118 patched; a lever-rail tick or life-event verdict could read "comfortable" for a scenario
+that retires at/after the plan's own life expectancy.**
+**Found by:** an execution-based Opus adversarial review of PR #66 (the same review that found
+BUG-122), re-verified directly against the code before any fix.
+**What:** `src/model/what-if.js`'s `marginForScenario` (BUG-73's "the ONE sustainability-margin
+computation — replaces four inlined copies") computes, on its depletion basis,
+`marginYears = scenarioYears − (safeLifeExp − scenarioRetAge)`. When `scenarioRetAge >= safeLifeExp`
+(the scenario retires at or after the plan's own life expectancy), `safeLifeExp − scenarioRetAge` is
+zero or negative — subtracting a non-positive number only ever ADDS to `marginYears`, so a scenario
+that sustains almost no time at all can still read as a large positive margin. Proven repro:
+`marginForScenario({ scenarioYears: 0.5, scenarioRetAge: 75 }, safeLifeExp: 70)` returned
+`marginYears: 5.5` → `verdictForMargin` → `"comfortable"`, for a scenario that retires 5 years past
+the plan's own horizon and sustains only half a year. Separately, `calcWorkLongerBreakEven`'s own
+`coversPlan` (~line 1497) was a SIXTH, independent inline copy of this same formula — BUG-118 had
+already patched *this one copy* with an ad hoc `retAge < safeLifeExp` guard, but the guard was never
+added to the canonical `marginForScenario`, so the 4 other callers kept the original bug.
+**Why:** `marginForScenario`'s depletion-basis formula was written assuming `scenarioRetAge` is
+always well inside the plan's horizon (true for money events and most lever sweeps) and never
+validated the case where a caller's own retirement-age sweep (`calcWorkLongerBreakEven`'s offsets,
+or a wide `buildLeverRail` retirement-age sweep) pushes past it.
+**Fix:** moved the guard into `marginForScenario` itself: when `Number.isFinite(safeLifeExp) &&
+scenario.scenarioRetAge >= safeLifeExp`, return a sentinel `{ marginYears: -Infinity, marginBasis:
+"depletion" }` — unambiguously negative regardless of `scenarioYears`' own magnitude, so
+`verdictForMargin` always reads it as `"unaffordable"`. `buildMarginLabel` gained an explicit case
+for the sentinel (`"doesn't cover the plan by {safeLifeExp}"`) so it never prints `"runs out Infinity
+yrs early"`. `calcWorkLongerBreakEven`'s inline `coversPlan` was deleted outright and replaced with
+`marginForScenario(scenario, safeLifeExp).marginYears >= 0` — the sixth copy is gone, and the guard
+now applies to all 5 callers (the 4 pre-existing plus this one) from one place.
+**Tests:** `src/model/__tests__/what-if.test.js` — direct repro of the exact numbers above via
+`marginForScenario`/`verdictForScenarioResult`; a boundary case at `scenarioRetAge === safeLifeExp`
+exactly; `buildMarginLabel`'s sentinel label; a control case proving the guard is inert for the
+ordinary (retires-before-horizon) case. All pre-existing BUG-118/`calcWorkLongerBreakEven` tests
+(including BUG-118's own regression test) still pass unchanged. Reverted the `marginForScenario`
+guard and confirmed 4 tests fail (including BUG-118's pre-existing regression test, proving the
+delegation genuinely carries the fix through); restored and confirmed all 126 tests in the file pass.
+**Golden master:** untouched — `marginForScenario`'s depletion basis is unchanged for every ordinary
+(retires-before-horizon) scenario; only the previously-unguarded degenerate case changes.
+**Where:** `src/model/what-if.js` (`marginForScenario`, `buildMarginLabel`,
+`calcWorkLongerBreakEven`), `src/model/__tests__/what-if.test.js`.
+
+---
+
+### BUG-122 — the "Guaranteed for life" card's percentage was diluted by a spouse's temporary income, and its "savings cover you until then" claim had no truth condition (found 2026-08-19, Opus adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — both halves directly undermine the card's stated purpose
+(a first-time user's one honest "is this guaranteed" signal); the second half is a live,
+self-contradicting claim at a plausible input combination, the exact BUG-117 pattern reintroduced
+one commit later.**
+**Found by:** an execution-based Opus adversarial review of PR #66 (Slice 4), with reproductions
+verified directly against the code before any fix, not just read from the diff.
+
+**Part 1 — `guaranteedPct` dilution.** `src/model/drawdown.js`'s `calcRetIncomeFlow` computed
+`guaranteedPct` from the SCALED `ssBand`/`penBand` (`guaranteedIncome / exp`), where `scale = exp /
+incomeTotal` in the over-funded regime and `incomeTotal` includes `spouseIncome`. A spouse's
+temporary gap-year paycheck is correctly excluded from the numerator's raw terms, but it still
+multiplies into `scale` — diluting the percentage anyway. Proven repro: `calcRetIncomeFlow({
+effectiveExpenses: 80_000, ss: 60_000, pension: 0 })` → 75%; the same household with `spouseIncome:
+40_000` added → 60%, even though the spouse's pay has nothing to do with what share of spending SS
+covers. This also fed two more symptoms from the same root cause: the card disagreed with its own
+tap-through destination (Numbers → Statement's "Where the money comes from" reads the ungated
+`householdSS`, while the card read the retirement-year-GATED `ssAtRet` — 0% vs 21% at one fixture),
+and the card read an alarming 0% for every new user at the shipped default (retire 65, claim SS 67)
+purely because SS hadn't started YET in the snapshot year, a category error for a *lifetime* claim.
+**Fix:** `guaranteedPct` now reads the RAW, unscaled `ssRaw + penRaw` (capped at 100), never the
+scaled bands — `Math.min(100, Math.round(((ssRaw + penRaw) / exp) * 100))`. The scaled
+`ssBand`/`penBand`/`guaranteedIncome` are untouched (still needed for the meter's bars, which must
+sum to `exp`). Separately, `App.jsx`'s `planHighlights.guaranteed.pct` now reads a dedicated
+`calcRetIncomeFlow` call (`flowGuaranteedPct`) fed the UNGATED eventual `householdSS`/
+`retPensionAnnualBasis` streams — the same fields `budget.js`'s Statement-tab ledger already reads —
+instead of the retirement-year-gated snapshot `flowRetirement` uses for its bands, resolving both the
+destination-disagreement and the false-0%-for-new-users symptoms at once. `hasSS`/`hasPension`/
+`hasSpouseIncome` deliberately stay on the GATED `flowRetirement` snapshot — a different question
+(has this actually started by retirement, for the sub-copy's timing narrative) from the lifetime
+percentage above.
+
+**Part 2 — ungated "savings cover you until then" claim.** `src/horizon/screens/PlanScreen.jsx`'s
+`guaranteedSub` rendered "`{source} starts at {age} — savings cover you until then`" unconditionally
+whenever `startsAtAge != null`, with no check that savings actually last that long. Proven repro
+(age 55, retire 60, spend $300k/yr, trad401k $100k only): the Plan screen simultaneously showed
+"Guaranteed for life 0% — Social Security starts at 67 — savings cover you until then" AND "Money
+lasts to age 61 — 29 years short of your plan" — directly contradicting itself. This is BUG-117's
+exact pattern (an ungated reassurance claim with no truth condition), reintroduced one commit later
+in the same PR.
+**Fix:** new `planHighlights.guaranteed.savingsCoverUntilStart` (`App.jsx`), computed from the
+already-available `planView.outlastsPlan`/`depletionAge` (`calcPlanProgress`,
+`src/model/retirement-drawdown.js`) — true when `outlastsPlan` or `depletionAge >= startsAtAge`, null
+when there's no pending source to cover. `PlanScreen.jsx` branches its copy on this pre-computed
+boolean (rule 10 — no age comparison in the screen): true keeps the existing sentence, false swaps to
+`"{source} starts at {age} — but your savings may not stretch that far, see \"Money lasts to\" below"`.
+**Tests:** `src/model/__tests__/drawdown.test.js` — a new fixture that actually enters the scaled
+regime WITH spouse income (the existing spouse-exclusion fixture never did, which is why it didn't
+catch this), proving `guaranteedPct` is identical with/without the spouse's income once scaled.
+`src/horizon/__tests__/plan-screen.test.js` — the exact false-reassurance repro rendering neither
+claim contradictorily, plus the true-case rendering the original sentence. Both reverted-and-confirmed
+(drawdown.js's fix reverted → new test fails with the pre-fix diluted value; PlanScreen.jsx's fix
+reverted → the false-reassurance test fails); both restored and confirmed green.
+**Golden master:** untouched — `guaranteedPct`/`savingsCoverUntilStart` are new fields with no
+existing golden-master assertion; no other locked value changed.
+**Where:** `src/model/drawdown.js`, `src/App.jsx`, `src/horizon/screens/PlanScreen.jsx`,
+`src/model/__tests__/drawdown.test.js`, `src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
 ### BUG-121 — `StmtCol`'s label-fit guard was inline arithmetic on model values, against rule 10 (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
 
 **Owner:** me_theguy. **Severity: Low (rule-10 hygiene) — visually inert (the computation itself was

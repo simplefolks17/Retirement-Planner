@@ -117,6 +117,24 @@ export function verdictForMargin(marginYears) {
 // to diverge.
 export function marginForScenario(scenario, safeLifeExp) {
   if (scenario.scenarioYears !== Infinity) {
+    // BUG-123: retiring AT/AFTER the plan's own life expectancy can never
+    // "cover the plan" — there's no horizon left to cover, no matter how long
+    // the scenario itself sustains. Without this guard, `safeLifeExp -
+    // scenarioRetAge` goes to zero or negative once scenarioRetAge reaches
+    // safeLifeExp, and subtracting a non-positive number only ever ADDS to
+    // marginYears — so a scenario that barely sustains half a year could still
+    // read "comfortable" purely because it retires past the plan's own
+    // horizon. `calcWorkLongerBreakEven`'s `coversPlan` (BUG-118) guarded this
+    // ad hoc with `retAge < safeLifeExp` on its own sixth, separate copy of
+    // this formula; this generalizes that guard into the ONE shared formula so
+    // every caller (evaluateLifeEvent, buildLeverPreview, buildLeverRail,
+    // buildDurationRail, and coversPlan itself) gets it, not just the copy
+    // that happened to get patched. -Infinity (not a finite negative) keeps
+    // verdictForMargin's `< 0` check unambiguous regardless of scenarioYears'
+    // own magnitude; buildMarginLabel has an explicit case for it below.
+    if (Number.isFinite(safeLifeExp) && scenario.scenarioRetAge >= safeLifeExp) {
+      return { marginYears: -Infinity, marginBasis: "depletion" };
+    }
     return {
       marginYears: scenario.scenarioYears - (safeLifeExp - scenario.scenarioRetAge),
       marginBasis: "depletion",
@@ -145,6 +163,10 @@ function buildMarginLabel({ marginYears, marginBasis }, safeLifeExp) {
     if (marginYears > cap) return `${cap}+ yrs of runway left at ${safeLifeExp}`;
     return `≈${Math.round(marginYears)} yrs of runway left at ${safeLifeExp}`;
   }
+  // BUG-123: the -Infinity sentinel for "retires at/after safeLifeExp" (see
+  // marginForScenario) needs its own label — Math.abs(-Infinity) would
+  // otherwise print "runs out Infinity yrs early".
+  if (marginYears === -Infinity) return `doesn't cover the plan by ${safeLifeExp}`;
   return marginYears >= 0
     ? `${Math.round(marginYears)} yrs to spare past ${safeLifeExp}`
     : `runs out ${Math.round(Math.abs(marginYears))} yrs early`;
@@ -1494,10 +1516,13 @@ export function calcWorkLongerBreakEven({
     // `safeLifeExp - retAge` zero or negative, which any non-negative
     // scenarioYears trivially satisfies. Without this guard a scenario that
     // retires AFTER the plan already ends read coversPlan: true.
-    const coversPlan = scenSustainable || (
-      Number.isFinite(safeLifeExp) && retAge < safeLifeExp
-        && scenario.scenarioYears >= (safeLifeExp - retAge)
-    );
+    // BUG-123: this used to be a SIXTH inline copy of the sustainability-margin
+    // formula `marginForScenario`'s own header comment says it "replaces four
+    // inlined copies" of — with the retAge < safeLifeExp guard applied only
+    // here, not to the shared function. Now delegates outright: the guard
+    // lives in marginForScenario itself (so every caller gets it), and this
+    // row just asks whether the margin is non-negative.
+    const coversPlan = marginForScenario(scenario, safeLifeExp).marginYears >= 0;
     return {
       years: k, retAge,
       portfolioAtRet, portfolioDelta: portfolioAtRet - baseTotalAtRet,

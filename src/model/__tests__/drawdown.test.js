@@ -100,6 +100,35 @@ describe("calcRetIncomeFlow — guaranteedPct (SS + pension only)", () => {
     expect(f.guaranteedPct).toBe(100);
   });
 
+  // BUG-122: this is the case the two tests above can't reach. "Over-funded"
+  // alone (no spouse) never discriminates the raw-vs-scaled source, because
+  // `scale` is 1 unless incomeTotal > exp; "spouse-exclusion" alone never
+  // discriminates it either, because that fixture's incomeTotal stays under
+  // exp (scale is still 1 there). Only BOTH together — spouse income pushing
+  // incomeTotal over exp — puts a live `scale < 1` factor on the SS/pension
+  // bands, which is exactly what used to leak spouse income into the percent.
+  it("is identical with and without a spouse's income even in the SCALED (over-funded) regime — the actual dilution repro (BUG-122)", () => {
+    // exp 40k, ss 30k alone: under-funded, scale=1, guaranteedPct = 75.
+    const withoutSpouse = calcRetIncomeFlow({ effectiveExpenses: 40_000, ss: 30_000, pension: 0 });
+    expect(withoutSpouse.guaranteedPct).toBe(75);
+    // Same household, spouse adds 30k: incomeTotal (60k) > exp (40k) — the
+    // scaled regime. Pre-fix, ssBand was scaled down by spouseIncome's own
+    // share of incomeTotal, diluting the percent even though ss itself didn't
+    // change. Post-fix, the percent must stay unchanged.
+    const withSpouse = calcRetIncomeFlow({
+      effectiveExpenses: 40_000, ss: 30_000, pension: 0, spouseIncome: 30_000,
+    });
+    expect(withSpouse.portfolioDraw).toBe(0);        // fully over-funded, nothing drawn
+    expect(withSpouse.guaranteedPct).toBe(75);
+    expect(withSpouse.guaranteedPct).toBe(withoutSpouse.guaranteedPct);
+    // The scaled-band formula this replaces would have read 50 here
+    // (ssBand = 30k * (40k/60k) = 20k → 20k/40k = 50%) — proving this fixture
+    // actually reaches the regime the earlier tests couldn't.
+    const scaleDilutedFormula = Math.round((30_000 * (40_000 / 60_000) / 40_000) * 100);
+    expect(scaleDilutedFormula).toBe(50);
+    expect(withSpouse.guaranteedPct).not.toBe(scaleDilutedFormula);
+  });
+
   it("is null — a designed '—', never 0 — when there are no expenses to take a share of", () => {
     expect(calcRetIncomeFlow({ effectiveExpenses: 0, ss: 20_000, pension: 0 }).guaranteedPct).toBeNull();
   });

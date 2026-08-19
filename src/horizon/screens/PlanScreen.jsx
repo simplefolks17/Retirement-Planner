@@ -553,6 +553,14 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
   // "the rest comes from your savings" would be false for that household.
   // The startsAtAge branches cover the retirement-year snapshot honestly — see
   // planHighlights.guaranteed's note in App.jsx.
+  //
+  // BUG-122 Item 2: "savings cover you until then" used to render unconditionally
+  // whenever startsAtAge was set, with no check that savings actually last that
+  // long — it could (and did, at a plausible input combo) sit directly next to
+  // the "Money lasts to" card contradicting it outright. g.savingsCoverUntilStart
+  // is the pre-computed truth condition (App.jsx, from calcPlanProgress's own
+  // outlastsPlan/depletionAge — the SAME numbers "Money lasts to" itself
+  // renders), so this screen still does no age arithmetic of its own (rule 10).
   const guaranteedSub = (() => {
     const g = planHighlights?.guaranteed;
     if (!g) return undefined;
@@ -568,9 +576,12 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
         ? `${source} — ${rest} · more from ${g.startsAtAge}`
         : `${source} — ${rest}`;
     }
-    return g.startsAtAge != null
-      ? `${g.startsLabel} starts at ${g.startsAtAge} — savings cover you until then`
-      : `Nothing guaranteed — ${rest}`;
+    if (g.startsAtAge != null) {
+      return g.savingsCoverUntilStart
+        ? `${g.startsLabel} starts at ${g.startsAtAge} — savings cover you until then`
+        : `${g.startsLabel} starts at ${g.startsAtAge} — but your savings may not stretch that far, see "Money lasts to" below`;
+    }
+    return `Nothing guaranteed — ${rest}`;
   })();
 
   // Preview-first lever state lives here (not inside TryAChangePanel) so the
