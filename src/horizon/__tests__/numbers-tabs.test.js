@@ -60,6 +60,11 @@ const statementView = {
   monthlyTotal:         5_000,
   monthlyHHSS:          3_096,
   monthlyPension:           0,
+  // Item 6 (BUG-122 batch): companion strip bar widths, computed once here
+  // (calcStatementView), never divided in JSX (rule 10).
+  ssSharePct:              62,
+  pensionSharePct:          0,
+  portDrawSharePct:        40,
   // Session-3: lifetime compounding multiplier (totalAtRet / totalContrib)
   lifetimeContribROI:    7.0,
   // Session-4: income replacement ratio
@@ -925,6 +930,20 @@ describe("NumbersScreen — Statement tab (Session-4: income replacement)", () =
     // monthlyTotal > 0 → strip visible
     expect(allText).toContain("Where retirement income comes from");
     expect(allText).toContain("Social Security");
+    act(() => renderer.unmount());
+  });
+
+  // Item 6 (BUG-122 batch): this strip was the THIRD site the rule-11
+  // basis-caption pass was supposed to cover but missed (commit 022cced only
+  // fixed "the bottom line" and the "Where the money comes from" ledger). It
+  // renders the same retirement-year figures as the ledger above it, so now
+  // carries the SAME caption text — proving there are genuinely TWO scoped
+  // captions on the tab (one per site), not one shared claim reused by count.
+  it("the companion strip carries its own scoped retirement-year-dollars caption, distinct from the ledger's", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    const occurrences = allText.split("in retirement-year dollars").length - 1;
+    expect(occurrences).toBe(2);
     act(() => renderer.unmount());
   });
 

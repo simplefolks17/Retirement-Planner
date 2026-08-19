@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo, Btn, Pill } from "../shared.jsx";
 import { fmtFull, fmtPct } from "../../formatters.js";
-import { buildBarSegments } from "../../model/budget.js";
+import { buildBarSegments, SEG_LABEL_MIN_SHARE_PCT } from "../../model/budget.js";
 
 // A deduction row: "−$12,400" for a finite value, plain "—" when missing.
 // Negation goes THROUGH the canonical formatter (never a hand-prepended "−",
@@ -577,8 +577,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 </div>
                 {/* Retirement income companion strip — shows how SS/pension/portfolio
                     combine to fund retirement (mirrors the working-year waterfall).
-                    Bar widths are layout proportion only (val/monthlyTotal * 100%) —
-                    the same precedent as Accounts tab horizontal bars (rule 10). */}
+                    Bar widths read the model's own pre-computed sharePct fields
+                    (calcStatementView) instead of dividing in JSX — a screen formats
+                    and lays out, it does not compute (rule 10; same class BUG-121
+                    fixed nearby in this file's StmtCol bars). */}
                 {sv.monthlyTotal > 0 && (
                   <div style={{ marginTop: 16 }}>
                     <div style={{
@@ -588,23 +590,30 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       Where retirement income comes from · per month
                     </div>
                     {[
-                      { label: "Social Security", val: sv.monthlyHHSS, color: t.warm },
-                      ...(sv.monthlyPension > 0 ? [{ label: "Pension", val: sv.monthlyPension, color: t.accent }] : []),
-                      { label: "Portfolio draw", val: sv.monthlyPortDraw, color: t.good },
-                    ].map(({ label, val, color }) => (
+                      { label: "Social Security", val: sv.monthlyHHSS, pct: sv.ssSharePct, color: t.warm },
+                      ...(sv.monthlyPension > 0
+                        ? [{ label: "Pension", val: sv.monthlyPension, pct: sv.pensionSharePct, color: t.accent }]
+                        : []),
+                      { label: "Portfolio draw", val: sv.monthlyPortDraw, pct: sv.portDrawSharePct, color: t.good },
+                    ].map(({ label, val, pct, color }) => (
                       <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <div style={{ font: `400 12px ${SERIF}`, color: t.mut, width: 110 }}>{label}</div>
                         <div style={{ flex: 1, background: `${color}22`, borderRadius: 3, height: 6, overflow: "hidden" }}>
-                          <div style={{
-                            width: `${Math.round((val / sv.monthlyTotal) * 100)}%`,
-                            background: color, height: "100%",
-                          }} />
+                          <div style={{ width: `${pct}%`, background: color, height: "100%" }} />
                         </div>
                         <div style={{ font: `500 12px ${HM}`, color: t.ink, width: 56, textAlign: "right" }}>
                           {fmt(val)}
                         </div>
                       </div>
                     ))}
+                    {/* Rule 11: this strip reads the SAME retirement-year monthly
+                        bands as the "Where the money comes from" ledger above (both
+                        source calcStatementView's ss/pension/exp — budget.js:199-205)
+                        — the third of the three sites this PR's basis-caption pass
+                        was supposed to cover, missed until this batch. */}
+                    <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 6, fontStyle: "italic" }}>
+                      in retirement-year dollars
+                    </div>
                   </div>
                 )}
               </div>
@@ -1292,7 +1301,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                                 minWidth: 0, overflow: "hidden",
                                 whiteSpace: "nowrap",
                               }}>
-                                {seg.pct >= 12 ? `${seg.pct}%` : ""}
+                                {seg.pct >= SEG_LABEL_MIN_SHARE_PCT ? `${seg.pct}%` : ""}
                               </div>
                             ))}
                           </div>

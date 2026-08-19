@@ -203,6 +203,14 @@ export function calcStatementView({
   const monthlyPension  = Math.round(pension / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyPortDraw = Math.round(Math.max(0, exp - ss - pension) / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
+  // Each band's share of monthlyTotal, as a display-ready integer percent — the
+  // Statement tab's "Where retirement income comes from" companion strip used
+  // to compute `Math.round((val / sv.monthlyTotal) * 100)` inline in JSX for
+  // each bar's width (rule 10 violation, same class BUG-121 fixed nearby).
+  const sharePct = (val) => monthlyTotal > 0 ? Math.round((val / monthlyTotal) * 100) : 0;
+  const ssSharePct       = sharePct(monthlyHHSS);
+  const pensionSharePct  = sharePct(monthlyPension);
+  const portDrawSharePct = sharePct(monthlyPortDraw);
   const monthlyTakeHome = (hasIncome && takeHome > 0)
     ? Math.round(takeHome / ASSUMPTIONS.MONTHS_PER_YEAR)
     : null;
@@ -236,6 +244,7 @@ export function calcStatementView({
     afterTaxLevel, flowKeep, flowTaxPct, flowPreTaxPct, flowPostTaxPct, flowSavePct, flowKeepPct,
     showPreTaxBar, showPostTaxBar, showPaycheckLine,
     monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
+    ssSharePct, pensionSharePct, portDrawSharePct,
     monthlyTakeHome, incomeReplacementPct,
     effFedRatePct,
     lifetimeContribROI,

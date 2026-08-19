@@ -103,3 +103,87 @@ describe("golden master ↔ App wiring cross-check (default state)", () => {
     expect(props.rangeView.successPct).toBe(E.rangeSuccessPct);
   });
 });
+
+// ── planHighlights wiring cross-check (item 5, BUG-122 batch review) ─────────
+//
+// The Horizon design-review PR (#66, Slice 4) added 7 new fields to
+// planHighlights/planView for the Plan screen's rebuilt stat row + dollar-
+// basis toggle. Before this block, they had ZERO coverage through the real
+// App — only hand-built-fixture unit tests existed. Proven: deliberately
+// breaking the real wiring in App.jsx (dropping a basis conversion on ss/
+// spouseIncome fed into calcRetIncomeFlow) left the full 1319-test suite
+// still 100% green — nothing caught it. This block closes that gap the same
+// way the block above does: mount the REAL App, lock the REAL computed
+// values (read from a live run, never guessed), additive to the file above.
+const PH = {
+  todayExpenses:      57_377,
+  retExpenses:         226_414.74822089862,
+  guaranteedPct:       21,
+  guaranteedStartsAge: 67,
+  guaranteedStartsLabel: "Social Security",
+  savingsCoverUntilStart: true,
+  yearsToRetirement:   35,
+  retirementDuration:  25,
+  outlastsPlan:        false,
+  depletionAge:        87,
+  yearsShortOfPlan:    3,
+};
+
+describe("planHighlights ↔ App wiring cross-check (default state, item 5)", () => {
+  it("incomeFlowByBasis carries both bases, correctly related by the SAME inflation factor App.jsx computes once", () => {
+    const props = mount();
+    const { today, retirement } = props.planHighlights.incomeFlowByBasis;
+
+    expect(today.expenses).toBe(PH.todayExpenses);
+    expect(today.ss).toBe(0);          // SS hasn't started by this default's retirement age
+    expect(today.hasSS).toBe(false);
+    expect(today.portfolioDraw).toBe(today.expenses); // nothing guaranteed yet → 100% portfolio
+
+    expect(retirement.expenses).toBeCloseTo(PH.retExpenses, 6);
+    // Both bases are the SAME concept scaled by the SAME factor — today's and
+    // retirement's ratio must match exactly (a real wiring bug — e.g. scaling
+    // only one of the two — would break this identity, not just move a number).
+    const factor = retirement.expenses / today.expenses;
+    expect(retirement.portfolioDraw / today.portfolioDraw).toBeCloseTo(factor, 6);
+  });
+
+  it("guaranteed (the 'Guaranteed for life' card) reads BUG-122's fixed ungated pct, and gates its 'savings cover you until then' claim on a real computed boolean", () => {
+    const props = mount();
+    const g = props.planHighlights.guaranteed;
+
+    expect(g.pct).toBe(PH.guaranteedPct);
+    // hasSS false: the RETIREMENT-YEAR-GATED snapshot (SS hasn't started by
+    // retirement at this default) — a DIFFERENT question from pct above,
+    // which reads the ungated eventual streams (BUG-122's whole point: a new
+    // user's SS-not-started-yet must not zero out a LIFETIME percentage).
+    expect(g.hasSS).toBe(false);
+    expect(g.startsAtAge).toBe(PH.guaranteedStartsAge);
+    expect(g.startsLabel).toBe(PH.guaranteedStartsLabel);
+    // BUG-122 item 2: this must be a real boolean (from calcPlanProgress), not
+    // undefined/always-true — the false-reassurance bug was exactly a missing
+    // gate here.
+    expect(typeof g.savingsCoverUntilStart).toBe("boolean");
+    expect(g.savingsCoverUntilStart).toBe(PH.savingsCoverUntilStart);
+  });
+
+  it("dollarBasisApplicable/dollarBasisOptions are wired — the toggle has something real to render", () => {
+    const props = mount();
+    expect(props.planHighlights.dollarBasisApplicable).toBe(true);
+    const ids = props.planHighlights.dollarBasisOptions.map(o => o.id);
+    expect(ids).toEqual(["today", "retirement"]);
+    expect(props.planHighlights.yearsToRetirement).toBe(PH.yearsToRetirement);
+    expect(props.planHighlights.retirementDuration).toBe(PH.retirementDuration);
+  });
+
+  it("takeHomeIsHousehold is false at the no-spouse default (rule 9's MFJ-only household scope)", () => {
+    const props = mount();
+    expect(props.planHighlights.takeHomeIsHousehold).toBe(false);
+  });
+
+  it("planView (the 'Money lasts to' card) — outlastsPlan/depletionAge/yearsShortOfPlan match golden-master's own yearsSustained/withdrawalRate story", () => {
+    const props = mount();
+    expect(props.planView.outlastsPlan).toBe(PH.outlastsPlan);
+    expect(props.planView.depletionAge).toBe(PH.depletionAge);
+    expect(props.planView.yearsShortOfPlan).toBe(PH.yearsShortOfPlan);
+  });
+});

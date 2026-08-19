@@ -232,7 +232,7 @@ describe("PlanScreen — command center survivors", () => {
     const { renderer } = mount();
     const text = allText(renderer.root);
     expect(text).toContain("Retirement income");
-    expect(text).toContain("82% of current income");
+    expect(text).toContain("replaces 82% of today's take-home pay");
     expect(text).toContain("Soc. Security");
     act(() => renderer.unmount());
   });
@@ -272,7 +272,11 @@ describe("PlanScreen — command center survivors", () => {
     expect(text).toContain("Social Security — the rest comes from your savings");
     expect(text).toContain("Money lasts to");
     expect(text).toContain("Tax in retirement");
-    expect(text).toContain("total, across all your retirement years");
+    // Item 8 (BUG-122 batch): "total, across all" overclaimed completeness
+    // (BUG-38's incremental-tax-only accounting) — softened, and now carries
+    // its own basis note instead of no basis at all.
+    expect(text).toContain("across your retirement years, in retirement-year dollars");
+    expect(text).not.toContain("total, across all your retirement years");
     // Retired copy — the labels these replaced.
     expect(text).not.toContain("Income for life");
     expect(text).not.toContain("Retirement taxes");
@@ -447,7 +451,7 @@ describe("PlanScreen — dollar-basis toggle", () => {
     const before = allText(renderer.root);
     act(() => { buttonsByText(renderer.root, "At 65")[0].props.onClick(); });
     const after = allText(renderer.root);
-    for (const invariant of ["36%", "past 90", "$554k", "82% of current income"]) {
+    for (const invariant of ["36%", "past 90", "$554k", "replaces 82% of today's take-home pay"]) {
       expect(before).toContain(invariant);
       expect(after).toContain(invariant);
     }

@@ -178,6 +178,28 @@ describe("calcStatementView", () => {
     expect(v.monthlyPortDraw).toBe(0);
   });
 
+  // Item 6 (BUG-122 batch): the companion strip used to divide val/monthlyTotal
+  // inline in JSX for each bar's width — moved into the model so the screen
+  // only ever reads a precomputed share, never computes one (rule 10).
+  it("ssSharePct/pensionSharePct/portDrawSharePct sum to ~100 and match the monthly bands' own ratio", () => {
+    const v = calcStatementView({ ...base, effectivePension: 12_000 });
+    expect(v.ssSharePct).toBe(Math.round((v.monthlyHHSS / v.monthlyTotal) * 100));
+    expect(v.pensionSharePct).toBe(Math.round((v.monthlyPension / v.monthlyTotal) * 100));
+    expect(v.portDrawSharePct).toBe(Math.round((v.monthlyPortDraw / v.monthlyTotal) * 100));
+    // Rounding of 3 independent shares can land at 99-101, never wildly off.
+    const total = v.ssSharePct + v.pensionSharePct + v.portDrawSharePct;
+    expect(total).toBeGreaterThanOrEqual(99);
+    expect(total).toBeLessThanOrEqual(101);
+  });
+
+  it("share percentages are 0, not NaN/Infinity, when monthlyTotal is 0", () => {
+    const v = calcStatementView({ ...base, effectiveExpenses: 0, householdSS: 0 });
+    expect(v.monthlyTotal).toBe(0);
+    expect(v.ssSharePct).toBe(0);
+    expect(v.pensionSharePct).toBe(0);
+    expect(v.portDrawSharePct).toBe(0);
+  });
+
   it("Statement table arithmetic: gross − taxes − preTaxDeductions = takeHome", () => {
     // A user with 401k (pre-tax), Roth IRA, and taxable brokerage contributions.
     // safeDeduc = pre-tax only (401k); Roth + taxable are after-tax.

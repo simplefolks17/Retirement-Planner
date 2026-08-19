@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 12 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 14 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,6 +15,8 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
+| **BUG-125** | Medium | "Guaranteed for life" ignores a spouse's own SS claiming age — only the primary's timing gates the card | `src/App.jsx`, `src/model/retirement-income.js` |
+| **BUG-124** | Low | "Tax in retirement" isn't wired to the dollar-basis toggle, and is entangled with BUG-38's known undercounting | `src/horizon/screens/PlanScreen.jsx`, `src/model/retirement-engine.js` |
 | **BUG-113** | Low-Medium | Journey's flow-bar `%` labels are 9px white on an `opacity:.72` composited fill — 1.54–3.45:1, a compositing failure the flat-token contrast contract (BUG-112) structurally can't cover | `src/horizon/screens/JourneyScreen.jsx` |
 | **BUG-103** | Medium | Monte Carlo `successPct` counts paths rescued only by the penalized spouse-401k spillover hatch as plain successes, with no visibility (BUG-92's problem class, new surface) | `src/model/monte-carlo.js`, `src/App.jsx`, `src/components/ArcGraph.jsx` |
 | **BUG-102** | Medium | Lever-preview's spouse-gap gating inherited from the base plan, not the scenario's own re-seeded maps | `src/model/what-if.js`, `src/App.jsx` |
@@ -62,6 +64,59 @@ per-mode text instead of a hardcoded `#fff`, or (c) move the `%` out of the bar 
 below it (which already exists, at `t.faint`, and is now compliant). (c) is the smallest and also
 removes the `pct >= 12` hide-the-label guard the current design needs.
 **Where:** `src/horizon/screens/JourneyScreen.jsx:81-91`.
+
+---
+
+### BUG-125 — "Guaranteed for life" doesn't account for a spouse claiming Social Security on a different timeline than the primary (found 2026-08-19, Opus adversarial review of PR #66; filed, not fixed — needs an owner product decision)
+
+**Owner:** me_theguy. **Severity: Medium — a headline percentage can silently include income that
+hasn't started yet, with no disclosure, in a genuinely common MFJ shape (spouses claiming SS at
+different ages).**
+**Found by:** an execution-based Opus adversarial review of PR #66 (Slice 4/BUG-122's own review).
+**What:** the "Guaranteed for life" card's `nextGuaranteedStart` (`src/App.jsx`, near
+`startsAtAge`/`startsLabel`) only considers the PRIMARY's `ssClaimingAge`. In an MFJ household where
+the primary claims SS at 65 (= retirement age) and the spouse claims later (e.g. 70), the card can
+read e.g. "40%" with `startsAtAge: null` (implying "already guaranteed now") — but that 40% includes
+the spouse's SS five years before it actually starts, and nothing discloses this.
+**Why:** this traces to a PRE-EXISTING, model-wide simplification, not something BUG-122 introduced —
+`src/model/retirement-income.js` (~line 49) gates household SS only on the primary's claim age;
+`spouseClaimingAge` only affects the benefit AMOUNT via `claimFactor`, never the timing. BUG-122's new
+"Guaranteed for life" card is internally consistent with the engine (it reads the same household SS
+figure everything else does) — it's just the first UI surface to turn this simplification into a
+headline percentage with no disclosure attached.
+**Not fixed here:** fixing the underlying model gate is a genuinely bigger change (does
+`nextGuaranteedStart` need to become per-spouse-aware? does the whole household SS model need
+per-person claim-age gating, the same shape question BUG-84 already has open for withdrawal order?) —
+this needs an owner decision between fix shapes, not a quick fix bundled into a batch of unrelated
+model/logic corrections.
+**Where:** `src/App.jsx` (`nextGuaranteedStart`), `src/model/retirement-income.js:49`.
+
+---
+
+### BUG-124 — "Tax in retirement" is the one dollar-denominated Plan card not wired to the basis toggle, and is entangled with BUG-38's known undercounting (found 2026-08-19, Opus adversarial review of PR #66; filed, not fixed — deliberately deferred)
+
+**Owner:** me_theguy. **Severity: Low — both halves are pre-existing, known, accepted simplifications;
+this entry exists so they're not silently forgotten now that BUG-122's review surfaced them on this
+specific card, and so a future session doesn't re-discover them from scratch.**
+**Found by:** an execution-based Opus adversarial review of PR #66 (Slice 4/BUG-122's own review).
+**What:** two separate, narrow gaps on the "Tax in retirement" card
+(`src/horizon/screens/PlanScreen.jsx`): (a) it's the only genuinely dollar-denominated card on the
+Plan screen NOT wired to the dollar-basis toggle (`incomeFlowByBasis`/`DollarBasisToggle`) that the
+Income Meter and "Spending each month" already use — it always shows the retirement-year-dollar
+cumulative sum regardless of which basis the user has selected; (b) that sum is entangled with
+**BUG-38** (Open, accepted) — the engine only charges *incremental* tax above the SS/pension floor,
+so this total is systematically low by construction, not actually complete.
+**Why not fixed now:** (a) needs a larger, separate decision first — does the underlying tax
+calculation even have a today's-dollar equivalent computed anywhere the toggle could read? — not
+something to rush into a batch of unrelated model/logic fixes. (b) is BUG-38 itself, already Open and
+explicitly out of scope for this batch (BUG-122's fix instructions said "don't try to fix BUG-38
+itself").
+**Interim mitigation (shipped in the same batch that filed this):** the card's sub-copy no longer
+overclaims completeness ("total, across all your retirement years" → "across your retirement years,
+in retirement-year dollars") and now carries its own basis note, so the two gaps above are at least
+not compounded by misleading copy while they stay open.
+**Where:** `src/horizon/screens/PlanScreen.jsx` (tax card), `src/model/retirement-engine.js` (BUG-38's
+root cause).
 
 ---
 

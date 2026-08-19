@@ -198,7 +198,7 @@ function IncomeMeter({ t, planHighlights, flow, basisOption, basisApplicable, on
         </span>
         {incomeReplacementPct !== null && incomeReplacementPct !== undefined && (
           <span style={{ font: `500 12px ${HF}`, color: t.mut }}>
-            {incomeReplacementPct}% of current income
+            replaces {incomeReplacementPct}% of today's take-home pay
           </span>
         )}
       </div>
@@ -823,9 +823,15 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
               : "see the year-by-year detail"}
           accent={planView?.outlastsPlan ? t.ink : t.warm}
           onClick={() => navigate("numbers", "yearly")} />
+        {/* Item 8 (BUG-122 batch): "total, across all" overclaimed completeness
+            — the engine only charges INCREMENTAL tax above the SS/pension floor
+            (BUG-38, open/accepted), so this sum is systematically low by
+            construction, not actually complete. Softened, and given its own
+            basis note (a retirement-year-dollar cumulative sum) — see BUG-124
+            for why it's not wired to the toggle. */}
         <StatCard t={t} label="Tax in retirement"
           value={taxView?.composition?.total != null ? fmt(taxView.composition.total) : "—"}
-          sub="total, across all your retirement years"
+          sub="across your retirement years, in retirement-year dollars"
           accent={t.mut}
           onClick={() => navigate("numbers", "taxes")} />
       </div>

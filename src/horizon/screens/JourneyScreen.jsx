@@ -14,6 +14,7 @@
 
 import React, { useState } from "react";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
+import { SEG_LABEL_MIN_SHARE_PCT } from "../../model/budget.js";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo, Btn } from "../shared.jsx";
 
@@ -86,7 +87,7 @@ function ProportionBar({ t, segs }) {
             display: "flex", alignItems: "center", justifyContent: "center",
             font: `600 9px ${HF}`, color: "#fff", minWidth: 0, overflow: "hidden",
           }}>
-            {s.pct >= 12 ? `${s.pct}%` : ""}
+            {s.pct >= SEG_LABEL_MIN_SHARE_PCT ? `${s.pct}%` : ""}
           </div>
         ))}
       </div>
