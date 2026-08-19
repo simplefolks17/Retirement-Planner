@@ -594,6 +594,116 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-121 — `StmtCol`'s label-fit guard was inline arithmetic on model values, against rule 10 (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Low (rule-10 hygiene) — visually inert (the computation itself was
+correct), but the wrong layer, and used `?? 0` fallbacks the rule specifically forbids.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified — code from an earlier slice
+of this same design-review effort.
+**What:** `StmtCol` (`src/horizon/screens/NumbersScreen.jsx`) computed `barTotal`
+(`(bar?.segs ?? []).reduce((s, g) => s + Math.max(0, g.f ?? 0), 0)`) and `fitsLabel` (a segment's
+share of its bar ≥ `SEG_LABEL_MIN_SHARE_PCT`) inline in the render — arithmetic on model values
+inside `src/horizon/`, with `?? 0` fallbacks, both against rule 10.
+**Why:** the three composition bars' segments (paycheck split, account mix, retirement income mix)
+are assembled directly in `NumbersScreen.jsx` from raw model fields (`statementView`/`retVals`
+props), not pre-built by a `src/model/` function, so nothing already computed a label-fit boolean
+for the screen to just read.
+**Fix:** new pure `buildBarSegments` (`src/model/budget.js`) — takes raw `{f, c, l}` segments and
+returns them with a computed `showLabel` (share of the bar's total ≥ `SEG_LABEL_MIN_SHARE_PCT`, now
+also moved to `budget.js`), using a real `Number.isFinite`/`> 0` guard instead of `?? 0`. All three
+`StmtCol` call sites now wrap their `segs` array in `buildBarSegments(...)`; `StmtCol` itself just
+reads `seg.showLabel` — `barTotal`/`fitsLabel`/the local `SEG_LABEL_MIN_SHARE_PCT` constant are gone
+from `NumbersScreen.jsx` entirely.
+**Tests:** `buildBarSegments` unit tests in `src/model/__tests__/budget.test.js` (all-clear, threshold
+boundary at exactly 12%, missing/negative/non-finite inputs treated as real 0, zero-total bar, empty
+list). Wiring tests in `src/horizon/__tests__/numbers-tabs.test.js` — the default fixture's
+account-mix bar hides HSA's label (≈5.3% share, under 12%) while showing the other three, and the
+label reappears once HSA's share is grown past 12% (proving the wiring is live, not a value baked in
+once). Reverted the fix and confirmed all new tests fail; restored and confirmed green.
+**Golden master:** untouched — display-layer refactor only, no dollar value changed.
+**Where:** `src/model/budget.js`, `src/model/__tests__/budget.test.js`,
+`src/horizon/screens/NumbersScreen.jsx`, `src/horizon/__tests__/numbers-tabs.test.js`.
+
+---
+
+### BUG-120 — `MoreSheet` declared `aria-haspopup="dialog"` without being a real dialog (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium — on mobile, `MoreSheet` is the ONLY route to Someday / My
+details / Settings, so a missing Escape/focus contract is user-facing, not cosmetic.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified.
+**What:** `MoreSheet` (`src/components/HorizonShell.jsx`) — the mobile bottom-sheet overflow
+menu — declared `aria-haspopup="dialog" aria-expanded={showMore}` on its trigger button, but the
+sheet itself had none of the real dialog behaviour every OTHER Horizon overlay already got in
+BUG-50 (`ConfirmModal`, `LifeEventSheet`, `ApplyPreviewModal`): no `role="dialog"`, no `aria-modal`,
+no Escape handler, no focus move/restore.
+**Why:** `MoreSheet` predates the shared `useDialogBehaviour` hook (BUG-50) and was never
+retrofitted onto it when the other three overlays were — and BUG-49's keyboard-access sweep
+structurally can't catch this class of gap, since every test iteration navigates to a screen
+immediately after opening the sheet, unmounting it before the sweep runs.
+**Fix:** wired `useDialogBehaviour` (`src/horizon/useDialogBehaviour.js`) into `MoreSheet` —
+`role="dialog"`, `aria-modal="true"`, `aria-label="More"`, `tabIndex={-1}`, Escape-to-close, focus
+move/restore, and `data-dismiss-backdrop` on its backdrop (matching `ConfirmModal`/`LifeEventSheet`'s
+convention).
+**Tests:** new `src/__tests__/more-sheet-dismissal.test.js` (5 tests, mirroring
+`dialog-dismissal.test.js`'s pattern for the other three overlays, reached through the real App at a
+mobile viewport since `MoreSheet` is a `HorizonShell`-local, unexported component) — role/aria-modal/
+name, Escape closes, a non-Escape key doesn't, the backdrop click closes and is declared as one, a
+click inside the card doesn't bubble to the backdrop. Reverted the fix and confirmed all 5 fail;
+restored and confirmed green.
+**Golden master:** untouched.
+**Where:** `src/components/HorizonShell.jsx`, `src/__tests__/more-sheet-dismissal.test.js`.
+
+---
+
+### BUG-119 — SomedayScreen's photo-upload well was unclickable by mouse/touch (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium-High — an interaction-breaking bug, not an a11y nitpick: the
+ONLY way to open the file picker by mouse or touch was silently dead.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified.
+**What:** the photo-upload `<div onClick>` (added in Slice 2 for BUG-49's keyboard fix —
+`role="button"` + `tabIndex` + `kbActivate`) sits underneath a purely decorative, full-`inset:0`
+"dark gradient overlay" `<div>` rendered AFTER it in the JSX. With no `pointerEvents` declared on the
+overlay, later paint order put it on top, and it silently intercepted every mouse/touch tap on the
+photo well. The keyboard path (a real `onKeyDown` on the well itself) still worked, which is exactly
+why this went unnoticed — a keyboard-only regression test has no way to catch a mouse-only one.
+**Why:** the gradient exists purely for its visual effect over a photo and never needed to intercept
+pointer events; nothing declared it inert.
+**Fix:** `pointerEvents: "none"` on the gradient overlay (`src/horizon/screens/SomedayScreen.jsx`).
+**Tests:** new `src/horizon/__tests__/someday-screen.test.js` — asserts the overlay declares
+`pointerEvents: "none"` and that the photo well underneath is still a real click + keyboard target.
+Reverted the fix and confirmed the pointer-events assertion fails; restored and confirmed green.
+**Golden master:** untouched — layout/style only.
+**Where:** `src/horizon/screens/SomedayScreen.jsx`, `src/horizon/__tests__/someday-screen.test.js`.
+
+---
+
+### BUG-118 — `calcWorkLongerBreakEven`'s `coversPlan` read true for a scenario retiring at/after life expectancy (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium — feeds `minYearsToSustain`, which feeds the Plan screen's
+"working N more years would make it last" verdict sentence; a false positive there is a wrong claim
+on a headline surface, not just an internal miscalculation.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified.
+**What:** `calcWorkLongerBreakEven`'s per-offset `coversPlan` compared
+`scenario.scenarioYears >= (safeLifeExp - retAge)`. `safeLifeExp` is the BASE plan's fixed horizon
+and never moves with the offset; `retAge = safeRetAge + k` does. When `retAge >= safeLifeExp`
+(reachable at the top of a wide offset table, or whenever `retirementAge` is already close to
+`lifeExpect` — e.g. retirementAge 88, lifeExpect 90, offset 3 → retAge 91), `safeLifeExp - retAge` is
+zero or negative, so the comparison is trivially satisfied by any non-negative `scenarioYears`, and
+`coversPlan` read `true` for a scenario that retires AFTER the plan horizon it's supposedly covering.
+**Why:** the comparison assumed `retAge` always stays inside `[safeRetAge, safeLifeExp)` — true for
+the shipped default's offsets `[1,3,5]` against a 65→90 plan, but not guaranteed for every
+`(retirementAge, lifeExpect, offsets)` combination.
+**Fix:** require `retAge < safeLifeExp` before the year-count comparison (`src/model/what-if.js`) —
+a row past the plan horizon can only cover it by genuinely never depleting (`scenSustainable`), never
+by the (now-moot) year-count comparison.
+**Tests:** new regression in `src/model/__tests__/what-if.test.js` — a `retirementAge`/`lifeExpect`
+fixture close enough that offsets `[1,3,5]` push `retAge` to/past `safeLifeExp` (the task's own repro
+shape). Reverted the fix and confirmed the new test fails; restored and confirmed green.
+**Golden master:** untouched — the shipped default's offsets never reach the degenerate case.
+**Where:** `src/model/what-if.js`, `src/model/__tests__/what-if.test.js`.
+
+---
+
 ### BUG-114 — The Plan screen showed the same figure in two different dollar bases, ~20px apart, differing by the full inflation factor (~4× at the shipped default) (found 2026-08-03, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 4)
 
 **Owner:** me_theguy. **Severity: HIGH — live at the shipped default, on the app's landing screen,
