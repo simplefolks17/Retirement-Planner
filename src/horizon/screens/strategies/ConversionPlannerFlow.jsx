@@ -341,7 +341,7 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
             {cv.optimizer.currentAmountLabel}/yr from age {cv.optimizer.currentStartAge}.
           </NoteBox>
           <button type="button" onClick={() => setPreviewOpen(true)}
-            style={{ alignSelf: "flex-start", minHeight: 44, font: `600 13px ${HF}`, color: "#fff",
+            style={{ alignSelf: "flex-start", minHeight: 44, font: `600 13px ${HF}`, color: t.onAccent,
               background: t.accent, border: "none", borderRadius: 8, padding: "9px 18px", cursor: "pointer" }}>
             Apply suggestion
           </button>

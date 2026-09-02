@@ -14,8 +14,9 @@
 
 import React, { useState } from "react";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
+import { SEG_LABEL_MIN_SHARE_PCT } from "../../model/budget.js";
 import { HF, HM } from "../ThemeContext.jsx";
-import { fmt, fmtMo } from "../shared.jsx";
+import { fmt, fmtMo, Btn } from "../shared.jsx";
 
 const SERIF = "Georgia, 'Times New Roman', serif";
 
@@ -52,7 +53,13 @@ function DetailRow({ t, label, value, muted, source }) {
       padding: "6px 0", borderBottom: `1px solid ${t.line}`,
     }}>
       <span style={{ font: `400 13px ${SERIF}`, color: muted ? t.faint : t.mut }}>
-        {label}{source && <span style={{ font: `400 10px ${HF}`, color: t.faint, marginLeft: 4 }}>({source})</span>}
+        {label}
+        {/* Dev-only provenance breadcrumb — a raw model field name ("flowDown.portPreRMD")
+            reads as a bug to a real user; it's only useful while tracing a value back
+            to its source during development. */}
+        {source && import.meta.env.DEV && (
+          <span style={{ font: `400 10px ${HF}`, color: t.faint, marginLeft: 4 }}>({source})</span>
+        )}
       </span>
       <span style={{ font: `500 13px ${HM}`, color: muted ? t.faint : t.ink, whiteSpace: "nowrap", marginLeft: 12 }}>
         {value}
@@ -80,7 +87,7 @@ function ProportionBar({ t, segs }) {
             display: "flex", alignItems: "center", justifyContent: "center",
             font: `600 9px ${HF}`, color: "#fff", minWidth: 0, overflow: "hidden",
           }}>
-            {s.pct >= 12 ? `${s.pct}%` : ""}
+            {s.pct >= SEG_LABEL_MIN_SHARE_PCT ? `${s.pct}%` : ""}
           </div>
         ))}
       </div>
@@ -112,15 +119,13 @@ function ToggleDetail({ t, children }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <button
+      <Btn t={t} size="sm" variant="ghost" tone="accent"
+        ariaExpanded={open}
         onClick={() => setOpen(o => !o)}
-        style={{
-          background: "transparent", border: "none", cursor: "pointer",
-          font: `500 12px ${HF}`, color: t.accent, padding: "6px 0", display: "flex", alignItems: "center", gap: 4,
-        }}
+        style={{ padding: "6px 8px", marginLeft: -8, justifyContent: "flex-start" }}
       >
         {open ? "Hide detail ↑" : "Show detail ↓"}
-      </button>
+      </Btn>
       {open && <div style={{ marginTop: 4 }}>{children}</div>}
     </div>
   );
@@ -171,11 +176,21 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
   // flowDown fields: distStartVal, distDraws, distRMDTax, distGrowth,
   //   distEndVal, actualSustainedYrs, depletionAge
   // retirementWalk.depletionAge — model-provided, no screen math
-  const depletionLabel = isSustainable
-    ? "funded for life"
+  // Headline's `value` slot is sized for a short answer (Ch1/Ch2 put a dollar
+  // figure there) — the full sentence used to go in `value` itself, so the
+  // depletion age wrapped onto its own orphaned line at narrow widths and the
+  // one real number in this chapter's headline read as prose, not a figure.
+  // `sub` carries the sentence context instead, matching Ch1/Ch2's shape.
+  const depletionValue = isSustainable
+    ? "Funded for life"
     : retirementWalk?.depletionAge != null
-      ? `portfolio runs to age ${retirementWalk.depletionAge}`
+      ? `Age ${retirementWalk.depletionAge}`
       : "—";
+  const depletionSub = isSustainable
+    ? "how long the portfolio sustains you"
+    : retirementWalk?.depletionAge != null
+      ? "the age your portfolio runs out"
+      : "how long the portfolio sustains you";
 
   // actualSustainedYrs null/0 means the plan sustains beyond the projection horizon
   const sustainedLabel = flowDown.actualSustainedYrs > 0
@@ -264,8 +279,8 @@ export default function JourneyScreen({ t, props, isMobile = false, navigate }) 
       <ChapterCard t={t}>
         <Headline t={t}
           label="Chapter 3 — Retirement years"
-          value={depletionLabel}
-          sub="how long the portfolio sustains you"
+          value={depletionValue}
+          sub={depletionSub}
         />
 
         {/* Income floor strip */}

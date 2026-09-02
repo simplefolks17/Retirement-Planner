@@ -12,11 +12,11 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1076 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`).
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1355 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`).
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
-11. **Every dollar figure has a declared basis — today's dollars or retirement-year real dollars — and mixing them is the single most common bug class in this codebase (BUG-91's diagnosis: 14+ bugs, #77–#101, decompose into this or the sibling primary-vs-household scope axis).** The retirement engine walks in the PRIMARY's RETIREMENT-YEAR real dollars (`rReal`, proven by BUG-90); `effectiveExpenses`/`effectivePension`/user-entered dollar inputs are TODAY's dollars. Converting forward uses `toRetirementYearDollars` (App.jsx computes this ONCE per quantity — `retSpendBasis`, `retPensionBasis`, `retPensionAnnualBasis`, `retPensionAtRMDAge`, `retPensionAt70`, etc. — never inline a second conversion); a what-if scenario re-basing SS/pension to a DIFFERENT retirement age uses the bidirectional `inflationRebaseFactor` instead (a scenario can retire earlier than the base plan — `toRetirementYearDollars` clamps negative years to 0, which is wrong there). **Before wiring any pension/expense/income figure into a new call site, ask which basis that specific consumer needs** — a function that does its own internal timing gate (like `calcRMDIncomeFloor`) needs the UNGATED annual figure; a function with no internal gate (like `projectRetirementBracket`) needs a figure PRE-gated to that function's own horizon, not the retirement age (this exact mismatch — "double-gating" — was found and fixed three separate times in one PR: BUG-91/Qodo's original finding, then `wr70`, review-fix round, PR #62). Deliberately-mixed-basis bundles (e.g. `retDrawShared`, which keeps `effectiveExpenses` raw but converts `pensionAmount`) carry an explicit `⚠ MIXED-BASIS BUNDLE` comment — never "tidy" one without reading it first. A display site captioning or describing another already-converted value (a chart, a breakdown total) must read the SAME converted figure, not re-derive or re-read the raw one — three such sites (a Classic chart caption, a Horizon income-meter headline, two pension display pills) were found still on the raw figure after BUG-91 landed everywhere else, in the PR #62 review-fix round, precisely because this rule didn't exist yet to check against.
+11. **Every dollar figure has a declared basis — today's dollars or retirement-year real dollars — and mixing them is the single most common bug class in this codebase (BUG-91's diagnosis: 14+ bugs, #77–#101, decompose into this or the sibling primary-vs-household scope axis).** The retirement engine walks in the PRIMARY's RETIREMENT-YEAR real dollars (`rReal`, proven by BUG-90); `effectiveExpenses`/`effectivePension`/user-entered dollar inputs are TODAY's dollars. Converting forward uses `toRetirementYearDollars` (App.jsx computes this ONCE per quantity — `retSpendBasis`, `retPensionBasis`, `retPensionAnnualBasis`, `retPensionAtRMDAge`, `retPensionAt70`, etc. — never inline a second conversion); a what-if scenario re-basing SS/pension to a DIFFERENT retirement age uses the bidirectional `inflationRebaseFactor` instead (a scenario can retire earlier than the base plan — `toRetirementYearDollars` clamps negative years to 0, which is wrong there). **Before wiring any pension/expense/income figure into a new call site, ask which basis that specific consumer needs** — a function that does its own internal timing gate (like `calcRMDIncomeFloor`) needs the UNGATED annual figure; a function with no internal gate (like `projectRetirementBracket`) needs a figure PRE-gated to that function's own horizon, not the retirement age (this exact mismatch — "double-gating" — was found and fixed three separate times in one PR: BUG-91/Qodo's original finding, then `wr70`, review-fix round, PR #62). Deliberately-mixed-basis bundles (e.g. `retDrawShared`, which keeps `effectiveExpenses` raw but converts `pensionAmount`) carry an explicit `⚠ MIXED-BASIS BUNDLE` comment — never "tidy" one without reading it first. A display site captioning or describing another already-converted value (a chart, a breakdown total) must read the SAME converted figure, not re-derive or re-read the raw one — three such sites (a Classic chart caption, a Horizon income-meter headline, two pension display pills) were found still on the raw figure after BUG-91 landed everywhere else, in the PR #62 review-fix round, precisely because this rule didn't exist yet to check against. **The Plan screen now lets the USER pick a basis** (`planHighlights.incomeFlowByBasis` = `{ today, retirement }`, built once in App.jsx and selected — never converted — by the screen; BUG-114). Only genuinely dollar-denominated figures may be wired to that toggle: ages, percentages, ratios (`guaranteed.pct`), "money lasts to age N" and cumulative totals are basis-INVARIANT and must read a single fixed source, or the same number will visibly flicker by a rounding step when the user switches.
 
 ## Git & PR Workflow
 - **Always use a feature branch.** Never commit directly to `main`.
@@ -44,7 +44,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (126 items, 78 done, 48 planned)
+- Feature backlog: `feature-tracker.html` (127 items, 79 done, 48 planned)
 - Session history archive (everything before BUG-82, 2026-07-25): `docs/HISTORY.md`
 
 ## Status
@@ -412,11 +412,125 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
     push but failed with `429 RESOURCE_EXHAUSTED` (free-tier quota) on every PR of real size,
     including three times in a row on this PR — pure CI noise, no working review ever produced.
     1074 → **1076 tests**. PR #64 merged 2026-07-28.
+- **Horizon UI design review — 23 bugs across 5 slices, plus the Plan screen rebuilt for a
+  first-time user (2026-08-03 → 2026-08-19, branch `claude/design-review-plan-page-j3by51`,
+  PR #66).** Owner request: a design review of the **Horizon** UI only (Classic explicitly out of
+  scope), naming two symptoms — buttons not lining up with their neighbours on a phone, and the
+  arc chart's axis cut off by its container — plus a separate content review of the Plan screen's
+  stat cards, which "seem out-of-place and oddly worded" for the app's actual audience (people who
+  want to learn retirement planning and do NOT already know what a 401k or an RMD is).
+  1. **Method — screenshots, not code-reading.** A phone-viewport (390×844) Playwright harness
+     modelled on `.claude/skills/verifier-browser.cjs` captured every Horizon screen, every Numbers
+     sub-tab, both Explore-tray facets, the mobile sticky bar, and the modals; two Opus agents then
+     reviewed the renders (visual audit + a content audit against the stated audience). 18 findings.
+  2. **Then a batch sweep for the same bug SHAPES, not just the reported instances** (owner's
+     request — "find similar problems, there's a lot"): 7 patterns, ~15-20 further instances, and
+     2 brand-new bugs neither screenshot pass could see.
+  3. **Then an Opus pre-mortem of the plan itself**, which materially changed its scope before any
+     code was written. It found: the primary-vs-household SCOPE axis (CLAUDE.md rule 11's sibling)
+     was never swept and had a live instance on the Plan screen; a SECOND dollar-basis mismatch
+     ~20px from the first; WCAG contrast failing in all 12 palette/mode combinations (computed, not
+     eyeballed — only 1 of the 12 had ever been screenshotted); `100vh`/safe-area as an
+     INDEPENDENT, height-driven second cause of the arc clipping that a width-only fix would not
+     clear; and that the plan's own cited "good pattern" exemplar (`TabBar`) was itself a
+     keyboard-unreachable `<div onClick>`.
+  4. **Two owner decisions taken before building** (`AskUserQuestion`): dollar basis defaults to
+     TODAY's dollars **but ships a visible user toggle** (reclassifying that item from a one-line
+     wiring fix to a real feature — the one genuinely new feature in this PR); and the "You keep/mo"
+     card MOVES OUT of the 5-card retirement row into a separate today-anchor pair, which is also
+     where its household-vs-"you" scope bug (BUG-116) got fixed.
+  5. **Shipped in 5 gated slices** — 1: pure correctness (BUG-104/105/106); 2: the shared `Btn`/`Pill`
+     primitive absorbing touch targets + BUG-49's keyboard-reachability pass + a `:focus-visible`
+     rule in one pass; 2.5: the visual/layout gap-fill, incl. the owner's own reported bug
+     (BUG-107/108/109/110/111); 3: the 12-palette contrast fix (BUG-112); 4: the Plan rebuild +
+     the basis toggle (BUG-114/115/116/117).
+  6. **The headline bugs, for the record.** **BUG-107** (the owner's report) was a UNITS mismatch:
+     the padding reserving room for the axis is in SVG viewBox units that shrink with container
+     width, while the tick labels are a fixed-CSS-pixel HTML overlay — ~7px of clearance for a
+     ~12px label on a phone, 20-30px on desktop, which is why it read as "mobile-only." **BUG-104**
+     — the Taxes composition bar's colour map had no `draw` key, rendering the LARGEST tax
+     component (78% of the bar at the shipped default) fully invisible. **BUG-105** — the raw
+     driver id `"confidence"` printed verbatim to users. **BUG-114** — the same figure shown in two
+     different dollar bases ~20px apart, differing ~4× at the default. **BUG-115** — the tax card
+     read 4.6× smaller than the total on the screen it navigates to, under near-identical wording.
+  7. **Review battery, then two fix batches.** An execution-based (not read-the-diff) Opus
+     adversarial review of the full diff found 12 issues; CodeRabbit found 7 then 5 more. The 18
+     surviving action items shipped as Batch A (model/logic) + Batch B (mechanical). Two are worth
+     remembering: **BUG-122** — the new "Guaranteed for life" card's percentage was diluted by a
+     spouse's TEMPORARY gap-year income (same household read 28% vs 69% depending only on the
+     spouse's retirement timing) and its "savings cover you until then" copy had no truth condition,
+     so it could sit next to "Money lasts to age 61" contradicting it outright — BUG-117's exact
+     pattern, reintroduced by the very PR that fixed it elsewhere. **BUG-123** — `coversPlan` was a
+     SIXTH inline copy of `marginForScenario`'s formula, and BUG-118's guard had been patched only
+     onto that copy: the canonical shared function still carried the same latent bug, silently
+     affecting its 4 other callers. Fixed in the shared function, so all five now benefit.
+  8. **Filed, not fixed** (Open, each for a stated reason): **BUG-113** (Journey's composited-opacity
+     `%` labels — a per-call-site contrast contract the flat-token test structurally cannot cover),
+     **BUG-124** (the "Tax in retirement" card is the one dollar-denominated card NOT wired to the
+     new toggle, entangled with BUG-38's known undercounting), **BUG-125** (the guaranteed-for-life
+     card ignores a spouse's own SS claiming age — traces to a model-wide simplification in
+     `retirement-income.js`; needs an owner product decision, not a quick fix).
+  9. **A FINAL adversarial review before merge found 7 more — including two the PR itself had
+     introduced (BUG-127 → BUG-133).** Worth recording because the method is what found them: the
+     reviewer was told to EXECUTE the diff (mount the real App, drive the real setter bundles,
+     compare rendered copy against model output) rather than read it, and every finding came with a
+     live repro. **BUG-127 (HIGH)** — `spouseSeedInputs` carried the base plan's already-RESOLVED
+     `effectiveSpouseRetAge` into `what-if.js`, whose re-seed sites override only `primaryRetAge`.
+     Since `spouseRetirementAge` defaults to null and falls back to the PRIMARY's age, a spouse's
+     retirement age tracked correctly in the committed plan but FROZE in every scenario — so each
+     extra year of "work longer" deleted a year of the spouse's gap income instead of adding one.
+     The work-longer card reported depletion at 86 → 82 → 78 for +1/+3/+5 (monotonically worse,
+     while adding $949k of portfolio), and the Plan screen turned that into an assertive, false
+     "retiring later alone won't close the gap" — for a household where retiring 3 years later
+     actually fixes the plan outright. Fixed with ONE shared `resolveSpouseRetAge` helper called by
+     the base plan AND both scenario sites, so "auto" can never be interpreted two ways (BUG-31's
+     signature class). **BUG-131 (HIGH)** — "Guaranteed for life" read its percentage off UNGATED
+     lifetime streams but its sub-copy off the GATED retirement-year snapshot, so the card could
+     say "100%" while the copy said "the rest comes from your savings", the meter above showed
+     100% PORTFOLIO, and the tap-through destination said 24% — with a pension supplying ~76 of
+     those 100 points never named anywhere, because `nextGuaranteedStart` rendered only `[0]`.
+     Fixed with model-provided `everHasSS`/`everHasPension`/`fullyCovered`/`pendingSources`.
+     **BUG-130** — the verdict sentence converted `minYearsToSustain: null` into a negative
+     existential the model never tested (it only ever simulates +1/+3/+5; measured, the real answer
+     was +8 to +12 for a range of households, and the app's own slider lets a user falsify it in one
+     drag). **BUG-132** — the basis toggle moved the headline but left "replaces 84% of today's
+     take-home pay" glued beside it ($18,900 is 332% of the $5,700 paycheck shown elsewhere on the
+     same screen) — BUG-114/115's exact "two numbers a reader reconciles at a glance" failure,
+     recreated by the new toggle. Plus **BUG-128** (over-funded households' ledger rows summed past
+     their own bolded total, the new share percentages hitting 105% and overflowing the bar track),
+     **BUG-129** (a missing non-finite guard, asymmetric with its sibling one function away), and
+     **BUG-133** (the progress pill could read "on target" beside "your savings run out", because it
+     gated on the withdrawal driver alone rather than the plan's actual verdict). The same review
+     came back explicitly CLEAN on the areas most at risk: no golden-master assertion anywhere in
+     the diff was deleted or weakened, both toggle bases are individually correct (verified
+     numerically — every stream converts by the same factor), `marginForScenario`'s `-Infinity`
+     sentinel is fully contained and reaches no formatter, and `calcPlanProgress` is correct at
+     every boundary.
+  10. **CodeRabbit then caught a regression in fix #9 itself (BUG-134) — the third instance of this
+     PR's signature failure, and the reason the merge was held.** BUG-127's fix rebuilt the
+     scenario's spouse seed and gap-year maps at the scenario's retirement age but left
+     `buildRetirementPhase`'s `spouseRetirementAge` on the `...retPhaseBase` spread — the BASE
+     plan's value — which the engine reads for its Option-A hold-out. So a work-longer scenario
+     RELEASED a still-working spouse's Traditional bucket into the drawable pool years early and
+     drained it silently, with no spillover recorded and no early-withdrawal penalty charged
+     (measured: `totalSpouseSpillover` 0 / 0 / 0 pre-fix vs 982,500 / 1,120,964 / 926,336 post-fix
+     for scenarios at 55/58/62, and pre-fix scenarios reported MORE sustained years). The call site
+     even carried a comment vouching for the old invariant — true before BUG-127, false after it.
+     A comment asserting an invariant is not a test enforcing one.
+  1076 → **1355 tests**. Every behavioural fix carries revert-and-confirm evidence (revert the fix,
+  confirm the new test fails, restore) per this repo's standard — including, for the two HIGH
+  findings above, an independent re-run of that evidence by the orchestrator rather than trusting
+  the implementing agent's report. All four golden masters confirmed unmoved throughout —
+  `golden-master-app-wiring.test.js` was extended for the 7 new `planHighlights`/`planView` fields
+  and verified to catch a real App-level wiring break that the hand-built `golden-master.test.js`
+  stays green through; the two spouse-household fixtures pin `spouseRetirementAge` explicitly, which
+  is precisely why BUG-127 could hide from them. Full root cause / fix / verification for every
+  item: `docs/BUGS.md` → BUG-104 through BUG-134.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (1076 tests)
+- `npm test` — run model + formatter + render-smoke tests (1355 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

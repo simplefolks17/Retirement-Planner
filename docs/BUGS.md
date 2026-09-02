@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 13 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 14 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,6 +15,9 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
+| **BUG-125** | Medium | "Guaranteed for life" ignores a spouse's own SS claiming age — only the primary's timing gates the card | `src/App.jsx`, `src/model/retirement-income.js` |
+| **BUG-124** | Low | "Tax in retirement" isn't wired to the dollar-basis toggle, and is entangled with BUG-38's known undercounting | `src/horizon/screens/PlanScreen.jsx`, `src/model/retirement-engine.js` |
+| **BUG-113** | Low-Medium | Journey's flow-bar `%` labels are 9px white on an `opacity:.72` composited fill — 1.54–3.45:1, a compositing failure the flat-token contrast contract (BUG-112) structurally can't cover | `src/horizon/screens/JourneyScreen.jsx` |
 | **BUG-103** | Medium | Monte Carlo `successPct` counts paths rescued only by the penalized spouse-401k spillover hatch as plain successes, with no visibility (BUG-92's problem class, new surface) | `src/model/monte-carlo.js`, `src/App.jsx`, `src/components/ArcGraph.jsx` |
 | **BUG-102** | Medium | Lever-preview's spouse-gap gating inherited from the base plan, not the scenario's own re-seeded maps | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-101** | Low-Medium | Accumulation-phase `contrib401k` stays nominal (tracks `incomeGrowth`, not inflation) | `src/model/simulation.js` |
@@ -22,8 +25,6 @@ place this gets checked).
 | **BUG-99** | Medium | Money events (Goals/LifeEventSheet) still entered/applied in nominal dollars against the now-corrected retirement-year walk | `src/model/money-events.js`, `src/model/retirement-engine.js`, `src/horizon/LifeEventSheet.jsx` |
 | **BUG-85** | Low-Medium | Spouse Roth/Taxable/HSA gap-year contributions dollar-conserving but not separately tracked (only Traditional 401k is, v1 scope) | `src/model/retirement-phase.js`, `src/model/retirement-engine.js` |
 | **BUG-84** | Major (owner tax-law call) | Withdrawal-order/conversion scalars (`retTrad`/`retRoth`/`retTaxable`) stay primary-only after #30 — needs an owner decision between two fix shapes, coupled to BUG-85 | `src/App.jsx` |
-| **BUG-50** | Low (polish) | `OnTrackPill` popover has no outside-click/Escape dismissal | `src/horizon/screens/HorizonShell.jsx` |
-| **BUG-49** | Medium (a11y, broad) | Most of Horizon's nav/Ideas controls are keyboard-unreachable — needs a dedicated `kbActivate`-pattern pass, not a single fix | `src/horizon/**` |
 | **BUG-39** | Low (accepted) | Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (the one documented exception to the no-residual-plug rule) | `src/model/flow-down.js` |
 | **BUG-38** | Low (accepted) | Engine charges only *incremental* tax above the SS/pension floor — SS/pension effectively tax-free | `src/model/retirement-engine.js` |
 | **BUG-37** | Low (accepted, owner-deferred) | Engine ignores `conversionTaxSource` — always funds conversion tax from the pool | `src/model/retirement-engine.js` |
@@ -32,6 +33,92 @@ place this gets checked).
 ---
 
 ## Open Issues
+
+### BUG-113 — Journey's flow-bar percentage labels are 9px white text on an `opacity: 0.72` composited fill (1.54–3.45:1), a compositing failure the flat-token contrast contract structurally cannot cover (found 2026-08-13, Horizon design-review Slice 3)
+
+**Owner:** me_theguy. **Severity: LOW-MEDIUM — small, decorative-ish labels, but they are the only
+place the flow percentages are stated numerically, and the failure is worst in dark mode (1.54:1)
+where it is essentially illegible.**
+**What:** `JourneyScreen.jsx:81-91` renders the Keep/Save/Tax flow bar as a row of segments, each
+`background: s.color` (a `good`/`warm`/`accent` token) with `opacity: 0.72` and a hardcoded
+`color: "#fff"` `600 9px` label inside. Because `opacity` composites the whole subtree, BOTH the
+white label and the token fill blend against the card surface behind them, so the effective pair is
+`mix(#fff, surf, .72)` on `mix(token, surf, .72)` — not `#fff` on `token`. Measured across all 12
+palette/mode combinations, that lands at **1.54–3.45:1** (light mode 2.96–3.45, dark mode
+1.54–2.57), against a 4.5:1 bar for 9px text.
+**Why the Slice-3 contrast work does not cover it:** BUG-112 fixed and locked *flat token pairs*
+(`token` on `bg`/`surf`/`surf2`, `onAccent` on `accent`). This site's colours are produced at render
+time by alpha compositing, so neither operand is a token value and `palette-contrast.test.js` cannot
+see it — enforcing it needs the test to model the component's own `opacity`, i.e. a per-call-site
+contract rather than a token contract. BUG-112's token darkening *improved* the light-mode numbers
+(a darker fill gives white more to work against) but nowhere near enough, and it does not touch dark
+mode, where dark-mode accents are light by design.
+**Not caused by BUG-112 — pre-existing, and materially improved by it in one mode.** Verified by
+computing the same composited ratios against the pre-fix token values: light mode was **1.55–2.89**
+and is now **2.96–3.45**; dark mode was **1.54–2.57** and is unchanged (BUG-112 moved only `faint`
+in dark mode, and this site uses `good`/`warm`/`accent`). So the fix roughly halves the light-mode
+deficit as a side effect but closes neither mode.
+**Fix shapes (a design decision, hence not folded into Slice 3):** (a) drop `opacity` and use a
+pre-mixed token so the label sits on a known colour, (b) switch the label to `t.onAccent`-style
+per-mode text instead of a hardcoded `#fff`, or (c) move the `%` out of the bar into the legend
+below it (which already exists, at `t.faint`, and is now compliant). (c) is the smallest and also
+removes the `pct >= 12` hide-the-label guard the current design needs.
+**Where:** `src/horizon/screens/JourneyScreen.jsx:81-91`.
+
+---
+
+### BUG-125 — "Guaranteed for life" doesn't account for a spouse claiming Social Security on a different timeline than the primary (found 2026-08-19, Opus adversarial review of PR #66; filed, not fixed — needs an owner product decision)
+
+**Owner:** me_theguy. **Severity: Medium — a headline percentage can silently include income that
+hasn't started yet, with no disclosure, in a genuinely common MFJ shape (spouses claiming SS at
+different ages).**
+**Found by:** an execution-based Opus adversarial review of PR #66 (Slice 4/BUG-122's own review).
+**What:** the "Guaranteed for life" card's `nextGuaranteedStart` (`src/App.jsx`, near
+`startsAtAge`/`startsLabel`) only considers the PRIMARY's `ssClaimingAge`. In an MFJ household where
+the primary claims SS at 65 (= retirement age) and the spouse claims later (e.g. 70), the card can
+read e.g. "40%" with `startsAtAge: null` (implying "already guaranteed now") — but that 40% includes
+the spouse's SS five years before it actually starts, and nothing discloses this.
+**Why:** this traces to a PRE-EXISTING, model-wide simplification, not something BUG-122 introduced —
+`src/model/retirement-income.js` (~line 49) gates household SS only on the primary's claim age;
+`spouseClaimingAge` only affects the benefit AMOUNT via `claimFactor`, never the timing. BUG-122's new
+"Guaranteed for life" card is internally consistent with the engine (it reads the same household SS
+figure everything else does) — it's just the first UI surface to turn this simplification into a
+headline percentage with no disclosure attached.
+**Not fixed here:** fixing the underlying model gate is a genuinely bigger change (does
+`nextGuaranteedStart` need to become per-spouse-aware? does the whole household SS model need
+per-person claim-age gating, the same shape question BUG-84 already has open for withdrawal order?) —
+this needs an owner decision between fix shapes, not a quick fix bundled into a batch of unrelated
+model/logic corrections.
+**Where:** `src/App.jsx` (`nextGuaranteedStart`), `src/model/retirement-income.js:49`.
+
+---
+
+### BUG-124 — "Tax in retirement" is the one dollar-denominated Plan card not wired to the basis toggle, and is entangled with BUG-38's known undercounting (found 2026-08-19, Opus adversarial review of PR #66; filed, not fixed — deliberately deferred)
+
+**Owner:** me_theguy. **Severity: Low — both halves are pre-existing, known, accepted simplifications;
+this entry exists so they're not silently forgotten now that BUG-122's review surfaced them on this
+specific card, and so a future session doesn't re-discover them from scratch.**
+**Found by:** an execution-based Opus adversarial review of PR #66 (Slice 4/BUG-122's own review).
+**What:** two separate, narrow gaps on the "Tax in retirement" card
+(`src/horizon/screens/PlanScreen.jsx`): (a) it's the only genuinely dollar-denominated card on the
+Plan screen NOT wired to the dollar-basis toggle (`incomeFlowByBasis`/`DollarBasisToggle`) that the
+Income Meter and "Spending each month" already use — it always shows the retirement-year-dollar
+cumulative sum regardless of which basis the user has selected; (b) that sum is entangled with
+**BUG-38** (Open, accepted) — the engine only charges *incremental* tax above the SS/pension floor,
+so this total is systematically low by construction, not actually complete.
+**Why not fixed now:** (a) needs a larger, separate decision first — does the underlying tax
+calculation even have a today's-dollar equivalent computed anywhere the toggle could read? — not
+something to rush into a batch of unrelated model/logic fixes. (b) is BUG-38 itself, already Open and
+explicitly out of scope for this batch (BUG-122's fix instructions said "don't try to fix BUG-38
+itself").
+**Interim mitigation (shipped in the same batch that filed this):** the card's sub-copy no longer
+overclaims completeness ("total, across all your retirement years" → "across your retirement years,
+in retirement-year dollars") and now carries its own basis note, so the two gaps above are at least
+not compounded by misleading copy while they stay open.
+**Where:** `src/horizon/screens/PlanScreen.jsx` (tax card), `src/model/retirement-engine.js` (BUG-38's
+root cause).
+
+---
 
 ### BUG-103 — Monte Carlo `successPct` doesn't distinguish a path that survives cleanly from one rescued only by the penalized spouse-401k spillover hatch (found 2026-07-28, in-house interoperability audit, PR #64)
 
@@ -289,97 +376,6 @@ spouse's own sequence) is **coupled to BUG-85**, not independent of it: sequenci
 Trad/Roth/Taxable/HSA draw order needs separately-tracked spouse Roth/Taxable/HSA buckets, which don't
 exist yet (only `tradSp` is split out). Recommend fixing BUG-85's buckets first; option 2 becomes a
 smaller add-on once they exist. Noted on `feature-tracker.html`'s #30 entry.
-
-### BUG-49 — Primary Horizon navigation and most Ideas controls are unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51)
-
-**Owner:** me_theguy. **Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell,
-requested specifically to find "a few bugs worth fixing" in the UI as it stands (not scoped to
-this session's diff).
-**What:** the desktop `TabBar` and mobile bottom bar (`src/components/HorizonShell.jsx:130-148,
-604-638`), the `MoreSheet` rows (`:467-487`), `OnTrackPill` (`:73-80` — has `role="button"` but no
-`tabIndex`/`onKeyDown`), onboarding's next/back/save controls (`:345-390`), and in `IdeasScreen.jsx`
-the 6 mode buttons, both dial ± pairs, both "Show on arc" buttons, the life-event pills, the
-scenario cards, and "Make this my plan" (`:245, 280, 309-328, 333, 356, 388, 421` — line numbers as
-of the pre-fix commit; several shifted slightly after this session's dial-bounds fix) are all
-`<div>`/`<span onClick>` with no keyboard path (`tabIndex`, `onKeyDown`, or a real `<button>`). A
-keyboard-only user cannot change Horizon screens at all, let alone use most of Ideas.
-**Why not fixed this pass:** this is a broad, mechanical retrofit (dozens of call sites across the
-nav shell and Ideas) rather than a single contained bug — the session's other Fable-review findings
-were fixable as isolated, verifiable patches; this one needs its own dedicated pass to do properly
-(convert each surface to a real `<button>` or add `role="button"` + `tabIndex={0}` + a `kbActivate`
-Enter/Space handler, matching the pattern already used correctly elsewhere in this codebase —
-`StatCard`, `SignalsStrip`, per PR #38's fix 4). Doing it piecemeal here risked missing surfaces and
-under-delivering on what should be a complete, verifiable a11y pass.
-**Precedent this codebase already has for the fix:** `src/horizon/shared.jsx`'s `kbActivate` helper
-+ the `role`/`tabIndex` pattern already applied to `StatCard` and `SignalsStrip` — the fix is
-"apply the existing pattern everywhere it's missing," not invent a new one.
-**Fix path:** a dedicated WI/session auditing every interactive `<div>`/`<span onClick>` in
-`src/horizon/` and `src/components/HorizonShell.jsx` against the `kbActivate` pattern, with a
-render-smoke-style test asserting every clickable surface has a keyboard path.
-**Re-verified 2026-07-12 (Scenarios-removal + L3d-merge close-out) — scope narrowed, still open.**
-The `IdeasScreen.jsx` portion of this finding (6 mode buttons, dial ± pairs, "Show on arc" buttons,
-scenario cards, "Make this my plan") is **now moot** — that whole UI was replaced by #122's
-preview-first redesign + today's Scenarios removal: the mode segments are real `<button
-type="button">`s, the dials are native `<input type="range">` (keyboard-operable by construction),
-"Show on arc"/scenario cards/dial ± pairs don't exist anymore, and the life-event pills are real
-`<button>`s (confirmed in the current file). **The `HorizonShell.jsx` nav-shell portion still
-reproduces exactly as described** — confirmed against current code: `TabBar` (`:130-148`) is still
-`<div key={id} onClick={() => onChange(id)}>` with no `tabIndex`/`onKeyDown`; the mobile bottom bar,
-`MoreSheet` rows, and onboarding's next/back/save controls are likewise still bare
-`<div onClick>`/`<span onClick>`. Scope narrows to `HorizonShell.jsx` only; the fix path is
-unchanged.
-**Re-verified 2026-07-12 (session close-out, PR #52):** `TabBar`'s `<div key={id} onClick={() =>
-onChange(id)}` still at line 134, still no `tabIndex`/`onKeyDown`. `OnTrackPill`'s clickable span
-(`role="button"`, no `tabIndex`) still at line 73. Still reproduces; this session's work was
-CodeRabbit-review fixes in `App.jsx`/`what-if.js`/`IdeasScreen.jsx`/`AffordabilityPanel.jsx`/
-`LifeEventSheet.jsx`/`money-events.js`/`irs-2026.js` — `HorizonShell.jsx` was not touched.
-**Re-verified 2026-07-17 (PR #56 close-out) — scope narrows again, still open.** `IdeasScreen.jsx`
-was DELETED this PR (Ideas retired; its capabilities moved to Plan's Explore tray, whose new
-surfaces — facet tabs, goal rows/pills, quick-jump chips — are all native `<button>`s by
-construction). Every IdeasScreen reference in this entry is now historical. The `HorizonShell.jsx`
-nav-shell portion **still reproduces**: `TabBar` `<div key={id} onClick>` confirmed at line 134
-(no `tabIndex`/`onKeyDown`); mobile bar / `MoreSheet` rows / onboarding controls unchanged (PR #56
-touched HorizonShell only for the Ideas removal, the `navigate` guard, and formatter imports).
-**Re-verified 2026-07-23 (PR #57 session close-out):** `TabBar` still `<div key={id} onClick={() =>
-onChange(id)}>` (now line 142, no `tabIndex`/`onKeyDown`); `OnTrackPill`'s clickable span still
-`role="button"` with no `tabIndex` (now line 83). This session's `HorizonShell.jsx` edits (Batch 3
-— the arc band-view rename to "Range" and a new confidence driver row rendered INSIDE the pill's
-existing popover content) added content to the popover without touching the pill's own
-keyboard-focusability. Still reproduces; scope unchanged.
-**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** `TabBar` still
-`<div key={id} onClick={() => onChange(id)}` at line 143, no `tabIndex`/`onKeyDown`. This session's
-`HorizonShell.jsx` edit added a spouse-driver `note` string inside `OnTrackPill`'s existing rows map
-(withdrawal-rate driver, "temporary — includes your spouse's income through age N") — content only,
-no change to the nav shell's keyboard reachability. Still reproduces.
-
-### BUG-50 — `OnTrackPill` popover has no outside-click or Escape dismissal (found 2026-07-09, Fable UI review of PR #51)
-
-**Owner:** me_theguy. **Found by:** the same Fable UI review as BUG-49.
-**What:** `HorizonShell.jsx:91-125`'s `OnTrackPill` popover closes only via its own ✕ button or by
-re-clicking the pill — clicking anywhere else in the app, including navigating to a different
-screen, leaves it pinned over the top-right corner. Every other overlay in the app (`ConfirmModal`,
-`ApplyPreviewModal`, `MoreSheet`) closes on backdrop click; this one doesn't have a backdrop at all.
-**Why not fixed this pass:** minor polish, not a correctness bug; lower priority than the findings
-fixed this session, and deferred rather than rushed.
-**Fix path:** add a document-level click listener (or a transparent full-screen backdrop matching
-`ConfirmModal`'s pattern) that closes the popover on any click outside it, plus an `Escape` key
-handler for keyboard parity (ties into BUG-49's broader keyboard-access gap).
-**Re-verified 2026-07-12 (session close-out, PR #52):** the popover (`open && (<div ...>`) still
-closes only via its own `✕` (line 102) — no outside-click or `Escape` handler. Still reproduces;
-`HorizonShell.jsx` untouched this session.
-**Re-verified 2026-07-17 (PR #56 close-out):** `✕`-only close confirmed at line 102. Still
-reproduces; PR #56's HorizonShell edits (Ideas removal, navigate guard, formatters) didn't touch
-the popover.
-**Re-verified 2026-07-23 (PR #57 session close-out):** confirmed no `addEventListener`/outside-click/
-`Escape` handling anywhere in `HorizonShell.jsx` (file-wide grep). This session's addition to the
-popover (Batch 3's confidence driver row) is new content rendered inside the existing `open && (…)`
-block — the dismissal mechanism itself is untouched. Still reproduces.
-**Re-verified 2026-07-26 (BUG-82/88/89/90 + 3-agent-review session close-out):** popover still closes
-only via its own `✕` (line 111-112) — no outside-click or `Escape` handler added. This session's only
-`HorizonShell.jsx` change was the spouse-driver note string inside the existing rows map (see BUG-49's
-same-day re-verification, above); the dismissal mechanism is untouched. Still reproduces.
-
----
 
 ### BUG-36 — What-if / optimized deltas not yet on the taxed-once engine (accepted, low)
 
@@ -652,6 +648,1378 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 ---
+
+### BUG-134 — BUG-127's own fix left the engine's spouse hold-out gate on the BASE plan's retirement age, so a work-longer scenario drained a still-working spouse's 401k silently and unpenalised (found 2026-09-02, CodeRabbit review of the final pre-merge round, PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — scenarios read systematically optimistic for exactly the
+households #30 exists to serve, and the mechanism was invisible: the money simply appeared, with no
+spillover recorded and no early-withdrawal penalty charged.**
+
+**What:** BUG-127 (same PR, hours earlier) fixed the scenario path to rebuild the spouse's SEED and
+gap-year MAPS against the scenario's own retirement age via `resolveSpouseRetAge`. But
+`calcWhatIfScenario`'s `buildRetirementPhase` call still took `spouseRetirementAge` from the
+`...retPhaseBase` spread — the BASE plan's value. `retirement-engine.js` reads that field for its
+Option-A hold-out (`spouseHoldout`, `retirement-engine.js:236`:
+`spouseOptionA && (spouseAge == null || spouseAge < spouseRetirementAge)`), so with a raw
+`spouseRetirementAge` of `null` ("auto") the walk **released the spouse's Traditional bucket into
+the drawable pool at the BASE retirement age while the very same walk still had them working and
+contributing up to the SCENARIO age.** Seed and draw gate describing two different households.
+
+**Why the old code was right until it wasn't.** The call site carried an explicit comment —
+*"spouseRetirementAge itself is left alone (via the `...retPhaseBase` spread above) since the
+spouse's OWN age doesn't change in a primary-retirement-age scenario"* — which was TRUE before
+BUG-127: `retPhaseBase.spouseRetirementAge` and the seed's own age were the same number. BUG-127
+changed one of them and not the other, and the comment kept vouching for the old invariant. A
+reminder that a comment asserting an invariant is not the same as a test enforcing it.
+
+**Measured** (fixture: primary retires at 52 on a $50k Trad balance, $150k spend, spouse aged 22
+holding $900k Trad and earning $60k — so the walk must reach for the spouse bucket during the gap):
+
+| scenario retirement age | `totalSpouseSpillover` pre-fix | post-fix |
+|---|---|---|
+| 55 | **0** | 982,500 |
+| 58 | **0** | 1,120,964 |
+| 62 | **0** | 926,336 |
+
+Pre-fix those scenarios also reported MORE sustained years (e.g. 12.588 vs 12.321 at 55) — the
+optimistic bias, quantified.
+
+**Fix:** resolve the scenario's spouse retirement age ONCE into `scenarioSpouseRetAge` and feed it
+to BOTH consumers — `buildSpouseRetirementSeed` (as before) and `buildRetirementPhase`'s
+`spouseRetirementAge` (new). One value, one resolution, both consumers — the same BUG-31 "two
+implementations of one concept" discipline BUG-127 itself invoked, applied one level deeper.
+
+**Tests:** `src/__tests__/spouse-household.test.js` — a hold-out-binding fixture asserting
+`totalSpouseSpillover > 0` for scenarios at 55/58/62, plus a base-plan-unaffected control.
+Revert-and-confirm: removing the one-line fix fails the new test with `expected 0 to be greater
+than 0`; restoring it passes. 1353 → **1355 tests**.
+
+**Golden masters:** all four unmoved (the two spouse fixtures pin `spouseRetirementAge`
+explicitly, so their hold-out gate never depended on the auto-resolution — which is precisely why
+neither they nor BUG-127's own new tests could see this).
+
+**Where:** `src/model/what-if.js` (`calcWhatIfScenario` — `scenarioSpouseRetAge`, and the
+`buildRetirementPhase` call's `spouseRetirementAge`), consumed by
+`src/model/retirement-engine.js`'s `spouseHoldout`.
+
+---
+
+### BUG-133 — the Plan progress pill could read "↗ on target" on the same screen as "Your savings run out…" (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: LOW — a small directional badge, but it directly contradicts the
+verdict sentence on the very same screen, the same class of self-contradiction BUG-114/115/122 were
+all rated for.**
+**Found by:** the final adversarial review of PR #66. Repro: MFJ · `spouseCurrentAge` 22 ·
+`spouseIncome` 500,000 · `annualExpenses` 120,000 · `retirementAge` 55 renders "92% there ↗ on
+target" beside "Your savings run out at age 88 — 2 years before your plan ends at 90."
+
+**Root cause.** `PlanScreen.jsx`'s progress-bar badge gated its "on target" label on
+`planView.drivers.find(d => d.id === "withdrawal")?.ok` alone — the withdrawal-RATE driver only.
+That driver can read `ok: true` while the plan genuinely fails to cover its horizon: in the repro, a
+still-working spouse's temporary income (`temporaryIncomeBasis`, rule 5b — active only until the
+spouse's own retirement age) flatters the withdrawal rate to near-zero, while the longevity/savings/
+confidence drivers all read `ok: false` and `planView.outlastsPlan` — the SAME field `PlanVerdict`'s
+"Your savings run out…" sentence a few lines below reads — is `false`. The badge and the sentence are
+built from the same `planView`, but the badge was checking one narrow driver instead of the plan's
+actual consolidated verdict.
+
+**Fix.** `onTarget = wrOk === true && planView.outlastsPlan === true` — the withdrawal driver AND the
+model's own consolidated verdict, the exact field the adjacent verdict sentence already reads,
+instead of inventing a second competing "is this plan OK" rule (this codebase's signature bug class,
+per the task brief). Since `isSustainable` (checked one branch earlier, for the "↗ gaining" label) and
+`planView.outlastsPlan` are the same underlying concept, this makes "on target" no longer reachable
+as a THIRD, weaker state once the plan doesn't cover its horizon — the badge now agrees with the
+sentence beside it in every case, which is the honesty property being fixed; the pill still reads
+"↗ adjust" whenever the plan needs an actual change, no longer a false "↗ on target" in between.
+**Where:** `src/horizon/screens/PlanScreen.jsx` (`onTarget`, the progress-bar badge, ~line 700).
+
+**Tests:** `src/horizon/__tests__/plan-screen.test.js` — one new test using the REAL `planView`
+App computes for the task's exact repro (verified via a live App mount: `outlastsPlan: false`,
+`withdrawal.ok: true`, `temporaryIncomeBasis: true`), asserting the rendered text contains "Your
+savings run out at"/"age 88" and does NOT contain "on target", and does contain "adjust".
+**Revert-and-confirm:** reverted `onTarget` to the old `wrOk`-only expression in place, confirmed the
+new test fails with the exact reported contradiction (`"92% there↗ on target"` alongside "Your savings
+run out…"), then restored the fix and confirmed it passes.
+**Golden master:** all four confirmed unchanged — a pure copy/gating change with no numeric output;
+confirmed by direct test run, no values moved.
+
+---
+
+### BUG-132 — the income-replacement percentage stayed on screen after the dollar-basis toggle moved the dollar figure it was calculated against (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM — the same "two numbers a reader reconciles at a glance and
+they don't agree" failure BUG-114/115 were both rated HIGH for, newly reintroduced by the dollar-basis
+toggle those very bugs' fix shipped.**
+**Found by:** the final adversarial review of PR #66. Repro: default state, click "At 65" →
+"Retirement income $18,900/mo · replaces 84% of today's take-home pay" — $18,900 is 332% of the
+$5,700/mo paycheck shown elsewhere on the same screen, not 84%. A second repro (MFJ-gap household,
+"At 60"): "$40,700/mo replaces 93%" beside "Household paycheck $13,500/mo" (actually 301%).
+
+**Root cause.** `PlanScreen.jsx`'s Income Meter row rendered `fmtMo(flow.expenses)` — the basis the
+toggle selects (`planHighlights.incomeFlowByBasis[activeBasisId]`) — beside
+`planHighlights.incomeReplacementPct`, a SEPARATE, deliberately basis-INVARIANT top-level field
+(BUG-114: it always compares today's spending to today's take-home pay, on purpose, regardless of
+which basis the meter's headline shows). The toggle correctly left the percentage unconverted — that
+part was intentional — but nothing stopped the two from sitting in the same baseline-aligned row once
+the headline dollar figure could diverge from the one the percentage was actually computed against.
+
+**Fix.** The replacement-ratio clause now renders only while the ACTIVE basis is the one it was built
+to sit beside. Rather than have the screen inspect `activeBasisId`/compare it to a string literal
+(rule 10), `dollarBasisOptions` in `App.jsx` gained a model-provided `showsReplacementPct` flag per
+option (`true` for "today", `false` for "retirement" — the same render-ready-field pattern
+`label`/`caption`/`cardSub` already use), and `IncomeMeter` gates on
+`basisOption?.showsReplacementPct === true` instead of testing `incomeReplacementPct`'s nullness
+alone. In retirement-year mode the clause simply disappears — there is no on-screen referent for it to
+reconcile against, so hiding it (rather than converting it, which would defeat BUG-114's deliberate
+design) is the honest behavior.
+**Where:** `src/App.jsx` (`dollarBasisOptions`), `src/horizon/screens/PlanScreen.jsx` (`IncomeMeter`).
+
+**Tests:** `src/horizon/__tests__/plan-screen.test.js` — one new test proving the clause is present at
+the default ("today") basis and gone after switching to "At 65" (while the meter's own dollar figure
+visibly changes to $10,000/mo, proving this isn't a no-op); the pre-existing "leaves basis-invariant
+values alone" test had its now-incorrect "replaces 82%" assertion removed (that value is no longer
+basis-invariant in the sense the test claimed — it's basis-GATED). **Revert-and-confirm:** reverted
+`IncomeMeter`'s gate to its old unconditional check, confirmed the new test fails (the clause stayed
+present after toggling to "At 65"), then restored the fix and confirmed it passes. Also verified
+against a live App mount at the exact reported repro (default state, click "At 65"): before the fix
+the row read "$18,900/mo replaces 84% of today's take-home pay"; after, "$18,900/mo" with no
+replacement clause at all.
+**Golden master:** all four confirmed unchanged — a pure copy/gating change with no numeric output;
+confirmed by direct test run, no values moved.
+
+---
+
+### BUG-131 — "Guaranteed for life" named the wrong sources, or none at all, and could claim "100%" beside "the rest comes from your savings" (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — the card's headline percentage and its own sub-copy could
+directly contradict each other, and separately, a source supplying the majority of a "100%" claim
+could go completely unnamed — on the app's main dashboard, for the class of user (a first-time,
+financially-inexperienced saver) this whole PR exists to protect.**
+**Found by:** the final adversarial review of PR #66.
+**Repro A** — default state · `retirementAge` 60 · `pensionMonthly` 4000 · `pensionStartAge` 70: the
+Income Meter shows a single Portfolio-only band (SS/pension haven't started at retirement), and
+"Guaranteed for life › 100% · Social Security starts at 67 — savings cover you until then" — the
+pension supplying roughly 76 of those 100 points was never mentioned at all, and Numbers → Statement
+(the card's own navigate target) shows SS at 24% with no pension row.
+**Repro B** — default state · `pensionMonthly` 4000 · `pensionStartAge` 60 (retire 65): "Guaranteed
+for life › 100% · Your pension — the rest comes from your savings · more from 67" while the meter
+directly above shows Pension $4,000/mo AND Portfolio $800/mo — "100%" and "the rest comes from your
+savings" cannot both be true, and "more from 67" implies additional guaranteed income stacking on top
+of an already-100% card.
+
+**Root cause.** `planHighlights.guaranteed` in `App.jsx` computed its headline `pct` from the UNGATED,
+eventual SS + pension streams (BUG-122's own deliberate fix — a lifetime claim shouldn't read 0%
+just because SS hasn't started yet), but named its SOURCES (`hasSS`/`hasPension`) off
+`flowRetirement`, the retirement-year-GATED snapshot — a different question ("has this started by
+retirement") that the sub-copy conflated with "does pct count this stream at all." A source that
+counts toward `pct` but hasn't started yet (repro A's pension) was invisible to the naming logic
+entirely. Separately, `nextGuaranteedStart` built a full list of every pending source but only ever
+exposed `[0]` (the earliest) to the screen, so a second pending source (repro A's pension, again) had
+no field to be named from even if the naming logic had been fixed in isolation. And nothing anywhere
+checked whether `pct` had already reached 100% before appending "the rest comes from your savings" —
+a clause that is unconditionally false once there is no "rest" left by the model's own number.
+
+**Fix.** Three changes, all in the model layer (`App.jsx`) except the copy-selection itself
+(`PlanScreen.jsx`), per rule 10:
+1. New UNGATED booleans `everHasSS`/`everHasPension` (does this household eventually get Social
+   Security / a pension at all — the same eligibility test `pct`'s own numerator already uses) drive
+   source NAMING; the existing gated `hasSS`/`hasPension` are left untouched (still used for a
+   different question — see below) rather than repurposed, so nothing that already read them breaks.
+2. `pendingGuaranteedStarts`, the full sorted array `nextGuaranteedStart` already built internally, is
+   now surfaced in full as `guaranteed.pendingSources` (each entry: `age`, `label`, its own
+   `savingsCoverUntilStart`) — `startsAtAge`/`startsLabel`/`savingsCoverUntilStart` (the single
+   earliest entry) are kept byte-identical for backward compatibility.
+3. New `fullyCovered` boolean (`pct >= 100`) suppresses "the rest comes from your savings" once true.
+   `PlanScreen.jsx`'s copy-selection also keeps a gated `activeNow = hasSS || hasPension` check (the
+   ORIGINAL gated flags, now used for their own correct purpose): whether ANYTHING is already paying
+   right now, which decides between the "X starts at N — savings cover you until then" safety framing
+   (nothing active yet — the honest question is whether savings bridge the gap) and the "source — the
+   rest comes from savings · more from N" framing (something is already active). This is what
+   preserves BUG-122's own already-tested "savings cover you until then" / "may not stretch that far"
+   behavior for the still-common case (SS not yet started, nothing else active) while fixing the two
+   repros above.
+**Where:** `src/App.jsx` (`planHighlights.guaranteed`, `pendingGuaranteedStarts`), `src/horizon/screens/PlanScreen.jsx` (`guaranteedSub`).
+
+**Tests:** `src/horizon/__tests__/plan-screen.test.js` — two new tests using the REAL
+`planHighlights.guaranteed` App computes for repro A and repro B (verified via a live App mount)
+proving the fixed copy ("Social Security + pension — full coverage once Social Security at 67, Your
+pension at 70" / "Social Security + pension — full coverage starts at 67") and the absence of the old
+buggy strings. Three pre-existing tests (the base fixture, the spouse-income test, both BUG-122
+"savings cover you until then" tests) updated with the new fields so their existing assertions keep
+holding under the new logic. **Revert-and-confirm:** reverted `App.jsx` + `PlanScreen.jsx` together
+(`git stash`), confirmed all four new/updated regression assertions failed with the EXACT pre-fix
+strings quoted in the two repros above, then restored the fix and confirmed all pass.
+**Golden master:** all four confirmed unchanged — `guaranteed.hasSS`/`.startsAtAge`/`.startsLabel`/
+`.savingsCoverUntilStart` (the fields `golden-master-app-wiring.test.js` locks) are computed
+byte-identically to before; the new fields are purely additive; confirmed by direct test run, no
+values moved.
+**Not fixed here — still open:** BUG-125 (a spouse claiming SS on a different timeline than the
+primary isn't reflected in `pct`'s source list either) is a pre-existing, separate, filed issue this
+fix does not touch — `everHasSS`/`pendingGuaranteedStarts` still read the same primary-only-gated
+`householdSS`/`ssClaimingAge` BUG-125 already documents as incomplete for that household shape.
+
+---
+
+### BUG-130 — the Plan verdict's "won't fix it" sentence asserted something the model never tested (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — a confidently-stated NEGATIVE claim ("retiring later
+alone won't close the gap") that the app's own retirement-age slider can falsify in one drag, steering
+a first-time user away from the plan's strongest lever.**
+**Found by:** the final adversarial review of PR #66. `calcWorkLongerBreakEven` only ever simulates
+`offsets = [1, 3, 5]` (by design — its own docstring says so); `minYearsToSustain` is `null` when none
+of those three tested offsets cover the plan. That correctly means "none of the offsets I tested
+worked" — but `PlanVerdict`'s `leverText` converted the `null` into a blanket claim about EVERY
+possible later retirement age. Repro: default state · `retirementAge` 60 · `annualExpenses` 58,000
+renders "Retiring later alone won't close the gap — trimming monthly spending is the other lever." —
+but setting `retirementAge` to 68 on the same household gives `outlastsPlan: true`. Measuring the
+first offset that actually works at each spend level (58k→+8, 60k→+9, 62k→+10, 64k–70k→+12, 72k+→
+never) confirms the model's own null case does not mean "no later age would ever work," and the app's
+own slider reaches `lifeExpect − 1` — well past `safeRetAge + 5`.
+
+**Root cause.** `calcWorkLongerBreakEven`'s own docstring already documents that it "does not
+interpolate" and only ever reports one of the tested offsets — the null case was ALWAYS meant to mean
+"none of the three I tried," never "none exist." `PlanScreen.jsx`'s `PlanVerdict` had no way to say
+which offsets were actually tried, so it fell back to a blanket, unqualified claim.
+
+**Fix (decided): weaken the copy to exactly what the model knows, rather than widen `offsets`** —
+widening means a full extra multi-decade scenario re-simulation on every Plan render (a real cost on
+the app's main screen), and the function's own contract already documents that it intentionally
+doesn't interpolate. New `maxOffsetTested` field on `calcWorkLongerBreakEven`'s return
+(`Math.max(...offsets)`, the tested set — not `rows.length`, which would silently follow a
+filtered/failed row instead of what was actually asked for) lets `PlanVerdict` render "Working up to
+N more years isn't enough on its own — trimming monthly spending is the other lever." (N = the actual
+largest tested offset, never a hardcoded "5" in JSX, per rule 10) instead of the blanket claim.
+**Where:** `src/model/what-if.js` (`calcWorkLongerBreakEven`, new `maxOffsetTested`),
+`src/horizon/screens/PlanScreen.jsx` (`PlanVerdict.leverText`).
+
+**Tests:** `src/model/__tests__/what-if.test.js` — one new test proving `maxOffsetTested` is
+`Math.max` of whatever `offsets` were actually passed (default `[1,3,5]` → 5; custom out-of-order
+`[9,1,5]` → 9, not just the largest index; a single-offset `[2]` → 2).
+`src/horizon/__tests__/plan-screen.test.js` — the existing null-case test rewritten to assert the new
+sentence ("Working up to 5 more years isn't enough on its own") and the ABSENCE of the old blanket
+claim. **Revert-and-confirm:** reverted `what-if.js` + `PlanScreen.jsx` together (`git stash`),
+confirmed both new/updated tests failed (the model test with `expected undefined to be 5`, the screen
+test rendering the old "Retiring later alone won't close the gap" copy), then restored the fix and
+confirmed both pass. Also verified against a live App mount at the exact reported repro (`retirementAge`
+60, `annualExpenses` 58,000): the verdict sentence now reads "…Working up to 5 more years isn't enough
+on its own — trimming monthly spending is the other lever."
+**Golden master:** all four confirmed unchanged — a pure copy/gating change plus one additive field;
+confirmed by direct test run, no values moved.
+
+---
+
+### BUG-129 — `calcRetIncomeFlow`'s `guaranteedPct` had no non-finite guard, unlike `buildBarSegments` one function away in the same PR (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: LOW — a defensive-contract gap only. No live App input path
+reaches this today (every value feeding `calcRetIncomeFlow` is numeric), so nothing on the shipped
+app is affected; this closes an asymmetry, not a live bug.**
+**Found by:** the same final adversarial review of PR #66, noting that `buildBarSegments`
+(`src/model/budget.js`, same PR) got an explicit `Number.isFinite` guard with a comment about
+precisely this hazard (`Math.max(0, NaN)` is `NaN`, not a clamp), while `guaranteedPct` — a sibling
+function in the very next block of `drawdown.js` — had no equivalent guard. Same defensive-contract
+class as the already-filed BUG-98 (the spouse gap-year maps).
+
+**Root cause.** `calcRetIncomeFlow`'s `guaranteedPct: exp > 0 ? Math.min(100, Math.round(((ssRaw +
+penRaw) / exp) * 100)) : null` has no check that `ssRaw + penRaw` is actually finite. `ssRaw =
+Math.max(0, ss)` — if a caller ever passed a non-finite `ss`/`pension` (e.g. `NaN`, `Infinity`),
+`Math.max` does not clamp it (`Math.max(0, NaN)` is `NaN`), so `guaranteedPct` becomes `NaN`.
+`PlanScreen.jsx`'s `pct != null` applicability test passes `NaN` straight through (`NaN != null` is
+`true`), rendering the literal string `"NaN%"` on the "Guaranteed for life" card instead of the
+designed `"—"` empty state.
+
+**Fix.** Added a `Number.isFinite` guard on `guaranteedRaw = ssRaw + penRaw`, matching
+`buildBarSegments`'s own guard style: `guaranteedPct: (exp > 0 && Number.isFinite(guaranteedRaw)) ?
+Math.min(100, Math.round((guaranteedRaw / exp) * 100)) : null` — returns `null` (the designed "—"
+empty state this codebase already uses elsewhere for "not applicable"), never `0` (which would
+falsely claim zero guaranteed income) and never `NaN`. Scoped narrowly to `guaranteedPct` only,
+matching the task's precise ask and `buildBarSegments`'s own narrow contract — the rest of
+`calcRetIncomeFlow`'s return bundle (`ss`/`pension`/`portfolioDraw`/`guaranteedIncome`) is
+unaffected by this change; no live path exercises a non-finite `ss`/`pension` today, so widening
+the guard's scope was out of scope for this fix.
+
+**Tests:** `src/model/__tests__/drawdown.test.js` — one new test asserting `guaranteedPct` is `null`
+(not `NaN`, not `0`) for a `NaN` `ss`, a `NaN` `pension`, and an `Infinity` `ss`, plus a sanity check
+that the function still returns a well-formed object rather than throwing. **Revert-and-confirm:**
+reverted `drawdown.js` alone (`git stash`), confirmed the new test fails with `expected NaN to be
+null`, then restored the fix and confirmed it passes.
+**Golden master:** all four confirmed unchanged — every default-state input is numeric, so the new
+guard's condition is always true there; confirmed by direct test run, no values moved.
+**Where:** `src/model/drawdown.js` (`calcRetIncomeFlow`), `src/model/__tests__/drawdown.test.js`.
+
+---
+
+### BUG-128 — the Statement income ledger's rows summed to MORE than the bolded total for an over-funded household (SS + pension alone exceed spending) (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: LOW-MEDIUM — a real, live-reachable arithmetic mismatch on the
+Statement tab's headline ledger (not a rare edge case: any household whose SS + pension already
+covers spending hits it), and the "Where retirement income comes from" companion strip's bars
+overflow their `overflow: hidden` track because their percentages summed past 100%.**
+**Found by:** the same final adversarial review of PR #66. `src/horizon/screens/NumbersScreen.jsx`'s
+own comment (lines 508-511) claims the ledger column "visibly reconciles to the bolded total" — it
+didn't, for this household shape.
+
+**Root cause.** `calcStatementView` (`src/model/budget.js`) computed
+`monthlyPortDraw = Math.round(Math.max(0, exp − ss − pension) / 12)` — clamping ONLY the portfolio
+draw at 0 when SS + pension already exceed spending — while `monthlyHHSS`/`monthlyPension` stayed
+the raw, unscaled monthly SS/pension figures. So the three "Where the money comes from" rows summed
+to `ss + pension` (unclamped) instead of `exp`, overshooting the bolded "Total monthly" by exactly
+the amount income exceeds spending. The `ssSharePct`/`pensionSharePct`/`portDrawSharePct` fields
+(added in the same PR) inherited the same bug, summing to ~105% at the reported live default
+(`pensionMonthly` 4000, `pensionStartAge` 60, retire 65: SS $4,010 + pension $15,784 + draw $0 =
+$19,794 against a stated total of $18,868/mo). `calcRetIncomeFlow` (`src/model/drawdown.js`) — the
+Money-flow tab's equivalent bands — already solves this exact over-funded edge (its own header
+comment documents it), but `calcStatementView` never reused that scaling, so the same bug class
+existed in two places with only one of them fixed.
+
+**Fix.** Reused `calcRetIncomeFlow`'s own scaling approach instead of inventing a second one:
+`incomeTotal = ssRaw + pensionRaw`; `portDraw = max(0, exp − incomeTotal)`; `incomeCovered = exp −
+portDraw` (== `min(incomeTotal, exp)`); `scale = incomeTotal > 0 ? incomeCovered / incomeTotal : 0`;
+`ssBand = ssRaw * scale`, `pensionBand = pensionRaw * scale`. The monthly SS/pension figures are now
+derived from these scaled bands rather than the raw values. In the ordinary (non-over-funded) case
+`scale` is always exactly 1, so the fix is byte-identical to before whenever income doesn't exceed
+spending — it only changes behavior in the over-funded edge case. `ssSharePct`/`pensionSharePct`/
+`portDrawSharePct` (already derived from the monthly bands) inherit the fix automatically — no
+separate change needed. `NumbersScreen.jsx` needed NO change (rule 10: it only renders
+`sv.monthlyHHSS`/`sv.monthlyPension`/`sv.monthlyPortDraw`/`sv.ssSharePct`/etc. — the model fix alone
+makes its existing "reconciles to the bolded total" comment true again); `buildBarSegments`
+similarly needed no change since it self-normalizes off the sum of the values it's given, which now
+correctly equals `monthlyTotal`.
+
+**Tests:** `src/model/__tests__/budget.test.js` — two new tests: a clean-numbers case (exp=$12,000/yr,
+ss=$6,000/yr, pension=$9,000/yr — income 25% over spending) proving the exact scaled values
+($400/mo SS, $600/mo pension) and that the three bands + share percentages now sum exactly to
+`monthlyTotal`/100; and the task's own live repro reproduced at the model level (SS raw $4,010/mo,
+pension raw $15,784/mo, exp $18,868/mo) proving the fix's output reconciles. **Revert-and-confirm:**
+reverted `budget.js` alone (`git stash`), confirmed both new tests fail with the exact reported
+numbers (`expected 19794 to be 18868`), then restored the fix and confirmed both pass. Also
+reproduced the identical live App-level repro (mounted `App`, set `pensionMonthly`/`pensionStartAge`/
+`retirementAge` to the task's exact values) before writing the unit tests, confirming
+`statementView.monthlyHHSS + monthlyPension + monthlyPortDraw` moved from 19,794 (pre-fix) to
+18,868 == `monthlyTotal` (post-fix), and the share percentages from summing to 105% down to exactly
+100%.
+**Golden master:** all four confirmed unchanged — the default state (all four golden masters) has
+`pensionMonthly = 0`/SS+pension well under spending, so `scale = 1` and the fix is a no-op there;
+confirmed by direct test run, no values moved.
+**Where:** `src/model/budget.js` (`calcStatementView`), `src/model/__tests__/budget.test.js`.
+
+---
+
+### BUG-127 — a what-if scenario's spouse retirement age was frozen at the BASE plan's resolved value, so a "work longer" scenario silently deleted a year of the spouse's gap-year income for every extra year worked (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — the household's headline "work longer" comparison reported
+the OPPOSITE of reality: retiring later made the plan monotonically WORSE in the tool, while
+actually setting the retirement age later made it sustainable.**
+**Found by:** a final adversarial review of PR #66, tracing `App.jsx`'s `effectiveSpouseRetAge`
+through both `what-if.js` re-seed call sites into `buildSpouseRetirementSeed`'s loop-termination
+condition.
+
+**Root cause.** `App.jsx`'s `effectiveSpouseRetAge = clamp(spouseRetirementAge ?? retirementAge)`
+resolves the spouse's own retirement age from the raw input (`spouseRetirementAge`, default
+`null` = "auto") against the PRIMARY's retirement age. That resolved (not raw) value was the ONLY
+thing `spouseSeedInputs` carried into `what-if.js`. Both what-if re-seed sites
+(`calcWhatIfDelta`, `calcWhatIfScenario`) spread `spouseSeedInputs` straight into
+`buildSpouseRetirementSeed({ ...spouseSeedInputs, primaryRetAge: scenarioRetAge })` — overriding
+`primaryRetAge` for the scenario but leaving `spouseRetAge` at the BASE plan's frozen value. In
+auto mode, that frozen value equals the base plan's OWN retirement age (e.g. 55) — a fixed
+calendar year that never moves with the scenario. `buildSpouseRetirementSeed`'s gap-year loop
+(`if (sAge > spouseRetAge) break;`) then breaks earlier and earlier as the scenario's own
+retirement age creeps toward (and past) that frozen calendar year, so **every extra year worked
+shrinks, then deletes, the spouse's gap-year income window** instead of extending it (a scenario
+retiring later should let the spouse work `spouseRetirementAge ?? scenarioRetAge` years too, not
+fewer).
+
+**Verified live** (MFJ, `spouseCurrentAge` 22, `spouseIncome` 500,000, `annualExpenses` 120,000,
+`retirementAge` 55, `spouseRetirementAge` left at its default/null): `calcWorkLongerBreakEven`
+reported the portfolio lasting to age 86 / 82 / 78 for +1 / +3 / +5 years worked —
+**monotonically WORSE** — while directly setting `retirementAge` to 58 (no scenario, the real base
+plan) made the plan sustainable outright (`outlastsPlan: true`, `depletionAge: null`). A no-spouse
+control household gave correctly monotone rows (74 → 76 → 78 → 81), isolating the bug to the
+spouse re-seed path.
+
+**Fix.** Extracted the resolution into ONE shared pure helper, `resolveSpouseRetAge({
+spouseRetirementAge, primaryRetAge, spouseCurrentAge, lifeExp })` (`src/model/retirement-phase.js`,
+next to `spouseAgeAt`/`primaryAgeAt`) — `spouseRetirementAge ?? primaryRetAge`, clamped to
+`[spouseCurrentAge+1, max(that, lifeExp-1)]`, defensively `Number.isFinite`-guarded (BUG-98's
+convention: a non-finite `spouseCurrentAge`/`lifeExp` fails open on the unclamped raw age rather
+than producing a NaN that silently disables the loop's break condition). `App.jsx`'s
+`effectiveSpouseRetAge` (the BASE plan) now calls this helper directly instead of its old inline
+`Math.min(...Math.max(...))` — byte-identical result, verified unchanged. `spouseSeedInputs` was
+changed to carry the RAW `spouseRetirementAge` (may be `null`) plus `lifeExp`, not the pre-resolved
+age; both what-if.js re-seed sites now call `resolveSpouseRetAge` themselves, resolving against
+**their own** `scenarioRetAge` before calling `buildSpouseRetirementSeed` — the same pattern this
+codebase's BUG-31 précis exists to enforce (one implementation of a concept, not two silently
+drifting copies). An explicit (non-null) `spouseRetirementAge` is unaffected — it already resolved
+to the same literal value regardless of which primary age it's compared against, so every existing
+fixture using an explicit spouse retirement age (including both the T-X.2/T-X.3 spouse-household
+golden masters) produces byte-identical output; two `what-if.test.js` fixtures that had been
+passing an already-resolved `spouseRetAge` directly (bypassing the new resolver) were updated to
+the new `spouseRetirementAge`/`lifeExp` contract for correctness, confirmed to still resolve to the
+exact same numbers in both cases (no scenario in either fixture overrides the retirement age, or
+the explicit spouse age is later than every tested scenario age either way).
+
+**Tests:** `src/model/__tests__/retirement-phase.test.js` — 6 new unit tests on `resolveSpouseRetAge`
+directly (auto fallback, explicit-value invariance to `primaryRetAge`, the bug's own before/after
+values, both clamp directions, a same-age-or-older spouse's non-inverted range, non-finite-input
+fail-open). `src/__tests__/spouse-household.test.js` — a new `BUG-127` describe block reproducing
+the task's exact repro end-to-end through a mounted `App`: `calcWorkLongerBreakEven`'s rows are
+monotone (a later retirement age never ranks below an earlier one, treating "sustainable" as
+ranking above every finite depletion age), the +5-year row `coversPlan`, directly retiring at 58 is
+sustainable (`planView.outlastsPlan`), `whatIfSimInputs.spouseSeedInputs` carries the raw `null`
+`spouseRetirementAge` (not a pre-resolved age), and the BASE plan's own resolved
+`spouseAccounts.spouseRetirementAge.value` still tracks the base `retirementAge` exactly (unchanged
+by this fix — only the SCENARIO path changed). **Revert-and-confirm:** reverted `App.jsx`,
+`what-if.js`, and `retirement-phase.js` to their pre-fix state (`git stash` on just those three
+files), confirmed all 8 new assertions fail against the pre-fix code — including the monotonicity
+test failing with the exact reported shape (`expected 82 to be greater than or equal to 86`) — then
+restored the fix and confirmed all 8 pass.
+**Golden master:** all four confirmed unchanged — `golden-master.test.js` (no spouse, inert),
+`golden-master-app-wiring.test.js` (no spouse, inert), `spouse-household.test.js`'s T-X.2 and T-X.3
+(both set `spouseRetirementAge` explicitly, so the fix's "auto" branch never activates for them —
+confirmed by direct test run, no values moved), `unit-contract.test.js` (unaffected — no basis
+change). Lint clean, build OK.
+**Where:** `src/model/retirement-phase.js` (new `resolveSpouseRetAge`), `src/App.jsx`
+(`effectiveSpouseRetAge`, `spouseSeedInputs`), `src/model/what-if.js` (`calcWhatIfDelta`'s and
+`calcWhatIfScenario`'s spouse re-seed sites), `src/model/__tests__/retirement-phase.test.js`,
+`src/__tests__/spouse-household.test.js`, `src/model/__tests__/what-if.test.js` (two fixture
+updates to the new contract).
+
+---
+
+### BUG-126 — `useDialogBehaviour` had no Tab/Shift+Tab focus trap, and implementing the fix straightforwardly reintroduced a shorthand/longhand CSS conflict a live-browser check caught (found + fixed 2026-08-19, Batch B of the BUG-122 review-fix batch, CodeRabbit round 2 + own live verification)
+
+**Owner:** me_theguy. **Severity: Medium — every Horizon dialog (ConfirmModal, LifeEventSheet,
+ApplyPreviewModal) was affected; a keyboard user could Tab past the dialog's own last control and
+land on a background element still "under" the open modal, able to activate it while the dialog
+sat on top.**
+**Found by:** CodeRabbit's PR #66 round-2 review, flagged as the one documented gap left after the
+initial Escape/focus-in pass (`useDialogBehaviour.js`'s own header comment had explicitly deferred
+it, reasoning it "needs a live DOM to enumerate tabbables, which this repo's `environment: "node"`
+test setup cannot exercise, so it would ship untested").
+
+**Part 1 — the trap itself.** `useDialogBehaviour`'s `onKeyDown` now also handles `Tab`: it
+enumerates the card's own focusable elements (`button`/`[href]`/`input`/`select`/`textarea`/
+`[tabindex]` that aren't `disabled` and have a non-null `offsetParent`, i.e. actually visible) and
+wraps at the edges — `Shift+Tab` from the first tabbable (or from outside the tracked list
+entirely, e.g. still on the card's own `tabIndex={-1}` root right after open) goes to the last;
+`Tab` from the last goes to the first. Every Tab in between is untouched native behaviour. Verified
+with a LIVE Chromium session against the running dev server (this repo's `environment: "node"`
+`npm test` suite cannot exercise real Tab order or `offsetParent`, and jsdom's layout stubs make it
+an unconvincing substitute — MDN/jsdom both document `offsetParent`/`getBoundingClientRect` as
+unreliable there): opened LifeEventSheet's "+ Custom goal" sheet (9 real tabbable elements), Tabbed
+11 times forward (past the boundary) and landed back inside the dialog at the first element, then
+Shift+Tabbed 11 times and landed at the last — focus never once left `[role="dialog"]`'s subtree in
+either direction, and Escape still closed it afterward (the trap doesn't interfere with the
+existing dismissal mechanism).
+
+**Part 2 — a real regression the SAME live-browser check caught before it shipped.** Implementing
+Part 1 exposed that `Btn`/`Pill`'s existing `borderWidth: 1` invariant (BUG-122 batch, item 15 —
+locked separately from the `border` shorthand so a call site's `style.border` override couldn't
+zero out the width) was sitting in the SAME style object as the `border: "1px solid …"` shorthand.
+React logs its own "conflicting style property... don't mix shorthand and non-shorthand properties"
+dev warning the instant BOTH are present in one style update, because the DOM's `CSSStyleDeclaration`
+doesn't guarantee which one wins across a rerender — confirmed firing on every `Btn` render in the
+live session's console, traced to `shared.jsx`'s `Btn`. **Fix:** dropped the `border` shorthand
+entirely from both `Btn` and `Pill`, replaced with `borderStyle`/`borderColor` (colour/style, still
+overridable per call site) + the already-locked `borderWidth` — all three longhand, no shorthand key
+anywhere, so the ambiguity can't arise from the primitive's own defaults. The two real call sites
+that used to retint via the shorthand (`GoalsPanel.jsx`'s dashed goal-preset pills, `NumbersScreen.jsx`'s
+translucent "show all years" toggle) were migrated to the same longhand pattern. Re-ran the live
+Chromium session after the fix: the warning is gone, the focus trap still passes every assertion.
+**Tests:** `src/horizon/__tests__/shared-primitives.test.js` — every Btn/Pill assertion touching
+`border` rewritten to the longhand fields, plus a new explicit assertion that `style.border` is
+`undefined` on every ordinary render AND on a longhand-override render (proving the shorthand key
+never reappears). `src/horizon/__tests__/dialog-dismissal.test.js`'s footer-button border assertion
+updated the same way (LifeEventSheet's real footer, not a synthetic fixture). No dedicated jsdom test
+for the Tab-trap mechanics itself — see the live-verification note above for why; the mechanism is
+exercised for real by the Chromium session, not simulated.
+**Golden master:** untouched — pure interaction/accessibility behaviour and a CSS property-shape
+change, no dollar value or model output touched.
+**Where:** `src/horizon/useDialogBehaviour.js`, `src/horizon/shared.jsx` (`Btn`, `Pill`),
+`src/horizon/GoalsPanel.jsx`, `src/horizon/screens/NumbersScreen.jsx`,
+`src/horizon/__tests__/shared-primitives.test.js`, `src/horizon/__tests__/dialog-dismissal.test.js`.
+
+---
+
+### BUG-123 — `calcWorkLongerBreakEven`'s `coversPlan` was a SIXTH inline copy of `marginForScenario`'s formula, and the shared formula itself shared the same latent bug BUG-118 patched only locally (found 2026-08-19, Opus adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium — the shared-formula bug affects `evaluateLifeEvent`,
+`buildLeverPreview`, `buildLeverRail`, and `buildDurationRail` too, not just the one call site
+BUG-118 patched; a lever-rail tick or life-event verdict could read "comfortable" for a scenario
+that retires at/after the plan's own life expectancy.**
+**Found by:** an execution-based Opus adversarial review of PR #66 (the same review that found
+BUG-122), re-verified directly against the code before any fix.
+**What:** `src/model/what-if.js`'s `marginForScenario` (BUG-73's "the ONE sustainability-margin
+computation — replaces four inlined copies") computes, on its depletion basis,
+`marginYears = scenarioYears − (safeLifeExp − scenarioRetAge)`. When `scenarioRetAge >= safeLifeExp`
+(the scenario retires at or after the plan's own life expectancy), `safeLifeExp − scenarioRetAge` is
+zero or negative — subtracting a non-positive number only ever ADDS to `marginYears`, so a scenario
+that sustains almost no time at all can still read as a large positive margin. Proven repro:
+`marginForScenario({ scenarioYears: 0.5, scenarioRetAge: 75 }, safeLifeExp: 70)` returned
+`marginYears: 5.5` → `verdictForMargin` → `"comfortable"`, for a scenario that retires 5 years past
+the plan's own horizon and sustains only half a year. Separately, `calcWorkLongerBreakEven`'s own
+`coversPlan` (~line 1497) was a SIXTH, independent inline copy of this same formula — BUG-118 had
+already patched *this one copy* with an ad hoc `retAge < safeLifeExp` guard, but the guard was never
+added to the canonical `marginForScenario`, so the 4 other callers kept the original bug.
+**Why:** `marginForScenario`'s depletion-basis formula was written assuming `scenarioRetAge` is
+always well inside the plan's horizon (true for money events and most lever sweeps) and never
+validated the case where a caller's own retirement-age sweep (`calcWorkLongerBreakEven`'s offsets,
+or a wide `buildLeverRail` retirement-age sweep) pushes past it.
+**Fix:** moved the guard into `marginForScenario` itself: when `Number.isFinite(safeLifeExp) &&
+scenario.scenarioRetAge >= safeLifeExp`, return a sentinel `{ marginYears: -Infinity, marginBasis:
+"depletion" }` — unambiguously negative regardless of `scenarioYears`' own magnitude, so
+`verdictForMargin` always reads it as `"unaffordable"`. `buildMarginLabel` gained an explicit case
+for the sentinel (`"doesn't cover the plan by {safeLifeExp}"`) so it never prints `"runs out Infinity
+yrs early"`. `calcWorkLongerBreakEven`'s inline `coversPlan` was deleted outright and replaced with
+`marginForScenario(scenario, safeLifeExp).marginYears >= 0` — the sixth copy is gone, and the guard
+now applies to all 5 callers (the 4 pre-existing plus this one) from one place.
+**Tests:** `src/model/__tests__/what-if.test.js` — direct repro of the exact numbers above via
+`marginForScenario`/`verdictForScenarioResult`; a boundary case at `scenarioRetAge === safeLifeExp`
+exactly; `buildMarginLabel`'s sentinel label; a control case proving the guard is inert for the
+ordinary (retires-before-horizon) case. All pre-existing BUG-118/`calcWorkLongerBreakEven` tests
+(including BUG-118's own regression test) still pass unchanged. Reverted the `marginForScenario`
+guard and confirmed 4 tests fail (including BUG-118's pre-existing regression test, proving the
+delegation genuinely carries the fix through); restored and confirmed all 126 tests in the file pass.
+**Golden master:** untouched — `marginForScenario`'s depletion basis is unchanged for every ordinary
+(retires-before-horizon) scenario; only the previously-unguarded degenerate case changes.
+**Where:** `src/model/what-if.js` (`marginForScenario`, `buildMarginLabel`,
+`calcWorkLongerBreakEven`), `src/model/__tests__/what-if.test.js`.
+
+---
+
+### BUG-122 — the "Guaranteed for life" card's percentage was diluted by a spouse's temporary income, and its "savings cover you until then" claim had no truth condition (found 2026-08-19, Opus adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — both halves directly undermine the card's stated purpose
+(a first-time user's one honest "is this guaranteed" signal); the second half is a live,
+self-contradicting claim at a plausible input combination, the exact BUG-117 pattern reintroduced
+one commit later.**
+**Found by:** an execution-based Opus adversarial review of PR #66 (Slice 4), with reproductions
+verified directly against the code before any fix, not just read from the diff.
+
+**Part 1 — `guaranteedPct` dilution.** `src/model/drawdown.js`'s `calcRetIncomeFlow` computed
+`guaranteedPct` from the SCALED `ssBand`/`penBand` (`guaranteedIncome / exp`), where `scale = exp /
+incomeTotal` in the over-funded regime and `incomeTotal` includes `spouseIncome`. A spouse's
+temporary gap-year paycheck is correctly excluded from the numerator's raw terms, but it still
+multiplies into `scale` — diluting the percentage anyway. Proven repro: `calcRetIncomeFlow({
+effectiveExpenses: 80_000, ss: 60_000, pension: 0 })` → 75%; the same household with `spouseIncome:
+40_000` added → 60%, even though the spouse's pay has nothing to do with what share of spending SS
+covers. This also fed two more symptoms from the same root cause: the card disagreed with its own
+tap-through destination (Numbers → Statement's "Where the money comes from" reads the ungated
+`householdSS`, while the card read the retirement-year-GATED `ssAtRet` — 0% vs 21% at one fixture),
+and the card read an alarming 0% for every new user at the shipped default (retire 65, claim SS 67)
+purely because SS hadn't started YET in the snapshot year, a category error for a *lifetime* claim.
+**Fix:** `guaranteedPct` now reads the RAW, unscaled `ssRaw + penRaw` (capped at 100), never the
+scaled bands — `Math.min(100, Math.round(((ssRaw + penRaw) / exp) * 100))`. The scaled
+`ssBand`/`penBand`/`guaranteedIncome` are untouched (still needed for the meter's bars, which must
+sum to `exp`). Separately, `App.jsx`'s `planHighlights.guaranteed.pct` now reads a dedicated
+`calcRetIncomeFlow` call (`flowGuaranteedPct`) fed the UNGATED eventual `householdSS`/
+`retPensionAnnualBasis` streams — the same fields `budget.js`'s Statement-tab ledger already reads —
+instead of the retirement-year-gated snapshot `flowRetirement` uses for its bands, resolving both the
+destination-disagreement and the false-0%-for-new-users symptoms at once. `hasSS`/`hasPension`/
+`hasSpouseIncome` deliberately stay on the GATED `flowRetirement` snapshot — a different question
+(has this actually started by retirement, for the sub-copy's timing narrative) from the lifetime
+percentage above.
+
+**Part 2 — ungated "savings cover you until then" claim.** `src/horizon/screens/PlanScreen.jsx`'s
+`guaranteedSub` rendered "`{source} starts at {age} — savings cover you until then`" unconditionally
+whenever `startsAtAge != null`, with no check that savings actually last that long. Proven repro
+(age 55, retire 60, spend $300k/yr, trad401k $100k only): the Plan screen simultaneously showed
+"Guaranteed for life 0% — Social Security starts at 67 — savings cover you until then" AND "Money
+lasts to age 61 — 29 years short of your plan" — directly contradicting itself. This is BUG-117's
+exact pattern (an ungated reassurance claim with no truth condition), reintroduced one commit later
+in the same PR.
+**Fix:** new `planHighlights.guaranteed.savingsCoverUntilStart` (`App.jsx`), computed from the
+already-available `planView.outlastsPlan`/`depletionAge` (`calcPlanProgress`,
+`src/model/retirement-drawdown.js`) — true when `outlastsPlan` or `depletionAge >= startsAtAge`, null
+when there's no pending source to cover. `PlanScreen.jsx` branches its copy on this pre-computed
+boolean (rule 10 — no age comparison in the screen): true keeps the existing sentence, false swaps to
+`"{source} starts at {age} — but your savings may not stretch that far, see \"Money lasts to\" below"`.
+**Tests:** `src/model/__tests__/drawdown.test.js` — a new fixture that actually enters the scaled
+regime WITH spouse income (the existing spouse-exclusion fixture never did, which is why it didn't
+catch this), proving `guaranteedPct` is identical with/without the spouse's income once scaled.
+`src/horizon/__tests__/plan-screen.test.js` — the exact false-reassurance repro rendering neither
+claim contradictorily, plus the true-case rendering the original sentence. Both reverted-and-confirmed
+(drawdown.js's fix reverted → new test fails with the pre-fix diluted value; PlanScreen.jsx's fix
+reverted → the false-reassurance test fails); both restored and confirmed green.
+**Golden master:** untouched — `guaranteedPct`/`savingsCoverUntilStart` are new fields with no
+existing golden-master assertion; no other locked value changed.
+**Where:** `src/model/drawdown.js`, `src/App.jsx`, `src/horizon/screens/PlanScreen.jsx`,
+`src/model/__tests__/drawdown.test.js`, `src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
+### BUG-121 — `StmtCol`'s label-fit guard was inline arithmetic on model values, against rule 10 (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Low (rule-10 hygiene) — visually inert (the computation itself was
+correct), but the wrong layer, and used `?? 0` fallbacks the rule specifically forbids.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified — code from an earlier slice
+of this same design-review effort.
+**What:** `StmtCol` (`src/horizon/screens/NumbersScreen.jsx`) computed `barTotal`
+(`(bar?.segs ?? []).reduce((s, g) => s + Math.max(0, g.f ?? 0), 0)`) and `fitsLabel` (a segment's
+share of its bar ≥ `SEG_LABEL_MIN_SHARE_PCT`) inline in the render — arithmetic on model values
+inside `src/horizon/`, with `?? 0` fallbacks, both against rule 10.
+**Why:** the three composition bars' segments (paycheck split, account mix, retirement income mix)
+are assembled directly in `NumbersScreen.jsx` from raw model fields (`statementView`/`retVals`
+props), not pre-built by a `src/model/` function, so nothing already computed a label-fit boolean
+for the screen to just read.
+**Fix:** new pure `buildBarSegments` (`src/model/budget.js`) — takes raw `{f, c, l}` segments and
+returns them with a computed `showLabel` (share of the bar's total ≥ `SEG_LABEL_MIN_SHARE_PCT`, now
+also moved to `budget.js`), using a real `Number.isFinite`/`> 0` guard instead of `?? 0`. All three
+`StmtCol` call sites now wrap their `segs` array in `buildBarSegments(...)`; `StmtCol` itself just
+reads `seg.showLabel` — `barTotal`/`fitsLabel`/the local `SEG_LABEL_MIN_SHARE_PCT` constant are gone
+from `NumbersScreen.jsx` entirely.
+**Tests:** `buildBarSegments` unit tests in `src/model/__tests__/budget.test.js` (all-clear, threshold
+boundary at exactly 12%, missing/negative/non-finite inputs treated as real 0, zero-total bar, empty
+list). Wiring tests in `src/horizon/__tests__/numbers-tabs.test.js` — the default fixture's
+account-mix bar hides HSA's label (≈5.3% share, under 12%) while showing the other three, and the
+label reappears once HSA's share is grown past 12% (proving the wiring is live, not a value baked in
+once). Reverted the fix and confirmed all new tests fail; restored and confirmed green.
+**Golden master:** untouched — display-layer refactor only, no dollar value changed.
+**Where:** `src/model/budget.js`, `src/model/__tests__/budget.test.js`,
+`src/horizon/screens/NumbersScreen.jsx`, `src/horizon/__tests__/numbers-tabs.test.js`.
+
+---
+
+### BUG-120 — `MoreSheet` declared `aria-haspopup="dialog"` without being a real dialog (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium — on mobile, `MoreSheet` is the ONLY route to Someday / My
+details / Settings, so a missing Escape/focus contract is user-facing, not cosmetic.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified.
+**What:** `MoreSheet` (`src/components/HorizonShell.jsx`) — the mobile bottom-sheet overflow
+menu — declared `aria-haspopup="dialog" aria-expanded={showMore}` on its trigger button, but the
+sheet itself had none of the real dialog behaviour every OTHER Horizon overlay already got in
+BUG-50 (`ConfirmModal`, `LifeEventSheet`, `ApplyPreviewModal`): no `role="dialog"`, no `aria-modal`,
+no Escape handler, no focus move/restore.
+**Why:** `MoreSheet` predates the shared `useDialogBehaviour` hook (BUG-50) and was never
+retrofitted onto it when the other three overlays were — and BUG-49's keyboard-access sweep
+structurally can't catch this class of gap, since every test iteration navigates to a screen
+immediately after opening the sheet, unmounting it before the sweep runs.
+**Fix:** wired `useDialogBehaviour` (`src/horizon/useDialogBehaviour.js`) into `MoreSheet` —
+`role="dialog"`, `aria-modal="true"`, `aria-label="More"`, `tabIndex={-1}`, Escape-to-close, focus
+move/restore, and `data-dismiss-backdrop` on its backdrop (matching `ConfirmModal`/`LifeEventSheet`'s
+convention).
+**Tests:** new `src/__tests__/more-sheet-dismissal.test.js` (5 tests, mirroring
+`dialog-dismissal.test.js`'s pattern for the other three overlays, reached through the real App at a
+mobile viewport since `MoreSheet` is a `HorizonShell`-local, unexported component) — role/aria-modal/
+name, Escape closes, a non-Escape key doesn't, the backdrop click closes and is declared as one, a
+click inside the card doesn't bubble to the backdrop. Reverted the fix and confirmed all 5 fail;
+restored and confirmed green.
+**Golden master:** untouched.
+**Where:** `src/components/HorizonShell.jsx`, `src/__tests__/more-sheet-dismissal.test.js`.
+
+---
+
+### BUG-119 — SomedayScreen's photo-upload well was unclickable by mouse/touch (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium-High — an interaction-breaking bug, not an a11y nitpick: the
+ONLY way to open the file picker by mouse or touch was silently dead.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified.
+**What:** the photo-upload `<div onClick>` (added in Slice 2 for BUG-49's keyboard fix —
+`role="button"` + `tabIndex` + `kbActivate`) sits underneath a purely decorative, full-`inset:0`
+"dark gradient overlay" `<div>` rendered AFTER it in the JSX. With no `pointerEvents` declared on the
+overlay, later paint order put it on top, and it silently intercepted every mouse/touch tap on the
+photo well. The keyboard path (a real `onKeyDown` on the well itself) still worked, which is exactly
+why this went unnoticed — a keyboard-only regression test has no way to catch a mouse-only one.
+**Why:** the gradient exists purely for its visual effect over a photo and never needed to intercept
+pointer events; nothing declared it inert.
+**Fix:** `pointerEvents: "none"` on the gradient overlay (`src/horizon/screens/SomedayScreen.jsx`).
+**Tests:** new `src/horizon/__tests__/someday-screen.test.js` — asserts the overlay declares
+`pointerEvents: "none"` and that the photo well underneath is still a real click + keyboard target.
+Reverted the fix and confirmed the pointer-events assertion fails; restored and confirmed green.
+**Golden master:** untouched — layout/style only.
+**Where:** `src/horizon/screens/SomedayScreen.jsx`, `src/horizon/__tests__/someday-screen.test.js`.
+
+---
+
+### BUG-118 — `calcWorkLongerBreakEven`'s `coversPlan` read true for a scenario retiring at/after life expectancy (found 2026-08-19, CodeRabbit review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: Medium — feeds `minYearsToSustain`, which feeds the Plan screen's
+"working N more years would make it last" verdict sentence; a false positive there is a wrong claim
+on a headline surface, not just an internal miscalculation.**
+**Found by:** CodeRabbit's review of PR #66, independently re-verified.
+**What:** `calcWorkLongerBreakEven`'s per-offset `coversPlan` compared
+`scenario.scenarioYears >= (safeLifeExp - retAge)`. `safeLifeExp` is the BASE plan's fixed horizon
+and never moves with the offset; `retAge = safeRetAge + k` does. When `retAge >= safeLifeExp`
+(reachable at the top of a wide offset table, or whenever `retirementAge` is already close to
+`lifeExpect` — e.g. retirementAge 88, lifeExpect 90, offset 3 → retAge 91), `safeLifeExp - retAge` is
+zero or negative, so the comparison is trivially satisfied by any non-negative `scenarioYears`, and
+`coversPlan` read `true` for a scenario that retires AFTER the plan horizon it's supposedly covering.
+**Why:** the comparison assumed `retAge` always stays inside `[safeRetAge, safeLifeExp)` — true for
+the shipped default's offsets `[1,3,5]` against a 65→90 plan, but not guaranteed for every
+`(retirementAge, lifeExpect, offsets)` combination.
+**Fix:** require `retAge < safeLifeExp` before the year-count comparison (`src/model/what-if.js`) —
+a row past the plan horizon can only cover it by genuinely never depleting (`scenSustainable`), never
+by the (now-moot) year-count comparison.
+**Tests:** new regression in `src/model/__tests__/what-if.test.js` — a `retirementAge`/`lifeExpect`
+fixture close enough that offsets `[1,3,5]` push `retAge` to/past `safeLifeExp` (the task's own repro
+shape). Reverted the fix and confirmed the new test fails; restored and confirmed green.
+**Golden master:** untouched — the shipped default's offsets never reach the degenerate case.
+**Where:** `src/model/what-if.js`, `src/model/__tests__/what-if.test.js`.
+
+---
+
+### BUG-114 — The Plan screen showed the same figure in two different dollar bases, ~20px apart, differing by the full inflation factor (~4× at the shipped default) (found 2026-08-03, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: HIGH — live at the shipped default, on the app's landing screen,
+and the two numbers are the same concept under two labels a user reads in one glance.**
+**Found by:** the round-2.5 pre-mortem's sweep of CLAUDE.md rule 11's basis axis, re-verified here
+against the live default bundle by mounting the real App.
+**What:** `PlanScreen.jsx`'s Income Meter headline read `planHighlights.retIncomeFlow.expenses`,
+built from `retSpendBasis` — the primary's RETIREMENT-YEAR dollars, correct for the walk it
+reconciles with (BUG-91). The "Income for life" stat card, one card row below it, read the raw
+`effectiveExpenses` prop — TODAY's dollars, never converted. Same quantity, same screen, no label
+on either saying which frame it was in. Measured at the shipped default (retire at 65 from 30,
+4% inflation): the meter said **$18,868/mo** and the card said **$4,800/mo** — a 3.95× gap. This is
+the identical shape as the Classic chart-caption mismatch found in the PR #62 review round
+($57,377 vs $226,415); rule 11 exists precisely because of it, and this instance predates the rule.
+**Why:** BUG-91's basis conversion landed in the engine and in `retIncomeFlow`, but the stat card
+was reading a raw App prop rather than the converted bundle, so it was never part of that fix's
+call-site sweep. Nothing in the code or the tests forced the two to agree: `plan-screen.test.js`
+asserted the card's SUB-copy (`"82% replaced"`) and never its dollar value.
+**Fix:** rather than silently picking one basis (the owner's explicit decision), the model now
+builds **both** and the user chooses. `planHighlights.incomeFlowByBasis` is `{ today, retirement }`
+— two `calcRetIncomeFlow` results over the same four income streams — plus
+`dollarBasisOptions` (id/label/caption/cardSub, so no basis copy or age arithmetic lives in JSX)
+and `dollarBasisApplicable` (false once there are no years left to inflate over, i.e. already
+retired: the bases coincide and the screen renders no control at all). The today basis reads
+`effectiveExpenses`/`effectivePension` RAW — they are the user's own entered numbers, already
+today's dollars — and deflates SS and the spouse's gap-year pay with `inflationRebaseFactor` at a
+NEGATIVE year count, since those two have no today's-dollar source figure.
+`toRetirementYearDollars` would have been wrong there: it clamps negative years to a no-op and
+would have left both in the retirement-year frame silently. The Plan screen holds one local,
+unpersisted `dollarBasis` state ("today" by default) that drives the Income Meter (headline + all
+four bars) and the "Spending each month" card TOGETHER, so the two can no longer disagree by
+construction. Scope is deliberately limited to genuinely dollar-denominated figures: ages,
+percentages, `guaranteed.pct`, "Money lasts to", the tax total and `incomeReplacementPct` are
+basis-invariant and are NOT wired to the toggle.
+**Tests:** 4 new in `plan-screen.test.js` (a "dollar-basis toggle" describe): the default shows the
+today figure in BOTH surfaces and the retirement figure in neither; switching moves both together;
+four named basis-invariant values are byte-identical before and after switching; and the control
+plus its caption disappear when the model says the bases coincide. **Revert-and-confirm:** pinning
+the meter back to the retirement basis (the pre-fix state) reproduces the bug exactly — the
+rendered text contained `$10,000/mo` in the meter and `$5,800` in the card simultaneously — and
+failed 2 of the 4. Reverted, confirmed, restored.
+**Golden master:** untouched (all three), confirmed by running them — `incomeFlowByBasis.retirement`
+is value-identical to the `retIncomeFlow` it replaces, and no locked field reads the new today basis.
+**Where:** `src/App.jsx` (`planHighlights`, + the `inflationRebaseFactor` import),
+`src/horizon/screens/PlanScreen.jsx` (`DollarBasisToggle`, `IncomeMeter`, the spending card),
+`src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
+### BUG-115 — Plan's "Retirement taxes" card showed a number 4.6× smaller than the total on the screen it navigates to, under near-identical wording (found 2026-08-03, Horizon design-review round 2 content audit; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — live at the shipped default; tapping the card is
+what makes the discrepancy visible, so the user is walked into it deliberately.**
+**Found by:** the round-2 Plan-content audit's per-card destination trace, verified against the live
+default bundle.
+**What:** the card read `planHighlights.lifetimeTaxBurden = rmdTaxBite + conversionCost`. Its own
+`onClick` navigates to Numbers → Taxes, whose composition bar and headline read
+`taxView.composition.total = rmdTax + convTax + drawTax` — the same two components **plus** the
+401k-draw tax BUG-40 added. At the shipped default: card **$119,575**, destination **$553,782**.
+The destination's own callout text literally reads "RMD, conversion & 401k draws", so the larger
+number is the honest one; the card's "RMDs + conversions" sub-copy was accurate about what it was
+summing and gave no hint that it was a subset.
+**Why:** two independent definitions of one concept — the BUG-31 class. `lifetimeTaxBurden` was
+added for this card in the WI-1 stat-card pass and was never revisited when BUG-40 added the third
+tax component to `taxViewBundle`; nothing referenced both, so nothing forced them to agree.
+**Fix:** `planHighlights.lifetimeTaxBurden` is **deleted outright** rather than re-summed to match —
+keeping two fields in sync is what failed here. The card reads `taxView.composition.total`, the
+exact object its destination renders, so the two are now the same value by construction. Relabelled
+"Tax in retirement" with sub "total, across all your retirement years" (a 25-year cumulative figure
+sitting in a row of monthly ones needed its unit stated).
+**Not fixed here (unchanged scope):** what that total *should* be is still shaped by two open,
+pre-existing bugs — **BUG-38** (the engine charges only incremental tax above the SS/pension floor,
+so SS/pension is effectively tax-free) and **BUG-36** (what-if deltas don't charge the spending-draw
+tax). This fix makes the card agree with its own destination; it does not change either number.
+**Tests:** 1 new in `plan-screen.test.js` asserting the card renders the value passed in
+`taxView.composition.total` (a distinct fixture value, so it cannot pass by coincidence), plus the
+basis-invariance test above which pins the same total across a toggle switch.
+**Revert-and-confirm:** replacing the card's value expression with a placeholder failed both.
+Reverted, confirmed, restored.
+**Golden master:** untouched — no golden master ever locked `lifetimeTaxBurden` (checked, not
+assumed: it appeared in exactly two files, `App.jsx` and `plan-screen.test.js`), and
+`taxView.composition.total` is unchanged by this fix. All three golden masters re-run green.
+**Where:** `src/App.jsx` (`planHighlights` — field removed, `retPhase` dropped from its deps),
+`src/horizon/screens/PlanScreen.jsx`, `src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
+### BUG-116 — Plan's paycheck card was unconditionally primary-voiced ("You keep") over a figure that is HOUSEHOLD-scoped for MFJ filers (found 2026-08-03, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: MEDIUM — silently wrong for every married-filing-jointly household
+with a working spouse; invisible for everyone else, which is why it survived.**
+**Found by:** the round-2.5 pre-mortem's sweep of CLAUDE.md rule 11's *other* axis — primary-only vs.
+household scope — which the earlier rounds had searched only for basis mismatches.
+**What:** `PlanScreen.jsx`'s first stat card read `takeHome` under the label "You keep / mo".
+`takeHome` is `householdIncome − fedTax − stateTax − fica − safeDeduc` (`tax-basis.js`), and
+`householdIncome` is the COMBINED primary + spouse income when `filingStatus === "mfj"` (rule 9).
+So for an MFJ household the card showed both earners' take-home under a label that names one.
+**Why:** the same scope-declaration gap BUG-96 fixed on the RMD screen. Two correct reference
+patterns already existed in-repo — Classic's conditional label (`App.jsx:2927`,
+`spouseIncome > 0 ? "Est. Household Paycheck Deposit" : "Est. Paycheck Deposit"`) and BUG-96's
+model-provided `showHouseholdTotal` boolean — but the Horizon card predated both and was never
+revisited.
+**Fix:** a new pre-gated model boolean `planHighlights.takeHomeIsHousehold`
+(`filingStatus === "mfj" && spouseIncome > 0` — the exact condition under which `takeHome` widens),
+and the card label switches on it: "Your paycheck" / "Household paycheck". The test lives in the
+model boolean, not in JSX (rule 8): the screen never inspects `filingStatus` or `spouseIncome`.
+The card also moved out of the five-card retirement row into a two-up "today" pairing with
+"Portfolio at retirement" and gained "· today" in its sub-copy — a today's-paycheck figure sitting
+in a row of four retirement-labelled stats was the other half of what the content audit flagged.
+**Tests:** 2 new in `plan-screen.test.js` — the default renders "Your paycheck" and neither
+"Household paycheck" nor the retired "You keep", and flipping only `takeHomeIsHousehold` flips the
+label. **Revert-and-confirm:** hardcoding the label back to "Your paycheck" fails the second.
+Reverted, confirmed, restored.
+**Golden master:** untouched — a label, not a value.
+**Where:** `src/App.jsx` (`planHighlights.takeHomeIsHousehold`),
+`src/horizon/screens/PlanScreen.jsx` (`PaycheckCard`), `src/horizon/__tests__/plan-screen.test.js`.
+
+---
+
+### BUG-117 — Four ungated "for life" guarantees rendered over a spending TARGET, one of them directly above a "Runs dry at" row in the same column (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-13, Slice 4)
+
+**Owner:** me_theguy. **Severity: MEDIUM — the claim is false for any plan that depletes, which is
+the shipped default (it runs dry at 87 against a plan to 90).**
+**Found by:** the round-2 sweep for undeclared/overclaiming copy (Pattern 6), cross-checked against
+two correct in-repo reference implementations.
+**What:** four sites asserted "for life" unconditionally over `effectiveExpenses`, which is the
+user's retirement SPENDING target, not a guaranteed income stream:
+`PlanScreen.jsx`'s "Income for life" stat-card label; `NumbersScreen.jsx`'s Statement headline
+(`"/ month, for life"`); `NumbersScreen.jsx`'s Statement ledger column heading (also "Income for
+life" — whose own fifth row is **"Runs dry at"**, so the column disproved its own heading two lines
+later); and `SomedayScreen.jsx`'s hero line (`"a month, for life."`). The contrast that makes this a
+bug rather than a style preference: `JourneyScreen.jsx:184`, `WorkLongerFlow.jsx:35`,
+`LifeEventSheet.jsx:478` and `ArcGraph.jsx:390` all make the SAME claim correctly — each gated on a
+model sustainability boolean (`isSustainable` / `row.sustainable`). Those four are untouched.
+**Why:** the ungated four were written as fixed display copy rather than as a claim with a
+truth condition, so no gate was ever wired and nothing could fail when the plan didn't support it.
+**Fix:** removed the claim rather than gating it (the same shape as BUG-106, which deleted a stale
+basis claim rather than caveating it): "Income for life" → **"Spending each month"** (Plan card, now
+showing the monthly spend plainly, in the selected dollar basis) and → **"Where the money comes
+from"** (Statement column, which is what the column actually is); `"/ month, for life"` → `"/ month
+in retirement"`; `"a month, for life."` → `"a month in retirement."`. No new basis claim was added
+at the Statement headline — that tab is deliberately mixed-basis and its banner note says so.
+**Tests:** the Plan-card half is asserted in `plan-screen.test.js` (the five-card test asserts the
+new labels AND `not.toContain("Income for life")`). `horizon-screens-smoke.test.js`'s Plan
+proof-of-render marker moved from "Income for life" to "Guaranteed for life", and the same marker
+was updated in `.claude/skills/verifier-browser.cjs` (its documented mirror of that file) —
+the browser verifier was re-run and passes on the real rendered page.
+**Golden master:** untouched — copy only.
+**Where:** `src/horizon/screens/PlanScreen.jsx`, `src/horizon/screens/NumbersScreen.jsx`,
+`src/horizon/screens/SomedayScreen.jsx`, `src/__tests__/horizon-screens-smoke.test.js`,
+`.claude/skills/verifier-browser.cjs`.
+
+---
+
+### BUG-112 — Horizon's design tokens fail WCAG AA across all 12 palette/mode combinations, worst on the tokens that render real dollar figures (found 2026-08-13, Horizon design-review round 2.5 Opus pre-mortem; fixed 2026-08-13, Slice 3)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — a readability defect on every screen at once, and the
+worst-affected tokens (`good`/`warm`) are the ones the Plan screen's Income Meter uses for actual
+dollar amounts at 11px bold. Not a model bug: no number is wrong, they are just hard to read.**
+
+**What.** `ThemeContext.jsx` defines 6 palettes × light/dark = 12 token sets. The tokens were tuned by
+eye and nothing ever measured them. Recomputing WCAG 2.1 relative luminance over the shipped values
+(all six palettes; range shown as min–max across them):
+
+| pair | light mode, before | dark mode, before | bar |
+|---|---|---|---|
+| `faint` on `surf` | 2.15 – 2.38 | 3.38 – 3.78 | 4.5 |
+| `faint` on `bg` | 1.93 – 2.16 | 3.79 – 4.23 | 4.5 |
+| `faint` on `surf2` | 1.96 – 2.05 | 3.07 – 3.37 | 4.5 |
+| `mut` on `surf` | 3.78 – 4.15 | 6.20 – 6.70 | 5.5 |
+| `mut` on `bg` | 3.39 – 3.76 | 6.95 – 7.50 | 5.5 |
+| `good` on `surf` | 2.31 – 3.11 | 5.80 – 7.23 | 4.5 |
+| `warm` on `surf` | 1.82 – 2.32 | 7.00 – 9.18 | 4.5 |
+| `accent` on `surf` | 2.48 – 4.78 | 5.18 – 8.46 | 4.5 |
+| `#fff` on `accent` | 2.53 – 4.90 | 1.76 – 3.01 | 4.5 |
+
+`faint` never reached even the 3:1 non-text bar in any light palette. `mut` — every 11px card label —
+failed 4.5:1 in all six. `warm` at 1.82:1 is barely distinguishable from its background. The failures
+concentrate in light mode, which is the **default** (`modePref` defaults to `"light"`).
+
+**Two findings beyond the original report.** (1) `accent` is used as **text** at 60 `color: t.accent`
+sites, not only as a button fill, so it needed the text bar too — it was failing in 5 of 6 light
+palettes. (2) White-on-accent could not be fixed by moving `accent` in dark mode: dark-mode accents
+are deliberately **light** because their primary job is being text on a dark ground (5.18–8.46:1),
+and `ink` on them is no better (1.49–2.51:1). No single literal works for both modes, which
+falsified the premise written into `shared.jsx` at the time — *"every accent in PALETTES is a
+mid-tone that white reads against in both modes."*
+
+**Fix.**
+1. **New `onAccent` palette token** (10th token, all 12 sets) — the label colour for a filled-accent
+   CTA. Light mode: `#ffffff`. Dark mode: the palette's own `bg`, so the CTA label stays in-family.
+   Replaces the hardcoded `ON_ACCENT = "#fff"` in `shared.jsx` (`Btn variant="primary"`) and the two
+   hand-rolled accent buttons that never went through `Btn` (`SurplusDeploymentFlow.jsx:77`,
+   `ConversionPlannerFlow.jsx:345`). Now 4.52–9.54:1 across all 12.
+2. **`mut`/`faint`/`good`/`warm`/`accent` retuned** in every failing combination, holding each token's
+   **HSL hue and saturation constant** and searching only lightness, so each palette still reads as
+   itself (Apricot's accent is a deeper terracotta `#cd6f4f` → `#ad5131`, not a generic dark red).
+   Every token is measured against **all three** grounds it can land on — `bg`, `surf` AND `surf2` —
+   not just the one it was eyeballed against.
+3. **Tiered bars, not one flat bar.** `mut` is held to **5.5:1** and `faint` to 4.5:1. Solving both to
+   4.5 collapsed the `ink > mut > faint` reading ladder the palettes are designed around — in the
+   first pass `faint` came out *darker* than `mut` in Apricot (4.56 vs 4.54), inverting the
+   hierarchy. The tiering was a finding of the work, not a preset.
+4. **`faint` held to the full 4.5 text bar, not the 3:1 decorative bar.** Call-site survey: 75 of its
+   ~80 uses are real informational text (year-by-year table dollar cells, hints, captions, axis
+   ticks, empty states); only ~3 are decorative (StatCard's `›` chevron, one dashed SVG gridline).
+   A single bar is correct for the overwhelming majority and cannot be applied to the wrong site by
+   a future author.
+5. **Honey's accent deepened past its bar, deliberately** (5.65:1 vs the 4.5 the other five use).
+   Honey's `accent` and `warm` are the same gold hue, so solving both to 4.5 landed them at `#8a6717`
+   and `#8b6714` — **ΔE 1.22, imperceptibly different** — erasing the brand-vs-attention distinction.
+   Bronze `#785914` restores a visible two-step (ΔE 8.7) without leaving the honey family.
+
+**After:** every one of the 12 combinations clears every bar. `faint` 4.52–4.56 (was 1.93), `mut`
+5.52–5.97 (was 3.39), `good` 4.52–6.43, `warm` 4.52–8.15, `accent` 4.52–7.51, `onAccent` 4.52–9.54.
+
+**Tests:** new `src/horizon/__tests__/palette-contrast.test.js`, **125 tests**. It reimplements WCAG
+relative luminance + contrast ratio from the spec rather than importing a helper (a token file and its
+own checker sharing code would let one bug hide the other), self-checks that implementation against
+the spec's reference values (`#000`/`#fff` = 21:1, `#767676` on white = 4.54:1), then asserts every
+token/ground pair, `onAccent` on `accent`, the ink>mut>faint ladder, and token presence, across all 12
+sets. Tint separation is checked with **CIE76 ΔE over CIELAB, not contrast ratio** — a first draft used
+the ratio and produced false failures, because ratio is luminance-only and cannot tell Slate's blue
+accent from its orange warm (1.00:1 contrast, ΔE 63).
+**Revert-and-confirm:** restored the pre-fix Apricot light/dark values and Honey's colliding accent;
+the new file failed with exactly 9 assertions naming exactly those regressions (`mut` 3.50, `faint`
+2.08, `accent` 3.08, `good` 2.73, `warm` 2.08, `onAccent` 3.51 and 2.55, dark `faint` 3.89, Honey
+ΔE 1.2) and no others; restored.
+**Visual verification:** rendered a 12-combination before/after swatch sheet and reviewed it directly
+before committing to the values, then ran `verifier-browser.cjs` across all 7 screens + 5 Numbers
+sub-tabs + the Classic round-trip — all render. The verifier's 2 console errors (blocked Google Fonts
+CDN, sandbox egress policy) were confirmed byte-identical on a `git stash` of this change, i.e.
+pre-existing and unrelated.
+**Golden master:** untouched — all three (`golden-master.test.js`, `golden-master-app-wiring.test.js`,
+`spouse-household.test.js`) pass unchanged. Colours are not model inputs; confirmed rather than assumed.
+**Filed, not fixed:** **BUG-113** (Open) — Journey's flow-bar `%` labels are white on an
+`opacity: 0.72` composited fill, a compositing failure this flat-token contract structurally cannot
+cover.
+**Where:** `src/horizon/ThemeContext.jsx`, `src/horizon/shared.jsx`,
+`src/horizon/screens/strategies/SurplusDeploymentFlow.jsx`,
+`src/horizon/screens/strategies/ConversionPlannerFlow.jsx`,
+`src/horizon/__tests__/palette-contrast.test.js` (new).
+
+---
+
+### BUG-111 — Three small polish items closing out Slice 2.5: raw model field names leaking into the Journey UI, a depletion sentence sitting in a headline's number slot, and no `box-sizing` reset anywhere in the Horizon render path (found 2026-08-03, Horizon design-review round 2 sweep; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: LOW — cosmetic/consistency, no data or layout-breaking impact on
+their own, but each is the kind of thing that compounds.**
+**What, three sites:**
+1. **`JourneyScreen.jsx`'s `DetailRow`** printed its `source` prop (a raw model field path, e.g.
+   `flowDown.portPreRMD`) unconditionally next to every detail-row label, in every build — there was no
+   dev/prod gate anywhere in the file, or the codebase, for this affordance.
+2. **Chapter 3's headline** put the whole sentence `"portfolio runs to age 87"` in `Headline`'s `value`
+   slot — the same slot Chapters 1 and 2 use for a short dollar figure (`$49k`, `$3.5M`) — so the one
+   real number in that sentence could wrap onto its own orphaned line at narrow widths, and the
+   chapter's headline read as prose instead of a figure.
+3. **No `box-sizing: border-box` reset exists in the Horizon render path.** Classic UI has one, but it's
+   declared inside the Classic-only branch of `App.jsx` and never reaches Horizon. Every Horizon element
+   has been `content-box` by default since the shell was built — at least one component
+   (`LifeEventSheet.jsx`) already had to set it by hand on an input to avoid it overflowing its own
+   container.
+**Fix:** `DetailRow`'s source breadcrumb is now gated behind `import.meta.env.DEV`. Chapter 3's headline
+value is now a short `"Age 87"` / `"Funded for life"` / `"—"`, with the sentence context moved into the
+`sub` caption (`"the age your portfolio runs out"` / `"how long the portfolio sustains you"`) —
+matching Ch1/Ch2's value+sub shape. Added `.hz-root, .hz-root * { box-sizing: border-box; }` to
+`HorizonShell.jsx`'s existing scoped `<style>` block (the same one Slice 2 added the `:focus-visible`
+rule to) — scoped to `.hz-root` so Classic UI, which shares the document, is unaffected.
+**Tests:** 1 new in `journey-screen.test.js` — the unsustainable-plan case now asserts the headline
+value is `"Age 87"` (not the old sentence) and the sentence context survives in the sub caption.
+**Revert-and-confirm:** reverting the Chapter 3 split fails exactly this new test (`toContain("Age 87")`
+fails against the un-split sentence) and no other; restored. The `DetailRow` DEV-gate and the
+`box-sizing` reset are declarative/CSS changes with no jsdom-observable behavior difference under the
+test environment (`import.meta.env.DEV` is `true` under vitest, same as a dev build) — verified by
+direct code read instead: `source && import.meta.env.DEV && (...)` and the scoped selector both
+compile and lint clean.
+**Golden master:** untouched — display-only.
+**Where:** `src/horizon/screens/JourneyScreen.jsx`, `src/components/HorizonShell.jsx`,
+`src/horizon/__tests__/journey-screen.test.js`.
+
+---
+
+### BUG-110 — Six more "fixed-size content inside a box that shrinks" failures on the Numbers screen, all invisible to existing tests because none of them touch a dollar value (found 2026-08-03, Horizon design-review round 2 sweep; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: MEDIUM — same failure shape as BUG-107 (the arc's clipped axis),
+now confirmed to recur across the app's densest screen rather than being a one-off.**
+**What, six sites, all in `NumbersScreen.jsx` except one:**
+1. **Paycheck waterfall bar labels overrun their slot and clip at the viewBox edge.** `IncomeWaterfall`'s
+   5-column `text-anchor: middle` SVG labels ("Pre-tax savings", "After-tax savings") have no wrap of
+   any kind; at a phone-width slot (~66px) they're wider than their own column and the outer two get
+   cut by the chart's edge.
+2. **The same chart's "Paycheck deposit" annotation was drawn on top of the Gross-income bar**, not
+   beside it — `x={6}` sits inside `bx(0)` (≈4% of the plot width) at every container size, so ~150px of
+   green text overlaid the tallest bar rather than sitting in the empty strip above the plot.
+3. **The Statement tab's three account-flow bars (`StmtCol`) had no minimum-label-width guard at all** —
+   the Taxes tab's composition bar (a near-identical component) already hides a segment's label under
+   12% of the bar; these three didn't, so a small segment (e.g. a modest pension next to Social Security
+   and a portfolio draw) rendered a truncated label fragment instead of no label.
+4. **The 5-tab strip (Statement/Budget/Accounts/Taxes/Year by year) wrapped into a lopsided two-row
+   block on a phone** (`flexWrap: wrap`, no `isMobile` branch) — the fifth tab alone on its own row
+   inside a track that then read as two stacked controls.
+5. **A 1.5×26px divider in the "the engine is working" banner had no `isMobile` guard** and, when that
+   row wrapped on a phone, was stranded alone on a line separating nothing from nothing.
+6. **The Accounts tab's bucket-header row (label + longer descriptive note) shared one flex row with no
+   `whiteSpace`/`flexShrink` guard on the label**, so on a phone the label was squeezed until it broke
+   at its own hyphen — "TAX-" / "DEFERRED".
+
+Separately, the **Year-by-year table** (a 9-column, 720px-min-width grid inside a ~340px viewport) was
+already correctly horizontally scrollable, but nothing signalled that — a column was simply severed at
+the right edge, reading as broken rather than swipeable.
+**Why:** all six are the same mechanism as BUG-107 — fixed-size text or a fixed-size row inside a
+container whose available space shrinks with viewport width, with no guard or branch for the narrow
+case. None of them move a dollar value, which is exactly why nothing caught them: every existing test
+on this screen asserts *what number appears*, and all six bugs are about *whether text overlaps, clips,
+or reflows* — a dimension text-content assertions cannot see.
+**Fix:** waterfall labels wrap onto two `tspan` lines below an 80px slot width (`wrapBarLabel`, a pure
+word-break helper, unit-tested directly since there's no layout engine under `react-test-renderer` to
+observe wrapping any other way) and drop their secondary sub-label at that same width; the paycheck
+annotation moved into the plot's own top margin; `StmtCol` segments now hide their label under the same
+12%-of-bar threshold the Taxes tab already used; the tab strip becomes a single `overflowX: auto`
+scrolling row on mobile instead of wrapping; the divider and the bucket-header note are `isMobile`-gated
+the same way; the year-by-year scroller gets a right-edge `mask-image` fade plus an explicit "Swipe the
+table sideways…" hint line, both mobile-only.
+**Tests:** 9 new, `src/horizon/__tests__/numbers-tabs.test.js` — `wrapBarLabel`'s word-break behaviour
+(4 cases, including "never drops or reorders a word"), the narrow-vs-wide branch of the waterfall render
+(sub-labels present/absent, tspans present/absent, mounted via a `createNodeMock` width override since
+refs are null under `react-test-renderer`), the `StmtCol` label guard at both sides of the 12% threshold,
+and the year-by-year scroll affordance present on mobile / absent on desktop. **Revert-and-confirm** on
+each: reverting the wrap logic, the two guards, or either mobile-only branch individually fails exactly
+its own new test and nothing else; all restored.
+**Golden master:** untouched — every fix is layout/display only, no model or dollar value touched.
+**Where:** `src/horizon/screens/NumbersScreen.jsx`, `src/horizon/__tests__/numbers-tabs.test.js`.
+
+---
+
+### BUG-109 — Two of the seven Horizon screens were never passed `isMobile`, so they rendered their desktop layouts at every width (found 2026-08-03, Horizon design-review rounds 1+2; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: MEDIUM — two whole screens unusable-to-awkward on a phone, and
+invisible to every existing test.**
+**What:** Horizon has **zero CSS media queries**; all responsiveness runs through one boolean,
+`isMobile = windowWidth < 640` (`HorizonShell.jsx`), threaded to each screen as a prop. Five of the
+seven screens got it. `SomedayScreen` and `SettingsScreen` did not (`HorizonShell.jsx`'s screen
+switch), so:
+- **Settings** rendered a hard-coded two-column row — a `minWidth: 260` controls column beside a fixed
+  `width: 300` preview with `gap: 44` and no wrap: **604px of declared minimum inside a 390px
+  viewport**, overflowing horizontally.
+- **Someday** rendered its `62px` display headline with `44px` side padding. "First class" alone is
+  wider than a 390px screen at that size. Its decorative photo-placeholder label is also dead-centred
+  in a full-bleed layer, which lands exactly on the headline block (the foreground's `space-between`
+  puts that block in the middle) — harmless in a tall desktop window, a collision at 844px.
+**Why:** each screen defaults its own prop (`isMobile = false`), so a missing prop is indistinguishable
+from a desktop render — no crash, no warning, and a screen-level unit test that doesn't pass the prop
+sees the same thing the shell was producing. Nothing checked the wiring.
+**Fix:** the shell passes `isMobile` to both. Settings stacks to one column (`flexDirection`,
+`minWidth: 0`, `width: "100%"`, tightened padding/gap); Someday drops to a 40px headline with 20px
+side padding, a 28px money figure, and moves the placeholder label up under the header row on mobile
+rather than hiding it — it is the only affordance saying the photo is tappable.
+**Two related hygiene items, deliberately NOT "fixed" by adding code:** `WithdrawalOrderFlow` and
+`WorkLongerFlow` are the only two of seven strategy flows that don't destructure the `isMobile` their
+parent passes. Both are read-only, have no `DetailField` (the only real consumer — it swaps to a
+stepper under 640px), and compose only wrapping primitives, so declaring the parameter would be the
+dead code, not the omission; each now carries a one-line note saying so and pointing at what would
+change that. `ExploreTray` accepts `isMobile` and never reads it: both its facet tabs are `Btn` call
+sites carrying the shared 44px floor and its bar already wraps, so there is no width-dependent decision
+left — documented as an intentional no-op rather than given a fake usage.
+**Tests:** 4 new in `src/__tests__/mobile-layout.test.js` (new file). They mount the **real App** at
+390px and at 1200px and assert the branch on each screen — the screen-level unit tests structurally
+cannot catch this, since they'd have to pass the prop the shell was forgetting (the same reasoning
+behind `golden-master-app-wiring.test.js`). **Revert-and-confirm:** removing `isMobile` from either
+screen's shell call site fails exactly that screen's 390px case and nothing else; both restored.
+**Golden master:** untouched — layout only.
+**Where:** `src/components/HorizonShell.jsx`, `src/horizon/screens/SettingsScreen.jsx`,
+`src/horizon/screens/SomedayScreen.jsx`, `src/horizon/ExploreTray.jsx`,
+`src/horizon/screens/strategies/{WithdrawalOrderFlow,WorkLongerFlow}.jsx`,
+`src/__tests__/mobile-layout.test.js` (new).
+
+### BUG-107 — The arc chart's axis tick labels were clipped on every phone: the padding that reserves room for them is measured in units that shrink with the container, while the labels are fixed CSS pixels (reported 2026-08-03 by the app owner — the original bug of this review cycle; fixed 2026-08-03, Horizon design-review Slice 2.5)
+
+**Owner:** me_theguy. **Severity: HIGH — the app's single headline visual, broken on the device class
+it is most used on, and the first thing the owner reported.**
+**Found by:** the owner, on a phone ("the big arc chart's axis is cut off by its container"), then
+root-caused by the design review's first research pass and re-verified by direct read here.
+**What:** `ArcGraph`'s chart box is `overflow: hidden` (`ArcGraph.jsx`, the `boxRef` div). Its bottom
+padding `pad.b` reserved 40 viewBox units on mobile / 46 on desktop for the axis tick row. But the
+viewBox HEIGHT is derived from the container's WIDTH (`vbH = VW * h / w`, so `preserveAspectRatio="none"`
+scales x and y equally and circles stay round) — which makes one viewBox unit worth `w / VW` CSS
+pixels, ~0.33px on a 390px phone. The tick labels themselves (`ArcLabels`, `DecadesLabels`) are a
+sibling **HTML overlay in fixed CSS pixels** and do not shrink. Net clearance below the plot floor was
+`(pad.b − 16) * w / VW` ≈ **7.8px at 390px** for a 10px mono label whose line box is ~12px — so the
+bottom third of every age tick was cut off by the container's own `overflow: hidden`. At ≥900px the
+same formula yields 20-30px and the chart is fine, which is why this read as "mobile only".
+**Why:** a units mismatch between two coordinate systems that look interchangeable — the SVG's
+1200-unit space and the overlay's CSS pixels — with nothing in the code naming which was which. The
+same class as the money-event badge's real tap size (PR fb0dc19), where a 1:1 reading of a viewBox
+number gave an answer 3× off.
+**Fix:** `pad.b` now reserves a real CSS-**pixel** budget converted back into viewBox units:
+`axisPadBottom(w, floor) = max(floor, AXIS_TICK_OFFSET + AXIS_LABEL_PX * (VW / w))`, with
+`AXIS_TICK_OFFSET = 16` now a named constant **shared with the two label components that position the
+tick row at `s.bot + 16`** (previously a bare literal in three places, so the padding formula and the
+label position could drift apart). `w` joins the memo's deps; `makeScales` already listed `pad`.
+Keeping the old constants as a `floor` means nothing gets tighter than it was, and desktop is
+bit-for-bit unchanged (at 900px+ the formula asks for ~34, below the 46 floor).
+**Tests:** 5 new in `src/components/__tests__/arcgraph-geometry.test.js` — clearance ≥ a 12px line box
+at nine container widths from 288px to 1180px, for both floors; the OLD constant explicitly asserted
+to FAIL at 390px (7.8px), so the regression is documented in the suite rather than only in prose;
+desktop unchanged; never returns less than its floor (including for `w` of 0 / negative / NaN); and
+monotonically grows as the container narrows. **Revert-and-confirm:** replacing the body with
+`return floor` fails 2 of the 5; restored, green.
+**Golden master:** untouched — pure layout geometry, no model value involved.
+**Where:** `src/components/ArcGraph.jsx` (`axisPadBottom`/`axisLabelClearancePx`, the `pad` memo,
+`ArcLabels`, `DecadesLabels`), `src/components/__tests__/arcgraph-geometry.test.js` (new).
+
+### BUG-108 — The end-of-plan badge is centred on the curve's own end point, so a plan that depletes to $0 hangs half the badge off the bottom of the chart (found 2026-08-03, Horizon design-review round 1 as a secondary risk of the clipping bug; fixed 2026-08-03, Slice 2.5)
+
+**Owner:** me_theguy. **Severity: MEDIUM — only reachable for a plan that runs out of money, i.e.
+exactly the user who most needs to read the number the badge is showing.**
+**What:** `ArcLabels`' "$X at age Y" card is positioned `top: py(endPos.yEnd)` with
+`transform: translate(-100%,-50%)` — vertically centred on the curve's final y. For a sustainable
+plan that point is well inside the plot. For a plan that depletes, `yEnd` **is** `s.bot` (the plot
+floor), so half of a ~48px-tall card sat below the floor: over the axis tick row BUG-107 was already
+fighting for, and past the container's clipped edge. `BandLabels`' lean-market card has the same
+construction and the same failure when the lower cone reaches $0.
+**Fix:** a shared `clampOverlayY(y, top, bot, halfPx, u)` keeps the badge's centre at least half its
+own on-screen height inside the plot, converting that pixel half-height into viewBox units through
+the same `u = VW / w` factor BUG-107 introduced (the badge is fixed-size HTML; the plot is not). It
+falls back to the plot midpoint if the plot is ever too short to honour either bound, rather than
+producing an inverted clamp. Applied to both cards.
+**Tests:** 4 new in `arcgraph-geometry.test.js` — the depleted case ($0 end, badge's lower edge proven
+to land above the floor), the top-edge case, an ordinary mid-plot position left exactly where it was
+(so this can't silently move healthy plans), and the too-short-plot fallback.
+**Golden master:** untouched — display-only.
+**Where:** `src/components/ArcGraph.jsx` (`clampOverlayY`, `ArcLabels`, `BandLabels`),
+`src/components/__tests__/arcgraph-geometry.test.js`.
+
+### BUG-49 — Primary Horizon navigation and most nav/shell controls were unreachable by keyboard (found 2026-07-09, Fable UI review of PR #51; fixed 2026-08-03, Horizon design-review Slice 2)
+
+**Owner:** me_theguy. **Severity: MEDIUM (a11y, broad) — a keyboard-only user could not change
+Horizon screens at all, on either viewport, and could not complete first-run setup.**
+**Found by:** a Fable agent's adversarial UI/UX review of the Horizon shell. Re-verified as still
+reproducing at five separate session close-outs (2026-07-12 ×2, 07-17, 07-23, 07-26), each time by
+hand — the scope narrowed twice as `IdeasScreen.jsx` was redesigned and then deleted, but the
+`HorizonShell.jsx` nav-shell portion never moved.
+**What (as last verified, pre-fix):** `TabBar` (`:143`) was `<div key={id} onClick={…}>` with no
+`tabIndex`/`onKeyDown`; the mobile bottom bar's four screen tabs (`:614`) and its **More** tab
+(`:630`) were the same; `MoreSheet`'s rows (`:475`) were the same — and on mobile that sheet is the
+ONLY route to Someday / My details / Settings, so three whole screens had no keyboard path at all.
+`OnTrackPill`'s trigger (`:82`) carried `role="button"` but neither `tabIndex` nor `onKeyDown` (worse
+than a plain div: announced as a button, then unusable), and its ✕ (`:111`) the same. The entire
+first-run onboarding wizard — both ± steppers, back, next, "Save as my plan", and both skip links
+(`:349, :352, :369, :371, :376, :382, :389`) — was `<div>`/`<span onClick>`, so a keyboard user could
+not get past the first question. Outside the shell: `SettingsScreen`'s activity pills (`:100`) had no
+keyboard path (its other three groups already carried `kbActivate`), and `SomedayScreen`'s
+photo-upload well (`:45`) and activity chips (`:138`) had none.
+**Why it stayed open for a year:** nothing checked it mechanically. Each re-verification had to
+re-read the shell by hand, and every newly authored `<div onClick>` silently re-opened it. The
+entry's own fix path names the missing piece — *"a render-smoke-style test asserting every clickable
+surface has a keyboard path"* — which is what finally shipped alongside the fix.
+**Fix:** every site above is now a real `<button type="button">` (or, in the one case where it
+genuinely cannot be — `SomedayScreen`'s full-bleed photo well, which wraps an `<img>`, an `<svg>` and
+absolutely-positioned children — `role` + `tabIndex` + the existing `kbActivate` Enter/Space
+handler). Most route through the new shared `Btn`/`Pill` primitives (`src/horizon/shared.jsx`), whose
+semantics are modelled on `ExploreTray.jsx:40` — the one pre-existing site that got BOTH the border
+trick and the button semantics right. **`TabBar` was deliberately NOT used as the exemplar** even
+though the design review originally cited it: it was itself one of the unreachable `<div onClick>`s,
+and copying it would have baked this bug into every future call site permanently.
+Two structural side-effects worth naming: the mobile bar and the desktop tab bar are now
+`<nav aria-label="Main">` landmarks with `aria-current="page"` on the active tab, and every toggle
+carries `aria-pressed` driven by the SAME prop as its visual state (`Btn`'s `pressed`), so the two
+cannot disagree.
+**Tests:** new `src/__tests__/keyboard-access.test.js` (4). It mounts the REAL app, walks every
+screen in `SCREENS` at **both** 1200px and 390px (the mobile bar and More sheet only exist under
+640px, and they were the worst offenders), and fails on any host element with an `onClick` that is
+neither a native control nor `role`+`tabIndex`+`onKeyDown`. Two exemptions, both declared **on the
+element** rather than hard-coded in the test: `data-dismiss-backdrop` (a modal backdrop, whose
+keyboard equivalent is Escape — see BUG-50) and `role="dialog"` (the card's `stopPropagation`
+guard). Separate cases assert the bottom bar renders five real buttons, the More sheet renders three,
+and that the onboarding wizard can be walked end-to-end — including the confirm dialog it raises —
+with no unreachable control at any step. **Revert-and-confirm:** reverting just the mobile bar's five
+tabs to `<div onClick>` fails the 390px sweep with 28 offenders and the bottom-bar case with
+`length 1, expected 5`; restored, green.
+**Golden master:** untouched — layout/semantics only, no model value moves.
+**Where:** `src/horizon/shared.jsx` (`Btn`/`Pill`), `src/components/HorizonShell.jsx` (`TabBar`,
+`OnTrackPill`, `MoreSheet`, the mobile bar, the whole onboarding wizard, "Classic view"),
+`src/horizon/ExploreTray.jsx`, `src/horizon/ConfirmModal.jsx`, `src/horizon/LifeEventSheet.jsx`,
+`src/horizon/screens/PlanScreen.jsx`, `src/horizon/screens/SettingsScreen.jsx`,
+`src/horizon/screens/SomedayScreen.jsx`, `src/__tests__/keyboard-access.test.js`.
+
+### BUG-50 — `OnTrackPill` popover had no outside-click or Escape dismissal — and neither did any of the three real modals (found 2026-07-09, Fable UI review of PR #51; fixed 2026-08-03, Horizon design-review Slice 2)
+
+**Owner:** me_theguy. **Severity: LOW (polish) as filed; the generalisation found on the way to
+fixing it is a11y, not polish.**
+**Found by:** the same Fable UI review as BUG-49. Re-verified as still reproducing at four session
+close-outs (2026-07-12, 07-17, 07-23, 07-26).
+**What (as filed):** `HorizonShell.jsx`'s `OnTrackPill` popover closed only via its own ✕ or by
+re-clicking the pill — clicking anywhere else in the app, including navigating to a different screen,
+left it pinned over the top-right corner. It is the one overlay in the app with **no backdrop**, so
+it could not inherit the backdrop-click every other overlay already had.
+**What the fix pass additionally found:** none of the three REAL overlays handled Escape either, and
+none carried `role="dialog"`/`aria-modal` or moved focus on open — so a keyboard user could open a
+modal and have focus stranded on the element behind the backdrop, with no key that closes it.
+`ApplyPreviewModal` had zero `aria-*` of any kind (it delegates all chrome to `ConfirmModal`, which
+had none to inherit).
+**Fix, in two parts:**
+1. *The pill.* An `open`-gated effect registers a document-level `pointerdown` listener (outside-click
+   → close, tested against a `ref.contains` inside/outside discrimination) plus an `Escape` listener.
+   Both are removed when the popover closes or unmounts. The pill itself became a real `<button>`
+   with `aria-expanded` in the same pass (BUG-49).
+2. *The modals.* New shared hook `src/horizon/useDialogBehaviour.js`, used by `ConfirmModal` and
+   `LifeEventSheet` (and therefore by `ApplyPreviewModal`, which renders through `ConfirmModal`). It
+   moves focus into the dialog card on open, closes on Escape, and restores focus to whatever was
+   focused before. The Escape path is deliberately BOTH the card's own React `onKeyDown` (the branch
+   that fires in practice, since focus is moved into the card) and a document-level listener (the
+   fallback for when focus has left it); the React handler calls `stopPropagation`, so `onClose` fires
+   exactly once, never twice. `role="dialog"` + `aria-modal="true"` are now on all three, named by
+   `aria-labelledby` (ConfirmModal/ApplyPreviewModal, pointing at the rendered title) or a STATIC
+   `aria-label` (LifeEventSheet — its only heading is an editable input, and labelling from live state
+   would re-announce the dialog on every keystroke).
+   The hook keeps `onClose` in a ref so its mount-only effect needs no dependency array: every call
+   site passes an inline arrow, and re-running the effect per render would re-focus the card on each
+   keystroke, yanking focus out of the sheet's own inputs.
+**Deliberately NOT done:** a full Tab-cycling focus trap. It needs a live DOM to enumerate tabbables,
+which this repo's `environment: "node"` test setup cannot exercise, so it would ship untested; the
+document-level Escape listener is what keeps a dialog dismissible if focus does leave it. Noted here
+rather than filed as a new bug — it is a nice-to-have on a surface that is now dismissible three ways
+(backdrop, Escape, Cancel).
+**Tests:** 4 new in `src/__tests__/horizon-shell-dismissal.test.js` (the pill: real button +
+`aria-expanded`; outside-click closes while an inside click does not; Escape closes; listeners are
+registered only while open and removed on close) and 6 new in
+`src/horizon/__tests__/dialog-dismissal.test.js` (each modal's `role`/`aria-modal`/name, Escape-only
+key discrimination, the backdrop still dismissing, and the footer-alignment invariants). The suite
+runs with `environment: "node"`, so the pill file installs the minimal `document` the listener needs
+and invokes the handlers it captured — the same thing a real click/keypress would do.
+**Revert-and-confirm:** deleting just the pill's dismissal effect fails 3 of its 4 tests (the
+"is a real button" case correctly still passes, since that is BUG-49's fix, not this one); restored,
+green.
+**Golden master:** untouched — behaviour/semantics only.
+**Where:** `src/components/HorizonShell.jsx` (`OnTrackPill`), `src/horizon/useDialogBehaviour.js`
+(new), `src/horizon/ConfirmModal.jsx`, `src/horizon/LifeEventSheet.jsx`,
+`src/__tests__/horizon-shell-dismissal.test.js`, `src/horizon/__tests__/dialog-dismissal.test.js`.
+
+### BUG-104 — Taxes tab's composition bar had no colour for its `draw` segment, rendering the LARGEST tax component (78% of the bar at the shipped default) fully invisible (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-03, Horizon design-review Slice 1)
+
+**Owner:** me_theguy. **Severity: HIGH — live at the shipped default, and it hides the single biggest
+number on the surface whose entire job is to show where retirement tax goes.**
+**Found by:** the Horizon UI design review's round-2 sweep for "hardcoded lookup maps whose keys have
+drifted from their data source" (Pattern 7), then verified against the live default bundle.
+**What:** `NumbersScreen.jsx`'s "Retirement-phase tax composition" bar coloured its segments from a
+local `segColor` map — `{ working: t.warm, rmd: t.accent, conv: t.good }`. Its data source,
+`taxViewBundle.composition.segments` (`App.jsx:2068-2072`), emits three keys: `rmd`, `conv` and
+**`draw`** (the 401k-draw-tax segment BUG-40 added). `draw` had no entry, so `segColor[seg.key]`
+evaluated to `undefined` and React emitted `background: undefined` — a transparent segment. The
+legend dot beside "401k draw tax" was transparent for the same reason. Measured at the shipped
+default state (mounting the real App): RMD tax $10,182 (2%) · Conversion tax $109,393 (20%) ·
+**401k draw tax $434,207 (78%)** of a $553,782 total — so 78% of the bar was blank, and even the
+`78%` label inside it was invisible (it renders in `t.surf`, the card's own background colour, which
+only reads against a filled segment). A user saw a bar that appeared to be ~22% full and a legend
+whose third entry had no dot. The dead `working` key sitting next to the two live ones is what made
+the map *look* complete: working-year tax is deliberately excluded from this bar (`App.jsx:2062`),
+so that key had never been reachable.
+**Why:** classic lookup-map/data-source drift. When BUG-40 added the third segment to the model side,
+the display-side colour map wasn't updated — and because a missing key degrades to `undefined`
+(transparent) rather than to anything visible, the failure produced no error, no console warning, and
+no obviously-wrong pixel; it just silently removed the largest bar.
+**Fix:** (1) `segColor` now carries one entry per key the model actually emits —
+`{ rmd: t.accent, conv: t.good, draw: t.warm }` — with a comment naming `App.jsx:2068-2072` as the
+contract it must track. `t.warm` is the natural third accent token and was already free: the dead
+`working` entry that used to hold it is **removed outright** (provably unreachable — the same
+treatment `buildRetirementDrawdown`'s orphaned `rRealByYear` param got in PR #64), so the map now has
+exactly the three live keys and nothing that disguises a gap. (2) **Both** lookup sites — the bar
+segment background and the legend dot — now read `segColor[seg.key] ?? t.mut`, so any FUTURE key
+drift fails **visibly** (a muted grey segment a reviewer or user will notice) instead of invisibly.
+The fallback is a safety net, not a substitute for the map: the tests below assert no live segment
+ever reaches it.
+**Tests:** 3 new in `numbers-tabs.test.js` (Taxes tab). Text assertions structurally cannot see this
+bug, so these walk the rendered style props via a new `collect()` tree-walker helper: (a) all three
+segments have a string `background` and none equals the `?? t.mut` fallback; (b) the legend item whose
+text contains "401k draw tax" has exactly one dot and its background is `t.warm`; (c) a synthetic
+unknown segment key renders `t.mut`, never `undefined`. **Revert-and-confirm:** removing just the
+`draw: t.warm` entry (leaving the fallback) fails (a) and (b); removing just the `?? t.mut` fallbacks
+(leaving the entry) fails (c). Both reverted, confirmed failing, and restored.
+**Golden master:** untouched — display-only, no model value moves.
+**Where:** `src/horizon/screens/NumbersScreen.jsx` (the `segColor` map + both lookup sites),
+`src/horizon/__tests__/numbers-tabs.test.js`.
+
+### BUG-105 — Statement tab's plan-health badge printed the raw driver id `"confidence"` instead of a label, live at the shipped default (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-03, Horizon design-review Slice 1)
+
+**Owner:** me_theguy. **Severity: MEDIUM — cosmetic in impact but reachable at the shipped default,
+on the screen that presents itself as a formal statement.**
+**Found by:** the same round-2 lookup-map sweep as BUG-104 (Pattern 7), cross-checked against
+`calcPlanDrivers`' actual row set.
+**What:** `NumbersScreen.jsx`'s plan-health badge mapped failing drivers to prose via
+`DRIVER_LABELS = { withdrawal, longevity, savings }` and fell back to `?? d.id`. But
+`calcPlanDrivers` (`retirement-drawdown.js:186-197`) emits a **fourth** `"confidence"` row whenever
+the caller passes `monteCarloSuccessPct` — and App always passes it (`App.jsx:1558` passes the key
+unconditionally; the row is omitted only when the param is `undefined`, which never happens). So any
+plan whose Monte Carlo success rate falls under the 80% guideline rendered the bare string
+**`confidence`** in the "N areas to review" pill. This is live at the shipped default, not an edge
+case: the locked golden master has `rangeSuccessPct = 24` (< 80) and `withdrawalRate = 5.61%` (> the
+4% guideline), and `longevity` also fails, so the default state's badge read
+"3 areas to review · withdrawal rate · longevity · **confidence**".
+A second, same-root-cause symptom in the same 20 lines: the *all-OK* branch printed a **hardcoded**
+`"withdrawal rate · longevity · savings rate"` — three names for four evaluated drivers, so a healthy
+plan was told market confidence hadn't been checked when it had.
+**Why:** the same drift as BUG-104 — the `confidence` driver was added on the model side (and wired
+correctly into `HorizonShell.jsx`'s `OnTrackPill`, which has always labelled it "Market confidence")
+without the second consumer's label map being updated. The `?? d.id` fallback meant it degraded to
+something renderable, so nothing crashed and nothing warned.
+**Fix:** (1) `DRIVER_LABELS` gains `confidence: "market confidence"` — the same wording `OnTrackPill`
+already uses for this driver (`HorizonShell.jsx:62`), lower-cased to match this list's sibling
+entries, so the two surfaces name the same driver identically. (2) the all-OK branch no longer
+hardcodes a list: a shared `labelFor` maps the rows and the branch renders
+`planView.drivers.map(labelFor).join(" · ")`, derived from the SAME array the failing branch filters —
+so this list can never desync from the model's row set again (a pure display derivation over
+model-provided rows; no arithmetic, rule 10 clean).
+**Tests:** 2 new in `numbers-tabs.test.js` (Statement tab): a failing-confidence fixture renders
+"1 area to review · market confidence" and a lookbehind regex asserts the bare id never leaks; an
+all-OK fixture asserts the derived list reads
+"withdrawal rate · longevity · savings rate · market confidence". The file's shared `planView`
+fixture was also corrected to carry all **four** driver rows — it had stopped at three, which is part
+of why this went unnoticed there (the fixture couldn't reproduce the app's real shape). **Revert-and-
+confirm:** removing the `confidence` entry fails both new tests, with the pre-fix render captured
+verbatim (`1 area to reviewconfidence`); restored.
+**Golden master:** untouched — display-only.
+**Where:** `src/horizon/screens/NumbersScreen.jsx` (`DRIVER_LABELS`, `labelFor`, `allDrivers`),
+`src/horizon/__tests__/numbers-tabs.test.js`.
+
+### BUG-106 — Statement tab's banner claimed "today's dollars" for a tab that is deliberately mixed-basis, contradicting its own ledger by roughly the full inflation factor (found 2026-08-03, Horizon design-review round 2; fixed 2026-08-03, Horizon design-review Slice 1)
+
+**Owner:** me_theguy. **Severity: MEDIUM — a false unit declaration on the app's most
+statement-like surface; CLAUDE.md rule 11's exact bug class.**
+**Found by:** the Horizon design review's round-2 basis sweep (Pattern 6), reading the tab top-to-
+bottom against each figure's declared basis.
+**What:** the Statement tab's page banner read `Statement of your plan · today's dollars`,
+unconditionally, for the whole tab. "The bottom line" immediately under it honours that
+(`effectiveExpenses` is today's dollars per rule 11). But the **"Income for life" ledger** a few lines
+down (`sv.monthlyHHSS` / `monthlyPension` / `monthlyPortDraw` / `monthlyTotal`) and its companion
+"Where retirement income comes from" strip are built by `calcStatementView`
+(`src/model/budget.js:194-205`, whose own code comment says so) in the **primary's retirement-year
+real dollars** — the basis BUG-90 proved the retirement walk uses and BUG-91 converted the rest of the
+app into. So the banner's claim was false for the ledger by the full `(1+inflation)^yearsToRetirement`
+factor, with the two figures roughly 4× apart in the same screenful and nothing on the ledger flagging
+the switch.
+**Why:** the banner copy predates BUG-90/BUG-91 (it comes verbatim from the original design-handoff
+wireframes, which carried a "figures in today's dollars" line). It was a global claim written when the
+page was assumed to be single-basis; it was never revisited as retirement-year figures were added
+beneath it.
+**Fix:** the `· today's dollars` qualifier is **removed**, not caveated — the banner now reads
+`Statement of your plan`. This is the same fix shape this codebase already applied once to the exact
+same class of stale claim: `JourneyScreen.jsx`'s "— in today's dollars" subtitle (PR #62 review
+battery, round 2 finding 13, above), removed on the reasoning that *the page has never been
+consistently one basis throughout*. A comment at the site now records which figures on this tab carry
+which basis, so a future contributor re-adding a blanket claim has to read the mismatch first.
+**Deliberately NOT done:** re-basing the ledger itself. The underlying today's-vs-retirement-year
+choice for these surfaces is entangled with a planned user-facing dollar-basis toggle (the owner's
+decision in the design review's round 2.5: default to today's dollars, but expose a visible switch),
+which is its own scoped piece of work. Removing a false claim is strictly correct in the meantime;
+adding a *different* claim before that decision ships would just be a new thing to unwind.
+**Tests:** 1 new in `numbers-tabs.test.js` (Statement tab) — the banner renders "Statement of your
+plan" and the tab makes no blanket "today's dollars" claim. **Revert-and-confirm:** restoring the
+qualifier fails it; restored.
+**Golden master:** untouched — copy-only.
+**Where:** `src/horizon/screens/NumbersScreen.jsx` (Statement banner),
+`src/horizon/__tests__/numbers-tabs.test.js`.
 
 ### PR #62 review battery — adversarial code review + interoperability/forward-compat audits (2026-07-27, spousal-engine stabilization session)
 

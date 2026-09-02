@@ -15,9 +15,11 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 | File | Purpose |
 |---|---|
 | `src/horizon/ThemeContext.jsx` | Design token system, palette context, `useTheme()` hook; exports `safeGet`/`safeSet` |
+| `src/horizon/shared.jsx` | **The shared interactive primitives** — `Btn` / `Pill` (see "Interactive primitives" below) + `StatCard` + `kbActivate`; re-exports `fmt`/`fmtMo`/`fmtMonthly` |
+| `src/horizon/useDialogBehaviour.js` | Shared, binding modal behaviour: focus-in on open, Escape-to-close, focus restore, Tab/Shift+Tab focus trap. Used by `ConfirmModal` + `LifeEventSheet` + `MoreSheet` (and so by `ApplyPreviewModal`, which delegates to `ConfirmModal`) — see "Shared Dialog Behaviour" below |
 | `src/horizon/ConfirmModal.jsx` | Shared confirm dialog + toast pattern (used by PlanScreen and IdeasScreen) |
 | `src/horizon/ApplyPreviewModal.jsx` | Apply-with-preview shell (WI-3.9): pure renderer of a model-computed before/after payload, wraps `ConfirmModal`; exports `PreviewMetricRow` + `VerdictBadge`. Contract in `ARCHITECTURE.md` |
-| `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn`/`seg` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape |
+| `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape. (The local `seg` style helper was retired 2026-08-03 — its call sites now use `Btn`.) |
 | `src/horizon/AffordabilityPanel.jsx` | [DELETED 2026-07-13] "Biggest affordable expense" solver (WI-3.8, Ideas' "Solvers" mode) — called `calcAffordabilityMax` directly (sanctioned in-screen pattern), fed by `affordView` + `whatIfSimInputs`. Solvers tab and the panel were removed by owner decision (Dials + Events cover the job; `calcAffordabilityMax` retained for Classic's WhatIfPanel). |
 | `src/components/ArcGraph.jsx` | SVG portfolio arc with 4 views, scenario overlay, event markers, tap-to-scrub |
 | `src/components/HorizonShell.jsx` | Nav shell + onboarding wizard + mobile bar/MoreSheet; exports `SCREENS`; imports per-screen files |
@@ -68,8 +70,38 @@ Auto mode resolves to light/dark via `window.matchMedia("(prefers-color-scheme: 
 | `accent` | Palette signature color (CTAs, active state, highlights) |
 | `warm` | Golden amber — retirement payoff, income numbers, retirement phase |
 | `good` | Green/teal — on-track, savings, accumulation phase |
+| `onAccent` | Label colour for text on a filled `accent` background (the primary CTA) |
 
 **Rule:** Never use a raw hex value in any Horizon component. Derive tints with opacity suffix: `${t.accent}22` = 13% accent tint.
+
+**Rule: never put a raw `#fff` on an accent fill — use `onAccent`.** `onAccent` exists because no
+single literal works in both modes: light-mode accents are mid-tones that white reads against, but
+dark-mode accents are deliberately *light* (their main job is being text on a dark ground), and white
+on them measured 1.76–3.01:1 before BUG-112. Dark-mode `onAccent` is the palette's own `bg`.
+
+### Contrast contract (BUG-112)
+
+Every text token is held to a WCAG AA bar against **all three** grounds it can land on (`bg`, `surf`,
+`surf2`) — not just the one it was designed against — in all 6 palettes × 2 modes.
+`src/horizon/__tests__/palette-contrast.test.js` recomputes the ratios from the token values on every
+`npm test`, so a palette tweak cannot silently regress them.
+
+| Token | Bar | Why |
+|---|---|---|
+| `ink` | 7.0:1 | Primary text (AAA — it was already there) |
+| `mut` | **5.5:1** | Secondary text. Deliberately a step above `faint`: holding both to 4.5 collapses the `ink > mut > faint` ladder (the first pass made `faint` *darker* than `mut` in Apricot) |
+| `faint` | 4.5:1 | Tertiary text. Held to the full text bar, not the 3:1 decorative bar — 75 of its ~80 call sites are real informational text, including dollar cells in the year-by-year table |
+| `accent` | 4.5:1 | Used as **text** at 60 sites, not just as a fill |
+| `good` / `warm` | 4.5:1 | Render real dollar figures at 11px bold (the Plan screen's Income Meter) |
+| `onAccent` | 4.5:1 | Against `accent` — the filled-CTA label |
+
+Tint tokens (`accent`/`warm`/`good`) additionally have to stay perceptually distinct from each other
+(CIE76 ΔE > 5). Sage is exempted for `accent`/`good`, which it deliberately shares. Note that
+**contrast ratio is the wrong tool** for that check — it is luminance-only, so Slate's blue `accent`
+and orange `warm` sit at a 1.00:1 ratio while being obviously different colours.
+
+When retuning a token, hold its **HSL hue and saturation constant** and search only lightness, so the
+palette still reads as itself.
 
 ### Font stack
 
@@ -92,6 +124,131 @@ const { t, palKey, setPalKey, modePref, setModePref, resolvedMode, arcStyle, set
 ```
 
 `t` is the active `ThemeTokens` object for the current palette/mode.
+
+---
+
+## Interactive Primitives — `Btn` / `Pill` (2026-08-03, binding)
+
+**Source of truth: `src/horizon/shared.jsx`.** Before these existed, every button
+in Horizon was a one-off inline style object. Three properties had to be
+remembered independently at ~40 call sites, and weren't — each omission caused a
+real, shipped bug. `Btn` and `Pill` make all three structural.
+
+| # | Invariant | The bug it prevents |
+|---|---|---|
+| 1 | **A `1px solid` border is always emitted; only its COLOUR changes** (`"transparent"` for the borderless look) | A row mixing `1px solid` with `border: "none"` siblings makes the bordered box 2px taller. Invisible under flexbox `stretch`, visible under `alignItems: "center"` — the confirmed `LifeEventSheet` footer bug, where the mismatch squeezed "Cancel" into wrapping at 390px |
+| 2 | **`whiteSpace: "nowrap"` + `flexShrink: 0`** | The other half of the same bug: a shrinking flex row wrapping a two-word label |
+| 3 | **`minHeight: 44` (Btn) / `40` (Pill)** | ~35 controls under the touch-target guideline, the worst at ~14px |
+
+**Use a real `<button>`.** The exemplar is `ExploreTray`'s facet tab, not the nav
+`TabBar` — `TabBar` was itself one of BUG-49's keyboard-unreachable
+`<div onClick>`s. Where an element genuinely cannot be a button (a full-bleed
+layer wrapping an `<img>`, e.g. Someday's photo well), use `kbActivate` +
+`role` + `tabIndex`; that is the only sanctioned alternative.
+
+**API.** `Btn`: `variant` (`primary` | `quiet` | `ghost` | `seg`), `size`
+(`md` | `sm`), `tint` / `tone` (theme-token NAMES, never raw colours), `pressed`,
+`disabled`, `full`, `wrap`, `ariaLabel` / `ariaExpanded`, `style`.
+`Pill`: the same minus `variant`/`size`, at radius 999 and the 40px tier.
+
+- **`pressed` is one prop driving BOTH the visual "on" state and `aria-pressed`**,
+  so they cannot desync. Omit it entirely for a plain action button — no
+  `aria-pressed` attribute is emitted, because an action is not a toggle.
+- **`variant="seg"`** is the segment-inside-a-track skin (the Numbers tab strip,
+  the arc's view toggle, Settings' theme/arc rows, the desktop `TabBar`).
+- **`wrap`** is the ONE documented opt-out of invariant 2, and only for
+  full-width segments in a `flex: 1` row: there every segment is the same width
+  under `stretch`, so a two-line label makes them ALL two lines and heights stay
+  equal — which is the property the invariant protects. In an
+  `alignItems: "center"` action row it would reintroduce the original bug.
+- **`style` is for layout only** (`flex`, `margin`, `width`, `padding`,
+  `borderRadius`). Colours belong in `tint`/`tone` so they stay theme tokens.
+
+**Two tests enforce this, both walking the REAL mounted app:**
+`src/__tests__/keyboard-access.test.js` (no clickable element without a keyboard
+path, on every screen, at 1200px and 390px) and
+`src/__tests__/touch-targets.test.js` (every `<button>` DECLARES a ≥40px height
+floor). `src/horizon/__tests__/shared-primitives.test.js` covers the primitives
+themselves. Declaring the floor — rather than measuring it — is deliberate: a
+card that happens to be 80px tall today can shrink when its content changes.
+
+**Global `:focus-visible`.** Horizon is 100% inline styles and an inline style
+cannot express a pseudo-class, so the focus ring lives in the ONE `<style>` block
+in the Horizon render path (`HorizonShell.jsx`, alongside the font `@import`).
+It is theme-aware — the template literal is evaluated inside the component, where
+`t` is in scope — and scoped to `.hz-root` so Classic is untouched. **Never set
+`outline: "none"` on a Horizon control:** an inline outline overrides that rule,
+and three inputs that did so were the only elements it could not reach.
+
+---
+
+## Shared Dialog Behaviour — `useDialogBehaviour` (2026-08-03, binding; Tab trap added 2026-08-19, BUG-126)
+
+**Source of truth: `src/horizon/useDialogBehaviour.js`.** Before this hook existed, none of
+Horizon's overlays handled Escape, carried `role="dialog"`, or moved focus on open — a keyboard
+user could open one and have focus stranded on the element behind the backdrop, with no key that
+closed it (BUG-50). It is now the ONE mechanism every Horizon dialog goes through for
+focus-in-on-open, Escape-to-close, focus-restore-on-close, and a Tab/Shift+Tab focus trap; a new
+dialog is expected to call it rather than reimplement any of the four.
+
+**What it does (`useDialogBehaviour.js` lines 14–24):**
+1. moves focus into the dialog card on open;
+2. closes on Escape — via BOTH the card's own React `onKeyDown` (the path that fires in practice,
+   since focus is inside the card) and a document-level listener (the safety net for when focus
+   has left the card); the React handler calls `stopPropagation` so the two can never both fire
+   for one keypress;
+3. traps Tab/Shift+Tab within the card's own focusable elements (BUG-126), so keyboard focus can
+   never escape to the page behind the backdrop while the dialog is open;
+4. restores focus to whatever was focused before the dialog opened.
+
+**API.** `useDialogBehaviour(onClose)` (lines 56–126) takes the callback to invoke on
+Escape/trap-boundary dismissal and returns `{ cardRef, escapeProps }` — `cardRef` is a ref for the
+dialog CARD (the element inside the backdrop, not the backdrop itself), and `escapeProps` is
+`{ onKeyDown }`, spread onto that same element. `onClose` is captured in a ref (updated every
+render but never in a dependency array), so a caller passing an inline arrow — every call site
+does — doesn't re-run the mount effect (and re-steal focus into the card) on every keystroke.
+Every call site pairs the two return values with the same fixed set of props on the card element:
+`role="dialog" aria-modal="true"`, an accessible name (`aria-labelledby` pointing at a rendered
+title, or a static `aria-label` where the only heading is a live-editable input), `tabIndex={-1}`
+(so the card itself is a valid focus target), `ref={cardRef}`, and `{...escapeProps}` — see
+`ConfirmModal.jsx` lines 33–40 for the exact shape. The backdrop click-to-dismiss (`onClick`
+on the backdrop `<div>`, `data-dismiss-backdrop="true"`, plus `onClick={e => e.stopPropagation()}`
+on the card so an inside click doesn't bubble to it) is each caller's own convention, not part of
+this hook.
+
+**Focus trap mechanics (BUG-126).** On `Tab`, `onKeyDown` enumerates the card's own tabbable
+descendants (`button`, `[href]`, `input`, `select`, `textarea`, non-`-1` `[tabindex]` — none
+`disabled`, and visible per `offsetParent !== null` so a conditionally-hidden footer button is
+never a phantom trap boundary) and wraps only at the edges: `Shift+Tab` from the first tabbable —
+or from outside the tracked list entirely, e.g. still sitting on the card's own `tabIndex={-1}`
+root right after open — wraps to the last; `Tab` from the last wraps to the first. Every Tab in
+between is untouched native browser behaviour. **No-tabbable-elements edge case:** if the card has
+zero tabbable descendants, `Tab` is `preventDefault`-ed outright so focus stays pinned on the card
+rather than falling through to the page. This needed a live DOM to enumerate real tabbables and
+verify against — this repo's default `npm test` suite runs with `environment: "node"`
+(react-test-renderer, no real `document`), so the trap was deliberately deferred out of the
+original BUG-50 pass rather than shipped untested, and was verified instead with a live Chromium
+session against the running dev server: opened LifeEventSheet's "+ Custom goal" sheet (9 real
+tabbable elements), Tabbed 11 times forward and landed back at the first element, Shift+Tabbed 11
+times and landed at the last — focus never once left `[role="dialog"]`'s subtree in either
+direction, and Escape still closed it afterward. There is no dedicated jsdom test for the trap
+mechanics themselves for the same reason; it's exercised for real by that Chromium session, not
+simulated (`docs/BUGS.md` → BUG-126).
+
+**Who uses it.** `ConfirmModal.jsx`, `LifeEventSheet.jsx`, and `MoreSheet` (an unexported
+component inside `HorizonShell.jsx`, wired in for BUG-120 — it predates the hook and was the one
+overlay left declaring `aria-haspopup="dialog"` without behaving like one) all call the hook
+directly. `ApplyPreviewModal.jsx` gets it for free by delegating its entire chrome to
+`ConfirmModal` rather than calling it a second time. That is every dialog-shaped overlay in
+Horizon; **any new one is expected to call `useDialogBehaviour` rather than hand-roll Escape/focus
+handling again** (`docs/BUGS.md` → BUG-50, BUG-120, BUG-126).
+
+**Tests:** `src/horizon/__tests__/dialog-dismissal.test.js` (ConfirmModal, ApplyPreviewModal,
+LifeEventSheet — role/`aria-modal`/name, Escape-only key discrimination, backdrop dismissal) and
+`src/__tests__/more-sheet-dismissal.test.js` (the same shape for `MoreSheet`, reached through the
+real App at a mobile viewport since it's a `HorizonShell`-local component). Both mirror BUG-50's
+revert-and-confirm discipline: deleting the hook's dismissal effect fails the relevant assertions;
+restoring it turns them green again.
 
 ---
 
@@ -198,10 +355,19 @@ Right side of nav: "On track" / "Needs attention" status pill + "Classic view" b
 ### Plan screen
 
 - Headline: `"On track to retire at {retirementAge}."` or fallback
-- Sub-headline: `"Work optional, {activity} mandatory."` — `activity` comes from shell state (user picks in Someday or Settings)
+- Sub-headline (2026-08-13, Slice 4 — strictly either/or): the earned tagline
+  `"Work optional, {activity} mandatory."` when `planView.outlastsPlan`, otherwise the honest
+  verdict sentence — depletion age + `yearsShortOfPlan` + `workLongerView.minYearsToSustain`,
+  with a "Try a change →" link that opens the Explore tray's levers in place.
+  `activity` comes from shell state (user picks in Someday or Settings)
 - Progress bar toward sustainable retirement
 - ArcGraph (height 280 desktop / 200 mobile, with 4-view toggle, glow from `arcStyle`, strokeWidth from `arcStyle`)
-- Stats row: You keep / mo · Retire at · Income for life · Left at 90 (4-wide desktop → 2×2 grid mobile)
+- Today anchor (2-up): Your paycheck / Household paycheck · Portfolio at retirement
+- Retirement income meter (full width) — carries the **dollar-basis toggle** (today's money by
+  default / at-retirement dollars), which drives the meter and the "Spending each month" card and
+  nothing else: ages, percentages and totals are basis-invariant (BUG-114)
+- Stats row: Retire at · Spending each month · Guaranteed for life · Money lasts to ·
+  Tax in retirement (5-wide desktop → 2-col grid mobile)
 - **"Make this my plan"** button → ConfirmModal → calls `commitPlan({ retirementAge, annualExpenses })` → 2-second "✓ Plan saved" toast
 
 ### Ideas screen
@@ -289,7 +455,7 @@ path) and the LifeEventSheet's Save/Remove (one path, upsert-by-id).
 
 **3 tabs (original):**
 
-- **Statement** — editorial 3-column layout (Income & tax / What you're building / Income for life), each column with a proportion bar. Footnotes with real effective federal rate.
+- **Statement** — editorial 3-column layout (Income & tax / What you're building / Where the money comes from — the third was headed "Income for life" until BUG-117), each column with a proportion bar. Footnotes with real effective federal rate.
 - **Year by year** — full scrollable table sourced from `retirementWalk.rows` (retirement phase). Columns: Age | Year | Portfolio | Draw | Growth | Tax. Year computed as `currentYear + (row.age − currentAge)`. First 50 rows shown; "Show all N years" toggle renders the rest. Zebra rows with `t.surf`/`t.line` alternating, `HM` monospace for all numbers.
 - **Money flow** — inline SVG `IncomeSankey` component. Left column: Gross income node. Bezier-filled bands fan out to three right-column nodes: Tax (`t.line2`), Savings (`t.warm`), Take-home (`t.good`). Heights proportional to dollar amounts. HTML labels with formatted values beside the SVG. Legend chips below. No external charting library.
 
@@ -460,6 +626,9 @@ Full plan with per-work-item targets, actions, and done-metrics: **`docs/ROADMAP
 1. Add an entry to `PALETTES` in `src/horizon/ThemeContext.jsx` with both `light` and `dark` token sets.
 2. Add it to the `PaletteKey` union type (TypeScript annotation in `design-tokens.ts` reference file).
 3. The Settings screen swatch grid renders automatically from `Object.entries(PALETTES)`.
+4. Run `npm test` — `palette-contrast.test.js` enumerates `PALETTES`, so a new palette is held to the
+   contrast contract above automatically. Expect to iterate on the token values until it passes; the
+   failure message names the exact pair and ratio.
 
 ### Adding a new screen
 1. Create a function component `FooScreen({ t, props })` in `HorizonShell.jsx`.

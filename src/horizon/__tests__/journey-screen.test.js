@@ -158,6 +158,30 @@ describe("JourneyScreen (WI-2.1)", () => {
     act(() => renderer.unmount());
   });
 
+  // Slice 2.5 (BUG-110-adjacent): the depletion sentence used to be the
+  // Headline's whole `value` — the same slot Ch1/Ch2 put a short dollar figure
+  // in — so it wrapped onto its own orphaned line at narrow widths and the one
+  // real number in the chapter read as prose. Split into a short value + a
+  // sentence `sub`, matching Ch1/Ch2's shape.
+  it("unsustainable plan shows a short 'Age N' headline value, not the full sentence", () => {
+    const unsustainableProps = {
+      ...minimalProps,
+      isSustainable: false,
+      retirementWalk: { ...retirementWalk, depletionAge: 87 },
+    };
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(JourneyScreen, { t, props: unsustainableProps }));
+    });
+    const allText = textOf(renderer.root);
+    // The headline value itself is short — no longer a full sentence.
+    expect(allText).toContain("Age 87");
+    expect(allText).not.toContain("portfolio runs to age 87");
+    // The sentence context still exists, just in the sub caption.
+    expect(allText.toLowerCase()).toContain("runs out");
+    act(() => renderer.unmount());
+  });
+
   it("conversion window callout renders when conversionWindowYrs > 0", () => {
     let renderer;
     act(() => {

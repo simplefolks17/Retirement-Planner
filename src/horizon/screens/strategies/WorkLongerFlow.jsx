@@ -8,6 +8,9 @@ import React from "react";
 import { fmt, fmtSigned } from "../../../formatters.js";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW } from "./flow-ui.jsx";
 
+// `isMobile` is passed by StrategiesScreen and deliberately not destructured
+// here — see the same note in WithdrawalOrderFlow: this flow is read-only, has
+// no DetailField, and STAT_ROW already wraps its tiles at any width.
 export default function WorkLongerFlow({ t, props }) {
   const wl = props.workLongerView;
   if (!wl) {

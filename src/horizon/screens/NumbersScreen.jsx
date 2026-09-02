@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
-import { fmt, fmtMo } from "../shared.jsx";
+import { fmt, fmtMo, Btn, Pill } from "../shared.jsx";
 import { fmtFull, fmtPct } from "../../formatters.js";
+import { buildBarSegments, SEG_LABEL_MIN_SHARE_PCT } from "../../model/budget.js";
 
 // A deduction row: "−$12,400" for a finite value, plain "—" when missing.
 // Negation goes THROUGH the canonical formatter (never a hand-prepended "−",
@@ -50,7 +51,7 @@ function StmtCol({ t, title, items, bar }) {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 font: `600 10px ${HF}`, color: t.surf,
                 minWidth: 0, overflow: "hidden", whiteSpace: "nowrap"
-              }}>{seg.l}</div>
+              }}>{seg.showLabel ? seg.l : ""}</div>
             ))}
           </div>
           <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 4, fontStyle: "italic" }}>{bar.cap}</div>
@@ -71,6 +72,27 @@ function StmtCol({ t, title, items, bar }) {
 //
 // PIXEL/LAYOUT GEOMETRY ONLY (rule 10): all dollar levels and percentages come
 // from statementView; this component only converts values to pixels.
+// Below this slot width a bar's label no longer fits on one line: the labels are
+// `text-anchor: middle` SVG text with no wrapping of any kind, so "After-tax
+// savings" (~88px at 10.5px) inside a ~66px slot runs into its neighbours and
+// the outermost two get clipped by the viewBox edge.
+const NARROW_SLOT_PX = 80;
+
+// Break a bar label into at most two lines, at the space nearest its middle.
+// Exported for its own unit test — the wrap decision is the fix, and there is no
+// layout engine under react-test-renderer to observe it any other way.
+export function wrapBarLabel(label) {
+  const words = String(label).split(" ");
+  if (words.length < 2) return [label];
+  let best = 1, bestDist = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const left = words.slice(0, i).join(" ").length;
+    const dist = Math.abs(left - (label.length - left));
+    if (dist < bestDist) { bestDist = dist; best = i; }
+  }
+  return [words.slice(0, best).join(" "), words.slice(best).join(" ")];
+}
+
 function IncomeWaterfall({ t, view }) {
   const wrapRef = useRef(null);
   const [w, setW] = useState(520);
@@ -114,6 +136,7 @@ function IncomeWaterfall({ t, view }) {
 
   const COLS = bars.length;
   const slot = w / COLS;
+  const narrow = slot < NARROW_SLOT_PX;
   const barW = Math.min(slot * 0.60, 110);
   const cx = i => slot * i + slot / 2;
   const bx = i => cx(i) - barW / 2;
@@ -137,7 +160,14 @@ function IncomeWaterfall({ t, view }) {
           <>
             <line x1={0} x2={w} y1={y(paycheck)} y2={y(paycheck)}
               stroke={t.good} strokeWidth={1} strokeDasharray="4 4" opacity={0.45} />
-            <text x={6} y={y(paycheck) - 5}
+            {/* The caption used to sit at the LINE's own height, at x=6 — which
+                is inside the first bar (bx(0) is only 0.04w), so ~150px of green
+                text was drawn over the full-height Gross income bar at every
+                width, and worst on a phone. It lives in the empty strip above
+                the plot instead; the shared colour ties it to its dashed line.
+                PADT (32) reserves that strip, and the highest bar-top figure
+                sits at baseline 23, so nothing else is up here. */}
+            <text x={2} y={11}
               style={{ font: `700 10px ${HM}` }} fill={t.good}>
               Paycheck deposit: {fmt(paycheck)}
             </text>
@@ -162,12 +192,23 @@ function IncomeWaterfall({ t, view }) {
                 style={{ font: `600 11.5px ${HM}` }} fill={t.ink}>
                 {(b.full ? "" : "−") + fmt(b.val)}
               </text>
-              {/* label */}
-              <text x={cx(b.i)} y={H - 38} textAnchor="middle"
-                style={{ font: `500 10.5px ${HF}` }} fill={t.mut}>{b.label}</text>
-              {/* sub-label (account types or context) */}
-              <text x={cx(b.i)} y={H - 22} textAnchor="middle"
-                style={{ font: `400 9.5px ${HF}` }} fill={t.faint}>{b.sub}</text>
+              {/* label — wrapped onto two lines when the slot is too narrow for
+                  it on one (SVG text does not wrap on its own) */}
+              <text x={cx(b.i)} y={H - (narrow ? 42 : 38)} textAnchor="middle"
+                style={{ font: `500 10.5px ${HF}` }} fill={t.mut}>
+                {narrow
+                  ? wrapBarLabel(b.label).map((ln, li) => (
+                      <tspan key={ln} x={cx(b.i)} dy={li === 0 ? 0 : 12}>{ln}</tspan>
+                    ))
+                  : b.label}
+              </text>
+              {/* sub-label (account types or context) — dropped on a narrow
+                  slot, where the wrapped label needs that line's room and the
+                  sub-label is the least load-bearing of the three rows */}
+              {!narrow && (
+                <text x={cx(b.i)} y={H - 22} textAnchor="middle"
+                  style={{ font: `400 9.5px ${HF}` }} fill={t.faint}>{b.sub}</text>
+              )}
               {/* percentage of gross */}
               <text x={cx(b.i)} y={H - 7} textAnchor="middle"
                 style={{ font: `400 9.5px ${HM}` }} fill={t.faint}>{pctLabel(b.pct)}</text>
@@ -275,7 +316,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         marginBottom: 12, flexShrink: 0, flexWrap: "wrap"
       }}>
         <span style={{ font: `600 13px ${HF}`, color: t.accent }}>✦ The engine is working</span>
-        <span style={{ width: 1.5, height: 26, background: t.line2, flexShrink: 0 }} />
+        {/* A vertical rule separating the banner's title from its two figures.
+            When the row wraps on a phone it ends up stranded on a line of its
+            own, a 26px tick separating nothing from nothing. */}
+        {!isMobile && <span style={{ width: 1.5, height: 26, background: t.line2, flexShrink: 0 }} />}
         <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
           <span style={{ font: `600 18px ${HM}`, color: t.good }}>
             {yr1TaxSavings > 0 ? fmt(yr1TaxSavings) : "—"}
@@ -294,25 +338,23 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
         </span>
       </div>
 
-      {/* tab strip — 5 tabs: Statement | Budget | Accounts | Taxes | Year by year */}
+      {/* tab strip — 5 tabs: Statement | Budget | Accounts | Taxes | Year by year.
+          `flexWrap` broke it into a lopsided 3+2 block on a phone (the fifth tab
+          alone on its own row, inside a track that then looked like two stacked
+          controls). One scrolling row instead: the segmented track stays one
+          control, and the tabs keep their full labels. */}
       <div style={{
         display: "flex", gap: 3, padding: 3, borderRadius: 11,
-        background: t.line, alignSelf: "flex-start", marginBottom: 12, flexShrink: 0,
-        flexWrap: "wrap",
+        background: t.line, alignSelf: isMobile ? "stretch" : "flex-start",
+        marginBottom: 12, flexShrink: 0,
+        ...(isMobile
+          ? { overflowX: "auto", flexWrap: "nowrap" }
+          : { flexWrap: "wrap" }),
       }}>
-        {NUMBERS_TABS.map(([k, l]) => {
-          const on = tab === k;
-          return (
-            <button key={k} type="button" aria-pressed={on} onClick={() => setTab(k)} style={{
-              padding: "6px 16px", borderRadius: 8, cursor: "pointer",
-              border: "none",
-              background: on ? t.surf2 : "transparent",
-              font: `${on ? 600 : 400} 13px ${HF}`,
-              color: on ? t.ink : t.mut,
-              boxShadow: on ? "0 1px 4px rgba(0,0,0,.09)" : "none"
-            }}>{l}</button>
-          );
-        })}
+        {NUMBERS_TABS.map(([k, l]) => (
+          <Btn key={k} t={t} size="sm" variant="seg" pressed={tab === k}
+            onClick={() => setTab(k)} style={{ padding: "6px 16px" }}>{l}</Btn>
+        ))}
       </div>
 
       {/* tab body */}
@@ -330,8 +372,22 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               borderBottom: `2px solid ${t.ink}`, paddingBottom: 10, marginBottom: 3
             }}>
               <span style={{ font: `700 22px ${SERIF}`, color: t.ink, letterSpacing: "0.04em" }}>HORIZON</span>
+              {/* No BLANKET dollar-basis claim here (rule 11): this tab is
+                  deliberately mixed — "The bottom line" below reads
+                  effectiveExpenses (TODAY's dollars) while the "Where the money
+                  comes from" ledger + its companion strip read statementView's
+                  monthly bands (the primary's RETIREMENT-YEAR real dollars,
+                  budget.js:194-205). The banner used to claim "today's dollars"
+                  for the whole tab, which was false for the ledger by roughly
+                  the full inflation factor. Same fix shape as JourneyScreen's
+                  stale "— in today's dollars" subtitle (BUGS.md, PR #62 round 2
+                  finding 13): removing a page-wide claim isn't the same as
+                  declaring the true, mixed basis, though — each of the two
+                  figures now carries its OWN scoped, local caption instead (see
+                  "in today's dollars" below the bottom line, and the ledger
+                  bar's "in retirement-year dollars" caption further down). */}
               <span style={{ font: `400 12px ${SERIF}`, color: t.mut, textAlign: "right" }}>
-                Statement of your plan · today's dollars
+                Statement of your plan
               </span>
             </div>
             <div style={{ height: 2.5, background: t.ink, marginBottom: 16 }} />
@@ -341,17 +397,44 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               </div>
               <div style={{ font: `700 32px/1 ${SERIF}`, color: t.ink }}>
                 {fmtMo(effectiveExpenses)}{" "}
-                <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month, for life</span>
+                {/* Was "/ month, for life" — an unconditional guarantee over a
+                    spending target, on a tab whose own ledger below lists a
+                    "Runs dry at" row. The gated "for life" claims elsewhere
+                    (JourneyScreen, WorkLongerFlow, ArcGraph) condition on a
+                    model sustainability boolean and are correct as they stand;
+                    this one had no gate at all. */}
+                <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month in retirement</span>
               </div>
               <div style={{ font: `400 13px ${SERIF}`, color: t.mut, marginTop: 5 }}>
                 with <span style={{ color: t.warm, fontWeight: 700 }}>{fmt(balAt90)}</span> remaining at age 90.
+              </div>
+              {/* Rule 11: a scoped, LOCAL basis note — the removed banner above
+                  claimed one basis for the whole tab, which was false for the
+                  ledger further down; this figure specifically reads
+                  effectiveExpenses, today's dollars, so it says so right here. */}
+              <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 3, fontStyle: "italic" }}>
+                in today's dollars
               </div>
             </div>
 
             {/* Plan-health verdict badge */}
             {planView?.drivers && (() => {
-              const DRIVER_LABELS = { withdrawal: "withdrawal rate", longevity: "longevity", savings: "savings rate" };
-              const badIssues = planView.drivers.filter(d => d.ok === false).map(d => DRIVER_LABELS[d.id] ?? d.id);
+              // One label per calcPlanDrivers row id (retirement-drawdown.js:163-197).
+              // `confidence` is the 4th row — always present, since App always
+              // passes monteCarloSuccessPct (App.jsx:1558). Wording matches
+              // OnTrackPill's own name for the same driver (HorizonShell.jsx:62),
+              // lower-cased to match this list's sibling entries.
+              const DRIVER_LABELS = {
+                withdrawal: "withdrawal rate",
+                longevity: "longevity",
+                savings: "savings rate",
+                confidence: "market confidence",
+              };
+              const labelFor = d => DRIVER_LABELS[d.id] ?? d.id;
+              const badIssues = planView.drivers.filter(d => d.ok === false).map(labelFor);
+              // Derived from the SAME rows, never a hardcoded list — a hardcoded
+              // one silently omitted `confidence` when that driver was added.
+              const allDrivers = planView.drivers.map(labelFor).join(" · ");
               const allOk = badIssues.length === 0;
               const color = allOk ? t.good : t.warm;
               return (
@@ -365,9 +448,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     {allOk ? "✓ On track" : `${badIssues.length} area${badIssues.length > 1 ? "s" : ""} to review`}
                   </span>
                   <span style={{ font: `400 11px ${HF}`, color: t.mut }}>
-                    {allOk
-                      ? "withdrawal rate · longevity · savings rate"
-                      : badIssues.join(" · ")}
+                    {allOk ? allDrivers : badIssues.join(" · ")}
                   </span>
                 </div>
               );
@@ -400,11 +481,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["Pre-tax savings", negFull(sv.preTaxDeductions), null, false],
                 ["Paycheck deposit", fmtFull(takeHome),       null, true],
               ]} bar={sv.keepPct == null ? null : {
-                segs: [
+                segs: buildBarSegments([
                   { f: sv.keepPct, c: t.good, l: `Keep ${sv.keepPct}%` },
                   { f: sv.taxPct,  c: t.line2, l: `Tax ${sv.taxPct}%` },
                   { f: sv.savePct, c: t.warm,  l: `Save ${sv.savePct}%` },
-                ],
+                ]),
                 cap: "of every dollar earned"
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
@@ -415,12 +496,12 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["HSA",               fmt(hsa),     null, false],
                 [`Nest egg by ${retirementAge}`, fmt(totalAtRet), null, true],
               ]} bar={{
-                segs: [
+                segs: buildBarSegments([
                   { f: trad401, c: t.good,   l: "401k" },
                   { f: roth,    c: t.accent,  l: "Roth" },
                   { f: taxable, c: t.warm,    l: "Taxable" },
                   { f: hsa,     c: t.line2,   l: "HSA" },
-                ],
+                ]),
                 cap: `${fmt(totalAtRet)} across four buckets`
               }} />
               <span style={{ width: 1, background: t.line2, alignSelf: "stretch" }} />
@@ -428,7 +509,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   the column visibly reconciles to the bolded total (the model
                   guarantees the bands sum — per-row $100 rounding broke that
                   identity by up to ~$200; adversarial review, PR #56 F3). */}
-              <StmtCol t={t} title="Income for life" items={[
+              {/* Renamed from "Income for life": this column is a BREAKDOWN of
+                  where retirement spending comes from — it even carries its own
+                  "Runs dry at" row — so the old heading promised a guarantee the
+                  column itself disproves two lines later. */}
+              <StmtCol t={t} title="Where the money comes from" items={[
                 ["Social Security",   `${fmtFull(sv.monthlyHHSS)}/mo`, "3",  false],
                 ...(sv.monthlyPension > 0 ? [["Pension", `${fmtFull(sv.monthlyPension)}/mo`, null, false]] : []),
                 ["Portfolio draw",    `${fmtFull(sv.monthlyPortDraw)}/mo`, null, false],
@@ -436,12 +521,16 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 ["Runs dry at",       runsOutLabel,  null, false],
                 ["Total monthly",     `${fmtFull(sv.monthlyTotal)}/mo`, null, true],
               ]} bar={{
-                segs: [
+                segs: buildBarSegments([
                   { f: sv.monthlyHHSS,     c: t.warm,   l: "Soc Sec" },
                   ...(sv.monthlyPension > 0 ? [{ f: sv.monthlyPension, c: t.accent, l: "Pension" }] : []),
                   { f: sv.monthlyPortDraw, c: t.good,   l: "Portfolio" },
-                ],
-                cap: "blended monthly income"
+                ]),
+                // Rule 11: this column's own local basis note (the removed
+                // page-wide banner above — see its comment — was false for this
+                // ledger; a scoped note here is the correct fix, not a re-added
+                // blanket claim).
+                cap: "blended monthly income, in retirement-year dollars"
               }} />
             </div>
 
@@ -458,17 +547,12 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     {" "}of your working paycheck deposit.
                   </div>
                   {navigate && (
-                    <button
-                      type="button"
+                    <Btn t={t} size="sm" variant="ghost" tone="accent"
                       onClick={() => navigate("numbers", "yearly")}
-                      style={{
-                        background: "none", border: "none", cursor: "pointer",
-                        font: `400 12px ${SERIF}`, color: t.accent,
-                        padding: "4px 0", textDecoration: "underline",
-                      }}
+                      style={{ fontFamily: SERIF, textDecoration: "underline", padding: "4px 8px" }}
                     >
                       → Explore all years
-                    </button>
+                    </Btn>
                   )}
                 </div>
               );
@@ -493,8 +577,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 </div>
                 {/* Retirement income companion strip — shows how SS/pension/portfolio
                     combine to fund retirement (mirrors the working-year waterfall).
-                    Bar widths are layout proportion only (val/monthlyTotal * 100%) —
-                    the same precedent as Accounts tab horizontal bars (rule 10). */}
+                    Bar widths read the model's own pre-computed sharePct fields
+                    (calcStatementView) instead of dividing in JSX — a screen formats
+                    and lays out, it does not compute (rule 10; same class BUG-121
+                    fixed nearby in this file's StmtCol bars). */}
                 {sv.monthlyTotal > 0 && (
                   <div style={{ marginTop: 16 }}>
                     <div style={{
@@ -504,23 +590,30 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       Where retirement income comes from · per month
                     </div>
                     {[
-                      { label: "Social Security", val: sv.monthlyHHSS, color: t.warm },
-                      ...(sv.monthlyPension > 0 ? [{ label: "Pension", val: sv.monthlyPension, color: t.accent }] : []),
-                      { label: "Portfolio draw", val: sv.monthlyPortDraw, color: t.good },
-                    ].map(({ label, val, color }) => (
+                      { label: "Social Security", val: sv.monthlyHHSS, pct: sv.ssSharePct, color: t.warm },
+                      ...(sv.monthlyPension > 0
+                        ? [{ label: "Pension", val: sv.monthlyPension, pct: sv.pensionSharePct, color: t.accent }]
+                        : []),
+                      { label: "Portfolio draw", val: sv.monthlyPortDraw, pct: sv.portDrawSharePct, color: t.good },
+                    ].map(({ label, val, pct, color }) => (
                       <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <div style={{ font: `400 12px ${SERIF}`, color: t.mut, width: 110 }}>{label}</div>
                         <div style={{ flex: 1, background: `${color}22`, borderRadius: 3, height: 6, overflow: "hidden" }}>
-                          <div style={{
-                            width: `${Math.round((val / sv.monthlyTotal) * 100)}%`,
-                            background: color, height: "100%",
-                          }} />
+                          <div style={{ width: `${pct}%`, background: color, height: "100%" }} />
                         </div>
                         <div style={{ font: `500 12px ${HM}`, color: t.ink, width: 56, textAlign: "right" }}>
                           {fmt(val)}
                         </div>
                       </div>
                     ))}
+                    {/* Rule 11: this strip reads the SAME retirement-year monthly
+                        bands as the "Where the money comes from" ledger above (both
+                        source calcStatementView's ss/pension/exp — budget.js:199-205)
+                        — the third of the three sites this PR's basis-caption pass
+                        was supposed to cover, missed until this batch. */}
+                    <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 6, fontStyle: "italic" }}>
+                      in retirement-year dollars
+                    </div>
                   </div>
                 )}
               </div>
@@ -831,9 +924,20 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
               if (bucketTotal === 0) return null;
               return (
                 <div key={bucket.key} style={{ marginBottom: 20 }}>
-                  {/* Bucket header */}
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
-                    <span style={{ font: `600 12px ${HF}`, color: t.ink, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                  {/* Bucket header. The label and its (much longer) note shared
+                      one flex row, so on a phone the label got squeezed and
+                      broke mid-word at its hyphen — "TAX-" / "DEFERRED". The
+                      label never wraps now, and the note drops below it on
+                      mobile instead of competing for the same line. */}
+                  <div style={{
+                    display: "flex", flexDirection: isMobile ? "column" : "row",
+                    alignItems: isMobile ? "flex-start" : "baseline",
+                    gap: isMobile ? 2 : 10, marginBottom: 6,
+                  }}>
+                    <span style={{
+                      font: `600 12px ${HF}`, color: t.ink, textTransform: "uppercase",
+                      letterSpacing: "0.07em", whiteSpace: "nowrap", flexShrink: 0,
+                    }}>
                       {bucket.label}
                     </span>
                     <span style={{ font: `400 12px ${SERIF}`, color: t.faint }}>{bucket.note}</span>
@@ -1170,7 +1274,14 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           </div>
                         );
                       }
-                      const segColor = { working: t.warm, rmd: t.accent, conv: t.good };
+                      // One entry per key emitted by taxViewBundle.composition
+                      // (App.jsx:2068-2072): rmd · conv · draw. `draw` was missing,
+                      // so the largest segment rendered fully transparent. The
+                      // dead `working` key it used to sit beside is gone — working-
+                      // year tax is deliberately excluded from this bar. `?? t.mut`
+                      // makes any FUTURE missing key fail visibly (a muted grey
+                      // segment) instead of invisibly.
+                      const segColor = { rmd: t.accent, conv: t.good, draw: t.warm };
                       return (
                         <>
                           <div style={{
@@ -1181,7 +1292,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                             {segments.map((seg, i) => (
                               <div key={seg.key} style={{
                                 flex: seg.val / total,
-                                background: segColor[seg.key], opacity: 0.72,
+                                background: segColor[seg.key] ?? t.mut, opacity: 0.72,
                                 borderRight: i < segments.length - 1
                                   ? `1px solid ${t.surf}` : "none",
                                 display: "flex", alignItems: "center",
@@ -1190,7 +1301,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                                 minWidth: 0, overflow: "hidden",
                                 whiteSpace: "nowrap",
                               }}>
-                                {seg.pct >= 12 ? `${seg.pct}%` : ""}
+                                {seg.pct >= SEG_LABEL_MIN_SHARE_PCT ? `${seg.pct}%` : ""}
                               </div>
                             ))}
                           </div>
@@ -1203,7 +1314,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                               }}>
                                 <span style={{
                                   width: 8, height: 8, borderRadius: 999,
-                                  background: segColor[seg.key], flexShrink: 0,
+                                  background: segColor[seg.key] ?? t.mut, flexShrink: 0,
                                 }} />
                                 {seg.label} · {fmt(seg.val)}
                               </span>
@@ -1277,7 +1388,28 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 9 columns → the table scrolls horizontally so each stays readable
                 on desktop and mobile (rule 15 — renders + usable on small screens).
                 signed and null cells are formatted only; all values come from yearlyRows. */}
-            <div ref={tableScrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+            {/* Scroll affordance (mobile). The 9-column grid is 720px wide
+                inside a ~340px viewport, so it scrolls — but a column was simply
+                severed at the right edge with nothing saying it was swipeable.
+                The mask fades that edge so it reads as "there is more this way",
+                and the line below says so outright for anyone who doesn't read
+                the fade. Both are mobile-only: the desktop card is wide enough
+                to show the whole grid, where a fade would be a lie. */}
+            {isMobile && (
+              <div style={{
+                font: `400 11px ${SERIF}`, color: t.faint, fontStyle: "italic",
+                marginBottom: 6, flexShrink: 0,
+              }}>
+                Swipe the table sideways for growth, draws, tax and conversions →
+              </div>
+            )}
+            <div ref={tableScrollRef} style={{
+              flex: 1, overflow: "auto", minHeight: 0,
+              ...(isMobile ? {
+                maskImage: "linear-gradient(to right, #000 calc(100% - 26px), transparent 100%)",
+                WebkitMaskImage: "linear-gradient(to right, #000 calc(100% - 26px), transparent 100%)",
+              } : {}),
+            }}>
               <div style={{ minWidth: GRID_MIN_W }}>
                 {/* Jump bar — scroll-to-lifecycle shortcuts (Session 4) */}
                 {(() => {
@@ -1294,19 +1426,19 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         Jump to:
                       </span>
                       {visibleMarkers.map(([age, label]) => (
-                        <button
+                        <Pill
                           key={age}
-                          type="button"
+                          t={t}
+                          tone="accent"
                           onClick={() => rowRefs.current[Number(age)]?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
                           style={{
                             background: `${t.accent}14`, border: `1px solid ${t.accent}44`,
-                            borderRadius: 6, cursor: "pointer",
-                            font: `500 11px ${SERIF}`, color: t.accent,
-                            padding: "3px 10px",
+                            borderRadius: 6, padding: "3px 10px",
+                            fontFamily: SERIF, fontSize: 11, fontWeight: 500,
                           }}
                         >
                           {label}
-                        </button>
+                        </Pill>
                       ))}
                     </div>
                   );
@@ -1371,6 +1503,9 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                           display: "grid", gridTemplateColumns: GRID_COLS,
                           gap: 4, alignItems: "center",
                           padding: "7px 14px",
+                          // Tap-to-expand on a retirement row: a real control,
+                          // so it carries the same 44px floor as a <button>.
+                          minHeight: isRet ? 44 : undefined,
                           borderBottom: `1px solid ${t.line}`,
                           borderTop: isRetStart ? `1.5px solid ${t.warm}88` : "none",
                           background: wrHigh
@@ -1485,13 +1620,11 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   whole life · {allRetirementRows.length} years · balances and growth shown gross; taxes appear in the Tax and Draw columns
                 </span>
                 {allRetirementRows.length > YEAR_CAP && (
-                  <button onClick={() => setShowAllYears(v => !v)} style={{
-                    font: `500 12px ${HF}`, color: t.accent,
-                    background: "transparent", border: `1px solid ${t.accent}55`,
-                    borderRadius: 7, padding: "4px 12px", cursor: "pointer", flexShrink: 0,
-                  }}>
+                  <Btn t={t} size="sm" variant="quiet" tone="accent"
+                    onClick={() => setShowAllYears(v => !v)}
+                    style={{ borderColor: `${t.accent}55`, borderRadius: 7, padding: "4px 12px" }}>
                     {showAllYears ? "Show first 50" : `Show all ${allRetirementRows.length} years`}
-                  </button>
+                  </Btn>
                 )}
               </div>
             </div>

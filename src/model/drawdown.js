@@ -31,6 +31,31 @@ export function calcNetPortfolioNeed(effectiveExpenses, householdSS, effectivePe
 // retirement but before their own). Omitting it is byte-identical to before
 // this 4th band existed — the return shape gains a `spouseIncome` field but
 // every existing field keeps its old value.
+//
+// guaranteedIncome / guaranteedPct (Plan screen's "Guaranteed for life" card):
+// the share of retirement spending covered by income that does NOT stop —
+// Social Security + pension, and NOTHING else. The spouse's gap-year paycheck
+// is deliberately EXCLUDED from the numerator while staying in the denominator
+// (`expenses`): it is real income, but it stops at the spouse's own retirement
+// age (rule 5b), so counting it as "guaranteed for life" would tell a
+// first-time user that a temporary paycheck is permanent — precisely the
+// overclaim this card exists to replace. Defining the field as
+// "(ss + pension) / expenses" rather than "everything that isn't portfolio
+// draw" is what makes that exclusion structural instead of a caller's promise.
+// The band values are already scaled for the over-funded edge above, so the
+// numerator can never exceed the denominator.
+// guaranteedPct is null (a designed "—", never 0) when there are no expenses to
+// take a share of.
+//
+// BUG-122: guaranteedPct is computed from the RAW (unscaled) ssRaw/penRaw, NOT
+// the scaled ssBand/penBand. The scale factor is derived from incomeTotal,
+// which includes the spouse's gap-year income — so multiplying a spouse-income
+// household's ss/pension bands by that scale dilutes the percentage by income
+// that has nothing to do with what share of spending SS+pension cover. The
+// scaled ssBand/penBand/guaranteedIncome are still exactly right for the
+// meter's bars (which must sum to exp) — only the standalone percentage needs
+// the unscaled source. Explicitly capped at 100 since ssRaw+penRaw can exceed
+// exp on the over-funded edge (the scaled bands can't, by construction).
 export function calcRetIncomeFlow({ effectiveExpenses, ss, pension, spouseIncome = 0 }) {
   const exp = Math.max(0, effectiveExpenses);
   const ssRaw = Math.max(0, ss);
@@ -41,12 +66,26 @@ export function calcRetIncomeFlow({ effectiveExpenses, ss, pension, spouseIncome
   // Income covers whatever the portfolio doesn't (== min(incomeTotal, exp)).
   const covered = exp - portfolioDraw;
   const scale = incomeTotal > 0 ? covered / incomeTotal : 0;
+  const ssBand = ssRaw * scale;
+  const penBand = penRaw * scale;
+  const guaranteedIncome = ssBand + penBand;
+  // BUG-129: guaranteedRaw (and therefore guaranteedPct) can be NaN if a caller
+  // ever hands in a non-finite ss/pension — Math.max(0, NaN) is NaN, same
+  // hazard buildBarSegments (budget.js) already guards one function away. No
+  // live App path does this today (every input is numeric), but the guard
+  // keeps this function's contract symmetric with its sibling: null (the
+  // designed "—" state), never a NaN that renders as the literal string "NaN%".
+  const guaranteedRaw = ssRaw + penRaw;
   return {
     expenses: exp,
-    ss: ssRaw * scale,
-    pension: penRaw * scale,
+    ss: ssBand,
+    pension: penBand,
     spouseIncome: spRaw * scale,
     portfolioDraw,
+    guaranteedIncome,
+    guaranteedPct: (exp > 0 && Number.isFinite(guaranteedRaw))
+      ? Math.min(100, Math.round((guaranteedRaw / exp) * 100))
+      : null,
   };
 }
 

@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import ArcGraph from "../../components/ArcGraph.jsx";
 import { HF, HM, safeGet, safeSet } from "../ThemeContext.jsx";
-import { StatCard, fmt, fmtMo, fmtMonthly, kbActivate } from "../shared.jsx";
+import { StatCard, Btn, Pill, fmt, fmtMo, fmtMonthly } from "../shared.jsx";
 import { RETIRE_JUMPS, resolveRetireJump } from "../presets.js";
 import ApplyPreviewModal, { PreviewMetricRow } from "../ApplyPreviewModal.jsx";
 import LifeEventSheet from "../LifeEventSheet.jsx";
@@ -35,14 +35,17 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
           flex: 1, display: "flex", alignItems: "stretch", gap: 4,
           borderRadius: 13, background: t.surf2, border: `1px solid ${t.line2}`,
         }}>
-          <div
+          {/* Was a `role="button"` div (keyboard-reachable via kbActivate, but
+              still not a real control). A native <button> gives it the button
+              role, Enter/Space, and the global focus ring for free. */}
+          <button
+            type="button"
             onClick={() => navigate(sig.target.screen, sig.target.subView)}
-            onKeyDown={kbActivate(() => navigate(sig.target.screen, sig.target.subView))}
-            role="button"
-            tabIndex={0}
             style={{
               flex: 1, display: "flex", alignItems: "center", gap: 12,
               minHeight: 44, padding: "10px 4px 10px 14px", cursor: "pointer", minWidth: 0,
+              background: "transparent", border: "1px solid transparent",
+              textAlign: "left", font: "inherit",
             }}>
             <span style={{
               font: `600 16px ${HM}`, flexShrink: 0,
@@ -56,17 +59,11 @@ function SignalsStrip({ t, signals, navigate, isMobile }) {
                 {sig.body} <span style={{ color: t.accent }}>→</span>
               </span>
             </span>
-          </div>
-          <span
+          </button>
+          <Btn t={t} size="sm" variant="ghost" tone="faint"
             onClick={() => dismiss(sig.id)}
-            onKeyDown={kbActivate(() => dismiss(sig.id))}
-            role="button"
-            tabIndex={0}
-            aria-label={`dismiss ${sig.id} signal`}
-            style={{
-              display: "flex", alignItems: "flex-start", padding: "10px 12px",
-              cursor: "pointer", color: t.faint, font: `400 13px ${HF}`,
-            }}>✕</span>
+            ariaLabel={`dismiss ${sig.id} signal`}
+            style={{ alignSelf: "stretch", padding: "10px 12px", borderRadius: 13 }}>✕</Btn>
         </div>
       ))}
     </div>
@@ -104,19 +101,77 @@ function PortfolioHero({ t, totalAtRet, planHighlights }) {
   );
 }
 
+// ── Paycheck card (the TODAY anchor) ──────────────────────────────────────────
+// Was "You keep / mo", the first of five cards in a row of otherwise
+// RETIREMENT-labelled stats — a today's-paycheck figure with nothing saying so.
+// It now sits beside "Portfolio at retirement" as an explicit today→retirement
+// pairing, and its sub-copy states the year it belongs to.
+//
+// The label is household-aware: takeHome is a HOUSEHOLD figure for MFJ filers
+// (rule 9) while "You keep" was unconditionally primary-voiced. The scope test
+// is a model-provided boolean (planHighlights.takeHomeIsHousehold), never a
+// filingStatus/spouseIncome comparison here (rule 8) — same shape as BUG-96's
+// showHouseholdTotal and Classic's own conditional paycheck label.
+function PaycheckCard({ t, takeHome, keepPct, isHousehold }) {
+  return (
+    <div style={{
+      background: t.surf, borderRadius: 14,
+      border: `1px solid ${t.line}`,
+      padding: "16px 18px",
+      marginBottom: 10,
+    }}>
+      <div style={{ font: `500 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
+        {isHousehold ? "Household paycheck" : "Your paycheck"}
+      </div>
+      <div style={{ font: `700 30px/1.1 ${HM}`, color: t.ink }}>
+        {fmtMo(takeHome)}<span style={{ font: `500 14px ${HM}`, color: t.mut }}>/mo</span>
+      </div>
+      <div style={{ font: `500 12px ${HF}`, color: t.good, marginTop: 4 }}>
+        {keepPct != null ? `${keepPct}% of income · today` : "what you take home today"}
+      </div>
+    </div>
+  );
+}
+
+// ── Dollar-basis toggle ───────────────────────────────────────────────────────
+// The Plan screen used to contradict itself: the Income Meter showed
+// retirement-year dollars while the card below it showed today's dollars for
+// the same concept. Rather than silently picking one, the user picks — today's
+// money by default. Scoped DELIBERATELY to genuinely dollar-denominated
+// figures (this meter + the "Spending each month" card); ages, percentages,
+// "Guaranteed for life" and "Money lasts to" are basis-invariant and are not
+// wired to it. Options + captions come from the model (no age math in JSX).
+function DollarBasisToggle({ t, options, activeId, onChange }) {
+  return (
+    <div role="group" aria-label="Show dollars in"
+      style={{ display: "flex", gap: 3, background: t.line, borderRadius: 9, padding: 2 }}>
+      {options.map(o => (
+        <Btn key={o.id} t={t} size="sm" variant="seg" pressed={o.id === activeId}
+          onClick={() => onChange(o.id)}
+          style={{ padding: "6px 10px" }}>
+          {o.label}
+        </Btn>
+      ))}
+    </div>
+  );
+}
+
 // ── Income Replacement Meter ───────────────────────────────────────────────────
 // Shows retirement monthly income + how much of current income it replaces,
 // with per-source breakdown bars (SS, portfolio). Bar widths use model-provided
 // integer percentages (ssPct, portfolioPct) — no division in JSX (rule 10).
-function IncomeMeter({ t, planHighlights }) {
-  const { incomeReplacementPct, retIncomeFlow, spouseIncomeScopeNote, spouseSpilloverNote } = planHighlights ?? {};
-  if (!retIncomeFlow) return null;
+// `flow` is the basis the user selected (planHighlights.incomeFlowByBasis[id]) —
+// the meter never converts, it renders whichever of the two the screen handed it.
+function IncomeMeter({ t, planHighlights, flow, basisOption, basisApplicable, onBasisChange }) {
+  const { incomeReplacementPct, spouseIncomeScopeNote, spouseSpilloverNote,
+          dollarBasisOptions } = planHighlights ?? {};
+  if (!flow) return null;
 
   const {
     ss, pension, spouseIncome, portfolioDraw,
     hasSS, hasPension, hasSpouseIncome,
     ssPct, pensionPct, spouseIncomePct, portfolioPct,
-  } = retIncomeFlow;
+  } = flow;
 
   return (
     <div style={{
@@ -125,19 +180,40 @@ function IncomeMeter({ t, planHighlights }) {
       padding: "14px 18px",
       marginBottom: 10,
     }}>
-      <div style={{ font: `500 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>
-        Retirement income
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 10, flexWrap: "wrap", marginBottom: 4,
+      }}>
+        <span style={{ font: `500 11px ${HF}`, color: t.mut, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          Retirement income
+        </span>
+        {basisApplicable && (
+          <DollarBasisToggle t={t} options={dollarBasisOptions ?? []}
+            activeId={basisOption?.id} onChange={onBasisChange} />
+        )}
       </div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
         <span style={{ font: `700 22px/1 ${HM}`, color: t.ink }}>
-          {fmtMo(retIncomeFlow.expenses)}/mo
+          {fmtMo(flow.expenses)}/mo
         </span>
-        {incomeReplacementPct !== null && incomeReplacementPct !== undefined && (
+        {/* BUG-132 (Item 3): incomeReplacementPct is basis-INVARIANT by design
+            (BUG-114) — always today's-dollars vs. today's take-home pay. Once
+            the headline above can show a DIFFERENT (retirement-year) dollar
+            figure, the ratio has no on-screen referent, so it only renders
+            while the active basis is the one it was built to sit beside
+            (basisOption.showsReplacementPct, a model-provided flag — rule 10). */}
+        {basisOption?.showsReplacementPct === true
+          && incomeReplacementPct !== null && incomeReplacementPct !== undefined && (
           <span style={{ font: `500 12px ${HF}`, color: t.mut }}>
-            {incomeReplacementPct}% of current income
+            replaces {incomeReplacementPct}% of today's take-home pay
           </span>
         )}
       </div>
+      {basisApplicable && basisOption && (
+        <div style={{ font: `400 11px ${HF}`, color: t.faint, marginTop: 4 }}>
+          {basisOption.caption}
+        </div>
+      )}
 
       <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
         {hasSS && (
@@ -205,6 +281,79 @@ function IncomeMeter({ t, planHighlights }) {
   );
 }
 
+// ── Headline second line: the tagline, or an honest verdict ───────────────────
+// "Work optional, {activity} mandatory." is earned when the plan actually
+// works, and misleading when it doesn't — the previous version showed it to
+// every user regardless of whether their money lasted. The two are strictly
+// EITHER/OR (they occupy the same line and would contradict each other side by
+// side): a plan that covers its whole horizon keeps the tagline, one that
+// doesn't gets the number and its biggest lever instead.
+//
+// Every value here is a named model field — `planView.outlastsPlan` /
+// `.depletionAge` / `.yearsShortOfPlan` (calcPlanProgress) and
+// `workLongerView.minYearsToSustain` / `.maxOffsetTested` (calcWorkLongerBreakEven).
+// The screen compares no ages and derives no counts (rule 10), and each
+// missing value has a designed sentence rather than a fabricated number:
+//   depletionAge null    → no age is claimed at all.
+//   yearsShortOfPlan null→ the "N years before" clause is dropped, not zeroed.
+//   minYearsToSustain null→ "working up to N more years isn't enough on its
+//                          own" (N = maxOffsetTested, the largest offset the
+//                          model actually tested) — never the blanket
+//                          "retiring later alone won't close the gap" this
+//                          replaced (BUG-130, Item 1): that asserted something
+//                          about EVERY possible later retirement age when the
+//                          model only ever tests three (+1/+3/+5) — the app's
+//                          own retire-at slider reaches well past
+//                          safeRetAge + 5, and a household fixed by +8 would
+//                          have been told the opposite of the truth.
+//   workLongerView null  → already retired / no bundle: no work-longer clause.
+function PlanVerdict({ t, planView, workLongerView, activity, lifeExpect, onOpenLevers }) {
+  const { outlastsPlan, depletionAge, yearsShortOfPlan } = planView ?? {};
+
+  if (outlastsPlan) {
+    return (
+      <div style={{ font: `500 14px ${HF}`, color: t.mut, marginTop: 7 }}>
+        Work optional,{" "}
+        <span style={{ color: t.accent, fontWeight: 700 }}>{activity}</span>{" "}
+        mandatory.
+      </div>
+    );
+  }
+
+  const minYears = workLongerView?.minYearsToSustain ?? null;
+  const maxOffsetTested = workLongerView?.maxOffsetTested ?? null;
+  const leverText = workLongerView == null
+    ? null
+    : minYears != null
+      ? `Working ${minYears} more year${minYears === 1 ? "" : "s"} would make them last.`
+      : maxOffsetTested != null
+        ? `Working up to ${maxOffsetTested} more year${maxOffsetTested === 1 ? "" : "s"} isn't enough on its own — trimming monthly spending is the other lever.`
+        : "Trimming monthly spending is the other lever.";
+
+  return (
+    <div style={{ marginTop: 7 }}>
+      <span style={{ font: `500 14px ${HF}`, color: t.mut }}>
+        {depletionAge != null ? (
+          <>
+            Your savings run out at{" "}
+            <span style={{ color: t.warm, fontWeight: 700 }}>age {depletionAge}</span>
+            {yearsShortOfPlan != null
+              ? ` — ${yearsShortOfPlan} year${yearsShortOfPlan === 1 ? "" : "s"} before your plan ends at ${lifeExpect}.`
+              : "."}
+          </>
+        ) : (
+          <>Your plan doesn&rsquo;t cover every year yet.</>
+        )}
+        {leverText ? ` ${leverText}` : ""}
+      </span>
+      <Btn t={t} size="sm" variant="ghost" tone="accent" onClick={onOpenLevers}
+        style={{ padding: "8px 10px", marginLeft: 2 }}>
+        Try a change →
+      </Btn>
+    </div>
+  );
+}
+
 // ── Try a change panel ──────────────────────────────────────────────────────────
 // Preview-first levers (2026-07-11 redesign): dragging a slider NEVER touches
 // real App state — it only moves a local offset, which feeds buildLeverPreview
@@ -267,11 +416,6 @@ function TryAChangePanel({
   const rowLabel = { display: "flex", justifyContent: "space-between", marginBottom: 6 };
   const sliderInput = { width: "100%", cursor: "pointer", accentColor: t.accent, height: 6 };
 
-  const jumpChip = {
-    padding: "5px 11px", borderRadius: 999, cursor: "pointer",
-    border: `1px solid ${t.line2}`, background: "transparent",
-    font: `500 12px ${HF}`, color: t.mut,
-  };
   const applyJump = (jump) =>
     setRetireOffset(resolveRetireJump(jump, retirementAge, sliderBounds) - retirementAge);
 
@@ -280,9 +424,9 @@ function TryAChangePanel({
       {/* Quick-jump chips — pure nudges of the retire-at offset below. */}
       <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
         {RETIRE_JUMPS.map(jump => (
-          <button key={jump.k} type="button" onClick={() => applyJump(jump)} style={jumpChip}>
+          <Pill key={jump.k} t={t} onClick={() => applyJump(jump)}>
             {jump.label}
-          </button>
+          </Pill>
         ))}
       </div>
 
@@ -333,28 +477,14 @@ function TryAChangePanel({
             ))}
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button
-              type="button"
-              onClick={() => setShowApply(true)}
-              style={{
-                flex: 1, font: `600 13px ${HF}`, color: "#fff",
-                background: t.accent, border: `1px solid ${t.accent}`,
-                borderRadius: 10, padding: "9px 16px", cursor: "pointer",
-              }}
-            >
+            <Btn t={t} size="sm" variant="primary" onClick={() => setShowApply(true)}
+              style={{ flex: 1, borderRadius: 10 }}>
               Apply changes
-            </button>
-            <button
-              type="button"
-              onClick={discard}
-              style={{
-                font: `500 12px ${HF}`, color: t.mut, background: "transparent",
-                border: `1px solid ${t.line}`, borderRadius: 10, padding: "9px 14px",
-                cursor: "pointer", whiteSpace: "nowrap",
-              }}
-            >
+            </Btn>
+            <Btn t={t} size="sm" variant="quiet" onClick={discard}
+              style={{ borderRadius: 10 }}>
               Discard
-            </button>
+            </Btn>
           </div>
         </div>
       ) : (
@@ -381,28 +511,13 @@ function TryAChangePanel({
           background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 12,
           boxShadow: "0 6px 24px rgba(0,0,0,.18)",
         }}>
-          <button
-            type="button"
-            onClick={() => setShowApply(true)}
-            style={{
-              flex: 1, font: `600 13px ${HF}`, color: "#fff",
-              background: t.accent, border: `1px solid ${t.accent}`,
-              borderRadius: 9, padding: "9px 14px", cursor: "pointer",
-            }}
-          >
+          <Btn t={t} size="sm" variant="primary" onClick={() => setShowApply(true)}
+            style={{ flex: 1 }}>
             Apply changes
-          </button>
-          <button
-            type="button"
-            onClick={discard}
-            style={{
-              font: `500 12px ${HF}`, color: t.mut, background: "transparent",
-              border: `1px solid ${t.line}`, borderRadius: 9, padding: "9px 12px",
-              cursor: "pointer",
-            }}
-          >
+          </Btn>
+          <Btn t={t} size="sm" variant="quiet" onClick={discard}>
             Discard
-          </button>
+          </Btn>
         </div>
       )}
     </div>
@@ -413,10 +528,18 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
   const {
     chartData, currentAge, retirementAge, lifeExpect,
     totalAtRet, isSustainable,
-    takeHome, effectiveExpenses, balAt90,
+    takeHome,
     contribSeries, activity,
     planView, signals, moneyEvents, retirementWalk,
     planHighlights, statementView,
+    // The card's total must be the SAME total its own destination (Numbers →
+    // Taxes) shows: taxView.composition.total, which includes the 401k-draw tax
+    // the old planHighlights.lifetimeTaxBurden left out. That duplicate field is
+    // gone rather than kept in sync — one definition, one number.
+    taxView,
+    // #55: minYearsToSustain for the honest verdict sentence (null when already
+    // retired — the sentence drops its work-longer clause, see PlanVerdict).
+    workLongerView,
     // WI-5.3 (#114): Monte Carlo Range lens — passed straight through to the arc's Range view.
     rangeView,
     // Try-a-change panel + life-event edit-in-place.
@@ -427,6 +550,88 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
   } = props;
 
   const [arcView, setArcView] = useState("arc");
+
+  // ── Dollar basis (owner decision): today's money by default, with a visible
+  // toggle rather than the app silently picking one. Local, unpersisted state —
+  // a viewing lens, not a plan input. `dollarBasisApplicable` is false once
+  // there is nothing to inflate over (already retired): the two bases are then
+  // the same number, so the screen pins to "today" and shows no control.
+  const [dollarBasis, setDollarBasis] = useState("today");
+  const basisApplicable = planHighlights?.dollarBasisApplicable === true;
+  const activeBasisId   = basisApplicable ? dollarBasis : "today";
+  const basisOption     = (planHighlights?.dollarBasisOptions ?? [])
+    .find(o => o.id === activeBasisId) ?? null;
+  const incomeFlow      = planHighlights?.incomeFlowByBasis?.[activeBasisId] ?? null;
+
+  // "Guaranteed for life" sub-copy — copy selection from model booleans only, no
+  // dollar comparisons or age comparisons here (rule 10). The spouse branch
+  // exists because calcRetIncomeFlow deliberately keeps a spouse's gap-year pay
+  // OUT of the guaranteed numerator while leaving it in the denominator:
+  // without naming it, "the rest comes from your savings" would be false for
+  // that household.
+  //
+  // BUG-131 Item 2: source naming reads `everHasSS`/`everHasPension` — UNGATED
+  // eligibility, matching what `pct` itself is built from (BUG-122) — never the
+  // gated `hasSS`/`hasPension`. Those gated flags described a DIFFERENT
+  // question (has this started by retirement) and naming sources off them could
+  // omit a source pct is mostly built from because it simply hasn't started yet
+  // — the repro that shipped this fix: a pension worth ~76 of a 100% card,
+  // never once mentioned. `activeNow` keeps that gated question alive for a
+  // different purpose below: whether ANYTHING is already paying, which decides
+  // whether the honest "is there a gap to bridge" framing applies. Every
+  // pending source (not just the earliest) gets its own start age from
+  // `pendingSources`, and `fullyCovered` suppresses "the rest comes from your
+  // savings" once the model's own number says there is no rest.
+  //
+  // BUG-122 Item 2: "savings cover you until then" used to render unconditionally
+  // whenever startsAtAge was set, with no check that savings actually last that
+  // long — it could (and did, at a plausible input combo) sit directly next to
+  // the "Money lasts to" card contradicting it outright. Each pendingSources
+  // entry carries its own pre-computed savingsCoverUntilStart (App.jsx, from
+  // calcPlanProgress's own outlastsPlan/depletionAge — the SAME numbers "Money
+  // lasts to" itself renders), so this screen still does no age arithmetic of
+  // its own (rule 10). That framing fires whenever NOTHING is active yet
+  // (activeNow false) and something is pending — the household's income is
+  // 100% savings today, so whether savings bridge the gap is the load-bearing
+  // question — checked against the LATEST pending age (monotonic: once
+  // savings last that far, every earlier pending source is covered too).
+  const guaranteedSub = (() => {
+    const g = planHighlights?.guaranteed;
+    if (!g) return undefined;
+    const rest = g.hasSpouseIncome
+      ? "the rest comes from your savings and your spouse's pay"
+      : "the rest comes from your savings";
+    const source = g.everHasSS && g.everHasPension ? "Social Security + pension"
+      : g.everHasSS ? "Social Security"
+      : g.everHasPension ? "Your pension"
+      : null;
+    if (!source) return `Nothing guaranteed — ${rest}`;
+
+    const pending = g.pendingSources ?? [];
+    const activeNow = g.hasSS || g.hasPension;
+    const namedList = pending.map(p => `${p.label} at ${p.age}`).join(", ");
+    const lastPending = pending[pending.length - 1] ?? null;
+
+    if (g.fullyCovered) {
+      if (pending.length === 0) return source;
+      return pending.length === 1
+        ? `${source} — full coverage starts at ${lastPending.age}`
+        : `${source} — full coverage once ${namedList}`;
+    }
+    // pct < 100%, so "the rest comes from savings" is genuinely true.
+    if (!activeNow && pending.length > 0) {
+      const label = pending.length === 1
+        ? `${lastPending.label} starts at ${lastPending.age}`
+        : namedList;
+      return lastPending.savingsCoverUntilStart
+        ? `${label} — savings cover you until then`
+        : `${label} — but your savings may not stretch that far, see "Money lasts to" below`;
+    }
+    if (pending.length === 0) return `${source} — ${rest}`;
+    return pending.length === 1
+      ? `${source} — ${rest} · more from ${lastPending.age}`
+      : `${source} — ${rest} · ${namedList}`;
+  })();
 
   // Preview-first lever state lives here (not inside TryAChangePanel) so the
   // arc's dashed overlay and the panel's delta chip share the SAME model run
@@ -457,8 +662,43 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
     setEventSheet(null);
   };
 
+  // ── Explore-tray state, lifted out of ExploreTray ────────────────────────────
+  // The "Retire at" card used to navigate to the static My-Details facts screen;
+  // the retirement-age slider it describes actually lives in this page's own
+  // "Try a change" facet, one scroll up. Same for "Spending each month" and the
+  // monthly-spend slider. A card can only open that facet if the tray's open
+  // state lives here — hence the controlled refactor. The value keeps
+  // ExploreTray's original TRI-state exactly (null = auto-follow a staged
+  // change, "closed" = an explicit user collapse that beats the auto-open, or a
+  // facet key); collapsing it to a boolean is what the tray's own comment
+  // records as a real prior bug.
+  const [trayOpen, setTrayOpen] = useState(null);
+  const trayRef = useRef(null);
+  // Two-step so the scroll happens AFTER the facet body has actually rendered
+  // (the tray is short when collapsed — scrolling first lands in the wrong
+  // place). scrollIntoView is feature-detected: the test renderer has no DOM.
+  const [pendingTrayScroll, setPendingTrayScroll] = useState(false);
+  useEffect(() => {
+    if (!pendingTrayScroll) return;
+    setPendingTrayScroll(false);
+    const el = trayRef.current;
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [pendingTrayScroll]);
+  const openLevers = () => { setTrayOpen("change"); setPendingTrayScroll(true); };
+
   const { progressPct } = planView;
+  // BUG-133 (Item 4): this used to gate on the withdrawal driver ALONE
+  // (`wrOk`) — a plan can read a healthy withdrawal RATE while still failing
+  // to cover its horizon (e.g. a still-working spouse's temporary income
+  // flatters the rate — `temporaryIncomeBasis`, rule 5b), which let this pill
+  // read "on target" on the very same screen as "Your savings run out…"
+  // (PlanVerdict, built from this SAME planView). Gated on `outlastsPlan` —
+  // the model's own consolidated verdict, the exact field the verdict
+  // sentence itself reads — rather than inventing a second, competing rule.
   const wrOk = planView.drivers.find(d => d.id === "withdrawal")?.ok;
+  const onTarget = wrOk === true && planView.outlastsPlan === true;
 
   const progressLabel = isSustainable ? "self-sustaining ↗" : `${progressPct}% there`;
   const progressColor = isSustainable ? t.good : progressPct >= 75 ? t.good : t.warm;
@@ -468,7 +708,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
         <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{progressLabel}</span>
         <span style={{ font: `600 11.5px ${HF}`, color: progressColor }}>
-          {isSustainable ? "↗ gaining" : wrOk ? "↗ on target" : "↗ adjust"}
+          {isSustainable ? "↗ gaining" : onTarget ? "↗ on target" : "↗ adjust"}
         </span>
       </div>
       <div style={{ height: 7, borderRadius: 6, background: t.line, overflow: "hidden" }}>
@@ -529,11 +769,9 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
               ? `On track to retire at ${retirementAge}.`
               : `Retire at ${retirementAge} — keep building.`}
           </div>
-          <div style={{ font: `500 14px ${HF}`, color: t.mut, marginTop: 7 }}>
-            Work optional,{" "}
-            <span style={{ color: t.accent, fontWeight: 700 }}>{activity}</span>{" "}
-            mandatory.
-          </div>
+          <PlanVerdict
+            t={t} planView={planView} workLongerView={workLongerView}
+            activity={activity} lifeExpect={lifeExpect} onOpenLevers={openLevers} />
         </div>
         {!isMobile && progressBar}
       </div>
@@ -552,11 +790,12 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       {isMobile && <div style={{ marginBottom: 14, flexShrink: 0 }}>{progressBar}</div>}
 
       {/* ── Explore tray: one arc-anchored control surface (Try a change · Goals) ── */}
-      <div style={{ flexShrink: 0 }}>
+      <div ref={trayRef} style={{ flexShrink: 0, scrollMarginTop: 12 }}>
         <ExploreTray
           t={t} isMobile={isMobile}
           goalsCount={(moneyEvents ?? []).length}
           changeStaged={!!arcPreview?.changed}
+          open={trayOpen} onOpenChange={setTrayOpen}
           changeFacet={
             <TryAChangePanel
               t={t} isMobile={isMobile}
@@ -579,46 +818,88 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
         />
       </div>
 
-      {/* ── summary band: portfolio + income ─────────────────────────────────── */}
+      {/* ── today anchor: this month's paycheck → the portfolio it builds ────── */}
+      {/* The paycheck used to sit as card 1 of a five-card RETIREMENT row with
+          nothing marking it as a today figure. Pairing it with "Portfolio at
+          retirement" makes the today→retirement step the point of the pair,
+          and leaves the row below unambiguously about retirement. */}
       <div style={{
-        display: "grid", gridTemplateColumns: "1fr 1fr",
-        gap: isMobile ? 10 : 14, marginTop: 14, flexShrink: 0,
+        display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+        // Item 11 (BUG-122 batch): was 14px here vs the stat-card grid's flat
+        // 10px below — two adjacent card rows in the same visual system with
+        // different gaps. Normalized to the same 10px both grids already
+        // agree on at mobile width.
+        gap: 10, marginTop: 14, flexShrink: 0,
       }}>
+        <PaycheckCard t={t} takeHome={takeHome} keepPct={statementView?.keepPct}
+          isHousehold={planHighlights?.takeHomeIsHousehold === true} />
         <PortfolioHero t={t} totalAtRet={totalAtRet} planHighlights={planHighlights} />
-        <IncomeMeter t={t} planHighlights={planHighlights} />
+      </div>
+
+      {/* ── retirement income meter (carries the dollar-basis toggle) ────────── */}
+      <div style={{ flexShrink: 0 }}>
+        <IncomeMeter
+          t={t} planHighlights={planHighlights}
+          flow={incomeFlow} basisOption={basisOption}
+          basisApplicable={basisApplicable} onBasisChange={setDollarBasis} />
       </div>
 
       {/* ── stat cards ───────────────────────────────────────────────────────── */}
       <div style={{
         display: "grid",
         gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)",
-        gap: 10, marginTop: 14, flexShrink: 0,
+        gap: 10, marginTop: 4, flexShrink: 0,
       }}>
-        <StatCard t={t} label="You keep / mo"
-          value={fmtMo(takeHome)}
-          sub={statementView?.keepPct != null ? `${statementView.keepPct}% of income` : undefined}
-          accent={t.good}
-          onClick={() => navigate("numbers", "statement")} />
         <StatCard t={t} label="Retire at"
           value={String(retirementAge)}
           sub={planHighlights?.yearsToRetirement != null ? `in ${planHighlights.yearsToRetirement} yrs` : undefined}
           accent={t.ink}
-          onClick={() => navigate("details")} />
-        <StatCard t={t} label="Income for life"
-          value={fmtMo(effectiveExpenses)}
-          sub={planHighlights?.incomeReplacementPct != null ? `${planHighlights.incomeReplacementPct}% replaced` : undefined}
+          onClick={openLevers} />
+        {/* Was "Income for life" showing the total SPENDING target — a label
+            promising a guarantee over a number that is nothing of the kind
+            (its own destination lists a "Runs dry at" row). It is the monthly
+            spend, said plainly, in whichever dollar basis is selected. */}
+        <StatCard t={t} label="Spending each month"
+          value={incomeFlow ? fmtMo(incomeFlow.expenses) : "—"}
+          sub={basisOption?.cardSub}
           accent={t.warm} warm
+          onClick={openLevers} />
+        {/* The guarantee question the old card only pretended to answer.
+            A percentage, so it is basis-invariant and the toggle leaves it
+            alone. Social Security + pension ONLY — a spouse's gap-year pay is
+            excluded from the numerator by calcRetIncomeFlow, and named here
+            instead so "the rest" is honest about where it comes from. */}
+        <StatCard t={t} label="Guaranteed for life"
+          value={planHighlights?.guaranteed?.pct != null ? `${planHighlights.guaranteed.pct}%` : "—"}
+          sub={guaranteedSub}
+          accent={t.good}
           onClick={() => navigate("numbers", "statement")} />
-        <StatCard t={t} label={`Left at ${lifeExpect}`}
-          value={fmt(balAt90)}
-          sub={planHighlights?.retirementDuration != null ? `after ${planHighlights.retirementDuration} yrs` : undefined}
-          accent={t.ink}
+        <StatCard t={t} label="Money lasts to"
+          value={planView?.outlastsPlan
+            ? `past ${lifeExpect}`
+            : planView?.depletionAge != null ? `age ${planView.depletionAge}` : "—"}
+          sub={planView?.outlastsPlan
+            ? "your savings outlast your plan"
+            : planView?.yearsShortOfPlan != null
+              ? `${planView.yearsShortOfPlan} year${planView.yearsShortOfPlan === 1 ? "" : "s"} short of your plan`
+              : "see the year-by-year detail"}
+          accent={planView?.outlastsPlan ? t.ink : t.warm}
           onClick={() => navigate("numbers", "yearly")} />
-        <StatCard t={t} label="Retirement taxes"
-          value={planHighlights?.lifetimeTaxBurden != null ? fmt(planHighlights.lifetimeTaxBurden) : "—"}
-          sub="RMDs + conversions"
+        {/* Item 8 (BUG-122 batch): "total, across all" overclaimed completeness
+            — the engine only charges INCREMENTAL tax above the SS/pension floor
+            (BUG-38, open/accepted), so this sum is systematically low by
+            construction, not actually complete. Softened, and given its own
+            basis note (a retirement-year-dollar cumulative sum) — see BUG-124
+            for why it's not wired to the toggle. */}
+        {/* Item 11 (BUG-122 batch): 5 cards in a 2-column mobile grid leaves
+            this last one alone on its own row, half-width — an orphan. Full
+            width on mobile only; desktop's 5-column row is unaffected. */}
+        <StatCard t={t} label="Tax in retirement"
+          value={taxView?.composition?.total != null ? fmt(taxView.composition.total) : "—"}
+          sub="across your retirement years, in retirement-year dollars"
           accent={t.mut}
-          onClick={() => navigate("numbers", "taxes")} />
+          onClick={() => navigate("numbers", "taxes")}
+          style={isMobile ? { gridColumn: "1 / -1" } : undefined} />
       </div>
 
       {/* ── signals strip ────────────────────────────────────────────────────── */}

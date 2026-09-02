@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "../budget.js";
+import {
+  calcGrossAfterTax, calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth,
+  calcStatementView, buildBarSegments, SEG_LABEL_MIN_SHARE_PCT,
+} from "../budget.js";
 
 describe("calcGrossAfterTax", () => {
   it("subtracts all taxes from income", () => {
@@ -175,6 +178,73 @@ describe("calcStatementView", () => {
     expect(v.monthlyPortDraw).toBe(0);
   });
 
+  // Item 6 (BUG-122 batch): the companion strip used to divide val/monthlyTotal
+  // inline in JSX for each bar's width — moved into the model so the screen
+  // only ever reads a precomputed share, never computes one (rule 10).
+  it("ssSharePct/pensionSharePct/portDrawSharePct sum to ~100 and match the monthly bands' own ratio", () => {
+    const v = calcStatementView({ ...base, effectivePension: 12_000 });
+    expect(v.ssSharePct).toBe(Math.round((v.monthlyHHSS / v.monthlyTotal) * 100));
+    expect(v.pensionSharePct).toBe(Math.round((v.monthlyPension / v.monthlyTotal) * 100));
+    expect(v.portDrawSharePct).toBe(Math.round((v.monthlyPortDraw / v.monthlyTotal) * 100));
+    // Rounding of 3 independent shares can land at 99-101, never wildly off.
+    const total = v.ssSharePct + v.pensionSharePct + v.portDrawSharePct;
+    expect(total).toBeGreaterThanOrEqual(99);
+    expect(total).toBeLessThanOrEqual(101);
+  });
+
+  // BUG-128: monthlyPortDraw clamped at 0 for an over-funded household but left
+  // ss/pension unscaled, so the three bands summed to MORE than monthlyTotal
+  // (the task's own live repro: $4,010 SS + $15,784 pension + $0 draw = $19,794
+  // against a stated total of $18,868/mo, shares summing to 105%). Fixed by
+  // reusing calcRetIncomeFlow's (drawdown.js) own over-funded scaling: ss/pension
+  // are scaled down proportionally to fill exactly monthlyTotal, the same way
+  // calcRetIncomeFlow already does for its own SS/pension/portfolio-draw bands.
+  it("BUG-128: an over-funded household (SS + pension exceed spending) scales ss/pension so the three bands sum to monthlyTotal", () => {
+    // Round numbers, chosen so the fix's arithmetic is exact (no rounding
+    // ambiguity): exp=$12,000/yr (monthly total $1,000), ss=$6,000/yr,
+    // pension=$9,000/yr — income ($15,000) exceeds spending ($12,000) by 25%.
+    const v = calcStatementView({
+      ...base, effectiveExpenses: 12_000, householdSS: 6_000, effectivePension: 9_000,
+    });
+    expect(v.monthlyTotal).toBe(1_000);
+    expect(v.monthlyPortDraw).toBe(0);
+    // scale = 12,000/15,000 = 0.8 → ss $4,800/yr = $400/mo, pension $7,200/yr = $600/mo.
+    expect(v.monthlyHHSS).toBe(400);
+    expect(v.monthlyPension).toBe(600);
+    // The bug this fixes: pre-fix these three summed to $500 (unscaled ss) +
+    // $750 (unscaled pension) + $0 = $1,250 — 25% over monthlyTotal.
+    expect(v.monthlyHHSS + v.monthlyPension + v.monthlyPortDraw).toBe(v.monthlyTotal);
+    // The companion strip's bars (ssSharePct/pensionSharePct/portDrawSharePct)
+    // must sum to (at most, given rounding) 100 — not 105+ like the live repro.
+    const totalSharePct = v.ssSharePct + v.pensionSharePct + v.portDrawSharePct;
+    expect(totalSharePct).toBe(100);
+  });
+
+  // The task's own live repro, reproduced with the exact App-level inputs
+  // (pensionMonthly $4,000 from age 60, retire at 65 — the default state
+  // otherwise): pre-fix, SS $4,010 + pension $15,784 + draw $0 summed to
+  // $19,794 against a stated total of $18,868/mo. Locked here at the model
+  // level (calcStatementView) so a future change can't silently reopen it.
+  it("BUG-128 live repro: SS + pension + portfolio draw reconcile to monthlyTotal at the reported household shape", () => {
+    const v = calcStatementView({
+      ...base,
+      effectiveExpenses: 226_416, // $18,868/mo
+      householdSS: 48_120,        // raw $4,010/mo
+      effectivePension: 189_408,  // raw $15,784/mo
+    });
+    expect(v.monthlyPortDraw).toBe(0);
+    expect(v.monthlyHHSS + v.monthlyPension + v.monthlyPortDraw).toBe(v.monthlyTotal);
+    expect(v.ssSharePct + v.pensionSharePct + v.portDrawSharePct).toBeLessThanOrEqual(100);
+  });
+
+  it("share percentages are 0, not NaN/Infinity, when monthlyTotal is 0", () => {
+    const v = calcStatementView({ ...base, effectiveExpenses: 0, householdSS: 0 });
+    expect(v.monthlyTotal).toBe(0);
+    expect(v.ssSharePct).toBe(0);
+    expect(v.pensionSharePct).toBe(0);
+    expect(v.portDrawSharePct).toBe(0);
+  });
+
   it("Statement table arithmetic: gross − taxes − preTaxDeductions = takeHome", () => {
     // A user with 401k (pre-tax), Roth IRA, and taxable brokerage contributions.
     // safeDeduc = pre-tax only (401k); Roth + taxable are after-tax.
@@ -206,5 +276,104 @@ describe("calcStatementView", () => {
     // missing income behaves the same as 0
     const v2 = calcStatementView({ ...base, currentIncome: null });
     expect(v2.keepPct).toBeNull();
+  });
+});
+
+// ── buildBarSegments (rule 10) ───────────────────────────────────────────────
+// The Statement tab's three composition bars (NumbersScreen.jsx's StmtCol)
+// used to compute "is this segment wide enough for its own label" inline in
+// the render, with a `?? 0` fallback — arithmetic on model values inside
+// src/horizon/, against rule 10. Moved here so the screen only reads a
+// pre-computed `showLabel` boolean.
+describe("buildBarSegments", () => {
+  it("marks every segment showLabel when all comfortably clear the threshold", () => {
+    const segs = buildBarSegments([
+      { f: 50, c: "a", l: "Keep" },
+      { f: 30, c: "b", l: "Tax" },
+      { f: 20, c: "c", l: "Save" },
+    ]);
+    expect(segs.map(s => s.showLabel)).toEqual([true, true, true]);
+    // Original fields pass through untouched.
+    expect(segs.map(s => s.l)).toEqual(["Keep", "Tax", "Save"]);
+  });
+
+  it("hides a segment below SEG_LABEL_MIN_SHARE_PCT of the bar's total", () => {
+    // 5 / (80+15+5) = 5%, under the 12% threshold; the other two clear it.
+    const segs = buildBarSegments([
+      { f: 80, c: "a", l: "Big" },
+      { f: 15, c: "b", l: "Mid" },
+      { f: 5,  c: "c", l: "Tiny" },
+    ]);
+    expect(segs.find(s => s.l === "Big").showLabel).toBe(true);
+    expect(segs.find(s => s.l === "Mid").showLabel).toBe(true);
+    expect(segs.find(s => s.l === "Tiny").showLabel).toBe(false);
+  });
+
+  it("is exact at the threshold boundary (>= 12%, not > 12%)", () => {
+    // 12 / 100 = exactly 12%.
+    const segs = buildBarSegments([
+      { f: 12, c: "a", l: "Exact" },
+      { f: 88, c: "b", l: "Rest" },
+    ]);
+    expect(segs.find(s => s.l === "Exact").showLabel).toBe(true);
+    // Just under.
+    const under = buildBarSegments([
+      { f: 11.9, c: "a", l: "Under" },
+      { f: 88.1, c: "b", l: "Rest" },
+    ]);
+    expect(under.find(s => s.l === "Under").showLabel).toBe(false);
+  });
+
+  it("treats missing/negative/non-finite f as real 0 — never coerced with ?? 0 (rule 10)", () => {
+    const segs = buildBarSegments([
+      { f: 90, c: "a", l: "Real" },
+      { f: null, c: "b", l: "Missing" },
+      { f: -5, c: "c", l: "Negative" },
+      { f: NaN, c: "d", l: "NotANumber" },
+    ]);
+    expect(segs.find(s => s.l === "Real").showLabel).toBe(true);
+    for (const l of ["Missing", "Negative", "NotANumber"]) {
+      expect(segs.find(s => s.l === l).showLabel, l).toBe(false);
+    }
+  });
+
+  it("every segment reads false, never true, when the bar total is 0", () => {
+    const segs = buildBarSegments([
+      { f: 0, c: "a", l: "A" },
+      { f: null, c: "b", l: "B" },
+    ]);
+    expect(segs.every(s => s.showLabel === false)).toBe(true);
+  });
+
+  it("an empty/missing seg list returns an empty array, not a throw", () => {
+    expect(buildBarSegments([])).toEqual([]);
+    expect(buildBarSegments(undefined)).toEqual([]);
+  });
+
+  // CodeRabbit (PR #66 round 2): total/showLabel were computed from the
+  // SANITIZED f, but the returned segment leaked the ORIGINAL unsanitized f —
+  // so a caller rendering `flex: seg.f` for a negative/non-finite segment
+  // would feed the raw bad value straight into CSS, disagreeing with the
+  // showLabel decision this same function just made about that segment.
+  it("returns the SANITIZED f, not the original — a caller's flex: seg.f can never disagree with showLabel about the same segment's real share", () => {
+    const segs = buildBarSegments([
+      { f: 90, c: "a", l: "Real" },
+      { f: null, c: "b", l: "Missing" },
+      { f: -5, c: "c", l: "Negative" },
+      { f: NaN, c: "d", l: "NotANumber" },
+    ]);
+    expect(segs.find(s => s.l === "Real").f).toBe(90);
+    expect(segs.find(s => s.l === "Missing").f).toBe(0);
+    expect(segs.find(s => s.l === "Negative").f).toBe(0);
+    expect(segs.find(s => s.l === "NotANumber").f).toBe(0);
+    // No segment's returned f is ever negative or non-finite.
+    for (const s of segs) {
+      expect(Number.isFinite(s.f)).toBe(true);
+      expect(s.f).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("SEG_LABEL_MIN_SHARE_PCT is the single source of the threshold (12)", () => {
+    expect(SEG_LABEL_MIN_SHARE_PCT).toBe(12);
   });
 });

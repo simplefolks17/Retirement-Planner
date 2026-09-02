@@ -274,9 +274,16 @@ describe("calcWhatIfDelta", () => {
       "Roth IRA": 40_000, "Taxable": 20_000, "HSA": 0,
     }));
     const spouseCurrentSnapshotFixture = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    // Carries BOTH the resolved spouseRetAge (consumed directly by the
+    // buildSpouseRetirementSeed call right below) and the raw
+    // spouseRetirementAge/lifeExp pair (BUG-127 — consumed by calcWhatIfDelta's
+    // own resolveSpouseRetAge call, via spouseSeedInputs below). No scenario in
+    // this describe block overrides the retirement age, so both resolve to the
+    // same safeRetAge either way.
     const spouseSeedInputsFixture = {
       spouseSimData: spouseSimDataFixture, spouseCurrentSnapshot: spouseCurrentSnapshotFixture,
-      spouseCurrentAge: spouseCurrentAgeFixture, spouseRetAge: safeRetAge, spouseNetRate: 0.7,
+      spouseCurrentAge: spouseCurrentAgeFixture, spouseRetAge: safeRetAge,
+      spouseRetirementAge: safeRetAge, lifeExp: safeLifeExp, spouseNetRate: 0.7,
     };
     const baseSpouseSeed = buildSpouseRetirementSeed({
       ...spouseSeedInputsFixture, currentAge, primaryRetAge: safeRetAge,
@@ -1052,9 +1059,13 @@ describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
     baseTotalAtRet: householdBaseTotalAtRet, baseYearsSustained: householdRetPhase.yearsSustained,
     retPhaseBase: householdRetPhaseBase, conversionByAge: {},
     baseChart: householdTotalChartData, addlPreTaxBal: 0,
+    // BUG-127: spouseSeedInputs carries the RAW spouseRetirementAge (here an
+    // explicit, non-null literal — spouseRetAge=75 — so it stays fixed across
+    // every scenario tested below, exactly like the pre-fix contract did for
+    // this fixture) plus lifeExp for the shared clamp.
     spouseSeedInputs: {
       spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-      spouseRetAge, spouseNetRate,
+      spouseRetirementAge: spouseRetAge, lifeExp: spSafeLifeExp, spouseNetRate,
     },
     spouseChartInputs: { spouseSimData, spouseStartingBal },
   };
@@ -1565,6 +1576,44 @@ describe("marginForScenario / verdictInfoForScenario / buildVerdictLegend (BUG-7
       { verdict: "unaffordable", label: `runs out before ${safeLifeExp}` },
     ]);
   });
+
+  // ── BUG-123 — depletion-basis margin can't be inflated by retAge >= safeLifeExp
+  it("marginForScenario never inflates margin for a scenario retiring AT/AFTER safeLifeExp (regression: retAge 75 >= safeLifeExp 70 made `safeLifeExp - retAge` negative, which only ever ADDED to marginYears)", () => {
+    // The adversarial-review repro: retires 5 yrs past the plan's own horizon,
+    // sustains only half a year — must never read as margin-positive.
+    const scenario = { scenarioYears: 0.5, scenarioRetAge: 75 };
+    const { marginYears, marginBasis } = marginForScenario(scenario, 70);
+    expect(marginBasis).toBe("depletion");
+    expect(marginYears).toBeLessThan(0);
+    expect(verdictForMargin(marginYears)).not.toBe("comfortable");
+    expect(verdictForScenarioResult(scenario, 70)).toBe("unaffordable");
+  });
+
+  it("BUG-123 guard reaches every marginForScenario consumer, not just calcWorkLongerBreakEven's coversPlan — buildLeverRail/buildDurationRail/evaluateLifeEvent all route through verdictForScenarioResult", () => {
+    // Same degenerate shape, exercised through the rail builders directly
+    // (buildLeverRail sweeps a lever's own values, not retirement age, so
+    // simulate the same effect verdictForScenarioResult would see).
+    const scenario = { scenarioYears: 0.5, scenarioRetAge: 75 };
+    expect(verdictForScenarioResult(scenario, 70)).toBe("unaffordable");
+    // At retAge === safeLifeExp exactly (the boundary), the guard still fires
+    // (>=, not >) — zero years of horizon left is still "nothing to cover".
+    const boundary = { scenarioYears: 4, scenarioRetAge: 70 };
+    expect(verdictForScenarioResult(boundary, 70)).toBe("unaffordable");
+  });
+
+  it("buildMarginLabel gives the -Infinity sentinel an honest label, not 'runs out Infinity yrs early'", () => {
+    const info = verdictInfoForScenario({ scenarioYears: 0.5, scenarioRetAge: 75 }, 70);
+    expect(info.marginLabel).toBe("doesn't cover the plan by 70");
+    expect(info.marginLabel).not.toContain("Infinity");
+  });
+
+  it("a scenario retiring BEFORE safeLifeExp is unaffected by the guard (only the degenerate case changes)", () => {
+    // Same numbers as the very first depletion-basis assertion in this describe
+    // block (line ~1541) — proves the guard is inert for the ordinary case.
+    const ok = marginForScenario({ scenarioYears: 28, scenarioRetAge: 65 }, safeLifeExp);
+    expect(ok.marginYears).toBe(3);
+    expect(verdictForMargin(ok.marginYears)).toBe("tight");
+  });
 });
 
 // ── evaluateLifeEvent — edit mode (H1 double-count regression) ────────────────
@@ -2003,5 +2052,175 @@ describe("calcWorkLongerBreakEven", () => {
     for (let i = 1; i < sorted.length; i++) {
       expect(sorted[i].conversionWindowYrs).toBeLessThanOrEqual(sorted[i - 1].conversionWindowYrs);
     }
+  });
+
+  // ── coversPlan / minYearsToSustain — the Plan screen's verdict sentence ─────
+  // The distinction these pin is the whole reason the field isn't just
+  // `rows.find(r => r.sustainable)`: a plan can fund every year of its horizon
+  // while still depleting eventually, and calling that "not fixed by working
+  // longer" would be false.
+  it("coversPlan uses the PLAN-HORIZON test, not the stricter never-depletes test", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(result).not.toBeNull();
+    for (const row of result.rows) {
+      expect(typeof row.coversPlan).toBe("boolean");
+      // Never-depletes always implies covers-the-plan; the converse may not hold.
+      if (row.sustainable) expect(row.coversPlan).toBe(true);
+      // The same comparison App itself makes for isSustainable, re-derived from
+      // the row's own depletion age rather than trusting the field.
+      if (!row.sustainable && row.depletionAge != null) {
+        expect(row.coversPlan).toBe(row.depletionAge > safeLifeExp);
+      }
+    }
+  });
+
+  it("minYearsToSustain is the SMALLEST offset that covers the plan", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    const covering = result.rows.filter(r => r.coversPlan).map(r => r.years);
+    if (covering.length === 0) {
+      expect(result.minYearsToSustain).toBeNull();
+    } else {
+      expect(result.minYearsToSustain).toBe(Math.min(...covering));
+    }
+  });
+
+  it("picks the smallest even when the caller's offsets arrive out of order", () => {
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [9, 1, 5],
+    });
+    const covering = result.rows.filter(r => r.coversPlan).map(r => r.years);
+    expect(covering.length).toBeGreaterThan(0);           // this bundle is fixable
+    expect(result.minYearsToSustain).toBe(Math.min(...covering));
+  });
+
+  it("is null — a designed 'later retirement alone won't fix it' state — when no offset covers the plan", () => {
+    // One year of extra work on a plan that runs dry decades early can't close it.
+    const result = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [1],
+    });
+    expect(result.rows).toHaveLength(1);
+    if (!result.rows[0].coversPlan) expect(result.minYearsToSustain).toBeNull();
+  });
+
+  // BUG-130 (Item 1): the Plan screen's null-case sentence must name what was
+  // ACTUALLY tested, not a blanket "retiring later won't fix it" claim — so
+  // maxOffsetTested has to be a real, named field, never re-derived in JSX.
+  it("maxOffsetTested is Math.max of the offsets actually passed in, default or custom, ascending or not", () => {
+    const withDefaults = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(withDefaults.maxOffsetTested).toBe(5); // default offsets [1, 3, 5]
+
+    const withCustom = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [9, 1, 5],
+    });
+    expect(withCustom.maxOffsetTested).toBe(9); // not just the largest INDEX
+
+    const singleOffset = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [2],
+    });
+    expect(singleOffset.maxOffsetTested).toBe(2);
+  });
+
+  it("coversPlan is never trivially true at/after safeLifeExp — a scenario retiring AFTER the plan already ends must not read as covering it (regression: retAge >= safeLifeExp made `safeLifeExp - retAge` <= 0, satisfied by any non-negative scenarioYears)", () => {
+    // retirementAge close enough to lifeExpect that offsets [1,3,5] push retAge
+    // to/past safeLifeExp (88+3=91, 88+5=93, both >= 90) — the task's own repro
+    // shape. currentAge/totalYears widened so the re-sim covers those late ages.
+    const lateSafeRetAge = 88, lateSafeLifeExp = 90, lateCurrentAge = 80;
+    const lateSimInputs = {
+      ...simInputs, currentAge: lateCurrentAge, totalYears: lateSafeLifeExp - lateCurrentAge + 15,
+    };
+    const lateBase = 800_000;
+    const { yearsSustained: lateBaseYears } = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: lateBase, startAge: lateSafeRetAge, endAge: lateSafeRetAge + 130,
+    });
+    const lateRetPhaseBase = {
+      ...depletingRetPhaseBase,
+      taxable: lateBase, startAge: lateSafeRetAge, lifeExp: lateSafeLifeExp,
+      longevityHorizon: lateSafeRetAge + 130, currentAge: lateCurrentAge,
+    };
+    const lateArgs = {
+      simInputs: lateSimInputs, fedMarginal, retDrawShared: depletingRetDrawShared,
+      safeRetAge: lateSafeRetAge, safeLifeExp: lateSafeLifeExp,
+      baseTotalAtRet: lateBase, baseYearsSustained: lateBaseYears,
+      retPhaseBase: lateRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
+    };
+    const result = calcWorkLongerBreakEven({
+      bundle: lateArgs, safeRetAge: lateSafeRetAge, currentAge: lateCurrentAge, includeSS: false, ssInputs,
+      offsets: [1, 3, 5],
+    });
+    expect(result).not.toBeNull();
+    const overshoot = result.rows.filter(r => r.retAge >= lateSafeLifeExp);
+    // The fixture must actually reach the degenerate case, or this test proves nothing.
+    expect(overshoot.length).toBeGreaterThan(0);
+    for (const row of overshoot) {
+      // A row past the plan horizon can only cover the plan by literally never
+      // depleting (scenSustainable) — never by the year-count comparison, which
+      // is undefined/moot once retAge >= safeLifeExp.
+      if (!row.sustainable) expect(row.coversPlan).toBe(false);
+    }
+  });
+
+  // Item 18 (BUG-122 batch, CodeRabbit round 2): the test above only reaches
+  // retAge STRICTLY GREATER than safeLifeExp (89/91/93 against a 90 horizon,
+  // never exactly 90) — the guard is `retAge >= safeLifeExp` (via
+  // marginForScenario's own `>=` check, BUG-123), so the EXACT-equality
+  // boundary was never actually exercised. offset 2 lands retAge exactly on
+  // lateSafeLifeExp here.
+  it("coversPlan reads false at the EXACT boundary retAge === safeLifeExp, not just strictly past it", () => {
+    const lateSafeRetAge = 88, lateSafeLifeExp = 90, lateCurrentAge = 80;
+    const lateSimInputs = {
+      ...simInputs, currentAge: lateCurrentAge, totalYears: lateSafeLifeExp - lateCurrentAge + 15,
+    };
+    const lateBase = 800_000;
+    const { yearsSustained: lateBaseYears } = buildRetirementDrawdown({
+      ...depletingRetDrawShared, startBal: lateBase, startAge: lateSafeRetAge, endAge: lateSafeRetAge + 130,
+    });
+    const lateRetPhaseBase = {
+      ...depletingRetPhaseBase,
+      taxable: lateBase, startAge: lateSafeRetAge, lifeExp: lateSafeLifeExp,
+      longevityHorizon: lateSafeRetAge + 130, currentAge: lateCurrentAge,
+    };
+    const lateArgs = {
+      simInputs: lateSimInputs, fedMarginal, retDrawShared: depletingRetDrawShared,
+      safeRetAge: lateSafeRetAge, safeLifeExp: lateSafeLifeExp,
+      baseTotalAtRet: lateBase, baseYearsSustained: lateBaseYears,
+      retPhaseBase: lateRetPhaseBase, conversionByAge: {}, addlPreTaxBal: 0,
+    };
+    const result = calcWorkLongerBreakEven({
+      bundle: lateArgs, safeRetAge: lateSafeRetAge, currentAge: lateCurrentAge, includeSS: false, ssInputs,
+      offsets: [2],
+    });
+    expect(result).not.toBeNull();
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    // The fixture must actually land exactly on the boundary, or this proves nothing.
+    expect(row.retAge).toBe(lateSafeLifeExp);
+    if (!row.sustainable) expect(row.coversPlan).toBe(false);
+  });
+
+  // Item 17 (BUG-122 batch, CodeRabbit round 2): this used to claim a
+  // graceful "fall back to the never-depletes test" — but `calcWhatIfScenario`
+  // (called once per offset, below) returns null for EVERY offset whenever
+  // `safeLifeExp == null` (its own guard), so `rows` was silently EMPTY the
+  // whole time and this test's own loop never ran a single iteration — a
+  // vacuous pass, not a real one (confirmed live: `rows.length` was 0 and the
+  // old code returned `applicable: true` with a `"—"` headline anyway).
+  // calcWorkLongerBreakEven now matches calcWhatIfScenario's own convention
+  // for this exact missing input: null, not a placeholder-populated object.
+  it("returns null when the bundle carries no life expectancy, matching calcWhatIfScenario's own convention for the same missing input (regression: used to silently return `applicable: true` with an EMPTY rows array and a vacuously-passing test)", () => {
+    const { safeLifeExp: _drop, ...noLifeExp } = depletingArgs;
+    const result = calcWorkLongerBreakEven({
+      bundle: noLifeExp, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(result).toBeNull();
   });
 });

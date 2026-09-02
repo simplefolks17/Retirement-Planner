@@ -32,6 +32,7 @@
 
 import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } from "react";
 import { HF, HM } from "../horizon/ThemeContext.jsx";
+import { Btn } from "../horizon/shared.jsx";
 import { fmt as fmtMoney } from "../formatters.js";
 
 const VW = 1200;
@@ -165,6 +166,54 @@ function makeScales(H, pad, ageMin, ageMax, vmax) {
 const px = (x) => `${(x / VW) * 100}%`;
 const py = (y, H) => `${(y / H) * 100}%`;
 
+// ── Axis-label clearance (the original mobile clipping bug) ───────────────────
+// Everything inside the SVG is in viewBox units, and the viewBox HEIGHT is
+// derived from the container's WIDTH (vbH = VW * h / w) so x and y scale
+// equally. That makes one viewBox unit worth w/VW CSS pixels — on a 390px
+// phone, ~0.33px. But the axis tick row is a sibling HTML overlay in FIXED CSS
+// pixels: it does not shrink with the container.
+//
+// pad.b was a constant (40 compact / 46 desktop), so the space it reserved
+// BELOW the plot floor shrank with the container: (pad.b - AXIS_TICK_OFFSET) *
+// w / VW ≈ 7.8px on a 390px-wide box — less than the ~12px line box of a 10px
+// mono label, which the chart box's own `overflow: hidden` then cut off.
+//
+// The fix is to reserve a real CSS-PIXEL budget and convert it back into
+// viewBox units, so the tick row always has room at any width. Desktop is
+// unaffected (the floors already exceed what the formula asks for at ≥ ~900px),
+// which is why this was a mobile-only bug.
+const AXIS_TICK_OFFSET = 16;  // viewBox units below s.bot where the tick row starts
+const AXIS_LABEL_PX = 18;     // 10px mono line box (~12px) + ~6px breathing room
+
+// Bottom padding, in viewBox units, that guarantees the tick row fits.
+// `floor` keeps the previous constant as a minimum so nothing gets TIGHTER.
+export function axisPadBottom(w, floor) {
+  const u = w > 0 ? VW / w : 1;   // viewBox units per CSS pixel
+  return Math.max(floor, AXIS_TICK_OFFSET + AXIS_LABEL_PX * u);
+}
+
+// The CSS pixels actually left for the tick row's line box, given a container
+// width and a bottom padding. Exported so the guarantee above is testable
+// without a layout engine.
+export function axisLabelClearancePx(w, padB) {
+  return (padB - AXIS_TICK_OFFSET) * (w > 0 ? w / VW : 1);
+}
+
+// Keep a fixed-CSS-pixel HTML overlay (an end-of-plan badge) from centring on
+// or below the plot floor, where its lower half lands on the axis tick row and
+// past the container's `overflow: hidden` edge. `halfPx` is half the badge's
+// on-screen height; `u` converts it into viewBox units. Falls back to the
+// plot's midpoint when the plot is too short to honour either bound.
+export function clampOverlayY(y, top, bot, halfPx, u) {
+  const m = halfPx * u;
+  const lo = top + m, hi = bot - m;
+  if (hi <= lo) return (top + bot) / 2;
+  return Math.min(Math.max(y, lo), hi);
+}
+
+// Half-height of the end-of-plan badge (~44-48px tall with its caption line).
+const END_BADGE_HALF_PX = 24;
+
 function GridLines({ t, s, vals }) {
   return (
     <g>
@@ -258,7 +307,7 @@ function ArcSvg({ t, gid, glow, strokeWidth, chartData, currentAge, retirementAg
   );
 }
 
-function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vmax, compact, s }) {
+function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vmax, compact, s, u = 1 }) {
   // Pixel positions are computed inside the memo together with stop metadata so that
   // they're always recomputed atomically when chartData or the scale changes.
   const { stops, endPos } = useMemo(() => {
@@ -290,12 +339,12 @@ function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vma
       ))}
       {/* currentAge label at arc start — no centering transform so it hugs the left edge */}
       <div style={{
-        position: "absolute", left: px(s.xOf(currentAge)), top: py(s.bot + 16, H),
+        position: "absolute", left: px(s.xOf(currentAge)), top: py(s.bot + AXIS_TICK_OFFSET, H),
         font: `700 10px ${HM}`, color: t.good
       }}>{currentAge}</div>
       {ticks.map(a => (
         <div key={a} style={{
-          position: "absolute", left: px(s.xOf(a)), top: py(s.bot + 16, H),
+          position: "absolute", left: px(s.xOf(a)), top: py(s.bot + AXIS_TICK_OFFSET, H),
           transform: "translateX(-50%)", font: `600 10px ${HM}`, color: t.faint
         }}>{a}</div>
       ))}
@@ -318,8 +367,15 @@ function ArcLabels({ t, H, chartData, currentAge, retirementAge, lifeExpect, vma
           </div>
         );
       })}
+      {/* The badge is centred (translateY(-50%)) on the curve's own end point.
+          For a plan that depletes to $0 that point sits exactly ON the plot
+          floor, so half the badge hung below it — over the axis tick row and
+          past the chart box's `overflow: hidden` edge. Clamped to the plot's
+          interior, in viewBox units converted from the badge's real pixel
+          height (it is fixed-size HTML; the plot is not). */}
       <div style={{
-        position: "absolute", left: px(endPos.xEnd), top: py(endPos.yEnd, H),
+        position: "absolute", left: px(endPos.xEnd),
+        top: py(clampOverlayY(endPos.yEnd, s.top, s.bot, END_BADGE_HALF_PX, u), H),
         transform: "translate(-100%,-50%)", marginLeft: -14,
         background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 11, padding: "7px 12px",
         boxShadow: "0 4px 16px rgba(0,0,0,.11)", whiteSpace: "nowrap", zIndex: 2
@@ -391,15 +447,27 @@ function SourcesSvg({ t, gid, chartData, contribSeries, currentAge, retirementAg
   );
 }
 
-function LegendOverlay({ t, s, items }) {
+// `compact` mirrors ArcLabels': the overlay is fixed-pixel HTML inside a
+// container that shrinks, so on a phone two long legend items ("Your
+// contributions", "Market growth") overran the box's `overflow: hidden` edge.
+// `right` bounds the row so it can wrap instead of being cut, and the compact
+// pass tightens the type/gaps that a 390px box can't afford.
+function LegendOverlay({ t, s, items, compact = false }) {
   return (
     <div style={{
-      position: "absolute", left: px(s.pad.l + 6), top: 12,
-      display: "flex", gap: 14, pointerEvents: "none"
+      position: "absolute", left: px(s.pad.l + 6), right: 10, top: 12,
+      display: "flex", flexWrap: "wrap", columnGap: compact ? 9 : 14, rowGap: 3,
+      pointerEvents: "none"
     }}>
       {items.map(([l, c]) => (
-        <span key={l} style={{ display: "flex", alignItems: "center", gap: 6, font: `600 10.5px ${HF}`, color: t.mut }}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: c, opacity: 0.82 }} />
+        <span key={l} style={{
+          display: "flex", alignItems: "center", gap: compact ? 4 : 6,
+          font: `600 ${compact ? 9.5 : 10.5}px ${HF}`, color: t.mut
+        }}>
+          <span style={{
+            width: compact ? 8 : 10, height: compact ? 8 : 10, borderRadius: 3,
+            background: c, opacity: 0.82, flexShrink: 0
+          }} />
           {l}
         </span>
       ))}
@@ -454,13 +522,19 @@ function DecadesSvg({ t, gid, chartData, currentAge, retirementAge, s, vmax }) {
   );
 }
 
-function DecadesLabels({ t, H, chartData, currentAge, retirementAge, s }) {
+function DecadesLabels({ t, H, chartData, currentAge, retirementAge, s, compact = false }) {
   const ages = decadeAges(currentAge);
+  // The Arc view thins its tick set on a phone; this view never did, so all 13
+  // five-year ticks (30…90) rendered into a ~340px-wide box — each centred on
+  // its own bar, so they ran into each other and the outermost pair was clipped
+  // by the box's `overflow: hidden`. Thin to the decades the view is named for
+  // (the BARS are untouched; only the tick row thins, exactly as ArcLabels does).
+  const tickAges = compact ? ages.filter(a => a % 10 === 0) : ages;
   return (
     <>
-      {ages.map(age => (
+      {tickAges.map(age => (
         <div key={age} style={{
-          position: "absolute", left: px(s.xOf(age)), top: py(s.bot + 16, H),
+          position: "absolute", left: px(s.xOf(age)), top: py(s.bot + AXIS_TICK_OFFSET, H),
           transform: "translateX(-50%)", font: `600 10px ${HM}`, color: t.faint
         }}>{age}</div>
       ))}
@@ -469,12 +543,13 @@ function DecadesLabels({ t, H, chartData, currentAge, retirementAge, s }) {
         return (
           <div key={age} style={{
             position: "absolute", left: px(s.xOf(age)), top: py(s.yOf(bal), H),
-            transform: "translate(-50%,-150%)", font: `700 11px ${HM}`,
+            transform: "translate(-50%,-150%)", font: `700 ${compact ? 10 : 11}px ${HM}`,
             color: age >= retirementAge ? t.warm : t.good, whiteSpace: "nowrap"
           }}>{fmtMoney(bal)}</div>
         );
       })}
-      <LegendOverlay t={t} s={s} items={[["Accumulation", t.good], ["Retirement", t.warm]]} />
+      <LegendOverlay t={t} s={s} compact={compact}
+        items={[["Accumulation", t.good], ["Retirement", t.warm]]} />
     </>
   );
 }
@@ -560,7 +635,7 @@ function BandSvg({ t, chartData, currentAge, retirementAge, s, vmax, rangeBands 
   );
 }
 
-function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null }) {
+function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null, compact = false, u = 1 }) {
   const { spread, leanFinalTotal } = useMemo(() => bandModel({ chartData, currentAge, vmax, s }), [chartData, currentAge, vmax, s]);
   // REAL Monte Carlo caption (WI-5.3 / #114): a success-% chip REPLACES the
   // decorative strong/lean-market labels when percentile data is supplied. When
@@ -581,18 +656,22 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null })
     // render-only component (rule 10) — successOk is trusted directly.
     const pctColor = rangeBands.successOk ? t.good : t.warm;
     return (
+      // `right` bounds the block instead of a fixed 260px maxWidth: this is
+      // fixed-pixel HTML over a container that shrinks with the viewport, so a
+      // 260px box inside a ~340px phone chart ran to the edge and the note's
+      // long sentence was clipped by `overflow: hidden`.
       <div style={{
-        position: "absolute", left: px(s.pad.l + 6), top: 12,
+        position: "absolute", left: px(s.pad.l + 6), right: 12, top: 12,
         maxWidth: 260, pointerEvents: "none"
       }}>
-        <div style={{ font: `700 26px ${HM}`, color: pctColor, lineHeight: 1 }}>{pct}%</div>
-        <div style={{ font: `500 10.5px ${HF}`, color: t.mut, marginTop: 3 }}>
+        <div style={{ font: `700 ${compact ? 22 : 26}px ${HM}`, color: pctColor, lineHeight: 1 }}>{pct}%</div>
+        <div style={{ font: `500 ${compact ? 10 : 10.5}px ${HF}`, color: t.mut, marginTop: 3 }}>
           of market paths fund your plan to {endAgeFromSeries}
         </div>
         {rangeBands.note && (
           <div style={{
             font: `400 9.5px ${HF}`, color: t.faint, marginTop: 6,
-            maxWidth: 260, whiteSpace: "normal"
+            whiteSpace: "normal"
           }}>{rangeBands.note}</div>
         )}
       </div>
@@ -619,8 +698,12 @@ function BandLabels({ t, H, chartData, currentAge, s, vmax, rangeBands = null })
         position: "absolute", left: px(s.xOf(labelAge)), top: py(s.yOf(labelData.total * (1 - sp * CONE_LOWER_ASYMMETRY)), H),
         transform: "translate(-50%,44%)", font: `600 9.5px ${HF}`, color: t.mut
       }}>lean market</div>
+      {/* Same clamp as ArcLabels' end badge: a lean-market line that ends at $0
+          would otherwise centre this fixed-pixel card on the plot floor, half of
+          it below the container's clipped edge. */}
       <div style={{
-        position: "absolute", left: px(s.xOf(last.age)), top: py(s.yOf(last.total), H),
+        position: "absolute", left: px(s.xOf(last.age)),
+        top: py(clampOverlayY(s.yOf(last.total), s.top, s.bot, END_BADGE_HALF_PX, u), H),
         transform: "translate(-100%,-50%)", marginLeft: -14,
         background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 11, padding: "7px 12px",
         boxShadow: "0 4px 16px rgba(0,0,0,.11)", whiteSpace: "nowrap", zIndex: 2
@@ -712,13 +795,21 @@ export default function ArcGraph({
   // Per-instance id so multiple ArcGraphs on one page don't share SVG gradient/
   // filter ids (which would cross-wire their fills). Combined with activeView below.
   const uid = useId();
+  const [boxRef, { w, h }] = useSize();
+
+  // viewBox units per CSS pixel. Everything the SVG draws scales with the
+  // container; the HTML overlay does not, so any overlay geometry that has to
+  // agree with a fixed pixel size converts through this (see axisPadBottom and
+  // clampOverlayY above).
+  const u = useMemo(() => (w > 0 ? VW / w : 1), [w]);
+
   // Memoized so the scales memo below can list `pad` honestly in its deps
   // (a fresh object each render would defeat the memo — principle 13).
+  // `b` depends on the measured width: see axisPadBottom for why a constant
+  // silently clipped the axis on a phone.
   const pad = useMemo(() => compact
-    ? { l: 46, r: 60, t: 30, b: 40 }
-    : { l: 62, r: 92, t: 38, b: 46 }, [compact]);
-
-  const [boxRef, { w, h }] = useSize();
+    ? { l: 46, r: 60, t: 30, b: axisPadBottom(w, 40) }
+    : { l: 62, r: 92, t: 38, b: axisPadBottom(w, 46) }, [compact, w]);
 
   const validData = useMemo(() =>
     chartData.filter(d => d.age >= currentAge && d.age <= Math.max(lifeExpect, 90)),
@@ -742,6 +833,19 @@ export default function ArcGraph({
 
   const s = useMemo(() => makeScales(vbH, pad, ageMin, ageMax, vmax),
     [vbH, pad, ageMin, ageMax, vmax]);
+
+  // Money-event badge hit radius, in viewBox units. The visible badge is r=13,
+  // but the SVG is drawn in a 1200-unit-wide coordinate space scaled to the
+  // container, so on a 390px phone one unit is ~0.33px and the badge's real tap
+  // target is ~8.5px across — far worse than the ~26px a 1:1 reading suggests,
+  // and it is the tap target for EDITING a life event. This converts a 44px
+  // on-screen target back into viewBox units so the invisible hit circle is 44px
+  // wide at any container width (floored so a wide desktop container doesn't
+  // shrink it below the visible badge). Pure layout math on measured pixels —
+  // no model value is involved.
+  const eventHitR = useMemo(
+    () => Math.max(14, (22 * VW) / Math.max(w, 1)),
+    [w]);
 
   const gid = `arc-${uid}-${activeView}`;
 
@@ -775,17 +879,19 @@ export default function ArcGraph({
     <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
       {activeView === "arc" && validData.length >= 2 && (
         <ArcLabels t={t} H={vbH} chartData={validData} currentAge={currentAge}
-          retirementAge={retirementAge} lifeExpect={lifeExpect} vmax={vmax} compact={compact} s={s} />
+          retirementAge={retirementAge} lifeExpect={lifeExpect} vmax={vmax} compact={compact} s={s} u={u} />
       )}
       {activeView === "stacked" && contribSeries?.length >= 2 && (
-        <LegendOverlay t={t} s={s} items={[["Market growth", t.warm], ["Your contributions", t.good]]} />
+        <LegendOverlay t={t} s={s} compact={compact}
+          items={[["Market growth", t.warm], ["Your contributions", t.good]]} />
       )}
       {activeView === "columns" && validData.length >= 2 && (
         <DecadesLabels t={t} H={vbH} chartData={validData} currentAge={currentAge}
-          retirementAge={retirementAge} s={s} />
+          retirementAge={retirementAge} s={s} compact={compact} />
       )}
       {activeView === "band" && validData.length >= 2 && (
-        <BandLabels t={t} H={vbH} chartData={validData} currentAge={currentAge} s={s} vmax={vmax} rangeBands={rangeBands} />
+        <BandLabels t={t} H={vbH} chartData={validData} currentAge={currentAge} s={s} vmax={vmax}
+          rangeBands={rangeBands} compact={compact} u={u} />
       )}
     </div>
   );
@@ -794,16 +900,11 @@ export default function ArcGraph({
     <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: fillHeight ? 1 : "none", minHeight: 0 }}>
       {showToggle && (
         <div style={{ display: "flex", gap: 1, padding: 3, borderRadius: 10, background: t.line, alignSelf: "flex-start" }}>
-          {VIEWS.map(({ key, label }) => {
-            const on = activeView === key;
-            return (
-              <button key={key} onClick={() => onViewChange?.(key)} style={{
-                padding: "4px 13px", borderRadius: 7, border: "none", cursor: "pointer",
-                background: on ? t.surf2 : "transparent", font: `${on ? 600 : 500} 12px ${HF}`,
-                color: on ? t.ink : t.mut, boxShadow: on ? "0 1px 4px rgba(0,0,0,.10)" : "none", transition: "all .12s"
-              }}>{label}</button>
-            );
-          })}
+          {VIEWS.map(({ key, label }) => (
+            <Btn key={key} t={t} size="sm" variant="seg" pressed={activeView === key}
+              onClick={() => onViewChange?.(key)}
+              style={{ padding: "4px 13px", borderRadius: 7, fontSize: 12 }}>{label}</Btn>
+          ))}
         </div>
       )}
 
@@ -872,6 +973,11 @@ export default function ArcGraph({
                   vectorEffect="non-scaling-stroke" />
                 <circle cx={cx} cy={cy} r="3.5" fill={color} stroke={t.surf}
                   strokeWidth="1.5" opacity="0.9" vectorEffect="non-scaling-stroke" />
+                {/* Invisible 44px-on-screen hit area, concentric with the badge.
+                    Painted first so it sits UNDER the visible circle. */}
+                {onEventTap && (
+                  <circle cx={cx} cy={by} r={eventHitR} fill="transparent" stroke="none" />
+                )}
                 <circle cx={cx} cy={by} r="13" fill={t.surf} stroke={color}
                   strokeWidth="2" vectorEffect="non-scaling-stroke">
                   <title>{ev.label} · age {ev.age}</title>

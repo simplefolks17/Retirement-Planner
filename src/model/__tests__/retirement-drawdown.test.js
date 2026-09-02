@@ -125,26 +125,30 @@ describe("reconciliation with existing longevity functions (R1)", () => {
 });
 
 describe("calcPlanProgress", () => {
+  // The three "money lasts to" fields are inert (outlastsPlan aside) when the
+  // caller passes no depletion age — the shape every pre-existing call site sees.
+  const NO_DEPLETION = { depletionAge: null, yearsShortOfPlan: null };
+
   it("returns 100 when sustainable (including Infinity yearsSustained)", () => {
     expect(calcPlanProgress({ yearsSustained: Infinity, isSustainable: true, lifeExpect: 90, retirementAge: 65 }))
-      .toEqual({ progressPct: 100 });
+      .toEqual({ progressPct: 100, outlastsPlan: true, ...NO_DEPLETION });
     expect(calcPlanProgress({ yearsSustained: 40, isSustainable: true, lifeExpect: 90, retirementAge: 65 }))
-      .toEqual({ progressPct: 100 });
+      .toEqual({ progressPct: 100, outlastsPlan: true, ...NO_DEPLETION });
     // Defensive: Infinity years with a stale isSustainable=false still reads 100,
     // never NaN/Infinity in the UI.
     expect(calcPlanProgress({ yearsSustained: Infinity, isSustainable: false, lifeExpect: 90, retirementAge: 65 }))
-      .toEqual({ progressPct: 100 });
+      .toEqual({ progressPct: 100, outlastsPlan: true, ...NO_DEPLETION });
   });
 
   it("computes the percent of the retirement horizon covered when unsustainable", () => {
     // 12.5 of 25 years → 50%
     expect(calcPlanProgress({ yearsSustained: 12.5, isSustainable: false, lifeExpect: 90, retirementAge: 65 }))
-      .toEqual({ progressPct: 50 });
+      .toEqual({ progressPct: 50, outlastsPlan: false, ...NO_DEPLETION });
   });
 
   it("caps an unsustainable plan at 99% — it never reads as done", () => {
     expect(calcPlanProgress({ yearsSustained: 24.9, isSustainable: false, lifeExpect: 90, retirementAge: 65 }))
-      .toEqual({ progressPct: 99 });
+      .toEqual({ progressPct: 99, outlastsPlan: false, ...NO_DEPLETION });
   });
 
   it("guards the zero/negative horizon (retiring at or past life expectancy)", () => {
@@ -152,6 +156,65 @@ describe("calcPlanProgress", () => {
     expect(Number.isFinite(r.progressPct)).toBe(true);
     expect(r.progressPct).toBeGreaterThanOrEqual(0);
     expect(r.progressPct).toBeLessThanOrEqual(99);
+  });
+
+  // ── "Money lasts to" card + the honest verdict sentence ────────────────────
+  it("passes the walk's depletion age THROUGH and reports how many plan years it misses", () => {
+    // The app's own default fixture: depletes at 87 against a plan to 90.
+    const r = calcPlanProgress({
+      yearsSustained: 21.65, isSustainable: false, lifeExpect: 90, retirementAge: 65,
+      depletionAge: 87,
+    });
+    expect(r.outlastsPlan).toBe(false);
+    expect(r.depletionAge).toBe(87);
+    expect(r.yearsShortOfPlan).toBe(3);
+  });
+
+  it("returns the walk's depletion age VERBATIM — it is never re-derived from yearsSustained", () => {
+    // retirementAge + yearsSustained is the derivation NumbersScreen's own
+    // comment warns against; it lands a year early in general. Feeding a
+    // depletion age that deliberately disagrees with yearsSustained proves the
+    // walk's value is what comes back out.
+    const r = calcPlanProgress({
+      yearsSustained: 10, isSustainable: false, lifeExpect: 90, retirementAge: 65,
+      depletionAge: 82,
+    });
+    expect(r.depletionAge).toBe(82);                  // not 65 + 10 = 75
+    expect(r.yearsShortOfPlan).toBe(8);               // measured off 82, not 75
+  });
+
+  it("suppresses the depletion age entirely when the plan outlasts its horizon", () => {
+    // A sustainable plan can still have a finite far-future depletion age; the
+    // card must say "past 90", not "age 140".
+    const r = calcPlanProgress({
+      yearsSustained: 75, isSustainable: true, lifeExpect: 90, retirementAge: 65,
+      depletionAge: 140,
+    });
+    expect(r.outlastsPlan).toBe(true);
+    expect(r.depletionAge).toBeNull();
+    expect(r.yearsShortOfPlan).toBeNull();
+  });
+
+  it("returns null (not 0) for yearsShortOfPlan when the walk depletes at/after life expectancy", () => {
+    // Sub-year edge: yearsSustained misses the horizon but the depletion age
+    // doesn't. "0 years short of your plan" would be false precision.
+    const r = calcPlanProgress({
+      yearsSustained: 24.8, isSustainable: false, lifeExpect: 90, retirementAge: 65,
+      depletionAge: 90,
+    });
+    expect(r.depletionAge).toBe(90);
+    expect(r.yearsShortOfPlan).toBeNull();
+  });
+
+  it("reports a null depletion age rather than inventing one when the walk has none", () => {
+    for (const bad of [null, undefined, Infinity, NaN]) {
+      const r = calcPlanProgress({
+        yearsSustained: 10, isSustainable: false, lifeExpect: 90, retirementAge: 65,
+        depletionAge: bad,
+      });
+      expect(r.depletionAge).toBeNull();
+      expect(r.yearsShortOfPlan).toBeNull();
+    }
   });
 });
 

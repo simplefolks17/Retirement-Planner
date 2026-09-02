@@ -9,6 +9,12 @@ import React from "react";
 import { fmt } from "../../../formatters.js";
 import { SectionLabel, NoteBox, StatTile, STAT_ROW, ListRow, ListCard } from "./flow-ui.jsx";
 
+// StrategiesScreen passes `isMobile` to every flow. This one deliberately does
+// not destructure it: unlike its five siblings it has no DetailField (which is
+// the only real consumer — it swaps to a stepper under 640px) and no
+// fixed-width layout, since NoteBox/ListRow/StatTile all wrap on their own.
+// Declaring an unused parameter would be the dead code, not the omission.
+// If you add a DetailField here, destructure it — the prop is already wired.
 export default function WithdrawalOrderFlow({ t, props }) {
   const wv = props.withdrawalView;
 

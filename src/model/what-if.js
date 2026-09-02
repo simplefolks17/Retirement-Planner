@@ -11,7 +11,7 @@
 
 import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
-import { buildRetirementPhase, buildSpouseRetirementSeed } from "./retirement-phase.js";
+import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
@@ -117,6 +117,24 @@ export function verdictForMargin(marginYears) {
 // to diverge.
 export function marginForScenario(scenario, safeLifeExp) {
   if (scenario.scenarioYears !== Infinity) {
+    // BUG-123: retiring AT/AFTER the plan's own life expectancy can never
+    // "cover the plan" — there's no horizon left to cover, no matter how long
+    // the scenario itself sustains. Without this guard, `safeLifeExp -
+    // scenarioRetAge` goes to zero or negative once scenarioRetAge reaches
+    // safeLifeExp, and subtracting a non-positive number only ever ADDS to
+    // marginYears — so a scenario that barely sustains half a year could still
+    // read "comfortable" purely because it retires past the plan's own
+    // horizon. `calcWorkLongerBreakEven`'s `coversPlan` (BUG-118) guarded this
+    // ad hoc with `retAge < safeLifeExp` on its own sixth, separate copy of
+    // this formula; this generalizes that guard into the ONE shared formula so
+    // every caller (evaluateLifeEvent, buildLeverPreview, buildLeverRail,
+    // buildDurationRail, and coversPlan itself) gets it, not just the copy
+    // that happened to get patched. -Infinity (not a finite negative) keeps
+    // verdictForMargin's `< 0` check unambiguous regardless of scenarioYears'
+    // own magnitude; buildMarginLabel has an explicit case for it below.
+    if (Number.isFinite(safeLifeExp) && scenario.scenarioRetAge >= safeLifeExp) {
+      return { marginYears: -Infinity, marginBasis: "depletion" };
+    }
     return {
       marginYears: scenario.scenarioYears - (safeLifeExp - scenario.scenarioRetAge),
       marginBasis: "depletion",
@@ -145,6 +163,10 @@ function buildMarginLabel({ marginYears, marginBasis }, safeLifeExp) {
     if (marginYears > cap) return `${cap}+ yrs of runway left at ${safeLifeExp}`;
     return `≈${Math.round(marginYears)} yrs of runway left at ${safeLifeExp}`;
   }
+  // BUG-123: the -Infinity sentinel for "retires at/after safeLifeExp" (see
+  // marginForScenario) needs its own label — Math.abs(-Infinity) would
+  // otherwise print "runs out Infinity yrs early".
+  if (marginYears === -Infinity) return `doesn't cover the plan by ${safeLifeExp}`;
   return marginYears >= 0
     ? `${Math.round(marginYears)} yrs to spare past ${safeLifeExp}`
     : `runs out ${Math.round(Math.abs(marginYears))} yrs early`;
@@ -355,11 +377,22 @@ export function calcWhatIfDelta({
       // Re-seed the spouse at the SCENARIO's retirement age (mirrors
       // calcWhatIfScenario's BUG-77 fix exactly — same builder, so the two
       // functions can never diverge on what the spouse's re-seeded balance is).
+      // BUG-127: resolve the spouse's own retirement age against THIS
+      // scenario's retirement age (not a frozen base-plan value) — the SAME
+      // helper App.jsx's base-plan effectiveSpouseRetAge uses, so "auto" (null)
+      // means "same calendar year as whichever retirement age is in play" for
+      // both the base plan and every scenario, never a stale mix of the two.
       const spouseSeed = spouseSeedInputs
         ? buildSpouseRetirementSeed({
             ...spouseSeedInputs,
             currentAge: simInputs.currentAge,
             primaryRetAge: scenarioRetAge,
+            spouseRetAge: resolveSpouseRetAge({
+              spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
+              primaryRetAge: scenarioRetAge,
+              spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+              lifeExp: spouseSeedInputs.lifeExp,
+            }),
           })
         : null;
       const spouseTotal = spouseSeed
@@ -628,11 +661,32 @@ export function calcWhatIfScenario({
     // scenario event forced a re-sim, or an excluded committed event); otherwise
     // retPhaseBase's own spouse fields (already correct for the base retirement
     // age) are used unchanged below.
+    // BUG-127: same resolution as calcWhatIfDelta above — the spouse's own
+    // retirement age must be resolved against THIS scenario's retirement age,
+    // not the frozen base-plan value spouseSeedInputs used to carry directly.
+    // BUG-134: resolved ONCE and reused for BOTH the seed below and the engine's
+    // own Option-A hold-out gate (`spouseRetirementAge`, passed to
+    // buildRetirementPhase further down). BUG-127's fix rebuilt the seed and the
+    // gap-year maps at the scenario's retirement age but left the hold-out gate
+    // reading retPhaseBase's base-plan value, so the walk could release the
+    // spouse's Traditional bucket into the drawable pool at the BASE age while
+    // the very same walk still modelled them working (and contributing) up to
+    // the SCENARIO age — seed and draw gate disagreeing, biasing scenarios
+    // optimistic. One value, one resolution, both consumers.
+    const scenarioSpouseRetAge = spouseSeedInputs
+      ? resolveSpouseRetAge({
+          spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
+          primaryRetAge: scenarioRetAge,
+          spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+          lifeExp: spouseSeedInputs.lifeExp,
+        })
+      : null;
     const spouseSeed = (needsResim && spouseSeedInputs)
       ? buildSpouseRetirementSeed({
           ...spouseSeedInputs,
           currentAge: simInputs.currentAge,
           primaryRetAge: scenarioRetAge,
+          spouseRetAge: scenarioSpouseRetAge,
         })
       : null;   // no override → retPhaseBase's base values are already correct
 
@@ -703,9 +757,18 @@ export function calcWhatIfScenario({
         moneyEvents: mergedEvents,
         // BUG-77: use the re-seeded spouse values when a resim produced them;
         // otherwise fall back to retPhaseBase's own (already-correct base-
-        // retirement-age) spouse fields — spouseRetirementAge itself is left
-        // alone (via the `...retPhaseBase` spread above) since the spouse's OWN
-        // age doesn't change in a primary-retirement-age scenario.
+        // retirement-age) spouse fields.
+        // BUG-134: spouseRetirementAge must move WITH them. It used to be left
+        // to the `...retPhaseBase` spread on the reasoning that "the spouse's
+        // OWN age doesn't change in a primary-retirement-age scenario" — true
+        // before BUG-127, when retPhaseBase's value and the seed's were the same
+        // number, but false after it: with a raw spouseRetirementAge of null
+        // ("auto") the seed now resolves to the SCENARIO's retirement age while
+        // the spread still carried the BASE plan's. The engine reads this field
+        // for its Option-A hold-out (retirement-engine.js, `spouseHoldout`), so
+        // the mismatch let a scenario draw down the spouse's Traditional bucket
+        // years before the same walk stopped their contributions.
+        spouseRetirementAge:      spouseSeed ? scenarioSpouseRetAge              : retPhaseBase.spouseRetirementAge,
         tradGrossSpouse:          spouseSeed ? spouseSeed.tradSeed                 : retPhaseBase.tradGrossSpouse,
         spouseContribByAge:       spouseSeed ? spouseSeed.spouseContribByAge       : retPhaseBase.spouseContribByAge,
         spouseTaxableIncomeByAge: spouseSeed ? spouseSeed.spouseTaxableIncomeByAge : retPhaseBase.spouseTaxableIncomeByAge,
@@ -1438,12 +1501,44 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
 // Render-ready headline/sub (rule 10): when the base plan already lasts for life
 // the "runway" framing is dishonest (infinite runway), so it switches to a
 // portfolio framing. The card face reads headline/sub directly.
+//
+// coversPlan / minYearsToSustain (Plan screen's honest verdict sentence): a row
+// `coversPlan` when its scenario funds the WHOLE plan horizon from its own,
+// later retirement age — the same test App itself uses for `isSustainable`
+// (`years >= lifeExpect − retirementAge`), not the stricter `sustainable`
+// (never depletes at all). The two differ in practice and the difference is the
+// whole point of the sentence: at the documented default fixture, no offset is
+// `sustainable` (all three still deplete eventually), but +3 years pushes
+// depletion past life expectancy — so "working 3 more years would make it last"
+// is TRUE and reporting "later retirement won't fix it" would be false.
+// minYearsToSustain is the SMALLEST tested offset that coversPlan, or null when
+// none of them do (the screen must then render a designed "retiring later alone
+// won't close the gap" state — never a fallback number). It is only ever one of
+// the offsets actually simulated: this function does not interpolate, so a
+// household fixed by +2 with offsets [1,3,5] reports 3, never 2.
+// maxOffsetTested (BUG-130, Item 1) — the LARGEST offset this call actually
+// simulated (Math.max of `offsets`, never a re-derivation from `rows.length`).
+// When minYearsToSustain is null, the screen's sentence must say "working up
+// to N more years isn't enough" (N = maxOffsetTested), NOT a blanket "retiring
+// later alone won't close the gap" — the latter asserts something about EVERY
+// possible offset when this function only ever tested three, and the app's
+// own retire-at slider reaches well past safeRetAge + maxOffsetTested.
 export function calcWorkLongerBreakEven({
   bundle, safeRetAge, currentAge, includeSS = true, ssInputs = {}, offsets = [1, 3, 5],
 }) {
-  if (!bundle || safeRetAge == null || currentAge == null || safeRetAge <= currentAge) return null;
+  // Item 17 (BUG-122 batch, CodeRabbit round 2): `bundle` is passed straight
+  // through to `calcWhatIfScenario` for every offset below, which returns
+  // null whenever `safeLifeExp == null` (its own guard, ~line 533) — so a
+  // bundle missing `safeLifeExp` silently produced ZERO rows from EVERY
+  // offset while this function still returned `applicable: true` with
+  // placeholder values (`rows: []`, `headline: "—"`) instead of also
+  // signalling "not computable," the same convention `calcWhatIfScenario`
+  // itself uses for this exact missing input. Checked here explicitly,
+  // matching that convention, instead of discovering it row-by-row.
+  if (!bundle || safeRetAge == null || currentAge == null || safeRetAge <= currentAge
+      || bundle.safeLifeExp == null) return null;
 
-  const { baseTotalAtRet, baseYearsSustained, baseDepletionAge } = bundle;
+  const { baseTotalAtRet, baseYearsSustained, baseDepletionAge, safeLifeExp } = bundle;
   const baseSustainable = baseYearsSustained === Infinity;
 
   const { currentIncome = 0, incomeGrowth = 0, incomeGrowthEndAge = null, ssClaimingAge = SS_FRA } = ssInputs;
@@ -1471,14 +1566,45 @@ export function calcWorkLongerBreakEven({
         : depletionAge - baseDepletionAge;
     const ssAnnual = ssAnnualAt(retAge);
     const window = windowAt(retAge);
+    // See the header note: the plan-horizon test, not the never-depletes test.
+    // `retAge < safeLifeExp` is required before the year-count comparison:
+    // safeLifeExp is the BASE plan's horizon and never moves with the offset,
+    // but retAge does — at a large enough offset (or a retirementAge already
+    // close to lifeExpect) retAge can reach or pass safeLifeExp, making
+    // `safeLifeExp - retAge` zero or negative, which any non-negative
+    // scenarioYears trivially satisfies. Without this guard a scenario that
+    // retires AFTER the plan already ends read coversPlan: true.
+    // BUG-123: this used to be a SIXTH inline copy of the sustainability-margin
+    // formula `marginForScenario`'s own header comment says it "replaces four
+    // inlined copies" of — with the retAge < safeLifeExp guard applied only
+    // here, not to the shared function. Now delegates outright: the guard
+    // lives in marginForScenario itself (so every caller gets it), and this
+    // row just asks whether the margin is non-negative.
+    const coversPlan = marginForScenario(scenario, safeLifeExp).marginYears >= 0;
     return {
       years: k, retAge,
       portfolioAtRet, portfolioDelta: portfolioAtRet - baseTotalAtRet,
-      depletionAge, sustainable: scenSustainable, longevityDeltaYears,
+      depletionAge, sustainable: scenSustainable, coversPlan, longevityDeltaYears,
       ssAnnual, ssDelta: ssAnnual - baseSSAnnual,
       conversionWindowYrs: window, conversionWindowDelta: window - baseWindow,
     };
   }).filter(Boolean);
+
+  // Smallest tested offset that funds the whole plan — rows are re-sorted rather
+  // than trusting the caller's `offsets` to be ascending.
+  const minYearsToSustain =
+    [...rows].sort((a, b) => a.years - b.years).find(r => r.coversPlan)?.years ?? null;
+
+  // BUG-130 (Item 1): the largest offset this call actually simulated — so the
+  // Plan screen's null-case sentence ("working longer alone won't close the
+  // gap") can name what was tested INSTEAD of overclaiming "retiring later"
+  // generally, which the caller's own slider can falsify (the default offsets
+  // are [1,3,5], but the app lets a user drag retirementAge well past
+  // safeRetAge+5). Read off `offsets`, the tested set — not `rows.length`,
+  // which would silently follow a filtered/failed row instead of what was
+  // actually asked for. `null` only if a caller passed an empty `offsets`
+  // array (never happens with the default).
+  const maxOffsetTested = offsets.length > 0 ? Math.max(...offsets) : null;
 
   // Representative row for the card face — prefer +3, else the middle, else first.
   const rep = rows.find(r => r.years === 3) ?? rows[Math.floor(rows.length / 2)] ?? rows[0] ?? null;
@@ -1496,6 +1622,6 @@ export function calcWorkLongerBreakEven({
   return {
     applicable: true,
     baseRetAge: safeRetAge, baseSustainable, baseSSAnnual, baseWindow, includeSS,
-    rows, headline, sub,
+    rows, headline, sub, minYearsToSustain, maxOffsetTested,
   };
 }

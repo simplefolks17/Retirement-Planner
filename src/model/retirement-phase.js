@@ -10,6 +10,32 @@ export const spouseAgeAt  = (currentAge, spouseCurrentAge, primaryAge) =>
 export const primaryAgeAt = (currentAge, spouseCurrentAge, spouseAge) =>
   currentAge + (spouseAge - spouseCurrentAge);
 
+// Resolve the spouse's own retirement age from the RAW user input (BUG-127).
+// null (the default — "auto") falls back to the PRIMARY's OWN retirement age —
+// but which primary age matters: the base plan resolves against the base plan's
+// retirementAge, while a what-if scenario ("work longer") must resolve against
+// ITS OWN scenarioRetAge, or a null spouseRetirementAge silently freezes at the
+// base plan's age and every extra year worked deletes a year of the spouse's
+// gap-year income instead of adding one (the exact bug this function fixes —
+// verified live: a +1/+3/+5-year work-longer scenario reported monotonically
+// WORSE depletion ages before this fix). Clamped to
+// [spouseCurrentAge+1, max(that, lifeExp-1)] the same way for both callers —
+// one implementation, not two (BUG-31's signature bug class) — so App.jsx's
+// base-plan `effectiveSpouseRetAge` and what-if.js's per-scenario re-seed can
+// never diverge on how "auto" is interpreted.
+// Defensive like buildSpouseRetirementSeed's own spouseNetRate guard (BUG-98
+// convention): a non-finite spouseCurrentAge/lifeExp/primaryRetAge must never
+// produce a NaN retirement age that silently disables every downstream clamp
+// (NaN comparisons are always false) — fall back to the unclamped raw age
+// instead of corrupting it.
+export function resolveSpouseRetAge({ spouseRetirementAge, primaryRetAge, spouseCurrentAge, lifeExp }) {
+  const raw = Number.isFinite(spouseRetirementAge) ? spouseRetirementAge : primaryRetAge;
+  if (!Number.isFinite(raw)) return raw;
+  const min = Number.isFinite(spouseCurrentAge) ? spouseCurrentAge + 1 : -Infinity;
+  const max = Number.isFinite(lifeExp) ? Math.max(min, lifeExp - 1) : Infinity;
+  return Math.min(max, Math.max(min, raw));
+}
+
 // Build the engine's { [age]: amount } Roth-conversion schedule from the plan's
 // per-year (bracket-fill) or flat conversion targets. Conversions occur at ages
 // startAge .. endAge (inclusive). At the default window (startAge = safeRetAge+1,

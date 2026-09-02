@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildRetirementPhase, buildConversionByAge, buildRmdTaxByAge, buildSpouseRetirementSeed,
+  resolveSpouseRetAge,
 } from "../retirement-phase.js";
 import { buildRetirementWalkByAccount } from "../retirement-engine.js";
 import { runSimulation } from "../simulation.js";
@@ -510,5 +511,79 @@ describe("buildSpouseRetirementSeed", () => {
     expect(withInfl.rothSeed).toBe(noInfl.rothSeed);
     expect(withInfl.taxableSeed).toBe(noInfl.taxableSeed);
     expect(withInfl.hsaSeed).toBe(noInfl.hsaSeed);
+  });
+});
+
+// ── resolveSpouseRetAge (BUG-127) ───────────────────────────────────────────
+// The ONE shared resolver App.jsx's base-plan effectiveSpouseRetAge and
+// what-if.js's per-scenario re-seed both call, so "auto" (null) can never be
+// interpreted two different ways in the same app.
+describe("resolveSpouseRetAge", () => {
+  it("null spouseRetirementAge (auto) falls back to primaryRetAge", () => {
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: null, primaryRetAge: 58, spouseCurrentAge: 40, lifeExp: 90,
+    })).toBe(58);
+  });
+
+  it("an explicit spouseRetirementAge is used verbatim, independent of primaryRetAge", () => {
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: 75, primaryRetAge: 58, spouseCurrentAge: 40, lifeExp: 90,
+    })).toBe(75);
+    // Changing primaryRetAge must not move an explicit spouseRetirementAge —
+    // this is the exact invariant a what-if "work longer" scenario needs.
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: 75, primaryRetAge: 63, spouseCurrentAge: 40, lifeExp: 90,
+    })).toBe(75);
+  });
+
+  it("the BUG-127 bug directly: auto (null) tracks a LATER scenario retirement age instead of freezing at an earlier one", () => {
+    const base = resolveSpouseRetAge({
+      spouseRetirementAge: null, primaryRetAge: 55, spouseCurrentAge: 22, lifeExp: 90,
+    });
+    const scenario = resolveSpouseRetAge({
+      spouseRetirementAge: null, primaryRetAge: 60, spouseCurrentAge: 22, lifeExp: 90,
+    });
+    expect(base).toBe(55);
+    // Pre-fix, the scenario call was never made — the frozen base value (55)
+    // was reused verbatim, which is LESS than the scenario's own retirement
+    // age (60) and would falsely tell buildSpouseRetirementSeed the spouse had
+    // already retired 5 years earlier than the scenario itself assumes.
+    expect(scenario).toBe(60);
+    expect(scenario).toBeGreaterThan(base);
+  });
+
+  it("clamps to [spouseCurrentAge+1, max(that, lifeExp-1)] in both directions", () => {
+    // Below the floor (spouse already older than the raw candidate).
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: 50, primaryRetAge: 50, spouseCurrentAge: 55, lifeExp: 90,
+    })).toBe(56);
+    // Above the ceiling.
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: 95, primaryRetAge: 95, spouseCurrentAge: 60, lifeExp: 90,
+    })).toBe(89);
+  });
+
+  it("a same-age-or-older spouse never produces an inverted [min,max] clamp range", () => {
+    // spouseCurrentAge (89) pushes min (90) past lifeExp-1 (89) — max must
+    // widen to min, not stay at the smaller lifeExp-derived value.
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: null, primaryRetAge: 60, spouseCurrentAge: 89, lifeExp: 90,
+    })).toBe(90);
+  });
+
+  it("non-finite spouseCurrentAge/lifeExp fail open (no NaN) rather than corrupting the resolved age (BUG-98 convention)", () => {
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: 65, primaryRetAge: 60, spouseCurrentAge: undefined, lifeExp: undefined,
+    })).toBe(65);
+    expect(resolveSpouseRetAge({
+      spouseRetirementAge: null, primaryRetAge: 60, spouseCurrentAge: undefined, lifeExp: undefined,
+    })).toBe(60);
+    // A non-finite primaryRetAge with no explicit spouseRetirementAge has no
+    // sensible numeric fallback — returns NaN rather than fabricating an age,
+    // instead of the pre-guard behavior (silently disabling the clamp so an
+    // out-of-range NaN could sail through unclamped).
+    expect(Number.isNaN(resolveSpouseRetAge({
+      spouseRetirementAge: null, primaryRetAge: NaN, spouseCurrentAge: 40, lifeExp: 90,
+    }))).toBe(true);
   });
 });

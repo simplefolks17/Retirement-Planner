@@ -120,22 +120,49 @@ const makeMockProps = (overrides = {}) => ({
   activity:          "golf course",
   planView: {
     progressPct: 100,
+    // calcPlanProgress's "money lasts to" fields (Plan card 4 + the verdict
+    // sentence). This fixture is a sustainable plan, so the null pair is the
+    // real shape, not a placeholder.
+    outlastsPlan: true, depletionAge: null, yearsShortOfPlan: null,
     drivers: [{ id: "withdrawal", ok: true }],
   },
   signals:           [],
   moneyEvents:       [],
   retirementWalk:    { rows: _retPhase.rows },
+  taxView:           { composition: { total: 553_782, segments: [] } },
+  workLongerView:    { applicable: true, rows: [], minYearsToSustain: null },
   planHighlights: {
     wealthMultiplier: 14.2,
     incomeReplacementPct: 82,
-    retIncomeFlow: {
-      ss: 25_200, pension: 0, portfolioDraw: 44_664,
-      hasSS: true, hasPension: false,
-      ssPct: 36, pensionPct: 0, portfolioPct: 64,
+    // Both dollar bases (the Plan screen's toggle picks one). The retirement
+    // basis is the today one inflated — the fixture keeps them visibly
+    // different so a test can prove the toggle actually switches.
+    incomeFlowByBasis: {
+      today: {
+        expenses: 69_864, ss: 25_200, pension: 0, spouseIncome: 0, portfolioDraw: 44_664,
+        hasSS: true, hasPension: false, hasSpouseIncome: false,
+        ssPct: 36, pensionPct: 0, spouseIncomePct: 0, portfolioPct: 64,
+      },
+      retirement: {
+        expenses: 120_000, ss: 43_200, pension: 0, spouseIncome: 0, portfolioDraw: 76_800,
+        hasSS: true, hasPension: false, hasSpouseIncome: false,
+        ssPct: 36, pensionPct: 0, spouseIncomePct: 0, portfolioPct: 64,
+      },
     },
-    lifetimeTaxBurden: 207_557,
+    guaranteed: {
+      pct: 36, hasSS: true, hasPension: false, hasSpouseIncome: false,
+      everHasSS: true, everHasPension: false, fullyCovered: false,
+      startsAtAge: null, startsLabel: null, savingsCoverUntilStart: null,
+      pendingSources: [],
+    },
+    dollarBasisApplicable: true,
+    dollarBasisOptions: [
+      { id: "today", label: "Today's money", caption: "Retirement income and spending shown in today's buying power.", cardSub: "in today's money", showsReplacementPct: true },
+      { id: "retirement", label: "At 65", caption: "Retirement income and spending shown in age-65 dollars — the same lifestyle after 35 years of inflation.", cardSub: "in age-65 dollars", showsReplacementPct: false },
+    ],
     yearsToRetirement: 14,
     retirementDuration: 25,
+    takeHomeIsHousehold: false,
   },
   statementView:     { keepPct: 52 },
   whatIfSimInputs:   whatIfBundle,
@@ -172,16 +199,23 @@ const dashedPaths = (root) =>
   root.findAll(n => n.type === "path" && n.props?.strokeDasharray === "8 5");
 const tickDivs = (root) =>
   root.findAll(n => n.type === "div" && n.props?.style?.borderRadius === 2);
+// A StatCard: the sanctioned role="button" + tabIndex div. Its text begins with
+// its own label, so a prefix match identifies the card without matching the
+// slider inside the tray that shares the "Retire at" string.
+const statCard = (root, label) =>
+  root.findAll(n => n.props?.role === "button" && typeof n.props?.onClick === "function"
+    && textOf({ children: n.children }).startsWith(label))[0];
 
-function mount(overrides = {}) {
+function mount(overrides = {}, isMobile = false) {
   const props = makeMockProps(overrides);
+  const navigate = vi.fn();
   let renderer;
   act(() => {
     renderer = create(
-      React.createElement(PlanScreen, { t, props, navigate: vi.fn(), isMobile: false }),
+      React.createElement(PlanScreen, { t, props, navigate, isMobile }),
     );
   });
-  return { renderer, props };
+  return { renderer, props, navigate };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -200,19 +234,166 @@ describe("PlanScreen — command center survivors", () => {
     const { renderer } = mount();
     const text = allText(renderer.root);
     expect(text).toContain("Retirement income");
-    expect(text).toContain("82% of current income");
+    expect(text).toContain("replaces 82% of today's take-home pay");
     expect(text).toContain("Soc. Security");
     act(() => renderer.unmount());
   });
 
-  it("renders stat cards with subtitles", () => {
+  it("renders the today-anchor paycheck card, primary-voiced by default", () => {
     const { renderer } = mount();
     const text = allText(renderer.root);
-    expect(text).toContain("52% of income");
+    expect(text).toContain("Your paycheck");
+    expect(text).toContain("52% of income · today");
+    expect(text).not.toContain("Household paycheck");
+    expect(text).not.toContain("You keep");
+    act(() => renderer.unmount());
+  });
+
+  // The scope half of the same fix: takeHome is a HOUSEHOLD figure for MFJ
+  // filers (rule 9), and the old "You keep" label was unconditionally
+  // primary-voiced. The switch reads a model boolean, never spouseIncome.
+  it("labels the paycheck card 'Household paycheck' when the model says the figure is household-scoped", () => {
+    const { renderer } = mount({
+      planHighlights: { ...makeMockProps().planHighlights, takeHomeIsHousehold: true },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Household paycheck");
+    expect(text).not.toContain("Your paycheck");
+    act(() => renderer.unmount());
+  });
+
+  it("renders the five retirement stat cards with their subtitles", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    expect(text).toContain("Retire at");
     expect(text).toContain("in 14 yrs");
-    expect(text).toContain("82% replaced");
-    expect(text).toContain("after 25 yrs");
-    expect(text).toContain("Retirement taxes");
+    expect(text).toContain("Spending each month");
+    expect(text).toContain("in today's money");
+    expect(text).toContain("Guaranteed for life");
+    expect(text).toContain("36%");
+    expect(text).toContain("Social Security — the rest comes from your savings");
+    expect(text).toContain("Money lasts to");
+    expect(text).toContain("Tax in retirement");
+    // Item 8 (BUG-122 batch): "total, across all" overclaimed completeness
+    // (BUG-38's incremental-tax-only accounting) — softened, and now carries
+    // its own basis note instead of no basis at all.
+    expect(text).toContain("across your retirement years, in retirement-year dollars");
+    expect(text).not.toContain("total, across all your retirement years");
+    // Retired copy — the labels these replaced.
+    expect(text).not.toContain("Income for life");
+    expect(text).not.toContain("Retirement taxes");
+    expect(text).not.toContain("Left at");
+    act(() => renderer.unmount());
+  });
+
+  // Item 11 (BUG-122 batch): 5 cards in a 2-column mobile grid leaves the
+  // last one ("Tax in retirement") alone on its own row, half-width — an
+  // orphan. It should span the full row on mobile only.
+  it("the 5th stat card spans the full row on mobile, and is untouched on desktop", () => {
+    const mobile = mount({}, true);
+    const mobileCard = statCard(mobile.renderer.root, "Tax in retirement");
+    expect(mobileCard.props.style.gridColumn).toBe("1 / -1");
+    act(() => mobile.renderer.unmount());
+
+    const desktop = mount({}, false);
+    const desktopCard = statCard(desktop.renderer.root, "Tax in retirement");
+    expect(desktopCard.props.style.gridColumn).toBeUndefined();
+    act(() => desktop.renderer.unmount());
+  });
+
+  // The card's number must match the number its own destination (Numbers →
+  // Taxes) shows. It used to read planHighlights.lifetimeTaxBurden
+  // (RMD + conversion tax only) while the destination showed a bigger total
+  // that also includes the 401k-draw tax; the duplicate field is gone.
+  it("the tax card reads taxView.composition.total, the same total its destination shows", () => {
+    const { renderer } = mount({
+      taxView: { composition: { total: 400_000, segments: [] } },
+    });
+    expect(allText(renderer.root)).toContain("$400k");
+    act(() => renderer.unmount());
+  });
+
+  it("a sustainable plan shows 'Money lasts to past 90' and keeps the earned tagline", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    expect(text).toContain("past 90");
+    expect(text).toContain("your savings outlast your plan");
+    expect(text).toContain("mandatory.");
+    expect(text).not.toContain("Your savings run out");
+    act(() => renderer.unmount());
+  });
+
+  // The honest verdict replaces the tagline (strictly either/or) when the plan
+  // does NOT cover its horizon — every number from a named model field.
+  it("an unsustainable plan replaces the tagline with the depletion age + its smallest fix", () => {
+    const { renderer } = mount({
+      isSustainable: false,
+      planView: {
+        progressPct: 87, outlastsPlan: false, depletionAge: 87, yearsShortOfPlan: 3,
+        drivers: [{ id: "withdrawal", ok: false }],
+      },
+      workLongerView: { applicable: true, rows: [], minYearsToSustain: 3 },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Your savings run out at");
+    expect(text).toContain("age 87");
+    expect(text).toContain("3 years before your plan ends at 90");
+    expect(text).toContain("Working 3 more years would make them last.");
+    expect(text).not.toContain("mandatory.");
+    // Card 4 must agree with the sentence — one model field, two surfaces.
+    expect(text).toContain("3 years short of your plan");
+    act(() => renderer.unmount());
+  });
+
+  // BUG-133 (Item 4): the progress pill used to gate "on target" on the
+  // withdrawal driver ALONE — a plan can read a healthy withdrawal RATE
+  // (e.g. flattered by a still-working spouse's temporary income,
+  // temporaryIncomeBasis/rule 5b) while still failing to cover its horizon,
+  // letting the pill read "on target" on the same screen as "Your savings run
+  // out…" beside it. Fixture values below are the REAL planView App computes
+  // for this exact repro (MFJ, spouseCurrentAge 22, spouseIncome 500000,
+  // annualExpenses 120000, retirementAge 55) — verified against a live App
+  // mount: withdrawal.ok true, outlastsPlan false.
+  it("does not read 'on target' when the withdrawal driver passes but the plan's own verdict says it doesn't cover the horizon", () => {
+    const { renderer } = mount({
+      isSustainable: false,
+      planView: {
+        progressPct: 92, outlastsPlan: false, depletionAge: 88, yearsShortOfPlan: 2,
+        drivers: [
+          { id: "withdrawal", ok: true, temporaryIncomeBasis: true, basisEndsAtAge: 55 },
+          { id: "longevity", ok: false },
+          { id: "savings", ok: false },
+          { id: "confidence", ok: false },
+        ],
+      },
+      workLongerView: { applicable: true, rows: [], minYearsToSustain: 5, maxOffsetTested: 5 },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Your savings run out at");
+    expect(text).toContain("age 88");
+    expect(text).not.toContain("on target");
+    expect(text).toContain("adjust");
+    act(() => renderer.unmount());
+  });
+
+  // No tested offset fixes the plan → a designed sentence naming what was
+  // ACTUALLY tested (BUG-130, Item 1), never a made-up number of years and
+  // never a blanket claim about every possible later retirement age (the old
+  // "Retiring later alone won't close the gap" copy asserted something the
+  // model never tested past +5 — falsifiable by the app's own slider).
+  it("names the largest TESTED offset instead of a blanket claim when minYearsToSustain is null (BUG-130, Item 1)", () => {
+    const { renderer } = mount({
+      isSustainable: false,
+      planView: {
+        progressPct: 40, outlastsPlan: false, depletionAge: 80, yearsShortOfPlan: 10,
+        drivers: [{ id: "withdrawal", ok: false }],
+      },
+      workLongerView: { applicable: true, rows: [], minYearsToSustain: null, maxOffsetTested: 5 },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Working up to 5 more years isn't enough on its own");
+    expect(text).not.toContain("Retiring later alone won't close the gap");
+    expect(text).not.toContain("more years would make them last");
     act(() => renderer.unmount());
   });
 
@@ -225,24 +406,200 @@ describe("PlanScreen — command center survivors", () => {
   });
 
   it("renders the spouse-income bar + scope note only when hasSpouseIncome and the note are truthy", () => {
+    const base = makeMockProps().planHighlights;
+    const spouseFlow = {
+      expenses: 69_864, ss: 25_200, pension: 0, spouseIncome: 12_000, portfolioDraw: 32_664,
+      hasSS: true, hasPension: false, hasSpouseIncome: true,
+      ssPct: 36, pensionPct: 0, spouseIncomePct: 17, portfolioPct: 47,
+    };
     const { renderer } = mount({
       planHighlights: {
-        wealthMultiplier: 14.2,
-        incomeReplacementPct: 82,
-        retIncomeFlow: {
-          ss: 25_200, pension: 0, spouseIncome: 12_000, portfolioDraw: 32_664,
-          hasSS: true, hasPension: false, hasSpouseIncome: true,
-          ssPct: 36, pensionPct: 0, spouseIncomePct: 17, portfolioPct: 47,
-        },
-        lifetimeTaxBurden: 207_557,
-        yearsToRetirement: 14,
-        retirementDuration: 25,
+        ...base,
+        incomeFlowByBasis: { today: spouseFlow, retirement: spouseFlow },
+        guaranteed: { ...base.guaranteed, hasSpouseIncome: true },
         spouseIncomeScopeNote: "Includes your spouse's income through age 63; the portfolio draw rises after that.",
       },
     });
     const text = allText(renderer.root);
     expect(text).toContain("Spouse income");
     expect(text).toContain("Includes your spouse's income through age 63");
+    // The "Guaranteed for life" card must NOT let a spouse's temporary paycheck
+    // read as part of "the rest comes from your savings" — it names it.
+    expect(text).toContain("the rest comes from your savings and your spouse's pay");
+    act(() => renderer.unmount());
+  });
+
+  // BUG-122 (item 2): "savings cover you until then" used to render whenever
+  // startsAtAge was set, with no check that savings actually last that long —
+  // it could contradict "Money lasts to" directly. g.savingsCoverUntilStart is
+  // the pre-computed truth condition (App.jsx, from calcPlanProgress).
+  it("shows 'savings cover you until then' when savingsCoverUntilStart is true", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 0, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: false, fullyCovered: false,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: true,
+          pendingSources: [{ age: 67, label: "Social Security", savingsCoverUntilStart: true }],
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Social Security starts at 67 — savings cover you until then");
+    act(() => renderer.unmount());
+  });
+
+  it("does NOT claim savings cover you until then when savingsCoverUntilStart is false — the false-reassurance repro (BUG-122): retire 60, spend $300k/yr, SS starts at 67, savings run out at 61", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 0, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: false, fullyCovered: false,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: false,
+          pendingSources: [{ age: 67, label: "Social Security", savingsCoverUntilStart: false }],
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).not.toContain("savings cover you until then");
+    expect(text).toContain("Social Security starts at 67");
+    // Still tells the honest story — points at "Money lasts to" instead.
+    expect(text.toLowerCase()).toContain("may not stretch");
+    act(() => renderer.unmount());
+  });
+
+  // BUG-131 (Item 2): source naming must read the UNGATED everHasSS/
+  // everHasPension (matching what pct itself is built from), never the gated
+  // hasSS/hasPension — and every pending source must be named, not just the
+  // earliest. Fixture values below are the REAL planHighlights.guaranteed App
+  // computes for this exact repro (retirementAge 60, pensionMonthly 4000,
+  // pensionStartAge 70) — verified against a live App mount.
+  it("repro A (BUG-131): names BOTH pending sources instead of silently dropping the pension supplying ~76 of a 100% card", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 100, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: true, fullyCovered: true,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: true,
+          pendingSources: [
+            { age: 67, label: "Social Security", savingsCoverUntilStart: true },
+            { age: 70, label: "Your pension", savingsCoverUntilStart: true },
+          ],
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Social Security + pension — full coverage once Social Security at 67, Your pension at 70");
+    // The old bug: only the earliest ([0]) source was ever named.
+    expect(text).not.toContain("Social Security starts at 67 — savings cover you until then");
+    act(() => renderer.unmount());
+  });
+
+  // BUG-131 (Item 2): once the model's own pct says nothing is left over
+  // (fullyCovered), the copy must not also claim "the rest comes from your
+  // savings" — the two directly contradict each other. Fixture is the REAL
+  // planHighlights.guaranteed App computes for pensionMonthly 4000,
+  // pensionStartAge 60, retirementAge 65 (default) — verified against a live
+  // App mount.
+  it("repro B (BUG-131): does not claim 'the rest comes from your savings' when the card already reads 100%", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 100, hasSS: false, hasPension: true, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: true, fullyCovered: true,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: true,
+          pendingSources: [{ age: 67, label: "Social Security", savingsCoverUntilStart: true }],
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Social Security + pension — full coverage starts at 67");
+    expect(text).not.toContain("the rest comes from your savings");
+    // The old bug's misleading "more from 67" implied MORE guaranteed income
+    // stacking on top of an already-100% card.
+    expect(text).not.toContain("more from 67");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Dollar-basis toggle (owner decision: today's money by default) ───────────
+describe("PlanScreen — dollar-basis toggle", () => {
+  it("defaults to today's dollars in BOTH the meter headline and the spending card", () => {
+    const { renderer } = mount();
+    const text = allText(renderer.root);
+    // 69_864/yr → $5,822/mo → "$5,800" (fmtMonthly rounds to the nearest $100).
+    expect(text).toContain("$5,800/mo");
+    expect(text).toContain("in today's money");
+    expect(text).toContain("today's buying power");
+    // The retirement-basis figure must not be on screen at the same time —
+    // the pre-fix bug was the meter and the card showing BOTH, ~20px apart.
+    expect(text).not.toContain("$10,000/mo");
+    act(() => renderer.unmount());
+  });
+
+  it("switching to the retirement basis moves the meter and the card together", () => {
+    const { renderer } = mount();
+    const toggle = buttonsByText(renderer.root, "At 65");
+    expect(toggle.length).toBe(1);
+    act(() => { toggle[0].props.onClick(); });
+
+    const text = allText(renderer.root);
+    // 120_000/yr → $10,000/mo.
+    expect(text).toContain("$10,000/mo");
+    expect(text).toContain("in age-65 dollars");
+    expect(text).not.toContain("$5,800/mo");
+    act(() => renderer.unmount());
+  });
+
+  it("leaves basis-invariant values alone — the guaranteed %, the ages, the tax total", () => {
+    const { renderer } = mount();
+    const before = allText(renderer.root);
+    act(() => { buttonsByText(renderer.root, "At 65")[0].props.onClick(); });
+    const after = allText(renderer.root);
+    for (const invariant of ["36%", "past 90", "$554k"]) {
+      expect(before).toContain(invariant);
+      expect(after).toContain(invariant);
+    }
+    act(() => renderer.unmount());
+  });
+
+  // BUG-132 (Item 3): incomeReplacementPct is basis-invariant BY DESIGN
+  // (BUG-114 — it always compares against today's take-home pay), but it used
+  // to render unconditionally next to whichever dollar figure the toggle
+  // picked — reading, at "At 65", "$18,900/mo replaces 84%" beside a
+  // $5,700/mo paycheck (actually 332%, not 84%). It must show only while the
+  // basis it was built to sit beside ("today") is active.
+  it("shows the replacement-% clause only in today's-dollars mode — the toggle must not leave a stale ratio beside a different dollar figure", () => {
+    const { renderer } = mount();
+    const before = allText(renderer.root);
+    expect(before).toContain("replaces 82% of today's take-home pay");
+
+    act(() => { buttonsByText(renderer.root, "At 65")[0].props.onClick(); });
+    const after = allText(renderer.root);
+    expect(after).not.toContain("replaces 82% of today's take-home pay");
+    expect(after).not.toContain("replaces");
+    // The dollar figure it used to sit beside is still visibly a different
+    // basis — proving this isn't just a text change but a real reconciling gap.
+    expect(after).toContain("$10,000/mo");
+    act(() => renderer.unmount());
+  });
+
+  it("hides the toggle entirely when the model says the two bases coincide", () => {
+    const { renderer } = mount({
+      planHighlights: { ...makeMockProps().planHighlights, dollarBasisApplicable: false },
+    });
+    const text = allText(renderer.root);
+    expect(buttonsByText(renderer.root, "At 65").length).toBe(0);
+    expect(text).toContain("$5,800/mo");       // pinned to today's dollars
+    expect(text).not.toContain("today's buying power"); // no caption either
     act(() => renderer.unmount());
   });
 });
@@ -313,6 +670,46 @@ describe("PlanScreen — Explore tray: Try a change facet", () => {
     openFacet(renderer, "Try a change");
     expect(buttonsByText(renderer.root, "Apply changes").length).toBeGreaterThan(0);
     expect(buttonsByText(renderer.root, "Discard").length).toBe(1);
+    act(() => renderer.unmount());
+  });
+
+  // The cards used to point AWAY from the levers they describe ("Retire at"
+  // navigated to the static My-Details facts screen). The tray's open state is
+  // now controlled by PlanScreen so a card can open the facet in place.
+  it("the 'Retire at' card opens the Try-a-change facet in place instead of navigating away", () => {
+    const { renderer, navigate } = mount();
+    expect(rangeInputs(renderer.root).length).toBe(0);
+
+    act(() => { statCard(renderer.root, "Retire at").props.onClick(); });
+
+    const labels = rangeInputs(renderer.root).map(n => n.props["aria-label"]);
+    expect(labels).toContain("Retire at");
+    expect(navigate).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it("the 'Spending each month' card opens the same facet, where the spend slider lives", () => {
+    const { renderer, navigate } = mount();
+    act(() => { statCard(renderer.root, "Spending each month").props.onClick(); });
+
+    const labels = rangeInputs(renderer.root).map(n => n.props["aria-label"]);
+    expect(labels).toContain("Monthly spend");
+    expect(navigate).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it("the verdict sentence's 'Try a change' link opens the same facet", () => {
+    const { renderer } = mount({
+      isSustainable: false,
+      planView: {
+        progressPct: 87, outlastsPlan: false, depletionAge: 87, yearsShortOfPlan: 3,
+        drivers: [{ id: "withdrawal", ok: false }],
+      },
+      workLongerView: { applicable: true, rows: [], minYearsToSustain: 3 },
+    });
+    expect(rangeInputs(renderer.root).length).toBe(0);
+    act(() => { buttonContaining(renderer.root, "Try a change →")[0].props.onClick(); });
+    expect(rangeInputs(renderer.root).length).toBeGreaterThan(0);
     act(() => renderer.unmount());
   });
 

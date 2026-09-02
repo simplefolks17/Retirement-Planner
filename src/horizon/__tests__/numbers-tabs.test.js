@@ -12,7 +12,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
-import NumbersScreen from "../screens/NumbersScreen.jsx";
+import NumbersScreen, { wrapBarLabel } from "../screens/NumbersScreen.jsx";
+import { fmtMo } from "../shared.jsx";
 
 // Stub browser APIs (ResizeObserver is used by IncomeWaterfall inside NumbersScreen).
 beforeAll(() => {
@@ -59,6 +60,11 @@ const statementView = {
   monthlyTotal:         5_000,
   monthlyHHSS:          3_096,
   monthlyPension:           0,
+  // Item 6 (BUG-122 batch): companion strip bar widths, computed once here
+  // (calcStatementView), never divided in JSX (rule 10).
+  ssSharePct:              62,
+  pensionSharePct:          0,
+  portDrawSharePct:        40,
   // Session-3: lifetime compounding multiplier (totalAtRet / totalContrib)
   lifetimeContribROI:    7.0,
   // Session-4: income replacement ratio
@@ -124,12 +130,17 @@ const budgetSurplus = {
 };
 
 // ── planView shape (savings driver used by Budget tab) ───────────────────────
+// NOTE: calcPlanDrivers emits FOUR rows in the real app — App always passes
+// monteCarloSuccessPct (App.jsx:1558), so the `confidence` row is always
+// present. This fixture used to stop at three, which is part of why the
+// missing `confidence` label in NumbersScreen went unnoticed.
 const planView = {
   progressPct: 78,
   drivers: [
     { id: "withdrawal", ok: true,  withdrawalRatePct: 3.4, guidelinePct: 4 },
     { id: "longevity",  ok: true,  sustainedYears: null,   horizonYears: 25 },
     { id: "savings",    ok: false, savingsRatePct: 31,     guidelinePct: 15 },
+    { id: "confidence", ok: true,  successPct: 88,         guidelinePct: 80 },
   ],
 };
 
@@ -247,6 +258,16 @@ const minimalProps = {
 function textOf(node) {
   if (typeof node === "string") return node;
   return (node.children ?? []).map(textOf).join("");
+}
+
+// Walks a react-test-renderer JSON tree collecting every node matching `pred`.
+// Used by the tax-composition colour tests — a text-only assertion cannot see a
+// transparent bar segment, which is exactly how the missing `draw` key hid.
+function collect(node, pred, out = []) {
+  if (!node || typeof node === "string") return out;
+  if (pred(node)) out.push(node);
+  (node.children ?? []).forEach(c => collect(c, pred, out));
+  return out;
 }
 
 function mountTab(tab, propsOverride = {}) {
@@ -514,6 +535,53 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
     act(() => renderer.unmount());
   });
 
+  // ── Regression: segColor was missing a `draw` entry ────────────────────────
+  // taxViewBundle.composition emits rmd/conv/draw (App.jsx:2068-2072) but
+  // NumbersScreen's segColor map only had rmd/conv (+ a dead `working`), so the
+  // draw segment rendered `background: undefined` — fully transparent — hiding
+  // the LARGEST tax component and its legend dot. Text assertions can't see
+  // this, so these walk the style props.
+  it("composition bar: every segment has a real colour, none falls through to the ?? fallback", () => {
+    const renderer = mountTab("taxes");
+    const segs = collect(renderer.toJSON(), n => n.props?.style?.opacity === 0.72);
+    expect(segs).toHaveLength(3);   // rmd + conv + draw
+    segs.forEach(s => {
+      expect(typeof s.props.style.background).toBe("string");
+      // t.mut is the `?? t.mut` fallback — reaching it means a key is missing.
+      expect(s.props.style.background).not.toBe(t.mut);
+    });
+    act(() => renderer.unmount());
+  });
+
+  it("composition legend: the 401k-draw dot is coloured (the segment that was invisible)", () => {
+    const renderer = mountTab("taxes");
+    const legendItem = collect(
+      renderer.toJSON(),
+      n => n.props?.style?.gap === 6 && textOf(n).includes("401k draw tax"),
+    );
+    expect(legendItem).toHaveLength(1);
+    const dot = collect(legendItem[0], n => n.props?.style?.width === 8 && n.props?.style?.height === 8);
+    expect(dot).toHaveLength(1);
+    expect(dot[0].props.style.background).toBe(t.warm);
+    act(() => renderer.unmount());
+  });
+
+  it("an UNKNOWN composition key fails visibly (muted grey), never transparent", () => {
+    const renderer = mountTab("taxes", {
+      taxView: {
+        ...taxView,
+        composition: {
+          total: 100_000,
+          segments: [{ label: "Mystery tax", val: 100_000, key: "mystery", pct: 100 }],
+        },
+      },
+    });
+    const segs = collect(renderer.toJSON(), n => n.props?.style?.opacity === 0.72);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].props.style.background).toBe(t.mut);
+    act(() => renderer.unmount());
+  });
+
   it("null taxView renders graceful empty state", () => {
     const renderer = mountTab("taxes", { taxView: null });
     expect(renderer.toJSON()).toBeTruthy();
@@ -581,6 +649,71 @@ describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
     act(() => renderer.unmount());
   });
 
+  // ── Regression: DRIVER_LABELS was missing a `confidence` entry ─────────────
+  // calcPlanDrivers always emits a 4th "confidence" row, so a plan whose Monte
+  // Carlo success rate falls under the guideline used to print the RAW ID
+  // "confidence" verbatim in the badge. Live at the shipped default (mcSuccessPct
+  // 24 < 80). Wording must match OnTrackPill's "Market confidence".
+  it("plan-health badge labels a failing confidence driver, not its raw id", () => {
+    const failingConfidence = {
+      ...planView,
+      drivers: planView.drivers.map(d =>
+        d.id === "confidence" ? { ...d, ok: false, successPct: 62 }
+          : { ...d, ok: true }),
+    };
+    const renderer = mountTab("statement", { planView: failingConfidence });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("1 area to review");
+    expect(allText).toContain("market confidence");
+    // The bare id must never leak through the `?? d.id` fallback.
+    expect(allText).not.toMatch(/(?<!market )confidence/);
+    act(() => renderer.unmount());
+  });
+
+  it("plan-health badge's on-track list is derived from the driver rows (all four)", () => {
+    const allOkPlanView = {
+      ...planView,
+      drivers: planView.drivers.map(d => ({ ...d, ok: true })),
+    };
+    const renderer = mountTab("statement", { planView: allOkPlanView });
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("withdrawal rate · longevity · savings rate · market confidence");
+    act(() => renderer.unmount());
+  });
+
+  // ── Regression: the Statement banner claimed one basis for a mixed tab ─────
+  // "The bottom line" is today's dollars; the "Where the money comes from"
+  // ledger below it is retirement-year dollars (budget.js:194-205). The
+  // banner's blanket "today's dollars" claim was false for the ledger —
+  // removed, per the JourneyScreen precedent (BUGS.md, PR #62 round 2 finding
+  // 13). Removing a false claim isn't the same as declaring the true, mixed
+  // basis, though (rule 11) — each figure now carries its OWN scoped, local
+  // caption instead, so the banner itself must stay silent on basis while the
+  // tab as a whole legitimately mentions both bases, each next to the figure
+  // it actually describes.
+  it("the banner itself makes no blanket dollar-basis claim", () => {
+    const renderer = mountTab("statement");
+    const banner = renderer.root.findAll(n => textOf(n) === "Statement of your plan")[0];
+    expect(banner, "banner text not found").toBeTruthy();
+    expect(textOf(banner)).not.toContain("dollars");
+    act(() => renderer.unmount());
+  });
+
+  it("'the bottom line' carries its own scoped today's-dollars caption", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain(fmtMo(minimalProps.effectiveExpenses)); // sanity: the figure itself
+    expect(allText).toContain("in today's dollars");
+    act(() => renderer.unmount());
+  });
+
+  it("the 'Where the money comes from' ledger carries its own scoped retirement-year-dollars caption", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("in retirement-year dollars");
+    act(() => renderer.unmount());
+  });
+
   it("contributions-vs-growth section shows lifetimeContribROI multiplier", () => {
     const renderer = mountTab("statement");
     const allText = textOf(renderer.root);
@@ -604,6 +737,54 @@ describe("NumbersScreen — Statement tab (Session-3 additions)", () => {
     });
     const allText = textOf(renderer.root);
     expect(allText).not.toContain("compounding multiplier");
+    act(() => renderer.unmount());
+  });
+});
+
+// ── Regression: StmtCol's label-fit guard was inline arithmetic (rule 10) ───
+// StmtCol used to compute `barTotal`/`fitsLabel` itself, with a `?? 0`
+// fallback — arithmetic on model values inside src/horizon/. Moved into
+// budget.js's buildBarSegments (a real >= 0 guard, no `?? 0`); StmtCol now
+// only reads the pre-computed `seg.showLabel` boolean. These tests exercise
+// the wiring end to end (App → NumbersScreen → StmtCol), not just the model
+// function in isolation (covered separately in budget.test.js).
+describe("NumbersScreen — Statement tab composition bars: label-fit comes from the model", () => {
+  // Segment divs share one structural fingerprint (opacity: 0.7) across all
+  // three StmtCol bars — distinct from the Taxes tab's own composition bar
+  // (opacity: 0.72), so this can't accidentally collect the wrong bar's segs.
+  const segsOf = (renderer) => collect(renderer.toJSON(), n => n.props?.style?.opacity === 0.7);
+
+  it("the account-mix bar hides HSA's label (≈5.3% share, under the 12% threshold) but shows the other three", () => {
+    // retVals: 1.8M/900k/600k/184,197 → HSA is 184,197 / 3,484,197 ≈ 5.29%.
+    const renderer = mountTab("statement");
+    const segs = segsOf(renderer);
+    // 3 (Income & tax: Keep/Tax/Save) + 4 (account mix) + 2 (Soc Sec/Portfolio,
+    // no pension in this fixture) = 9 total segments across the three bars.
+    expect(segs).toHaveLength(9);
+    const texts = segs.map(textOf);
+    expect(texts).toContain("401k");
+    expect(texts).toContain("Roth");
+    expect(texts).toContain("Taxable");
+    expect(texts).not.toContain("HSA");
+    act(() => renderer.unmount());
+  });
+
+  it("HSA's label reappears once its share crosses back over 12% — a live model field, not a value baked in once", () => {
+    // HSA grown to 1.0M against the other three unchanged (3.3M) → 1.0M/4.3M ≈ 23.3%.
+    const renderer = mountTab("statement", {
+      retVals: { ...minimalProps.retVals, HSA: 1_000_000 },
+    });
+    const texts = segsOf(renderer).map(textOf);
+    expect(texts).toContain("HSA");
+    act(() => renderer.unmount());
+  });
+
+  it("every segment shows its label when a bar gives all of them room (Income & tax: 49/26/25%)", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    expect(allText).toContain("Keep 49%");
+    expect(allText).toContain("Tax 26%");
+    expect(allText).toContain("Save 25%");
     act(() => renderer.unmount());
   });
 });
@@ -752,6 +933,20 @@ describe("NumbersScreen — Statement tab (Session-4: income replacement)", () =
     act(() => renderer.unmount());
   });
 
+  // Item 6 (BUG-122 batch): this strip was the THIRD site the rule-11
+  // basis-caption pass was supposed to cover but missed (commit 022cced only
+  // fixed "the bottom line" and the "Where the money comes from" ledger). It
+  // renders the same retirement-year figures as the ledger above it, so now
+  // carries the SAME caption text — proving there are genuinely TWO scoped
+  // captions on the tab (one per site), not one shared claim reused by count.
+  it("the companion strip carries its own scoped retirement-year-dollars caption, distinct from the ledger's", () => {
+    const renderer = mountTab("statement");
+    const allText = textOf(renderer.root);
+    const occurrences = allText.split("in retirement-year dollars").length - 1;
+    expect(occurrences).toBe(2);
+    act(() => renderer.unmount());
+  });
+
   it("retirement income strip hidden when monthlyTotal is 0", () => {
     const renderer = mountTab("statement", {
       statementView: { ...statementView, monthlyTotal: 0, gross: 100_000 },
@@ -821,3 +1016,132 @@ describe("NumbersScreen — Year by year (Session-4: deeper numbers)", () => {
   });
 });
 
+
+// ── Horizon design review, Slice 2.5 — narrow-viewport rendering ──────────────
+// Three separate "fixed-size text inside a box that shrinks" failures on this
+// screen. react-test-renderer has no layout engine, so each is asserted at the
+// point where the DECISION is made (a pure helper, or a declared style/branch)
+// rather than by measuring pixels — the same approach as touch-targets.test.js.
+
+describe("IncomeWaterfall — bar labels wrap instead of overrunning their slot", () => {
+  it("wrapBarLabel splits a two-word label at its space", () => {
+    expect(wrapBarLabel("Pre-tax savings")).toEqual(["Pre-tax", "savings"]);
+    expect(wrapBarLabel("After-tax savings")).toEqual(["After-tax", "savings"]);
+    expect(wrapBarLabel("Gross income")).toEqual(["Gross", "income"]);
+  });
+
+  it("leaves a single-word label alone", () => {
+    expect(wrapBarLabel("Taxes")).toEqual(["Taxes"]);
+  });
+
+  it("breaks a three-word label at the space nearest its middle", () => {
+    expect(wrapBarLabel("after all saving")).toEqual(["after all", "saving"]);
+  });
+
+  it("never drops or reorders a word", () => {
+    for (const l of ["Gross income", "Taxes", "Pre-tax savings", "After-tax savings",
+                     "Spending budget", "after all saving"]) {
+      expect(wrapBarLabel(l).join(" ")).toBe(l);
+    }
+  });
+
+  // The narrow branch itself. Two things have to be arranged for it: the
+  // waterfall measures its own width (a node mock, since refs are null under
+  // react-test-renderer, so it otherwise keeps its 520px default), and it needs
+  // its full five bars — the shared fixture has no pre/post-tax savings, so it
+  // renders three wide ones and is never narrow at any realistic width.
+  const fiveBarView = {
+    ...statementView,
+    showPreTaxBar: true, showPostTaxBar: true, showPaycheckLine: true,
+    takeHomePay: 49_150, afterTaxSavings: 7_000,
+  };
+  function mountWaterfallAt(width) {
+    let renderer;
+    act(() => {
+      renderer = create(
+        React.createElement(NumbersScreen, {
+          t, props: { ...minimalProps, statementView: fiveBarView }, initialTab: "statement",
+        }),
+        { createNodeMock: () => ({ offsetWidth: width }) },
+      );
+    });
+    return renderer;
+  }
+
+  it("drops the sub-labels at a phone width and keeps them at desktop width", () => {
+    const narrow = mountWaterfallAt(330);   // 5 bars → 66px slots
+    expect(textOf(narrow.root)).not.toContain("fed · FICA");
+    act(() => narrow.unmount());
+
+    const wide = mountWaterfallAt(900);     // 180px slots
+    expect(textOf(wide.root)).toContain("fed · FICA");
+    act(() => wide.unmount());
+  });
+
+  it("renders the wrapped label as tspans at a phone width, one line at desktop", () => {
+    const narrow = mountWaterfallAt(330);
+    expect(collect(narrow.toJSON(), n => n.type === "tspan").length).toBeGreaterThan(0);
+    act(() => narrow.unmount());
+
+    const wide = mountWaterfallAt(900);
+    expect(collect(wide.toJSON(), n => n.type === "tspan")).toEqual([]);
+    act(() => wide.unmount());
+  });
+});
+
+describe("Statement bar segments hide a label they are too narrow to hold", () => {
+  // The bar's own segments, not the ledger rows above it (which name the same
+  // income sources in prose and would make a page-wide text assertion useless).
+  const segText = (renderer) => collect(renderer.toJSON(),
+    n => n.props?.style?.opacity === 0.7).map(textOf).join("|");
+
+  it("a segment under 12% of the bar renders no label; the others keep theirs", () => {
+    // Pension is 4% of this income bar — under the guard.
+    const renderer = mountTab("statement", {
+      statementView: {
+        ...statementView,
+        monthlyHHSS: 3_000, monthlyPension: 250, monthlyPortDraw: 3_000,
+      },
+    });
+    const segs = segText(renderer);
+    expect(segs).toContain("Soc Sec");
+    expect(segs).toContain("Portfolio");
+    expect(segs).not.toContain("Pension");
+    act(() => renderer.unmount());
+  });
+
+  it("the same segment keeps its label once it is wide enough", () => {
+    const renderer = mountTab("statement", {
+      statementView: {
+        ...statementView,
+        monthlyHHSS: 3_000, monthlyPension: 3_000, monthlyPortDraw: 3_000,
+      },
+    });
+    expect(segText(renderer)).toContain("Pension");
+    act(() => renderer.unmount());
+  });
+});
+
+describe("Year-by-year table declares a scroll affordance on mobile only", () => {
+  const maskOf = (renderer) => collect(renderer.toJSON(),
+    n => typeof n.props?.style?.WebkitMaskImage === "string");
+
+  it("mobile gets the edge fade and the swipe hint", () => {
+    let renderer;
+    act(() => {
+      renderer = create(React.createElement(NumbersScreen, {
+        t, props: minimalProps, initialTab: "yearly", isMobile: true,
+      }));
+    });
+    expect(maskOf(renderer).length).toBe(1);
+    expect(textOf(renderer.root)).toContain("Swipe the table sideways");
+    act(() => renderer.unmount());
+  });
+
+  it("desktop gets neither — the card is wide enough to show the whole grid", () => {
+    const renderer = mountTab("yearly");
+    expect(maskOf(renderer)).toEqual([]);
+    expect(textOf(renderer.root)).not.toContain("Swipe the table sideways");
+    act(() => renderer.unmount());
+  });
+});

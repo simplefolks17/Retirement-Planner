@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { HF, HM } from "./ThemeContext.jsx";
+import React from "react";
+import { HM } from "./ThemeContext.jsx";
+import { Btn } from "./shared.jsx";
 
 // ── Explore tray ─────────────────────────────────────────────────────────────
 // The single arc-anchored control surface on the Plan screen. Both ways to
@@ -18,34 +19,48 @@ const FACETS = [
   { k: "goals",  label: "Goals",        icon: "✦" },
 ];
 
+// `isMobile` is accepted but deliberately unread: the tray owns only the quiet
+// bar, which already wraps, and both facet TABS are Btn call sites carrying the
+// shared 44px floor — there is no width-dependent decision left to make here.
+// Kept in the signature (rather than dropped) because the facet bodies passed in
+// as nodes are built by PlanScreen, which will hand this prop down if a mobile
+// branch is ever needed; a fake usage would be worse than a documented no-op.
+// CONTROLLED as of the Plan-content redesign: `open`/`onOpenChange` replace what
+// used to be this component's own useState. The state moved up to PlanScreen
+// because two stat cards ("Retire at", "Spending each month") now open the
+// "Try a change" facet and scroll to it — the levers those cards describe live
+// in this tray, one scroll up on the same screen, and a card cannot open a tray
+// whose state it can't reach.
+//
+// The lifted value keeps the EXACT tri-state contract it had as local state —
+// see the `effOpen` note below. Anything that collapses it to a plain boolean
+// reintroduces the collapse-does-nothing bug recorded there.
 export default function ExploreTray({
   t, isMobile, goalsCount = 0, changeStaged = false, changeFacet, goalsFacet,
+  open = null, onOpenChange,
 }) {
   // Tri-state: null = auto (falls back to "change" while a change is staged,
   // so a staged Apply/Discard is never silently hidden by default), "closed" =
   // the user explicitly collapsed (wins over the staged fallback — without
   // this sentinel the fallback re-opened the tray on every render and the
   // collapse click silently did nothing), or a facet key.
-  const [open, setOpen] = useState(null);
   const effOpen = open === "closed" ? null : (open ?? (changeStaged ? "change" : null));
 
   // Collapsing while a change is staged is allowed: the offsets live in
   // PlanScreen (nothing is lost), the staged dot on the facet tab stays
   // visible on the collapsed bar, and one click reopens to Apply/Discard.
-  const toggle = (k) => setOpen(effOpen === k ? "closed" : k);
+  const toggle = (k) => onOpenChange?.(effOpen === k ? "closed" : k);
 
+  // This tab was the model for the shared Btn primitive (a real
+  // `<button type="button">` carrying `aria-pressed`, with the border reserved
+  // and only its colour toggled). It now uses Btn itself, so the exemplar and
+  // the primitive can't drift — and it picks up the 44px touch target it was
+  // ~30px short of.
   const tab = (f) => {
     const on = effOpen === f.k;
     return (
-      <button key={f.k} type="button" onClick={() => toggle(f.k)} aria-pressed={on}
-        style={{
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "7px 13px", borderRadius: 9, cursor: "pointer",
-          border: `1px solid ${on ? t.accent : t.line2}`,
-          background: on ? `${t.accent}14` : "transparent",
-          font: `${on ? 600 : 500} 13px ${HF}`, color: on ? t.ink : t.mut,
-          transition: "all .12s",
-        }}>
+      <Btn key={f.k} t={t} onClick={() => toggle(f.k)} pressed={on}
+        style={{ justifyContent: "flex-start" }}>
         <span aria-hidden style={{ fontSize: 13 }}>{f.icon}</span>
         {f.label}
         {f.k === "change" && changeStaged && (
@@ -53,7 +68,7 @@ export default function ExploreTray({
             width: 6, height: 6, borderRadius: 999, background: t.accent, marginLeft: 1,
           }} />
         )}
-      </button>
+      </Btn>
     );
   };
 
@@ -65,14 +80,14 @@ export default function ExploreTray({
       {/* ── the quiet bar ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 7 }}>{FACETS.map(tab)}</div>
+        {/* Was the worst target in the app — a bare `<button>` with zero padding
+            (~14px tall). Btn's `ghost` variant keeps the quiet, link-like look
+            while giving it a real 44px hit area. */}
         {goalsCount > 0 && effOpen !== "goals" && (
-          <button type="button" onClick={() => toggle("goals")}
-            style={{
-              background: "transparent", border: "none", cursor: "pointer",
-              font: `500 12px ${HM}`, color: t.faint,
-            }}>
+          <Btn t={t} size="sm" variant="ghost" tone="faint" onClick={() => toggle("goals")}
+            style={{ fontFamily: HM }}>
             Goals · {goalsCount}
-          </button>
+          </Btn>
         )}
       </div>
 

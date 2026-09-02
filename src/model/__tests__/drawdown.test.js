@@ -58,6 +58,115 @@ describe("calcRetIncomeFlow (WI-2.6)", () => {
   });
 });
 
+// ── guaranteedPct — Plan's "Guaranteed for life" card ────────────────────────
+// The card exists to stop the page overclaiming; the field's whole job is that
+// a spouse's TEMPORARY gap-year paycheck can never be counted as permanent
+// income. That is the property these tests pin, not just the arithmetic.
+describe("calcRetIncomeFlow — guaranteedPct (SS + pension only)", () => {
+  it("is (ss + pension) / expenses", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: 10_000 });
+    expect(f.guaranteedIncome).toBe(40_000);
+    expect(f.guaranteedPct).toBe(50);
+  });
+
+  it("EXCLUDES a spouse's gap-year income from the numerator but keeps it in the denominator", () => {
+    // Same household, same $80k spend, same $20k SS. The only difference is a
+    // spouse still working. Their pay reduces the PORTFOLIO draw — it must not
+    // move the guaranteed share, because it stops at their own retirement.
+    const withoutSpouse = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 20_000, pension: 0 });
+    const withSpouse = calcRetIncomeFlow({
+      effectiveExpenses: 80_000, ss: 20_000, pension: 0, spouseIncome: 40_000,
+    });
+    expect(withSpouse.portfolioDraw).toBe(20_000);   // spouse pay did reduce the draw
+    expect(withSpouse.spouseIncome).toBe(40_000);
+    expect(withSpouse.guaranteedIncome).toBe(20_000); // …and not the guarantee
+    expect(withSpouse.guaranteedPct).toBe(25);
+    expect(withSpouse.guaranteedPct).toBe(withoutSpouse.guaranteedPct);
+    // The "everything that isn't portfolio draw" definition this replaces would
+    // have read 75% here — the exact overclaim the card is meant to prevent.
+    const naive = Math.round(((80_000 - withSpouse.portfolioDraw) / 80_000) * 100);
+    expect(naive).toBe(75);
+    expect(withSpouse.guaranteedPct).not.toBe(naive);
+  });
+
+  it("a spouse-income-only household is 0% guaranteed, not 100%", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 60_000, ss: 0, pension: 0, spouseIncome: 60_000 });
+    expect(f.portfolioDraw).toBe(0);       // nothing drawn from savings that year…
+    expect(f.guaranteedPct).toBe(0);       // …and nothing guaranteed for life either
+  });
+
+  it("uses the SCALED bands on the over-funded edge, so it can never exceed 100", () => {
+    const f = calcRetIncomeFlow({ effectiveExpenses: 40_000, ss: 30_000, pension: 30_000 });
+    expect(f.guaranteedPct).toBe(100);
+  });
+
+  // BUG-122: this is the case the two tests above can't reach. "Over-funded"
+  // alone (no spouse) never discriminates the raw-vs-scaled source, because
+  // `scale` is 1 unless incomeTotal > exp; "spouse-exclusion" alone never
+  // discriminates it either, because that fixture's incomeTotal stays under
+  // exp (scale is still 1 there). Only BOTH together — spouse income pushing
+  // incomeTotal over exp — puts a live `scale < 1` factor on the SS/pension
+  // bands, which is exactly what used to leak spouse income into the percent.
+  it("is identical with and without a spouse's income even in the SCALED (over-funded) regime — the actual dilution repro (BUG-122)", () => {
+    // exp 40k, ss 30k alone: under-funded, scale=1, guaranteedPct = 75.
+    const withoutSpouse = calcRetIncomeFlow({ effectiveExpenses: 40_000, ss: 30_000, pension: 0 });
+    expect(withoutSpouse.guaranteedPct).toBe(75);
+    // Same household, spouse adds 30k: incomeTotal (60k) > exp (40k) — the
+    // scaled regime. Pre-fix, ssBand was scaled down by spouseIncome's own
+    // share of incomeTotal, diluting the percent even though ss itself didn't
+    // change. Post-fix, the percent must stay unchanged.
+    const withSpouse = calcRetIncomeFlow({
+      effectiveExpenses: 40_000, ss: 30_000, pension: 0, spouseIncome: 30_000,
+    });
+    expect(withSpouse.portfolioDraw).toBe(0);        // fully over-funded, nothing drawn
+    expect(withSpouse.guaranteedPct).toBe(75);
+    expect(withSpouse.guaranteedPct).toBe(withoutSpouse.guaranteedPct);
+    // The scaled-band formula this replaces would have read 50 here
+    // (ssBand = 30k * (40k/60k) = 20k → 20k/40k = 50%) — proving this fixture
+    // actually reaches the regime the earlier tests couldn't.
+    const scaleDilutedFormula = Math.round((30_000 * (40_000 / 60_000) / 40_000) * 100);
+    expect(scaleDilutedFormula).toBe(50);
+    expect(withSpouse.guaranteedPct).not.toBe(scaleDilutedFormula);
+  });
+
+  it("is null — a designed '—', never 0 — when there are no expenses to take a share of", () => {
+    expect(calcRetIncomeFlow({ effectiveExpenses: 0, ss: 20_000, pension: 0 }).guaranteedPct).toBeNull();
+  });
+
+  it("is basis-INVARIANT: inflating every input by the same factor leaves it unchanged", () => {
+    // The Plan screen's dollar-basis toggle must not move this number, which is
+    // only true because numerator and denominator scale together.
+    const factor = 1.03 ** 35;
+    const today = calcRetIncomeFlow({ effectiveExpenses: 57_377, ss: 24_000, pension: 6_000 });
+    const retYear = calcRetIncomeFlow({
+      effectiveExpenses: 57_377 * factor, ss: 24_000 * factor, pension: 6_000 * factor,
+    });
+    expect(retYear.guaranteedPct).toBe(today.guaranteedPct);
+  });
+
+  // BUG-129: buildBarSegments (budget.js) already guards Number.isFinite one
+  // function away; guaranteedPct had no equivalent guard, so a non-finite
+  // ss/pension produced guaranteedPct: NaN — which PlanScreen.jsx's `pct !=
+  // null` test passes straight through to render as the literal string "NaN%"
+  // instead of the designed "—" empty state. No live App path reaches this
+  // today (every input is numeric) — a defensive-contract gap only, same class
+  // as the already-filed BUG-98.
+  it("BUG-129: a non-finite ss/pension yields guaranteedPct: null (the designed '—'), never NaN", () => {
+    expect(calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: NaN, pension: 10_000 }).guaranteedPct)
+      .toBeNull();
+    expect(calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: NaN }).guaranteedPct)
+      .toBeNull();
+    expect(calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: Infinity, pension: 10_000 }).guaranteedPct)
+      .toBeNull();
+    // The rest of the bundle isn't the concern of this guard (scoped to
+    // guaranteedPct only, matching buildBarSegments' own narrow contract) —
+    // just confirm the function doesn't throw and returns a well-formed object.
+    const f = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: NaN, pension: 10_000 });
+    expect(typeof f).toBe("object");
+    expect(Number.isNaN(f.guaranteedPct)).toBe(false);
+  });
+});
+
 describe("calcNetPortfolioNeed", () => {
   it("subtracts SS and pension from expenses", () => {
     expect(calcNetPortfolioNeed(80_000, 30_000, 10_000)).toBe(40_000);

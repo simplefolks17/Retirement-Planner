@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt, resolveSpouseRetAge } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -26,7 +26,7 @@ import { calcOptimizedScenario } from "./model/optimization.js";
 import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "./model/accumulation.js";
-import { fvAnnuity, toRetirementYearDollars } from "./model/finance-math.js";
+import { fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
 import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
@@ -296,9 +296,9 @@ export default function App() {
   // render, so a value valid when written can still fall outside a moved range.
   const spouseRetAgeMin = spouseCurrentAge + 1;
   const spouseRetAgeMax = Math.max(spouseRetAgeMin, lifeExpect - 1);
-  const effectiveSpouseRetAge = Math.min(
-    spouseRetAgeMax,
-    Math.max(spouseRetAgeMin, spouseRetirementAge ?? retirementAge));
+  const effectiveSpouseRetAge = resolveSpouseRetAge({
+    spouseRetirementAge, primaryRetAge: retirementAge, spouseCurrentAge, lifeExp: lifeExpect,
+  });
   // HSA family HDHP limit is a SHARED household ceiling (rule 4). Under 'self' each
   // person keeps the self-only cap (runSimulation's default, HSA_LIMIT_2026 — the
   // existing behavior, byte-identical). Under 'family' the household shares
@@ -1470,9 +1470,15 @@ export default function App() {
     // point (read at the SCENARIO's retirement age) and the gap-year maps need to be
     // rebuilt, via the SAME buildSpouseRetirementSeed builder the main path uses. null
     // with no spouse (inert).
+    // BUG-127: carry the RAW spouseRetirementAge (may be null = "auto") plus
+    // spouseCurrentAge/lifeExp, not the already-resolved effectiveSpouseRetAge
+    // — a scenario must resolve the spouse's retirement age against ITS OWN
+    // retirement age (resolveSpouseRetAge, retirement-phase.js), never the base
+    // plan's frozen value, or a "work longer" scenario silently deletes a year
+    // of spouse gap-year income for every year worked instead of adding one.
     spouseSeedInputs: hasSpouse ? {
       spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-      spouseRetAge: effectiveSpouseRetAge, spouseNetRate, inflationRate,
+      spouseRetirementAge, lifeExp: lifeExpect, spouseNetRate, inflationRate,
     } : null,
     // #30 interop: the same two args App's own buildAccumChart call passes, so a
     // resim's accumulation chart is HOUSEHOLD like the main path's (a pre-existing
@@ -1485,7 +1491,7 @@ export default function App() {
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
        addlPreTaxBal, depletionAge,
        hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-       effectiveSpouseRetAge, spouseNetRate, inflationRate,
+       spouseRetirementAge, lifeExpect, spouseNetRate, inflationRate,
        spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
@@ -1550,6 +1556,11 @@ export default function App() {
   const planView = useMemo(() => ({
     ...calcPlanProgress({
       yearsSustained, isSustainable, lifeExpect: safeLifeExp, retirementAge: safeRetAge,
+      // Passed THROUGH from the one shared retirement walk, never re-derived
+      // from retirementAge + yearsSustained — feeds planView.depletionAge /
+      // yearsShortOfPlan / outlastsPlan (Plan's "Money lasts to" card + the
+      // honest verdict sentence).
+      depletionAge,
     }),
     drivers: calcPlanDrivers({
       withdrawalRate, yearsSustained, isSustainable,
@@ -1561,7 +1572,7 @@ export default function App() {
       temporaryIncomeBasis: spouseIncomeAtRet > 0,
       basisEndsAtAge: effectiveSpouseRetAge,
     }),
-  }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge,
+  }), [yearsSustained, isSustainable, safeLifeExp, safeRetAge, depletionAge,
        withdrawalRate, currentContribTotal, takeHome, mcSuccessPct,
        spouseIncomeAtRet, effectiveSpouseRetAge]);
 
@@ -1579,45 +1590,204 @@ export default function App() {
   // object on each call, so moving it outside would make it an unstable dep — V9).
   const currentSaved = bal401k + balRoth + balTaxable + balHSA;
   const planHighlights = useMemo(() => {
-    // retIncomeFlow (BUG-91) is a RETIREMENT-YEAR-dollar breakdown — ss/pension/
-    // portfolioDraw must sum to the SAME frame `netPortfolioNeed` uses, so it's
-    // built from retSpendBasis/retPensionBasis (ssAtRet/spouseIncomeAtRet are
-    // already in that frame). incomeReplacementPct is a DIFFERENT comparison
-    // (today's spend vs. today's take-home) and deliberately stays on the raw
-    // effectiveExpenses.
-    const flow = calcRetIncomeFlow({
-      effectiveExpenses: retSpendBasis, ss: ssAtRet, pension: retPensionBasis,
-      spouseIncome: spouseIncomeAtRet,
-    });
-    const base = Math.max(1, retSpendBasis);
-    return {
-      wealthMultiplier: currentSaved > 0
-        ? Math.round((totalAtRet / currentSaved) * 10) / 10
-        : null,
-      incomeReplacementPct: takeHome > 0
-        ? Math.min(200, Math.round((effectiveExpenses / takeHome) * 100))
-        : null,
-      retIncomeFlow: {
+    // ── The two dollar bases (rule 11), built ONCE, both shipped ──────────────
+    // The Plan screen used to contradict itself about which one it was showing:
+    // the Income Meter read the retirement-year figures while the stat card
+    // ~20px below it read raw `effectiveExpenses` — the same concept, differing
+    // by the full inflation factor. Rather than silently pick one, the screen
+    // now shows TODAY's dollars by default with a visible toggle, so BOTH are
+    // built here and neither is derived in a screen.
+    //
+    //   retirement — the frame the retirement WALK is denominated in (the
+    //     PRIMARY's retirement-year purchasing power, BUG-90/BUG-91). This is
+    //     the basis `netPortfolioNeed` uses, so ss/pension/spouse/portfolioDraw
+    //     reconcile against the engine exactly. ssAtRet / spouseIncomeAtRet are
+    //     ALREADY in this frame (SS is nominal at the claim date by the engine's
+    //     convention; the spouse map was deflated to it by BUG-90).
+    //   today — the same four streams expressed in TODAY's buying power.
+    //     effectiveExpenses / effectivePension are the user's own entered
+    //     numbers, already today's dollars, so they are read RAW (never
+    //     round-tripped through the factor). SS and the spouse's gap-year pay
+    //     have no today's-dollar source figure, so they are deflated back with
+    //     inflationRebaseFactor at a NEGATIVE year count — the bidirectional
+    //     helper, not toRetirementYearDollars, which clamps negatives to a
+    //     no-op and would silently leave them in the wrong frame.
+    const toTodayFactor = inflationRebaseFactor(inflationRate, -yearsToRetForBasis);
+    const decorate = (flow) => {
+      const base = Math.max(1, flow.expenses);
+      return {
         ...flow,
         hasSS:        flow.ss > 0,
         hasPension:   flow.pension > 0,
         hasSpouseIncome: flow.spouseIncome > 0,
-        ssPct:        Math.round(flow.ss           / base * 100),
+        ssPct:        Math.round(flow.ss            / base * 100),
         pensionPct:   Math.round(flow.pension       / base * 100),
         spouseIncomePct: Math.round(flow.spouseIncome / base * 100),
         portfolioPct: Math.round(flow.portfolioDraw / base * 100),
+      };
+    };
+    const flowRetirement = decorate(calcRetIncomeFlow({
+      effectiveExpenses: retSpendBasis, ss: ssAtRet, pension: retPensionBasis,
+      spouseIncome: spouseIncomeAtRet,
+    }));
+    const flowToday = decorate(calcRetIncomeFlow({
+      effectiveExpenses, ss: ssAtRet * toTodayFactor, pension: effectivePension,
+      spouseIncome: spouseIncomeAtRet * toTodayFactor,
+    }));
+    // BUG-122 (Findings 3+4): "Guaranteed for life" is a LIFETIME claim, so its
+    // headline percentage must come from the EVENTUAL (ungated) SS + pension
+    // streams — householdSS / retPensionAnnualBasis, the same ungated fields
+    // budget.js's calcStatementView already reads for the Statement screen's
+    // "Where the money comes from" ledger (~budget.js lines 194-210) — never
+    // the retirement-year-GATED ssAtRet/retPensionBasis snapshot flowRetirement
+    // uses for its bands (that snapshot is correctly 0 before SS/pension have
+    // actually started, which is right for the bands but wrong for a lifetime
+    // percentage: it read 0% for every new user whose SS simply hasn't started
+    // YET). Reusing calcRetIncomeFlow (not a bespoke formula) keeps this the
+    // one place guaranteedPct is computed. Both householdSS and
+    // retPensionAnnualBasis are already in the retirement-year frame
+    // retSpendBasis is in (see the comment above), so the ratio is exact.
+    const flowGuaranteedPct = calcRetIncomeFlow({
+      effectiveExpenses: retSpendBasis, ss: householdSS, pension: retPensionAnnualBasis,
+      spouseIncome: spouseIncomeAtRet,
+    });
+    // Lifetime-income sources that have NOT started by the primary's retirement
+    // (rule 5b start gates), earliest first — see `guaranteed.startsAtAge` below.
+    // BUG-131 (Item 2): kept as the FULL sorted list (not just [0]) so the card
+    // can name every pending source, not only the earliest — see
+    // `guaranteed.pendingSources` below, which reuses this same array instead of
+    // a second copy of the eligibility gates.
+    const pendingGuaranteedStarts = [
+      ...(includeSS && householdSS > 0 && ssClaimingAge > safeRetAge
+        ? [{ age: ssClaimingAge, label: "Social Security" }] : []),
+      ...(pensionMonthly > 0 && pensionStartAge > safeRetAge
+        ? [{ age: pensionStartAge, label: "Your pension" }] : []),
+    ].sort((a, b) => a.age - b.age);
+    const nextGuaranteedStart = pendingGuaranteedStarts[0] ?? null;
+    // Whether the plan's own savings actually last until a given pending-source
+    // age (calcPlanProgress's already-computed outlastsPlan/depletionAge — never
+    // a fresh age comparison in the screen). Shared by `startsAtAge`'s single
+    // value below and every entry of `pendingSources`.
+    const savingsCoverUntil = (age) => planView.outlastsPlan === true
+      || (planView.depletionAge != null && planView.depletionAge >= age);
+    return {
+      wealthMultiplier: currentSaved > 0
+        ? Math.round((totalAtRet / currentSaved) * 10) / 10
+        : null,
+      // A DIFFERENT comparison from the flows above (today's spend vs. today's
+      // take-home) — basis-invariant by construction, so it is NOT toggled.
+      incomeReplacementPct: takeHome > 0
+        ? Math.min(200, Math.round((effectiveExpenses / takeHome) * 100))
+        : null,
+      // Keyed by the dollar-basis option id below — the screen SELECTS one, it
+      // never converts (rule 10).
+      incomeFlowByBasis: { today: flowToday, retirement: flowRetirement },
+      // "Guaranteed for life" card. A RATIO, so it is basis-INVARIANT — both
+      // flows above scale numerator and denominator by the same inflation
+      // factor and agree exactly. Deliberately NOT wired to the toggle for the
+      // same reason ages and percentages aren't.
+      //   pct — (SS + pension) / spending, read off `flowGuaranteedPct`
+      //     (BUG-122, above) — the UNGATED eventual streams, because this is a
+      //     lifetime claim, not a snapshot of this year. calcRetIncomeFlow
+      //     keeps the spouse's gap-year pay OUT of the numerator on purpose
+      //     (see its comment): it stops at the spouse's own retirement age, so
+      //     it is real income but not guaranteed-for-life income.
+      //   hasSS / hasPension / hasSpouseIncome — deliberately still read off
+      //     `flowRetirement`, the GATED retirement-year snapshot: these drive
+      //     the sub-copy's TIMING narrative ("has this actually started by
+      //     retirement"), a different question from the lifetime pct above.
+      //   hasSpouseIncome — true when that excluded pay is part of the
+      //     denominator, so the card's sub-copy can name where "the rest" comes
+      //     from honestly instead of implying it is all portfolio.
+      //   everHasSS / everHasPension (BUG-131 Item 2) — ungated: does this
+      //     household EVENTUALLY get Social Security / a pension at all, same
+      //     eligibility test `pendingGuaranteedStarts` above already uses. The
+      //     card's source naming ("Social Security + pension", "Your pension",
+      //     …) must read THESE, not the gated hasSS/hasPension above — pct is a
+      //     lifetime figure built from the same ungated streams (BUG-122), so
+      //     naming its sources off the gated snapshot could name a source pct
+      //     already counts (or silently omit one, as BUG-131's repro A did:
+      //     100% built mostly from a pension that hadn't started yet, and the
+      //     card never mentioned it).
+      //   fullyCovered (BUG-131 Item 2) — pct already at/above 100: the sub-copy
+      //     must not ALSO claim "the rest comes from your savings" once there
+      //     is no "rest" left by the model's own number.
+      //   startsAtAge / startsLabel — the single EARLIEST pending gated source
+      //     (rule 5b), kept for the existing single-source copy path; null when
+      //     nothing further is pending.
+      //   savingsCoverUntilStart — startsAtAge's own coverage flag (see
+      //     pendingSources below for the general, multi-source form).
+      //   pendingSources (BUG-131 Item 2) — EVERY pending gated source (not
+      //     just the earliest), each with its own start age/label and its own
+      //     savingsCoverUntilStart, so the card can name a second (or third)
+      //     source instead of silently dropping it, and never re-derive ages
+      //     from scratch in the screen (rule 10).
+      guaranteed: {
+        pct: flowGuaranteedPct.guaranteedPct,
+        hasSS: flowRetirement.hasSS,
+        hasPension: flowRetirement.hasPension,
+        hasSpouseIncome: flowRetirement.hasSpouseIncome,
+        everHasSS: includeSS && householdSS > 0,
+        everHasPension: pensionMonthly > 0,
+        fullyCovered: flowGuaranteedPct.guaranteedPct != null && flowGuaranteedPct.guaranteedPct >= 100,
+        startsAtAge: nextGuaranteedStart?.age ?? null,
+        startsLabel: nextGuaranteedStart?.label ?? null,
+        savingsCoverUntilStart: nextGuaranteedStart == null
+          ? null
+          : savingsCoverUntil(nextGuaranteedStart.age),
+        pendingSources: pendingGuaranteedStarts.map(s => ({
+          age: s.age, label: s.label, savingsCoverUntilStart: savingsCoverUntil(s.age),
+        })),
       },
-      lifetimeTaxBurden: (retPhase?.rmdTaxBite ?? 0) + (retPhase?.conversionCost ?? 0),
+      // The toggle's own options, with their captions, so no age arithmetic or
+      // basis copy lives in JSX. `dollarBasisApplicable` is false once there are
+      // no years left to inflate over (already retired) — the two bases are then
+      // the same number and a toggle would be noise, so the screen renders the
+      // today basis with no control at all.
+      //
+      // showsReplacementPct (BUG-132, Item 3) — incomeReplacementPct above is
+      // DELIBERATELY basis-invariant (BUG-114): it always compares retirement
+      // spending to TODAY's take-home pay, never to the toggled figure. Once
+      // the meter can show a DIFFERENT (retirement-year) dollar amount beside
+      // it, the ratio no longer has an on-screen referent — e.g. "$18,900/mo
+      // replaces 84%" beside a $5,700/mo paycheck reads as 332%, not 84%. Only
+      // the "today" option's copy is honest to show beside; carrying the flag
+      // ON THE OPTION (not a bare basis-id string comparison in the screen)
+      // keeps the screen's gate a model-provided field, same as label/caption/
+      // cardSub already are, and keeps working automatically if a third basis
+      // is ever added.
+      dollarBasisOptions: [
+        {
+          id: "today", label: "Today's money",
+          caption: "Retirement income and spending shown in today's buying power.",
+          cardSub: "in today's money", showsReplacementPct: true,
+        },
+        {
+          id: "retirement", label: `At ${safeRetAge}`,
+          caption: `Retirement income and spending shown in age-${safeRetAge} dollars — the same lifestyle after ${yearsToRetForBasis} years of inflation.`,
+          cardSub: `in age-${safeRetAge} dollars`, showsReplacementPct: false,
+        },
+      ],
+      dollarBasisApplicable: yearsToRetForBasis > 0,
       yearsToRetirement:  Math.max(0, safeRetAge - currentAge),
       retirementDuration: Math.max(0, safeLifeExp - safeRetAge),
+      // takeHome is a HOUSEHOLD figure for MFJ filers (rule 9, tax-basis.js) but
+      // the Plan card that shows it was unconditionally primary-voiced ("You
+      // keep"). Pre-gated here so the screen picks a label rather than testing
+      // filingStatus/spouseIncome itself (rule 8) — the same shape as Classic's
+      // own conditional "Est. Household Paycheck Deposit" and BUG-96's
+      // showHouseholdTotal.
+      takeHomeIsHousehold: filingStatus === "mfj" && spouseIncome > 0,
       // #30 / BUG-82: passed through (not computed here) — see spouseIncomeScopeNote
       // and spouseSpilloverNote (Finding 1) above.
       spouseIncomeScopeNote,
       spouseSpilloverNote,
     };
   }, [currentSaved, totalAtRet, takeHome, effectiveExpenses, retSpendBasis,
-      ssAtRet, retPensionBasis, retPhase, safeRetAge, safeLifeExp, currentAge,
-      spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote]);
+      ssAtRet, retPensionBasis, retPensionAnnualBasis, effectivePension, inflationRate, yearsToRetForBasis,
+      safeRetAge, safeLifeExp, currentAge, filingStatus, spouseIncome,
+      includeSS, householdSS, ssClaimingAge, pensionMonthly, pensionStartAge,
+      spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote, planView]);
 
   // Plan screen "Try a change" slider bounds — age/financial math extracted from the screen (rule 10).
   // canTuneRothConversion: pre-gated eligibility boolean so the screen never does > 0 check.

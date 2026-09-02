@@ -48,7 +48,11 @@ afterAll(() => {
 // collapsed toggle or a non-default sub-tab — so finding it proves the screen's
 // own body mounted (not a fallback). See the coverage guard below.
 const SCREEN_MARKERS = {
-  plan:     "Income for life",        // PlanScreen stat-card label
+  // "Income for life" until the Plan-content redesign retired that label (it
+  // promised a guarantee over a spending target). "Guaranteed for life" is its
+  // replacement card's label: rendered unconditionally in the stat row (only its
+  // VALUE has a "—" edge state), and unique to this screen.
+  plan:     "Guaranteed for life",    // PlanScreen stat-card label
   journey:  "Building years",         // JourneyScreen Chapter 2 headline
   numbers:  "Year by year",           // NumbersScreen tab label (always rendered)
   strategies: "Ways to keep more of what you've built", // StrategiesScreen subtitle (card-grid root)

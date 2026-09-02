@@ -7,6 +7,8 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
 import { fmt, fmtFull } from "../formatters.js";
+import { Btn } from "../horizon/shared.jsx";
+import { useDialogBehaviour } from "../horizon/useDialogBehaviour.js";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
 import PlanScreen    from "../horizon/screens/PlanScreen.jsx";
 import JourneyScreen from "../horizon/screens/JourneyScreen.jsx";
@@ -38,10 +40,31 @@ function Logo({ t }) {
 // COPY + FORMATTING ONLY here: every number, comparison, and ok flag comes from
 // the model rows (rule 10); null edge states (sustainedYears, savingsRatePct,
 // ok) are rendered as designed text, never synthesized numbers.
-function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
+function OnTrackPill({ t, isSustainable, drivers }) {
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
   const color = isSustainable ? t.good : t.warm;
   const label = isSustainable ? "On track" : "Needs attention";
+
+  // BUG-50: the popover used to close ONLY via its own ✕ or by re-clicking the
+  // pill — clicking elsewhere, or navigating to another screen, left it pinned
+  // over the top-right corner. It is the one overlay in the app with no
+  // backdrop, so it needs its own outside-click listener rather than
+  // ConfirmModal's backdrop-click. Escape is handled here too (the popover is
+  // not a dialog, so it does not use useDialogBehaviour).
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return undefined;
+    const onDocPointerDown = (e) => {
+      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+    };
+    const onDocKeyDown = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    document.addEventListener("keydown", onDocKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown);
+      document.removeEventListener("keydown", onDocKeyDown);
+    };
+  }, [open]);
 
   const rows = (drivers ?? []).map(d => {
     if (d.id === "withdrawal") return {
@@ -76,16 +99,24 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
   });
 
   return (
-    <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-      {/* clickable hit area — minHeight keeps the touch target ≥ 44px on mobile
-          while the visual pill inside stays compact */}
-      <span
+    <span ref={wrapRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      {/* BUG-49: was a `<span onClick role="button">` with no tabIndex and no
+          onKeyDown — announced as a button but unreachable and unactivatable by
+          keyboard. Now a real <button>; the 44px hit area wraps a compact visual
+          pill (the pattern this site already documented, kept intact). */}
+      <button
+        type="button"
         onClick={() => setOpen(o => !o)}
-        role="button"
         aria-expanded={open}
+        aria-label={`Plan status: ${label}. What drives this`}
         style={{
-          display: "inline-flex", alignItems: "center", cursor: "pointer",
-          minHeight: isMobile ? 44 : undefined,
+          // Unconditional 44px: the header's other two controls are 44px now,
+          // so there is no longer a desktop-density reason to make this the one
+          // exception (it used to be `isMobile ? 44 : undefined`).
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", minHeight: 44,
+          background: "transparent", border: "1px solid transparent",
+          borderRadius: 999, padding: 0, flexShrink: 0,
         }}>
         <span style={{
           display: "inline-flex", alignItems: "center", gap: 8,
@@ -95,7 +126,7 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
           <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
           <span style={{ font: `600 12px ${HF}`, color }}>{label}</span>
         </span>
-      </span>
+      </button>
 
       {open && (
         <div style={{
@@ -108,8 +139,11 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
             display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4,
           }}>
             <span style={{ font: `600 12.5px ${HF}`, color: t.ink }}>What drives this</span>
-            <span onClick={() => setOpen(false)} role="button" aria-label="close"
-              style={{ cursor: "pointer", color: t.faint, font: `400 13px ${HF}`, padding: "2px 4px" }}>✕</span>
+            {/* BUG-49: was a `<span onClick role="button">` with no keyboard
+                path; also ~20px, the smallest target in the app. */}
+            <Btn t={t} size="sm" variant="ghost" ariaLabel="Close"
+              onClick={() => setOpen(false)}
+              style={{ padding: "4px 8px", marginRight: -6 }}>✕</Btn>
           </div>
           {rows.map(r => (
             <div key={r.id} style={{ padding: "9px 0", borderTop: `1px solid ${t.line}` }}>
@@ -136,23 +170,22 @@ function OnTrackPill({ t, isSustainable, drivers, isMobile = false }) {
   );
 }
 
+// BUG-49: every tab was a `<div onClick>` — the desktop navigation was entirely
+// unreachable by keyboard. Now real buttons via the shared `seg` variant, whose
+// pressed/unpressed skin is exactly what this bar hand-rolled (surf2 + line2
+// border when active, transparent + transparent border otherwise — this file's
+// own "reserve the border, toggle its colour" pattern, now enforced centrally).
 function TabBar({ t, tabs, active, onChange }) {
   return (
-    <div style={{ display: "flex", gap: 4 }}>
+    <nav aria-label="Main" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
       {tabs.map(({ id, label }) => (
-        <div key={id} onClick={() => onChange(id)}
-          style={{
-            padding: "6px 13px", borderRadius: 8, cursor: "pointer",
-            background: active === id ? t.surf2 : "transparent",
-            border: active === id ? `1px solid ${t.line2}` : "1px solid transparent"
-          }}>
-          <span style={{
-            font: `${active === id ? 600 : 500} 12.5px ${HF}`,
-            color: active === id ? t.ink : t.faint
-          }}>{label}</span>
-        </div>
+        <Btn key={id} t={t} size="sm" variant="seg"
+          pressed={active === id}
+          onClick={() => onChange(id)}>
+          {label}
+        </Btn>
       ))}
-    </div>
+    </nav>
   );
 }
 
@@ -216,7 +249,10 @@ function ObInput({ t, field, vals, setVals }) {
         flex: 1, height: 50, borderRadius: 12,
         border: `1.5px solid ${t.line2}`, background: t.bg,
         font: `600 22px ${HM}`, color: t.ink,
-        textAlign: "center", outline: "none",
+        // No `outline: "none"` — an inline outline beats the .hz-root
+        // :focus-visible rule above (specificity), so removing a focus ring here
+        // left a keyboard user with no visible caret target at all.
+        textAlign: "center",
         padding: "0 12px", minWidth: 0, cursor: "text",
       }}
     />
@@ -266,17 +302,20 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
     ["Savings today",   fmt(vals.totalSaved),                              t.ink],
   ];
 
+  // BUG-49: the ± steppers were `<span onClick>` — a keyboard user could not
+  // change a single answer. Real buttons now, and 44px square instead of 36.
   const stepBtnStyle = {
-    width: 36, height: 36, flexShrink: 0, borderRadius: 9,
+    width: 44, height: 44, minHeight: 44, flexShrink: 0, borderRadius: 9,
     border: `1.5px solid ${t.line2}`, background: t.surf,
     display: "inline-flex", alignItems: "center", justifyContent: "center",
     font: `600 18px ${HF}`, color: t.accent, cursor: "pointer", userSelect: "none",
+    padding: 0,
   };
 
-  const navBtnPrimary = {
-    flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
-    padding: "13px", borderRadius: 12, background: t.accent, cursor: "pointer",
-  };
+  // The wizard's primary action, sized/shaped for this screen (12px radius,
+  // 15px label) rather than Btn's default chrome — passed through Btn so it
+  // still gets the reserved border, no-wrap and 44px invariants.
+  const navBtnPrimary = { flex: 1, padding: "13px", borderRadius: 12, fontSize: 15 };
 
   return (
     <div style={{
@@ -346,14 +385,14 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
                 </div>
               ))}
             </div>
-            <div onClick={() => setShowConfirm(true)} style={{ ...navBtnPrimary, width: "100%", marginTop: 6 }}>
-              <span style={{ font: `600 15px ${HF}`, color: "#fff" }}>Save as my plan →</span>
-            </div>
-            <div onClick={onComplete} style={{
-              font: `400 13px ${HF}`, color: t.faint, cursor: "pointer", textDecoration: "underline"
-            }}>
+            <Btn t={t} variant="primary" full onClick={() => setShowConfirm(true)}
+              style={{ ...navBtnPrimary, flex: "none", marginTop: 6 }}>
+              Save as my plan →
+            </Btn>
+            <Btn t={t} variant="ghost" tone="faint" onClick={onComplete}
+              style={{ fontSize: 13, textDecoration: "underline" }}>
               Skip for now
-            </div>
+            </Btn>
           </>
         ) : (
           /* ── Per-step question + stepper ── */
@@ -366,31 +405,27 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
 
             {/* stepper with live numeric state */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 320, marginTop: 4 }}>
-              <span style={stepBtnStyle} onClick={() => adjust(cur.field, -1)}>−</span>
+              <button type="button" style={stepBtnStyle}
+                aria-label={`decrease ${cur.q}`} onClick={() => adjust(cur.field, -1)}>−</button>
               <ObInput key={cur.field} t={t} field={cur.field} vals={vals} setVals={setVals} />
-              <span style={stepBtnStyle} onClick={() => adjust(cur.field, +1)}>+</span>
+              <button type="button" style={stepBtnStyle}
+                aria-label={`increase ${cur.q}`} onClick={() => adjust(cur.field, +1)}>+</button>
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 320, marginTop: 4 }}>
               {step > 0 && (
-                <div onClick={() => setStep(s => s - 1)} style={{
-                  padding: "13px 18px", borderRadius: 12,
-                  border: `1px solid ${t.line2}`, background: t.surf,
-                  font: `500 14px ${HF}`, color: t.mut, cursor: "pointer"
-                }}>←</div>
+                <Btn t={t} variant="quiet" ariaLabel="Back" onClick={() => setStep(s => s - 1)}
+                  style={{ padding: "13px 18px", borderRadius: 12, fontSize: 14 }}>←</Btn>
               )}
-              <div onClick={() => setStep(s => s + 1)} style={navBtnPrimary}>
-                <span style={{ font: `600 15px ${HF}`, color: "#fff" }}>
-                  {step === OB_STEPS.length - 1 ? "Build my plan →" : "Next →"}
-                </span>
-              </div>
+              <Btn t={t} variant="primary" onClick={() => setStep(s => s + 1)} style={navBtnPrimary}>
+                {step === OB_STEPS.length - 1 ? "Build my plan →" : "Next →"}
+              </Btn>
             </div>
 
-            <div onClick={onComplete} style={{
-              font: `400 12px ${HF}`, color: t.faint, cursor: "pointer", textDecoration: "underline", marginTop: 2
-            }}>
+            <Btn t={t} variant="ghost" tone="faint" onClick={onComplete}
+              style={{ fontSize: 12, textDecoration: "underline", marginTop: 2 }}>
               skip
-            </div>
+            </Btn>
           </>
         )}
       </div>
@@ -443,42 +478,82 @@ const byId = id => SCREENS.find(s => s.id === id);
 const MOBILE_BAR_SCREENS = MOBILE_BAR_IDS.map(byId).filter(Boolean);
 const MORE_SCREENS        = SCREENS.filter(s => !MOBILE_BAR_IDS.includes(s.id));
 
+// One mobile bottom-bar tab. The 2px top border is present on EVERY tab and only
+// its colour changes, so the selected tab can never be taller than its siblings.
+const tabBtnStyle = (t, on) => ({
+  flex: 1, display: "flex", flexDirection: "column",
+  alignItems: "center", justifyContent: "center", gap: 3,
+  minHeight: 44, padding: "7px 0 9px", cursor: "pointer",
+  background: "transparent",
+  border: "1px solid transparent",
+  borderTop: `2px solid ${on ? t.accent : "transparent"}`,
+});
+
 // ── MoreSheet — mobile bottom sheet for overflow screens ──────────────────────
 // Shown when the user taps the "More" tab in the mobile bottom bar.
 // Renders a slide-up overlay listing MORE_SCREENS; tap any to navigate.
+//
+// On mobile this sheet is the ONLY route to Someday / My details / Settings —
+// three whole screens — so it gets the same real dialog behaviour every other
+// Horizon overlay already has (ConfirmModal, LifeEventSheet, ApplyPreviewModal):
+// Escape-to-close and focus move/restore via useDialogBehaviour (BUG-50), plus
+// `role="dialog"`/`aria-modal` so assistive tech announces it as one. It was
+// the one overlay left declaring `aria-haspopup="dialog"` on its trigger
+// (below) without actually being one.
 function MoreSheet({ t, active, onNavigate, onClose }) {
+  const { cardRef, escapeProps } = useDialogBehaviour(onClose);
   return (
     <>
       {/* backdrop */}
       <div
         onClick={onClose}
+        // Click-to-dismiss backdrop. NOT keyboard-focusable by design — the
+        // keyboard equivalent is Escape (useDialogBehaviour), and a focusable
+        // full-screen div would just add a dead stop to the tab order. Same
+        // convention as ConfirmModal/LifeEventSheet's backdrops.
+        data-dismiss-backdrop="true"
         style={{
           position: "fixed", inset: 0, zIndex: 110,
           background: "rgba(0,0,0,.32)",
         }}
       />
       {/* sheet */}
-      <div style={{
-        position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 120,
-        background: t.surf, borderTop: `1px solid ${t.line2}`,
-        borderRadius: "16px 16px 0 0",
-        padding: "12px 0 8px",
-        boxShadow: "0 -8px 32px rgba(0,0,0,.18)",
-      }}>
+      <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="More"
+        tabIndex={-1}
+        {...escapeProps}
+        onClick={e => e.stopPropagation()}
+        style={{
+          position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 120,
+          background: t.surf, borderTop: `1px solid ${t.line2}`,
+          borderRadius: "16px 16px 0 0",
+          padding: "12px 0 8px",
+          boxShadow: "0 -8px 32px rgba(0,0,0,.18)",
+        }}>
         <div style={{
           width: 36, height: 4, borderRadius: 999, background: t.line2,
           margin: "0 auto 12px",
         }} />
+        {/* BUG-49: each row was a `<div onClick>` — on mobile this sheet is the
+            ONLY route to Someday / My details / Settings, so a keyboard user had
+            no path to three whole screens. Real buttons, border reserved. */}
         {MORE_SCREENS.map(({ id, label, emoji }) => {
           const on = active === id;
           return (
-            <div
+            <button
               key={id}
+              type="button"
+              aria-current={on ? "page" : undefined}
               onClick={() => { onNavigate(id); onClose(); }}
               style={{
                 display: "flex", alignItems: "center", gap: 14,
-                padding: "14px 24px",
+                width: "100%", minHeight: 44, boxSizing: "border-box",
+                padding: "14px 24px", textAlign: "left",
                 background: on ? `${t.accent}10` : "transparent",
+                border: "1px solid transparent",
                 cursor: "pointer",
               }}
             >
@@ -486,8 +561,9 @@ function MoreSheet({ t, active, onNavigate, onClose }) {
               <span style={{
                 font: `${on ? 600 : 400} 15px ${HF}`,
                 color: on ? t.accent : t.ink,
+                whiteSpace: "nowrap",
               }}>{label}</span>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -538,14 +614,31 @@ export default function HorizonShell({ onShowClassic, ...props }) {
   };
 
   return (
-    <div style={{
+    <div className="hz-root" style={{
       width: "100%", minHeight: "100vh",
       background: t.bg, fontFamily: HF,
       display: "flex", flexDirection: "column",
     }}>
-      {/* Google Fonts for Horizon typography */}
+      {/* Google Fonts for Horizon typography + the ONE global stylesheet in the
+          Horizon render path. Horizon is 100% inline styles, and an inline style
+          object cannot express a pseudo-class — so `:focus-visible` has nowhere
+          else to live (round-2.5 a11y review). The `@import` must stay first: a
+          CSS @import after any rule is ignored.
+
+          The ring is theme-aware because this template literal is evaluated
+          inside the component, where `t` is in scope — no fixed "neutral" focus
+          colour is needed, and the ring re-renders with the palette/mode.
+          Scoped to .hz-root so the Classic UI (which shares the document) is
+          untouched. The `:focus:not(:focus-visible)` reset suppresses the UA
+          ring after a MOUSE click while leaving the keyboard ring intact. */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&display=swap');
+        .hz-root, .hz-root * { box-sizing: border-box; }
+        .hz-root :focus-visible {
+          outline: 2px solid ${t.accent};
+          outline-offset: 2px;
+        }
+        .hz-root :focus:not(:focus-visible) { outline: none; }
       `}</style>
 
       {showOnboarding ? (
@@ -576,13 +669,11 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             <Logo t={t} />
             {!isMobile && <TabBar t={t} tabs={SCREENS} active={screen} onChange={navigate} />}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <OnTrackPill t={t} isSustainable={isSustainable}
-                drivers={planView.drivers} isMobile={isMobile} />
-              <button onClick={onShowClassic} style={{
-                font: `400 11px ${HF}`, color: t.faint,
-                background: "transparent", border: `1px solid ${t.line}`,
-                borderRadius: 6, padding: "4px 10px", cursor: "pointer",
-              }}>Classic view</button>
+              <OnTrackPill t={t} isSustainable={isSustainable} drivers={planView.drivers} />
+              <Btn t={t} size="sm" variant="quiet" tone="faint" onClick={onShowClassic}
+                style={{ fontSize: 11, padding: "6px 10px", borderRadius: 7 }}>
+                Classic view
+              </Btn>
             </div>
           </div>
 
@@ -595,15 +686,21 @@ export default function HorizonShell({ onShowClassic, ...props }) {
             {screen === "journey"  && <JourneyScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
             {screen === "numbers"  && <NumbersScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialTab={subView} />}
             {screen === "strategies" && <StrategiesScreen t={t} props={props} isMobile={isMobile} navigate={navigate} initialStrategy={subView} />}
-            {screen === "someday"  && <SomedayScreen t={t} props={props} navigate={navigate} />}
+            {screen === "someday"  && <SomedayScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
             {screen === "details"  && <MyDetailsScreen t={t} props={props} isMobile={isMobile} navigate={navigate} />}
-            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} navigate={navigate}
+            {screen === "settings" && <SettingsScreen t={t} activity={props.activity} setActivity={props.setActivity} isMobile={isMobile} navigate={navigate}
               onResetOnboarding={() => { safeSet("hz-onboarded", ""); setShowOnboarding(true); }} />}
           </div>
 
           {/* bottom tab bar — mobile only; first 4 screens + More tab */}
+          {/* BUG-49, highest priority: every tab here was a `<div onClick>`, so
+              a keyboard user could not change screens AT ALL on mobile — this is
+              the app's primary navigation. All five are real <button>s now.
+              `tabBtnStyle` keeps the 2px top-border indicator on every tab and
+              only toggles its colour, so the active tab is never 2px taller than
+              its neighbours (the shared border invariant, applied to nav). */}
           {isMobile && (
-            <div style={{
+            <nav aria-label="Main" style={{
               position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 100,
               background: t.bg, borderTop: `1px solid ${t.line}`,
               display: "flex",
@@ -611,39 +708,36 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               {MOBILE_BAR_SCREENS.map(({ id, short, icon }) => {
                 const on = screen === id;
                 return (
-                  <div key={id} onClick={() => navigate(id)} style={{
-                    flex: 1, display: "flex", flexDirection: "column",
-                    alignItems: "center", justifyContent: "center", gap: 3,
-                    padding: "7px 0 9px", cursor: "pointer",
-                    borderTop: `2px solid ${on ? t.accent : "transparent"}`,
-                  }}>
-                    <span style={{ font: `400 16px/1 ${HF}`, color: on ? t.accent : t.mut }}>{icon}</span>
+                  <button key={id} type="button" onClick={() => navigate(id)}
+                    aria-current={on ? "page" : undefined}
+                    style={tabBtnStyle(t, on)}>
+                    <span aria-hidden style={{ font: `400 16px/1 ${HF}`, color: on ? t.accent : t.mut }}>{icon}</span>
                     <span style={{
                       font: `${on ? 600 : 400} 10.5px/1 ${HF}`,
                       color: on ? t.accent : t.mut,
-                      textAlign: "center",
+                      textAlign: "center", whiteSpace: "nowrap",
                     }}>{short}</span>
-                  </div>
+                  </button>
                 );
               })}
               {/* More tab — opens the MoreSheet for overflow screens */}
-              <div
-                onClick={() => setShowMore(true)}
-                style={{
-                  flex: 1, display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center", gap: 3,
-                  padding: "7px 0 9px", cursor: "pointer",
-                  borderTop: `2px solid ${MORE_SCREENS.some(s => s.id === screen) ? t.accent : "transparent"}`,
-                }}
-              >
-                <span style={{ font: `400 16px/1 ${HF}`, color: MORE_SCREENS.some(s => s.id === screen) ? t.accent : t.mut }}>⋯</span>
-                <span style={{
-                  font: `${MORE_SCREENS.some(s => s.id === screen) ? 600 : 400} 10.5px/1 ${HF}`,
-                  color: MORE_SCREENS.some(s => s.id === screen) ? t.accent : t.mut,
-                  textAlign: "center",
-                }}>More</span>
-              </div>
-            </div>
+              {(() => {
+                const on = MORE_SCREENS.some(s => s.id === screen);
+                return (
+                  <button type="button" onClick={() => setShowMore(true)}
+                    aria-haspopup="dialog" aria-expanded={showMore}
+                    aria-current={on ? "page" : undefined}
+                    style={tabBtnStyle(t, on)}>
+                    <span aria-hidden style={{ font: `400 16px/1 ${HF}`, color: on ? t.accent : t.mut }}>⋯</span>
+                    <span style={{
+                      font: `${on ? 600 : 400} 10.5px/1 ${HF}`,
+                      color: on ? t.accent : t.mut,
+                      textAlign: "center", whiteSpace: "nowrap",
+                    }}>More</span>
+                  </button>
+                );
+              })()}
+            </nav>
           )}
           {/* MoreSheet — slide-up overlay for mobile overflow screens */}
           {isMobile && showMore && (

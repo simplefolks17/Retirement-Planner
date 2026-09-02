@@ -196,13 +196,39 @@ export function calcStatementView({
   // retirement-YEAR dollars, matching householdSS's own frame, so the three
   // bands actually reconcile to monthlyTotal — unlike incomeReplacementPct
   // below, which is a deliberately different (today's-dollars) comparison.
+  //
+  // BUG-128: an over-funded household (SS + pension alone exceed spending) used
+  // to clamp ONLY the portfolio draw at 0 while leaving ss/pension unscaled, so
+  // the three bands summed to MORE than monthlyTotal — the same over-count
+  // calcRetIncomeFlow (drawdown.js) already guards against for its own SS/
+  // pension/portfolio-draw bands. Reuse that exact scaling here instead of a
+  // second implementation: when income covers spending, ss/pension are scaled
+  // down proportionally to fill exactly `exp` (the surplus isn't "funding
+  // expenses"). A no-op (scale = 1, byte-identical) whenever income doesn't
+  // exceed spending — the ordinary, non-over-funded case.
   const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
   const pension         = effectivePensionRetYear ?? 0;
-  const exp             = effectiveExpensesRetYear ?? 0;
-  const monthlyHHSS     = Math.round(ss / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPension  = Math.round(pension / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPortDraw = Math.round(Math.max(0, exp - ss - pension) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const exp             = Math.max(0, effectiveExpensesRetYear ?? 0);
+  const ssRaw            = Math.max(0, ss);
+  const pensionRaw       = Math.max(0, pension);
+  const incomeTotal      = ssRaw + pensionRaw;
+  const portDraw         = Math.max(0, exp - incomeTotal);
+  const incomeCovered    = exp - portDraw;             // == min(incomeTotal, exp)
+  const incomeScale      = incomeTotal > 0 ? incomeCovered / incomeTotal : 0;
+  const ssBand           = ssRaw * incomeScale;
+  const pensionBand      = pensionRaw * incomeScale;
+  const monthlyHHSS     = Math.round(ssBand / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPension  = Math.round(pensionBand / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPortDraw = Math.round(portDraw / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
+  // Each band's share of monthlyTotal, as a display-ready integer percent — the
+  // Statement tab's "Where retirement income comes from" companion strip used
+  // to compute `Math.round((val / sv.monthlyTotal) * 100)` inline in JSX for
+  // each bar's width (rule 10 violation, same class BUG-121 fixed nearby).
+  const sharePct = (val) => monthlyTotal > 0 ? Math.round((val / monthlyTotal) * 100) : 0;
+  const ssSharePct       = sharePct(monthlyHHSS);
+  const pensionSharePct  = sharePct(monthlyPension);
+  const portDrawSharePct = sharePct(monthlyPortDraw);
   const monthlyTakeHome = (hasIncome && takeHome > 0)
     ? Math.round(takeHome / ASSUMPTIONS.MONTHS_PER_YEAR)
     : null;
@@ -236,8 +262,45 @@ export function calcStatementView({
     afterTaxLevel, flowKeep, flowTaxPct, flowPreTaxPct, flowPostTaxPct, flowSavePct, flowKeepPct,
     showPreTaxBar, showPostTaxBar, showPaycheckLine,
     monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
+    ssSharePct, pensionSharePct, portDrawSharePct,
     monthlyTakeHome, incomeReplacementPct,
     effFedRatePct,
     lifetimeContribROI,
   };
+}
+
+// A composition bar's segment is too narrow to hold its own text label: the
+// label is `whiteSpace: nowrap` inside an `overflow: hidden` flex segment, so
+// a segment under the threshold renders a truncated fragment ("Ta", "Portfo")
+// rather than disappearing cleanly. Below is the ONE place that decides this —
+// NumbersScreen's Statement tab (three bars: paycheck split, account mix,
+// retirement income mix) all build their segs through this, rather than
+// re-deriving the share/threshold check inline in the render (rule 10 — a
+// screen formats and lays out, it does not compute).
+export const SEG_LABEL_MIN_SHARE_PCT = 12;
+
+// segs: array of { f, c, l } (flex share, colour, label) — f may be missing/
+// negative/non-finite for a genuinely empty segment (e.g. no pension), which
+// is real 0 width for this purpose, checked explicitly rather than coerced
+// with `?? 0` (rule 10). Returns the same segments with `showLabel` added.
+//
+// CodeRabbit (PR #66 round 2): `total`/`showLabel` were computed from the
+// SANITIZED `share(seg.f)` (negative/non-finite → 0), but the returned
+// segment still carried the ORIGINAL, unsanitized `seg.f` via the `...seg`
+// spread — so a caller rendering `flex: seg.f` for a malformed segment (e.g.
+// a negative value that showLabel already treated as 0) would still feed the
+// negative raw number straight into CSS `flex`, disagreeing with the very
+// threshold decision this function just made. `f` is now the SAME sanitized
+// value `total`/`showLabel` are computed from, so a segment's flex-basis and
+// its label-visibility decision can never disagree about what its own share
+// actually is.
+export function buildBarSegments(segs) {
+  const list = segs ?? [];
+  const share = (f) => (Number.isFinite(f) && f > 0) ? f : 0;
+  const total = list.reduce((s, seg) => s + share(seg.f), 0);
+  return list.map((seg) => ({
+    ...seg,
+    f: share(seg.f),
+    showLabel: total > 0 && (share(seg.f) / total) * 100 >= SEG_LABEL_MIN_SHARE_PCT,
+  }));
 }

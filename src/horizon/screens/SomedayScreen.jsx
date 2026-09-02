@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { HF, HM, HD } from "../ThemeContext.jsx";
-import { fmtMo } from "../shared.jsx";
+import { fmtMo, kbActivate } from "../shared.jsx";
 
 export const ACTIVITIES = [
   { k: "golf",    l: "Golf course",    sub: "18 holes whenever you want." },
@@ -11,7 +11,10 @@ export const ACTIVITIES = [
   { k: "family",  l: "The grandkids",  sub: "Fully present, zero distraction." },
 ];
 
-export default function SomedayScreen({ t, props }) {
+// isMobile: this screen was one of two HorizonShell never passed it to, so its
+// 62px display headline and 44px side padding rendered unchanged on a 390px
+// phone — "First class" alone is wider than the viewport at that size.
+export default function SomedayScreen({ t, props, isMobile = false }) {
   const { effectiveExpenses, retirementAge, isSustainable, activity, setActivity } = props;
   const activeAct = ACTIVITIES.find(a => a.l.toLowerCase() === (activity ?? "golf course").toLowerCase())
     ?? ACTIVITIES[0];
@@ -42,12 +45,23 @@ export default function SomedayScreen({ t, props }) {
         style={{ display: "none" }}
         onChange={handleFileChange}
       />
+      {/* BUG-49: the photo well had no keyboard path. It genuinely cannot be a
+          <button> — it is a full-bleed layer wrapping an <img>, an <svg> and
+          absolutely-positioned children — so this is the case kbActivate exists
+          for (role + tabIndex + Enter/Space), not a Btn call site. */}
       <div
         onClick={() => fileInputRef.current?.click()}
+        onKeyDown={kbActivate(() => fileInputRef.current?.click())}
+        role="button"
+        tabIndex={0}
+        aria-label={customPhoto ? "Change your photo" : "Add a photo"}
         onMouseEnter={() => setPhotoHover(true)}
         onMouseLeave={() => setPhotoHover(false)}
         style={{
           position: "absolute", inset: 0, cursor: "pointer",
+          // Inert here (inset:0 already fills the screen) but declared anyway —
+          // the touch-target guard checks the CONTRACT, not the current layout.
+          minHeight: 44,
           background: customPhoto ? "transparent" : "linear-gradient(135deg, #2a2018 0%, #3d3020 40%, #2a2820 100%)",
         }}
       >
@@ -64,9 +78,16 @@ export default function SomedayScreen({ t, props }) {
               <line x1="0" y1="0" x2="100%" y2="100%" stroke="#fff" strokeWidth="1" />
               <line x1="100%" y1="0" x2="0" y2="100%" stroke="#fff" strokeWidth="1" />
             </svg>
+            {/* Dead-centred, it lands exactly on the headline block (which the
+                foreground's space-between puts in the middle of the screen) —
+                harmless on a tall desktop window, a collision on an 844px
+                phone. Moved up under the header row on mobile rather than
+                hidden: it is the only affordance saying the photo is tappable. */}
             <div style={{
               position: "absolute", inset: 0,
-              display: "flex", alignItems: "center", justifyContent: "center"
+              display: "flex", justifyContent: "center",
+              alignItems: isMobile ? "flex-start" : "center",
+              paddingTop: isMobile ? 84 : 0,
             }}>
               <span style={{
                 font: `400 13px ${HF}`,
@@ -89,16 +110,21 @@ export default function SomedayScreen({ t, props }) {
           </div>
         )}
       </div>
-      {/* dark gradient overlay */}
+      {/* dark gradient overlay — purely decorative, painted AFTER the photo-
+          upload div above (so it reads correctly over a photo), which put it
+          on top in paint order with no pointerEvents: it silently swallowed
+          every mouse/touch tap on the photo well (the keyboard path still
+          worked, since Enter/Space fire on the div itself, not through this
+          layer) until this was set. */}
       <div style={{
-        position: "absolute", inset: 0,
+        position: "absolute", inset: 0, pointerEvents: "none",
         background: "linear-gradient(135deg, rgba(18,14,10,.80) 0%, rgba(18,14,10,.20) 55%, rgba(18,14,10,.60) 100%)"
       }} />
       {/* foreground */}
       <div style={{
         position: "absolute", inset: 0,
         display: "flex", flexDirection: "column", justifyContent: "space-between",
-        padding: "32px 44px", zIndex: 2
+        padding: isMobile ? "22px 20px 24px" : "32px 44px", zIndex: 2
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ font: `700 17px ${HF}`, color: "rgba(255,255,255,.80)" }}>Horizon</span>
@@ -113,18 +139,33 @@ export default function SomedayScreen({ t, props }) {
             letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10
           }}>work optional.</div>
           <div style={{
-            font: `700 62px/1 ${HD}`, color: "#ffffff",
+            font: `700 ${isMobile ? 40 : 62}px/1 ${HD}`, color: "#ffffff",
             textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: 2
           }}>{activeAct.l}</div>
           <div style={{
-            font: `400 62px/1 ${HD}`, color: "rgba(255,255,255,.75)",
-            textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: 22
+            font: `400 ${isMobile ? 40 : 62}px/1 ${HD}`, color: "rgba(255,255,255,.75)",
+            textShadow: "0 2px 20px rgba(0,0,0,.40)", marginBottom: isMobile ? 16 : 22
           }}>mandatory.</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={{ font: `600 36px ${HM}`, color: "rgba(255,255,255,.95)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ font: `600 ${isMobile ? 28 : 36}px ${HM}`, color: "rgba(255,255,255,.95)" }}>
               {fmtMo(effectiveExpenses)}
             </span>
-            <span style={{ font: `400 16px ${HF}`, color: "rgba(255,255,255,.50)" }}>a month, for life.</span>
+            {/* Was "a month, for life." — an ungated guarantee over a spending
+                target (the gated "for life" claims elsewhere condition on a
+                model sustainability boolean; this one didn't). */}
+            <span style={{ font: `400 ${isMobile ? 14 : 16}px ${HF}`, color: "rgba(255,255,255,.50)" }}>a month in retirement.</span>
+          </div>
+          {/* Rule 11: effectiveExpenses is today's dollars — a scoped, local
+              caption on the figure itself, not a page banner (this screen has
+              no other dollar figure to disagree with it). Item 10 (BUG-122
+              batch): this was the lowest-opacity text on the screen (.32,
+              vs .38/.45 for its sibling captions) while sitting over a
+              user-uploaded photo with no guaranteed scrim — a real
+              readability risk this round's screenshot-only methodology
+              couldn't catch (no test photo was uploaded). Matched to the
+              same .38 weight the other captions on this screen already use. */}
+          <div style={{ font: `400 12px ${HF}`, color: "rgba(255,255,255,.38)", fontStyle: "italic", marginTop: 2 }}>
+            in today's dollars
           </div>
           <div style={{ font: `400 14px ${HF}`, color: "rgba(255,255,255,.38)", marginTop: 6 }}>
             {activeAct.sub}
@@ -132,17 +173,26 @@ export default function SomedayScreen({ t, props }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ font: `400 12px ${HF}`, color: "rgba(255,255,255,.38)" }}>your thing:</span>
+          {/* BUG-49 + touch target: were `<div onClick>` chips ~25px tall. Real
+              buttons now, at the Pill tier (40px). NOT the shared Pill: these sit
+              on a user photo and use the screen's white-on-image scale rather
+              than theme tokens (a pre-existing, deliberate exception noted in the
+              design review — the raw rgba values are unchanged here). The 1px
+              border is present in BOTH states, only its colour changes. */}
           {ACTIVITIES.map((a) => {
             const on = a.k === activeAct.k;
             return (
-              <div key={a.k} onClick={() => setActivity(a.l.toLowerCase())}
+              <button key={a.k} type="button" aria-pressed={on}
+                onClick={() => setActivity(a.l.toLowerCase())}
                 style={{
-                  padding: "5px 12px", borderRadius: 999, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  minHeight: 40, boxSizing: "border-box", flexShrink: 0, whiteSpace: "nowrap",
+                  padding: "5px 14px", borderRadius: 999, cursor: "pointer",
                   border: `1px solid ${on ? "rgba(255,255,255,.70)" : "rgba(255,255,255,.22)"}`,
                   background: on ? "rgba(255,255,255,.16)" : "transparent",
                   font: `${on ? 600 : 400} 12.5px ${HF}`,
                   color: on ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.44)"
-                }}>{a.l}</div>
+                }}>{a.l}</button>
             );
           })}
         </div>

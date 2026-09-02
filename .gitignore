@@ -157,4 +157,13 @@ Thumbs.db
 # Editor settings (optional, personal preference)
 .vscode/
 .idea/
+# Throwaway probe/scratch tests written by review agents. These must never be
+# committed: they are investigation scaffolding, not coverage, and a stray one
+# silently inflates the suite count CLAUDE.md rule 7 tracks (a probe left in the
+# tree during PR #66's review reported 1341 tests when the real count was 1335).
+# The narrow src/model/__tests__/zz-*.test.js rule came first, from an earlier
+# session that hit the same thing; this generalizes it to every test directory
+# and to the zzprobe-* naming as well.
+src/**/__tests__/zz-*.test.js
+src/**/__tests__/zzprobe-*.test.js
 src/model/__tests__/zz-*.test.js
