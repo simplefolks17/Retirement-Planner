@@ -157,8 +157,8 @@ const makeMockProps = (overrides = {}) => ({
     },
     dollarBasisApplicable: true,
     dollarBasisOptions: [
-      { id: "today", label: "Today's money", caption: "Retirement income and spending shown in today's buying power.", cardSub: "in today's money" },
-      { id: "retirement", label: "At 65", caption: "Retirement income and spending shown in age-65 dollars — the same lifestyle after 35 years of inflation.", cardSub: "in age-65 dollars" },
+      { id: "today", label: "Today's money", caption: "Retirement income and spending shown in today's buying power.", cardSub: "in today's money", showsReplacementPct: true },
+      { id: "retirement", label: "At 65", caption: "Retirement income and spending shown in age-65 dollars — the same lifestyle after 35 years of inflation.", cardSub: "in age-65 dollars", showsReplacementPct: false },
     ],
     yearsToRetirement: 14,
     retirementDuration: 25,
@@ -530,10 +530,31 @@ describe("PlanScreen — dollar-basis toggle", () => {
     const before = allText(renderer.root);
     act(() => { buttonsByText(renderer.root, "At 65")[0].props.onClick(); });
     const after = allText(renderer.root);
-    for (const invariant of ["36%", "past 90", "$554k", "replaces 82% of today's take-home pay"]) {
+    for (const invariant of ["36%", "past 90", "$554k"]) {
       expect(before).toContain(invariant);
       expect(after).toContain(invariant);
     }
+    act(() => renderer.unmount());
+  });
+
+  // BUG-132 (Item 3): incomeReplacementPct is basis-invariant BY DESIGN
+  // (BUG-114 — it always compares against today's take-home pay), but it used
+  // to render unconditionally next to whichever dollar figure the toggle
+  // picked — reading, at "At 65", "$18,900/mo replaces 84%" beside a
+  // $5,700/mo paycheck (actually 332%, not 84%). It must show only while the
+  // basis it was built to sit beside ("today") is active.
+  it("shows the replacement-% clause only in today's-dollars mode — the toggle must not leave a stale ratio beside a different dollar figure", () => {
+    const { renderer } = mount();
+    const before = allText(renderer.root);
+    expect(before).toContain("replaces 82% of today's take-home pay");
+
+    act(() => { buttonsByText(renderer.root, "At 65")[0].props.onClick(); });
+    const after = allText(renderer.root);
+    expect(after).not.toContain("replaces 82% of today's take-home pay");
+    expect(after).not.toContain("replaces");
+    // The dollar figure it used to sit beside is still visibly a different
+    // basis — proving this isn't just a text change but a real reconciling gap.
+    expect(after).toContain("$10,000/mo");
     act(() => renderer.unmount());
   });
 

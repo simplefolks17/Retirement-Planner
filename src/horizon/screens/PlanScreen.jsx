@@ -196,7 +196,14 @@ function IncomeMeter({ t, planHighlights, flow, basisOption, basisApplicable, on
         <span style={{ font: `700 22px/1 ${HM}`, color: t.ink }}>
           {fmtMo(flow.expenses)}/mo
         </span>
-        {incomeReplacementPct !== null && incomeReplacementPct !== undefined && (
+        {/* BUG-132 (Item 3): incomeReplacementPct is basis-INVARIANT by design
+            (BUG-114) — always today's-dollars vs. today's take-home pay. Once
+            the headline above can show a DIFFERENT (retirement-year) dollar
+            figure, the ratio has no on-screen referent, so it only renders
+            while the active basis is the one it was built to sit beside
+            (basisOption.showsReplacementPct, a model-provided flag — rule 10). */}
+        {basisOption?.showsReplacementPct === true
+          && incomeReplacementPct !== null && incomeReplacementPct !== undefined && (
           <span style={{ font: `500 12px ${HF}`, color: t.mut }}>
             replaces {incomeReplacementPct}% of today's take-home pay
           </span>

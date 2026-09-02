@@ -1744,19 +1744,31 @@ export default function App() {
       // no years left to inflate over (already retired) — the two bases are then
       // the same number and a toggle would be noise, so the screen renders the
       // today basis with no control at all.
-      dollarBasisApplicable: yearsToRetForBasis > 0,
+      //
+      // showsReplacementPct (BUG-132, Item 3) — incomeReplacementPct above is
+      // DELIBERATELY basis-invariant (BUG-114): it always compares retirement
+      // spending to TODAY's take-home pay, never to the toggled figure. Once
+      // the meter can show a DIFFERENT (retirement-year) dollar amount beside
+      // it, the ratio no longer has an on-screen referent — e.g. "$18,900/mo
+      // replaces 84%" beside a $5,700/mo paycheck reads as 332%, not 84%. Only
+      // the "today" option's copy is honest to show beside; carrying the flag
+      // ON THE OPTION (not a bare basis-id string comparison in the screen)
+      // keeps the screen's gate a model-provided field, same as label/caption/
+      // cardSub already are, and keeps working automatically if a third basis
+      // is ever added.
       dollarBasisOptions: [
         {
           id: "today", label: "Today's money",
           caption: "Retirement income and spending shown in today's buying power.",
-          cardSub: "in today's money",
+          cardSub: "in today's money", showsReplacementPct: true,
         },
         {
           id: "retirement", label: `At ${safeRetAge}`,
           caption: `Retirement income and spending shown in age-${safeRetAge} dollars — the same lifestyle after ${yearsToRetForBasis} years of inflation.`,
-          cardSub: `in age-${safeRetAge} dollars`,
+          cardSub: `in age-${safeRetAge} dollars`, showsReplacementPct: false,
         },
       ],
+      dollarBasisApplicable: yearsToRetForBasis > 0,
       yearsToRetirement:  Math.max(0, safeRetAge - currentAge),
       retirementDuration: Math.max(0, safeLifeExp - safeRetAge),
       // takeHome is a HOUSEHOLD figure for MFJ filers (rule 9, tax-basis.js) but
