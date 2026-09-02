@@ -44,7 +44,7 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon UI design system & open items: `docs/HORIZON.md` *(new warm shell — see below)*
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
-- Feature backlog: `feature-tracker.html` (126 items, 78 done, 48 planned)
+- Feature backlog: `feature-tracker.html` (127 items, 79 done, 48 planned)
 - Session history archive (everything before BUG-82, 2026-07-25): `docs/HISTORY.md`
 
 ## Status

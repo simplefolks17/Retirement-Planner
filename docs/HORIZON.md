@@ -16,7 +16,7 @@ The Classic view is for tinkering — sliders, tabs, and raw numbers. Horizon is
 |---|---|
 | `src/horizon/ThemeContext.jsx` | Design token system, palette context, `useTheme()` hook; exports `safeGet`/`safeSet` |
 | `src/horizon/shared.jsx` | **The shared interactive primitives** — `Btn` / `Pill` (see "Interactive primitives" below) + `StatCard` + `kbActivate`; re-exports `fmt`/`fmtMo`/`fmtMonthly` |
-| `src/horizon/useDialogBehaviour.js` | Shared modal behaviour: focus-in on open, Escape-to-close, focus restore. Used by `ConfirmModal` + `LifeEventSheet` (and so by `ApplyPreviewModal`) |
+| `src/horizon/useDialogBehaviour.js` | Shared, binding modal behaviour: focus-in on open, Escape-to-close, focus restore, Tab/Shift+Tab focus trap. Used by `ConfirmModal` + `LifeEventSheet` + `MoreSheet` (and so by `ApplyPreviewModal`, which delegates to `ConfirmModal`) — see "Shared Dialog Behaviour" below |
 | `src/horizon/ConfirmModal.jsx` | Shared confirm dialog + toast pattern (used by PlanScreen and IdeasScreen) |
 | `src/horizon/ApplyPreviewModal.jsx` | Apply-with-preview shell (WI-3.9): pure renderer of a model-computed before/after payload, wraps `ConfirmModal`; exports `PreviewMetricRow` + `VerdictBadge`. Contract in `ARCHITECTURE.md` |
 | `src/horizon/fields.jsx` | Shared editable-field primitives (`DetailField`/`FieldRow`/`StepBtn` + `money`/`ageFmt`/`pct` formatters) — desktop sliders / mobile ± steppers off a bundle field's `{ value, set, min, max, step }` shape. (The local `seg` style helper was retired 2026-08-03 — its call sites now use `Btn`.) |
@@ -179,6 +179,76 @@ It is theme-aware — the template literal is evaluated inside the component, wh
 `t` is in scope — and scoped to `.hz-root` so Classic is untouched. **Never set
 `outline: "none"` on a Horizon control:** an inline outline overrides that rule,
 and three inputs that did so were the only elements it could not reach.
+
+---
+
+## Shared Dialog Behaviour — `useDialogBehaviour` (2026-08-03, binding; Tab trap added 2026-08-19, BUG-126)
+
+**Source of truth: `src/horizon/useDialogBehaviour.js`.** Before this hook existed, none of
+Horizon's overlays handled Escape, carried `role="dialog"`, or moved focus on open — a keyboard
+user could open one and have focus stranded on the element behind the backdrop, with no key that
+closed it (BUG-50). It is now the ONE mechanism every Horizon dialog goes through for
+focus-in-on-open, Escape-to-close, focus-restore-on-close, and a Tab/Shift+Tab focus trap; a new
+dialog is expected to call it rather than reimplement any of the four.
+
+**What it does (`useDialogBehaviour.js` lines 14–24):**
+1. moves focus into the dialog card on open;
+2. closes on Escape — via BOTH the card's own React `onKeyDown` (the path that fires in practice,
+   since focus is inside the card) and a document-level listener (the safety net for when focus
+   has left the card); the React handler calls `stopPropagation` so the two can never both fire
+   for one keypress;
+3. traps Tab/Shift+Tab within the card's own focusable elements (BUG-126), so keyboard focus can
+   never escape to the page behind the backdrop while the dialog is open;
+4. restores focus to whatever was focused before the dialog opened.
+
+**API.** `useDialogBehaviour(onClose)` (lines 56–126) takes the callback to invoke on
+Escape/trap-boundary dismissal and returns `{ cardRef, escapeProps }` — `cardRef` is a ref for the
+dialog CARD (the element inside the backdrop, not the backdrop itself), and `escapeProps` is
+`{ onKeyDown }`, spread onto that same element. `onClose` is captured in a ref (updated every
+render but never in a dependency array), so a caller passing an inline arrow — every call site
+does — doesn't re-run the mount effect (and re-steal focus into the card) on every keystroke.
+Every call site pairs the two return values with the same fixed set of props on the card element:
+`role="dialog" aria-modal="true"`, an accessible name (`aria-labelledby` pointing at a rendered
+title, or a static `aria-label` where the only heading is a live-editable input), `tabIndex={-1}`
+(so the card itself is a valid focus target), `ref={cardRef}`, and `{...escapeProps}` — see
+`ConfirmModal.jsx` lines 33–40 for the exact shape. The backdrop click-to-dismiss (`onClick`
+on the backdrop `<div>`, `data-dismiss-backdrop="true"`, plus `onClick={e => e.stopPropagation()}`
+on the card so an inside click doesn't bubble to it) is each caller's own convention, not part of
+this hook.
+
+**Focus trap mechanics (BUG-126).** On `Tab`, `onKeyDown` enumerates the card's own tabbable
+descendants (`button`, `[href]`, `input`, `select`, `textarea`, non-`-1` `[tabindex]` — none
+`disabled`, and visible per `offsetParent !== null` so a conditionally-hidden footer button is
+never a phantom trap boundary) and wraps only at the edges: `Shift+Tab` from the first tabbable —
+or from outside the tracked list entirely, e.g. still sitting on the card's own `tabIndex={-1}`
+root right after open — wraps to the last; `Tab` from the last wraps to the first. Every Tab in
+between is untouched native browser behaviour. **No-tabbable-elements edge case:** if the card has
+zero tabbable descendants, `Tab` is `preventDefault`-ed outright so focus stays pinned on the card
+rather than falling through to the page. This needed a live DOM to enumerate real tabbables and
+verify against — this repo's default `npm test` suite runs with `environment: "node"`
+(react-test-renderer, no real `document`), so the trap was deliberately deferred out of the
+original BUG-50 pass rather than shipped untested, and was verified instead with a live Chromium
+session against the running dev server: opened LifeEventSheet's "+ Custom goal" sheet (9 real
+tabbable elements), Tabbed 11 times forward and landed back at the first element, Shift+Tabbed 11
+times and landed at the last — focus never once left `[role="dialog"]`'s subtree in either
+direction, and Escape still closed it afterward. There is no dedicated jsdom test for the trap
+mechanics themselves for the same reason; it's exercised for real by that Chromium session, not
+simulated (`docs/BUGS.md` → BUG-126).
+
+**Who uses it.** `ConfirmModal.jsx`, `LifeEventSheet.jsx`, and `MoreSheet` (an unexported
+component inside `HorizonShell.jsx`, wired in for BUG-120 — it predates the hook and was the one
+overlay left declaring `aria-haspopup="dialog"` without behaving like one) all call the hook
+directly. `ApplyPreviewModal.jsx` gets it for free by delegating its entire chrome to
+`ConfirmModal` rather than calling it a second time. That is every dialog-shaped overlay in
+Horizon; **any new one is expected to call `useDialogBehaviour` rather than hand-roll Escape/focus
+handling again** (`docs/BUGS.md` → BUG-50, BUG-120, BUG-126).
+
+**Tests:** `src/horizon/__tests__/dialog-dismissal.test.js` (ConfirmModal, ApplyPreviewModal,
+LifeEventSheet — role/`aria-modal`/name, Escape-only key discrimination, backdrop dismissal) and
+`src/__tests__/more-sheet-dismissal.test.js` (the same shape for `MoreSheet`, reached through the
+real App at a mobile viewport since it's a `HorizonShell`-local component). Both mirror BUG-50's
+revert-and-confirm discipline: deleting the hook's dismissal effect fails the relevant assertions;
+restoring it turns them green again.
 
 ---
 
