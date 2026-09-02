@@ -547,41 +547,73 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
   const incomeFlow      = planHighlights?.incomeFlowByBasis?.[activeBasisId] ?? null;
 
   // "Guaranteed for life" sub-copy — copy selection from model booleans only, no
-  // dollar comparisons here (rule 10). The spouse branch exists because
-  // calcRetIncomeFlow deliberately keeps a spouse's gap-year pay OUT of the
-  // guaranteed numerator while leaving it in the denominator: without naming it,
-  // "the rest comes from your savings" would be false for that household.
-  // The startsAtAge branches cover the retirement-year snapshot honestly — see
-  // planHighlights.guaranteed's note in App.jsx.
+  // dollar comparisons or age comparisons here (rule 10). The spouse branch
+  // exists because calcRetIncomeFlow deliberately keeps a spouse's gap-year pay
+  // OUT of the guaranteed numerator while leaving it in the denominator:
+  // without naming it, "the rest comes from your savings" would be false for
+  // that household.
+  //
+  // BUG-131 Item 2: source naming reads `everHasSS`/`everHasPension` — UNGATED
+  // eligibility, matching what `pct` itself is built from (BUG-122) — never the
+  // gated `hasSS`/`hasPension`. Those gated flags described a DIFFERENT
+  // question (has this started by retirement) and naming sources off them could
+  // omit a source pct is mostly built from because it simply hasn't started yet
+  // — the repro that shipped this fix: a pension worth ~76 of a 100% card,
+  // never once mentioned. `activeNow` keeps that gated question alive for a
+  // different purpose below: whether ANYTHING is already paying, which decides
+  // whether the honest "is there a gap to bridge" framing applies. Every
+  // pending source (not just the earliest) gets its own start age from
+  // `pendingSources`, and `fullyCovered` suppresses "the rest comes from your
+  // savings" once the model's own number says there is no rest.
   //
   // BUG-122 Item 2: "savings cover you until then" used to render unconditionally
   // whenever startsAtAge was set, with no check that savings actually last that
   // long — it could (and did, at a plausible input combo) sit directly next to
-  // the "Money lasts to" card contradicting it outright. g.savingsCoverUntilStart
-  // is the pre-computed truth condition (App.jsx, from calcPlanProgress's own
-  // outlastsPlan/depletionAge — the SAME numbers "Money lasts to" itself
-  // renders), so this screen still does no age arithmetic of its own (rule 10).
+  // the "Money lasts to" card contradicting it outright. Each pendingSources
+  // entry carries its own pre-computed savingsCoverUntilStart (App.jsx, from
+  // calcPlanProgress's own outlastsPlan/depletionAge — the SAME numbers "Money
+  // lasts to" itself renders), so this screen still does no age arithmetic of
+  // its own (rule 10). That framing fires whenever NOTHING is active yet
+  // (activeNow false) and something is pending — the household's income is
+  // 100% savings today, so whether savings bridge the gap is the load-bearing
+  // question — checked against the LATEST pending age (monotonic: once
+  // savings last that far, every earlier pending source is covered too).
   const guaranteedSub = (() => {
     const g = planHighlights?.guaranteed;
     if (!g) return undefined;
     const rest = g.hasSpouseIncome
       ? "the rest comes from your savings and your spouse's pay"
       : "the rest comes from your savings";
-    const source = g.hasSS && g.hasPension ? "Social Security + pension"
-      : g.hasSS ? "Social Security"
-      : g.hasPension ? "Your pension"
+    const source = g.everHasSS && g.everHasPension ? "Social Security + pension"
+      : g.everHasSS ? "Social Security"
+      : g.everHasPension ? "Your pension"
       : null;
-    if (source) {
-      return g.startsAtAge != null
-        ? `${source} — ${rest} · more from ${g.startsAtAge}`
-        : `${source} — ${rest}`;
+    if (!source) return `Nothing guaranteed — ${rest}`;
+
+    const pending = g.pendingSources ?? [];
+    const activeNow = g.hasSS || g.hasPension;
+    const namedList = pending.map(p => `${p.label} at ${p.age}`).join(", ");
+    const lastPending = pending[pending.length - 1] ?? null;
+
+    if (g.fullyCovered) {
+      if (pending.length === 0) return source;
+      return pending.length === 1
+        ? `${source} — full coverage starts at ${lastPending.age}`
+        : `${source} — full coverage once ${namedList}`;
     }
-    if (g.startsAtAge != null) {
-      return g.savingsCoverUntilStart
-        ? `${g.startsLabel} starts at ${g.startsAtAge} — savings cover you until then`
-        : `${g.startsLabel} starts at ${g.startsAtAge} — but your savings may not stretch that far, see "Money lasts to" below`;
+    // pct < 100%, so "the rest comes from savings" is genuinely true.
+    if (!activeNow && pending.length > 0) {
+      const label = pending.length === 1
+        ? `${lastPending.label} starts at ${lastPending.age}`
+        : namedList;
+      return lastPending.savingsCoverUntilStart
+        ? `${label} — savings cover you until then`
+        : `${label} — but your savings may not stretch that far, see "Money lasts to" below`;
     }
-    return `Nothing guaranteed — ${rest}`;
+    if (pending.length === 0) return `${source} — ${rest}`;
+    return pending.length === 1
+      ? `${source} — ${rest} · more from ${lastPending.age}`
+      : `${source} — ${rest} · ${namedList}`;
   })();
 
   // Preview-first lever state lives here (not inside TryAChangePanel) so the

@@ -1653,12 +1653,23 @@ export default function App() {
     });
     // Lifetime-income sources that have NOT started by the primary's retirement
     // (rule 5b start gates), earliest first — see `guaranteed.startsAtAge` below.
-    const nextGuaranteedStart = [
+    // BUG-131 (Item 2): kept as the FULL sorted list (not just [0]) so the card
+    // can name every pending source, not only the earliest — see
+    // `guaranteed.pendingSources` below, which reuses this same array instead of
+    // a second copy of the eligibility gates.
+    const pendingGuaranteedStarts = [
       ...(includeSS && householdSS > 0 && ssClaimingAge > safeRetAge
         ? [{ age: ssClaimingAge, label: "Social Security" }] : []),
       ...(pensionMonthly > 0 && pensionStartAge > safeRetAge
         ? [{ age: pensionStartAge, label: "Your pension" }] : []),
-    ].sort((a, b) => a.age - b.age)[0] ?? null;
+    ].sort((a, b) => a.age - b.age);
+    const nextGuaranteedStart = pendingGuaranteedStarts[0] ?? null;
+    // Whether the plan's own savings actually last until a given pending-source
+    // age (calcPlanProgress's already-computed outlastsPlan/depletionAge — never
+    // a fresh age comparison in the screen). Shared by `startsAtAge`'s single
+    // value below and every entry of `pendingSources`.
+    const savingsCoverUntil = (age) => planView.outlastsPlan === true
+      || (planView.depletionAge != null && planView.depletionAge >= age);
     return {
       wealthMultiplier: currentSaved > 0
         ? Math.round((totalAtRet / currentSaved) * 10) / 10
@@ -1688,26 +1699,45 @@ export default function App() {
       //   hasSpouseIncome — true when that excluded pay is part of the
       //     denominator, so the card's sub-copy can name where "the rest" comes
       //     from honestly instead of implying it is all portfolio.
-      //   startsAtAge / startsLabel — the next pending gated source (rule 5b),
-      //     null when nothing further is pending.
-      //   savingsCoverUntilStart (BUG-122 Item 2) — whether the plan's own
-      //     savings actually last until startsAtAge, from calcPlanProgress's
-      //     already-computed outlastsPlan/depletionAge (never a fresh age
-      //     comparison here — rule 10 lives in the screen, this is the model
-      //     layer, but the SAME "don't re-derive, read the one computed
-      //     answer" discipline applies). null when there's no pending source
-      //     to cover (startsAtAge is null) — the claim doesn't apply.
+      //   everHasSS / everHasPension (BUG-131 Item 2) — ungated: does this
+      //     household EVENTUALLY get Social Security / a pension at all, same
+      //     eligibility test `pendingGuaranteedStarts` above already uses. The
+      //     card's source naming ("Social Security + pension", "Your pension",
+      //     …) must read THESE, not the gated hasSS/hasPension above — pct is a
+      //     lifetime figure built from the same ungated streams (BUG-122), so
+      //     naming its sources off the gated snapshot could name a source pct
+      //     already counts (or silently omit one, as BUG-131's repro A did:
+      //     100% built mostly from a pension that hadn't started yet, and the
+      //     card never mentioned it).
+      //   fullyCovered (BUG-131 Item 2) — pct already at/above 100: the sub-copy
+      //     must not ALSO claim "the rest comes from your savings" once there
+      //     is no "rest" left by the model's own number.
+      //   startsAtAge / startsLabel — the single EARLIEST pending gated source
+      //     (rule 5b), kept for the existing single-source copy path; null when
+      //     nothing further is pending.
+      //   savingsCoverUntilStart — startsAtAge's own coverage flag (see
+      //     pendingSources below for the general, multi-source form).
+      //   pendingSources (BUG-131 Item 2) — EVERY pending gated source (not
+      //     just the earliest), each with its own start age/label and its own
+      //     savingsCoverUntilStart, so the card can name a second (or third)
+      //     source instead of silently dropping it, and never re-derive ages
+      //     from scratch in the screen (rule 10).
       guaranteed: {
         pct: flowGuaranteedPct.guaranteedPct,
         hasSS: flowRetirement.hasSS,
         hasPension: flowRetirement.hasPension,
         hasSpouseIncome: flowRetirement.hasSpouseIncome,
+        everHasSS: includeSS && householdSS > 0,
+        everHasPension: pensionMonthly > 0,
+        fullyCovered: flowGuaranteedPct.guaranteedPct != null && flowGuaranteedPct.guaranteedPct >= 100,
         startsAtAge: nextGuaranteedStart?.age ?? null,
         startsLabel: nextGuaranteedStart?.label ?? null,
         savingsCoverUntilStart: nextGuaranteedStart == null
           ? null
-          : (planView.outlastsPlan === true
-              || (planView.depletionAge != null && planView.depletionAge >= nextGuaranteedStart.age)),
+          : savingsCoverUntil(nextGuaranteedStart.age),
+        pendingSources: pendingGuaranteedStarts.map(s => ({
+          age: s.age, label: s.label, savingsCoverUntilStart: savingsCoverUntil(s.age),
+        })),
       },
       // The toggle's own options, with their captions, so no age arithmetic or
       // basis copy lives in JSX. `dollarBasisApplicable` is false once there are

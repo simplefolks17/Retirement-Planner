@@ -151,7 +151,9 @@ const makeMockProps = (overrides = {}) => ({
     },
     guaranteed: {
       pct: 36, hasSS: true, hasPension: false, hasSpouseIncome: false,
-      startsAtAge: null, startsLabel: null,
+      everHasSS: true, everHasPension: false, fullyCovered: false,
+      startsAtAge: null, startsLabel: null, savingsCoverUntilStart: null,
+      pendingSources: [],
     },
     dollarBasisApplicable: true,
     dollarBasisOptions: [
@@ -403,7 +405,9 @@ describe("PlanScreen — command center survivors", () => {
         ...base,
         guaranteed: {
           pct: 0, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: false, fullyCovered: false,
           startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: true,
+          pendingSources: [{ age: 67, label: "Social Security", savingsCoverUntilStart: true }],
         },
       },
     });
@@ -419,7 +423,9 @@ describe("PlanScreen — command center survivors", () => {
         ...base,
         guaranteed: {
           pct: 0, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: false, fullyCovered: false,
           startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: false,
+          pendingSources: [{ age: 67, label: "Social Security", savingsCoverUntilStart: false }],
         },
       },
     });
@@ -428,6 +434,63 @@ describe("PlanScreen — command center survivors", () => {
     expect(text).toContain("Social Security starts at 67");
     // Still tells the honest story — points at "Money lasts to" instead.
     expect(text.toLowerCase()).toContain("may not stretch");
+    act(() => renderer.unmount());
+  });
+
+  // BUG-131 (Item 2): source naming must read the UNGATED everHasSS/
+  // everHasPension (matching what pct itself is built from), never the gated
+  // hasSS/hasPension — and every pending source must be named, not just the
+  // earliest. Fixture values below are the REAL planHighlights.guaranteed App
+  // computes for this exact repro (retirementAge 60, pensionMonthly 4000,
+  // pensionStartAge 70) — verified against a live App mount.
+  it("repro A (BUG-131): names BOTH pending sources instead of silently dropping the pension supplying ~76 of a 100% card", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 100, hasSS: false, hasPension: false, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: true, fullyCovered: true,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: true,
+          pendingSources: [
+            { age: 67, label: "Social Security", savingsCoverUntilStart: true },
+            { age: 70, label: "Your pension", savingsCoverUntilStart: true },
+          ],
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Social Security + pension — full coverage once Social Security at 67, Your pension at 70");
+    // The old bug: only the earliest ([0]) source was ever named.
+    expect(text).not.toContain("Social Security starts at 67 — savings cover you until then");
+    act(() => renderer.unmount());
+  });
+
+  // BUG-131 (Item 2): once the model's own pct says nothing is left over
+  // (fullyCovered), the copy must not also claim "the rest comes from your
+  // savings" — the two directly contradict each other. Fixture is the REAL
+  // planHighlights.guaranteed App computes for pensionMonthly 4000,
+  // pensionStartAge 60, retirementAge 65 (default) — verified against a live
+  // App mount.
+  it("repro B (BUG-131): does not claim 'the rest comes from your savings' when the card already reads 100%", () => {
+    const base = makeMockProps().planHighlights;
+    const { renderer } = mount({
+      planHighlights: {
+        ...base,
+        guaranteed: {
+          pct: 100, hasSS: false, hasPension: true, hasSpouseIncome: false,
+          everHasSS: true, everHasPension: true, fullyCovered: true,
+          startsAtAge: 67, startsLabel: "Social Security", savingsCoverUntilStart: true,
+          pendingSources: [{ age: 67, label: "Social Security", savingsCoverUntilStart: true }],
+        },
+      },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Social Security + pension — full coverage starts at 67");
+    expect(text).not.toContain("the rest comes from your savings");
+    // The old bug's misleading "more from 67" implied MORE guaranteed income
+    // stacking on top of an already-100% card.
+    expect(text).not.toContain("more from 67");
     act(() => renderer.unmount());
   });
 });
