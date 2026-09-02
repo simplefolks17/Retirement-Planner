@@ -284,14 +284,21 @@ function IncomeMeter({ t, planHighlights, flow, basisOption, basisApplicable, on
 //
 // Every value here is a named model field — `planView.outlastsPlan` /
 // `.depletionAge` / `.yearsShortOfPlan` (calcPlanProgress) and
-// `workLongerView.minYearsToSustain` (calcWorkLongerBreakEven). The screen
-// compares no ages and derives no counts (rule 10), and each missing value has
-// a designed sentence rather than a fabricated number:
+// `workLongerView.minYearsToSustain` / `.maxOffsetTested` (calcWorkLongerBreakEven).
+// The screen compares no ages and derives no counts (rule 10), and each
+// missing value has a designed sentence rather than a fabricated number:
 //   depletionAge null    → no age is claimed at all.
 //   yearsShortOfPlan null→ the "N years before" clause is dropped, not zeroed.
-//   minYearsToSustain null→ "retiring later alone won't close the gap" (the
-//                          model tested its offsets and none of them worked) —
-//                          never a made-up number of years.
+//   minYearsToSustain null→ "working up to N more years isn't enough on its
+//                          own" (N = maxOffsetTested, the largest offset the
+//                          model actually tested) — never the blanket
+//                          "retiring later alone won't close the gap" this
+//                          replaced (BUG-130, Item 1): that asserted something
+//                          about EVERY possible later retirement age when the
+//                          model only ever tests three (+1/+3/+5) — the app's
+//                          own retire-at slider reaches well past
+//                          safeRetAge + 5, and a household fixed by +8 would
+//                          have been told the opposite of the truth.
 //   workLongerView null  → already retired / no bundle: no work-longer clause.
 function PlanVerdict({ t, planView, workLongerView, activity, lifeExpect, onOpenLevers }) {
   const { outlastsPlan, depletionAge, yearsShortOfPlan } = planView ?? {};
@@ -307,11 +314,14 @@ function PlanVerdict({ t, planView, workLongerView, activity, lifeExpect, onOpen
   }
 
   const minYears = workLongerView?.minYearsToSustain ?? null;
+  const maxOffsetTested = workLongerView?.maxOffsetTested ?? null;
   const leverText = workLongerView == null
     ? null
     : minYears != null
       ? `Working ${minYears} more year${minYears === 1 ? "" : "s"} would make them last.`
-      : "Retiring later alone won't close the gap — trimming monthly spending is the other lever.";
+      : maxOffsetTested != null
+        ? `Working up to ${maxOffsetTested} more year${maxOffsetTested === 1 ? "" : "s"} isn't enough on its own — trimming monthly spending is the other lever.`
+        : "Trimming monthly spending is the other lever.";
 
   return (
     <div style={{ marginTop: 7 }}>

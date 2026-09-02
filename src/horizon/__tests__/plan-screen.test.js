@@ -354,10 +354,11 @@ describe("PlanScreen — command center survivors", () => {
         progressPct: 40, outlastsPlan: false, depletionAge: 80, yearsShortOfPlan: 10,
         drivers: [{ id: "withdrawal", ok: false }],
       },
-      workLongerView: { applicable: true, rows: [], minYearsToSustain: null },
+      workLongerView: { applicable: true, rows: [], minYearsToSustain: null, maxOffsetTested: 5 },
     });
     const text = allText(renderer.root);
-    expect(text).toContain("Retiring later alone won't close the gap");
+    expect(text).toContain("Working up to 5 more years isn't enough on its own");
+    expect(text).not.toContain("Retiring later alone won't close the gap");
     expect(text).not.toContain("more years would make them last");
     act(() => renderer.unmount());
   });

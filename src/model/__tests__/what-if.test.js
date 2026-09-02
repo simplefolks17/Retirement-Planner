@@ -2108,6 +2108,28 @@ describe("calcWorkLongerBreakEven", () => {
     if (!result.rows[0].coversPlan) expect(result.minYearsToSustain).toBeNull();
   });
 
+  // BUG-130 (Item 1): the Plan screen's null-case sentence must name what was
+  // ACTUALLY tested, not a blanket "retiring later won't fix it" claim — so
+  // maxOffsetTested has to be a real, named field, never re-derived in JSX.
+  it("maxOffsetTested is Math.max of the offsets actually passed in, default or custom, ascending or not", () => {
+    const withDefaults = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+    });
+    expect(withDefaults.maxOffsetTested).toBe(5); // default offsets [1, 3, 5]
+
+    const withCustom = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [9, 1, 5],
+    });
+    expect(withCustom.maxOffsetTested).toBe(9); // not just the largest INDEX
+
+    const singleOffset = calcWorkLongerBreakEven({
+      bundle: depletingArgs, safeRetAge, currentAge, includeSS: false, ssInputs,
+      offsets: [2],
+    });
+    expect(singleOffset.maxOffsetTested).toBe(2);
+  });
+
   it("coversPlan is never trivially true at/after safeLifeExp — a scenario retiring AFTER the plan already ends must not read as covering it (regression: retAge >= safeLifeExp made `safeLifeExp - retAge` <= 0, satisfied by any non-negative scenarioYears)", () => {
     // retirementAge close enough to lifeExpect that offsets [1,3,5] push retAge
     // to/past safeLifeExp (88+3=91, 88+5=93, both >= 90) — the task's own repro

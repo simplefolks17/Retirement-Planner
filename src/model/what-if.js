@@ -1495,6 +1495,13 @@ export function buildDurationRail(bundle, eventBase, { maxMonths, step = 1 } = {
 // won't close the gap" state — never a fallback number). It is only ever one of
 // the offsets actually simulated: this function does not interpolate, so a
 // household fixed by +2 with offsets [1,3,5] reports 3, never 2.
+// maxOffsetTested (BUG-130, Item 1) — the LARGEST offset this call actually
+// simulated (Math.max of `offsets`, never a re-derivation from `rows.length`).
+// When minYearsToSustain is null, the screen's sentence must say "working up
+// to N more years isn't enough" (N = maxOffsetTested), NOT a blanket "retiring
+// later alone won't close the gap" — the latter asserts something about EVERY
+// possible offset when this function only ever tested three, and the app's
+// own retire-at slider reaches well past safeRetAge + maxOffsetTested.
 export function calcWorkLongerBreakEven({
   bundle, safeRetAge, currentAge, includeSS = true, ssInputs = {}, offsets = [1, 3, 5],
 }) {
@@ -1567,6 +1574,17 @@ export function calcWorkLongerBreakEven({
   const minYearsToSustain =
     [...rows].sort((a, b) => a.years - b.years).find(r => r.coversPlan)?.years ?? null;
 
+  // BUG-130 (Item 1): the largest offset this call actually simulated — so the
+  // Plan screen's null-case sentence ("working longer alone won't close the
+  // gap") can name what was tested INSTEAD of overclaiming "retiring later"
+  // generally, which the caller's own slider can falsify (the default offsets
+  // are [1,3,5], but the app lets a user drag retirementAge well past
+  // safeRetAge+5). Read off `offsets`, the tested set — not `rows.length`,
+  // which would silently follow a filtered/failed row instead of what was
+  // actually asked for. `null` only if a caller passed an empty `offsets`
+  // array (never happens with the default).
+  const maxOffsetTested = offsets.length > 0 ? Math.max(...offsets) : null;
+
   // Representative row for the card face — prefer +3, else the middle, else first.
   const rep = rows.find(r => r.years === 3) ?? rows[Math.floor(rows.length / 2)] ?? rows[0] ?? null;
   let headline = "—", sub = "";
@@ -1583,6 +1601,6 @@ export function calcWorkLongerBreakEven({
   return {
     applicable: true,
     baseRetAge: safeRetAge, baseSustainable, baseSSAnnual, baseWindow, includeSS,
-    rows, headline, sub, minYearsToSustain,
+    rows, headline, sub, minYearsToSustain, maxOffsetTested,
   };
 }
