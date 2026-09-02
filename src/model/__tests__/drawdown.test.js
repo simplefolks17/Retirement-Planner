@@ -143,6 +143,28 @@ describe("calcRetIncomeFlow — guaranteedPct (SS + pension only)", () => {
     });
     expect(retYear.guaranteedPct).toBe(today.guaranteedPct);
   });
+
+  // BUG-129: buildBarSegments (budget.js) already guards Number.isFinite one
+  // function away; guaranteedPct had no equivalent guard, so a non-finite
+  // ss/pension produced guaranteedPct: NaN — which PlanScreen.jsx's `pct !=
+  // null` test passes straight through to render as the literal string "NaN%"
+  // instead of the designed "—" empty state. No live App path reaches this
+  // today (every input is numeric) — a defensive-contract gap only, same class
+  // as the already-filed BUG-98.
+  it("BUG-129: a non-finite ss/pension yields guaranteedPct: null (the designed '—'), never NaN", () => {
+    expect(calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: NaN, pension: 10_000 }).guaranteedPct)
+      .toBeNull();
+    expect(calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: 30_000, pension: NaN }).guaranteedPct)
+      .toBeNull();
+    expect(calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: Infinity, pension: 10_000 }).guaranteedPct)
+      .toBeNull();
+    // The rest of the bundle isn't the concern of this guard (scoped to
+    // guaranteedPct only, matching buildBarSegments' own narrow contract) —
+    // just confirm the function doesn't throw and returns a well-formed object.
+    const f = calcRetIncomeFlow({ effectiveExpenses: 80_000, ss: NaN, pension: 10_000 });
+    expect(typeof f).toBe("object");
+    expect(Number.isNaN(f.guaranteedPct)).toBe(false);
+  });
 });
 
 describe("calcNetPortfolioNeed", () => {

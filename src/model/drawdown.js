@@ -69,6 +69,13 @@ export function calcRetIncomeFlow({ effectiveExpenses, ss, pension, spouseIncome
   const ssBand = ssRaw * scale;
   const penBand = penRaw * scale;
   const guaranteedIncome = ssBand + penBand;
+  // BUG-129: guaranteedRaw (and therefore guaranteedPct) can be NaN if a caller
+  // ever hands in a non-finite ss/pension — Math.max(0, NaN) is NaN, same
+  // hazard buildBarSegments (budget.js) already guards one function away. No
+  // live App path does this today (every input is numeric), but the guard
+  // keeps this function's contract symmetric with its sibling: null (the
+  // designed "—" state), never a NaN that renders as the literal string "NaN%".
+  const guaranteedRaw = ssRaw + penRaw;
   return {
     expenses: exp,
     ss: ssBand,
@@ -76,7 +83,9 @@ export function calcRetIncomeFlow({ effectiveExpenses, ss, pension, spouseIncome
     spouseIncome: spRaw * scale,
     portfolioDraw,
     guaranteedIncome,
-    guaranteedPct: exp > 0 ? Math.min(100, Math.round(((ssRaw + penRaw) / exp) * 100)) : null,
+    guaranteedPct: (exp > 0 && Number.isFinite(guaranteedRaw))
+      ? Math.min(100, Math.round((guaranteedRaw / exp) * 100))
+      : null,
   };
 }
 

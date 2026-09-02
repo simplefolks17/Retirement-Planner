@@ -649,6 +649,46 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-129 — `calcRetIncomeFlow`'s `guaranteedPct` had no non-finite guard, unlike `buildBarSegments` one function away in the same PR (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: LOW — a defensive-contract gap only. No live App input path
+reaches this today (every value feeding `calcRetIncomeFlow` is numeric), so nothing on the shipped
+app is affected; this closes an asymmetry, not a live bug.**
+**Found by:** the same final adversarial review of PR #66, noting that `buildBarSegments`
+(`src/model/budget.js`, same PR) got an explicit `Number.isFinite` guard with a comment about
+precisely this hazard (`Math.max(0, NaN)` is `NaN`, not a clamp), while `guaranteedPct` — a sibling
+function in the very next block of `drawdown.js` — had no equivalent guard. Same defensive-contract
+class as the already-filed BUG-98 (the spouse gap-year maps).
+
+**Root cause.** `calcRetIncomeFlow`'s `guaranteedPct: exp > 0 ? Math.min(100, Math.round(((ssRaw +
+penRaw) / exp) * 100)) : null` has no check that `ssRaw + penRaw` is actually finite. `ssRaw =
+Math.max(0, ss)` — if a caller ever passed a non-finite `ss`/`pension` (e.g. `NaN`, `Infinity`),
+`Math.max` does not clamp it (`Math.max(0, NaN)` is `NaN`), so `guaranteedPct` becomes `NaN`.
+`PlanScreen.jsx`'s `pct != null` applicability test passes `NaN` straight through (`NaN != null` is
+`true`), rendering the literal string `"NaN%"` on the "Guaranteed for life" card instead of the
+designed `"—"` empty state.
+
+**Fix.** Added a `Number.isFinite` guard on `guaranteedRaw = ssRaw + penRaw`, matching
+`buildBarSegments`'s own guard style: `guaranteedPct: (exp > 0 && Number.isFinite(guaranteedRaw)) ?
+Math.min(100, Math.round((guaranteedRaw / exp) * 100)) : null` — returns `null` (the designed "—"
+empty state this codebase already uses elsewhere for "not applicable"), never `0` (which would
+falsely claim zero guaranteed income) and never `NaN`. Scoped narrowly to `guaranteedPct` only,
+matching the task's precise ask and `buildBarSegments`'s own narrow contract — the rest of
+`calcRetIncomeFlow`'s return bundle (`ss`/`pension`/`portfolioDraw`/`guaranteedIncome`) is
+unaffected by this change; no live path exercises a non-finite `ss`/`pension` today, so widening
+the guard's scope was out of scope for this fix.
+
+**Tests:** `src/model/__tests__/drawdown.test.js` — one new test asserting `guaranteedPct` is `null`
+(not `NaN`, not `0`) for a `NaN` `ss`, a `NaN` `pension`, and an `Infinity` `ss`, plus a sanity check
+that the function still returns a well-formed object rather than throwing. **Revert-and-confirm:**
+reverted `drawdown.js` alone (`git stash`), confirmed the new test fails with `expected NaN to be
+null`, then restored the fix and confirmed it passes.
+**Golden master:** all four confirmed unchanged — every default-state input is numeric, so the new
+guard's condition is always true there; confirmed by direct test run, no values moved.
+**Where:** `src/model/drawdown.js` (`calcRetIncomeFlow`), `src/model/__tests__/drawdown.test.js`.
+
+---
+
 ### BUG-128 — the Statement income ledger's rows summed to MORE than the bolded total for an over-funded household (SS + pension alone exceed spending) (found 2026-09-02, final adversarial review of PR #66; fixed same day)
 
 **Owner:** me_theguy. **Severity: LOW-MEDIUM — a real, live-reachable arithmetic mismatch on the
