@@ -412,6 +412,70 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
     push but failed with `429 RESOURCE_EXHAUSTED` (free-tier quota) on every PR of real size,
     including three times in a row on this PR — pure CI noise, no working review ever produced.
     1074 → **1076 tests**. PR #64 merged 2026-07-28.
+- **Horizon UI design review — 23 bugs across 5 slices, plus the Plan screen rebuilt for a
+  first-time user (2026-08-03 → 2026-08-19, branch `claude/design-review-plan-page-j3by51`,
+  PR #66).** Owner request: a design review of the **Horizon** UI only (Classic explicitly out of
+  scope), naming two symptoms — buttons not lining up with their neighbours on a phone, and the
+  arc chart's axis cut off by its container — plus a separate content review of the Plan screen's
+  stat cards, which "seem out-of-place and oddly worded" for the app's actual audience (people who
+  want to learn retirement planning and do NOT already know what a 401k or an RMD is).
+  1. **Method — screenshots, not code-reading.** A phone-viewport (390×844) Playwright harness
+     modelled on `.claude/skills/verifier-browser.cjs` captured every Horizon screen, every Numbers
+     sub-tab, both Explore-tray facets, the mobile sticky bar, and the modals; two Opus agents then
+     reviewed the renders (visual audit + a content audit against the stated audience). 18 findings.
+  2. **Then a batch sweep for the same bug SHAPES, not just the reported instances** (owner's
+     request — "find similar problems, there's a lot"): 7 patterns, ~15-20 further instances, and
+     2 brand-new bugs neither screenshot pass could see.
+  3. **Then an Opus pre-mortem of the plan itself**, which materially changed its scope before any
+     code was written. It found: the primary-vs-household SCOPE axis (CLAUDE.md rule 11's sibling)
+     was never swept and had a live instance on the Plan screen; a SECOND dollar-basis mismatch
+     ~20px from the first; WCAG contrast failing in all 12 palette/mode combinations (computed, not
+     eyeballed — only 1 of the 12 had ever been screenshotted); `100vh`/safe-area as an
+     INDEPENDENT, height-driven second cause of the arc clipping that a width-only fix would not
+     clear; and that the plan's own cited "good pattern" exemplar (`TabBar`) was itself a
+     keyboard-unreachable `<div onClick>`.
+  4. **Two owner decisions taken before building** (`AskUserQuestion`): dollar basis defaults to
+     TODAY's dollars **but ships a visible user toggle** (reclassifying that item from a one-line
+     wiring fix to a real feature — the one genuinely new feature in this PR); and the "You keep/mo"
+     card MOVES OUT of the 5-card retirement row into a separate today-anchor pair, which is also
+     where its household-vs-"you" scope bug (BUG-116) got fixed.
+  5. **Shipped in 5 gated slices** — 1: pure correctness (BUG-104/105/106); 2: the shared `Btn`/`Pill`
+     primitive absorbing touch targets + BUG-49's keyboard-reachability pass + a `:focus-visible`
+     rule in one pass; 2.5: the visual/layout gap-fill, incl. the owner's own reported bug
+     (BUG-107/108/109/110/111); 3: the 12-palette contrast fix (BUG-112); 4: the Plan rebuild +
+     the basis toggle (BUG-114/115/116/117).
+  6. **The headline bugs, for the record.** **BUG-107** (the owner's report) was a UNITS mismatch:
+     the padding reserving room for the axis is in SVG viewBox units that shrink with container
+     width, while the tick labels are a fixed-CSS-pixel HTML overlay — ~7px of clearance for a
+     ~12px label on a phone, 20-30px on desktop, which is why it read as "mobile-only." **BUG-104**
+     — the Taxes composition bar's colour map had no `draw` key, rendering the LARGEST tax
+     component (78% of the bar at the shipped default) fully invisible. **BUG-105** — the raw
+     driver id `"confidence"` printed verbatim to users. **BUG-114** — the same figure shown in two
+     different dollar bases ~20px apart, differing ~4× at the default. **BUG-115** — the tax card
+     read 4.6× smaller than the total on the screen it navigates to, under near-identical wording.
+  7. **Review battery, then two fix batches.** An execution-based (not read-the-diff) Opus
+     adversarial review of the full diff found 12 issues; CodeRabbit found 7 then 5 more. The 18
+     surviving action items shipped as Batch A (model/logic) + Batch B (mechanical). Two are worth
+     remembering: **BUG-122** — the new "Guaranteed for life" card's percentage was diluted by a
+     spouse's TEMPORARY gap-year income (same household read 28% vs 69% depending only on the
+     spouse's retirement timing) and its "savings cover you until then" copy had no truth condition,
+     so it could sit next to "Money lasts to age 61" contradicting it outright — BUG-117's exact
+     pattern, reintroduced by the very PR that fixed it elsewhere. **BUG-123** — `coversPlan` was a
+     SIXTH inline copy of `marginForScenario`'s formula, and BUG-118's guard had been patched only
+     onto that copy: the canonical shared function still carried the same latent bug, silently
+     affecting its 4 other callers. Fixed in the shared function, so all five now benefit.
+  8. **Filed, not fixed** (Open, each for a stated reason): **BUG-113** (Journey's composited-opacity
+     `%` labels — a per-call-site contrast contract the flat-token test structurally cannot cover),
+     **BUG-124** (the "Tax in retirement" card is the one dollar-denominated card NOT wired to the
+     new toggle, entangled with BUG-38's known undercounting), **BUG-125** (the guaranteed-for-life
+     card ignores a spouse's own SS claiming age — traces to a model-wide simplification in
+     `retirement-income.js`; needs an owner product decision, not a quick fix).
+  1076 → **1335 tests**. Every behavioural fix carries revert-and-confirm evidence (revert the fix,
+  confirm the new test fails, restore) per this repo's standard. All four golden masters confirmed
+  unmoved throughout — `golden-master-app-wiring.test.js` was extended for the 7 new
+  `planHighlights`/`planView` fields and verified to catch a real App-level wiring break that the
+  hand-built `golden-master.test.js` stays green through. Full root cause / fix / verification for
+  every item: `docs/BUGS.md` → BUG-104 through BUG-126.
 
 ## Commands
 
