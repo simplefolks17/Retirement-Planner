@@ -649,6 +649,210 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-133 — the Plan progress pill could read "↗ on target" on the same screen as "Your savings run out…" (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: LOW — a small directional badge, but it directly contradicts the
+verdict sentence on the very same screen, the same class of self-contradiction BUG-114/115/122 were
+all rated for.**
+**Found by:** the final adversarial review of PR #66. Repro: MFJ · `spouseCurrentAge` 22 ·
+`spouseIncome` 500,000 · `annualExpenses` 120,000 · `retirementAge` 55 renders "92% there ↗ on
+target" beside "Your savings run out at age 88 — 2 years before your plan ends at 90."
+
+**Root cause.** `PlanScreen.jsx`'s progress-bar badge gated its "on target" label on
+`planView.drivers.find(d => d.id === "withdrawal")?.ok` alone — the withdrawal-RATE driver only.
+That driver can read `ok: true` while the plan genuinely fails to cover its horizon: in the repro, a
+still-working spouse's temporary income (`temporaryIncomeBasis`, rule 5b — active only until the
+spouse's own retirement age) flatters the withdrawal rate to near-zero, while the longevity/savings/
+confidence drivers all read `ok: false` and `planView.outlastsPlan` — the SAME field `PlanVerdict`'s
+"Your savings run out…" sentence a few lines below reads — is `false`. The badge and the sentence are
+built from the same `planView`, but the badge was checking one narrow driver instead of the plan's
+actual consolidated verdict.
+
+**Fix.** `onTarget = wrOk === true && planView.outlastsPlan === true` — the withdrawal driver AND the
+model's own consolidated verdict, the exact field the adjacent verdict sentence already reads,
+instead of inventing a second competing "is this plan OK" rule (this codebase's signature bug class,
+per the task brief). Since `isSustainable` (checked one branch earlier, for the "↗ gaining" label) and
+`planView.outlastsPlan` are the same underlying concept, this makes "on target" no longer reachable
+as a THIRD, weaker state once the plan doesn't cover its horizon — the badge now agrees with the
+sentence beside it in every case, which is the honesty property being fixed; the pill still reads
+"↗ adjust" whenever the plan needs an actual change, no longer a false "↗ on target" in between.
+**Where:** `src/horizon/screens/PlanScreen.jsx` (`onTarget`, the progress-bar badge, ~line 700).
+
+**Tests:** `src/horizon/__tests__/plan-screen.test.js` — one new test using the REAL `planView`
+App computes for the task's exact repro (verified via a live App mount: `outlastsPlan: false`,
+`withdrawal.ok: true`, `temporaryIncomeBasis: true`), asserting the rendered text contains "Your
+savings run out at"/"age 88" and does NOT contain "on target", and does contain "adjust".
+**Revert-and-confirm:** reverted `onTarget` to the old `wrOk`-only expression in place, confirmed the
+new test fails with the exact reported contradiction (`"92% there↗ on target"` alongside "Your savings
+run out…"), then restored the fix and confirmed it passes.
+**Golden master:** all four confirmed unchanged — a pure copy/gating change with no numeric output;
+confirmed by direct test run, no values moved.
+
+---
+
+### BUG-132 — the income-replacement percentage stayed on screen after the dollar-basis toggle moved the dollar figure it was calculated against (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM — the same "two numbers a reader reconciles at a glance and
+they don't agree" failure BUG-114/115 were both rated HIGH for, newly reintroduced by the dollar-basis
+toggle those very bugs' fix shipped.**
+**Found by:** the final adversarial review of PR #66. Repro: default state, click "At 65" →
+"Retirement income $18,900/mo · replaces 84% of today's take-home pay" — $18,900 is 332% of the
+$5,700/mo paycheck shown elsewhere on the same screen, not 84%. A second repro (MFJ-gap household,
+"At 60"): "$40,700/mo replaces 93%" beside "Household paycheck $13,500/mo" (actually 301%).
+
+**Root cause.** `PlanScreen.jsx`'s Income Meter row rendered `fmtMo(flow.expenses)` — the basis the
+toggle selects (`planHighlights.incomeFlowByBasis[activeBasisId]`) — beside
+`planHighlights.incomeReplacementPct`, a SEPARATE, deliberately basis-INVARIANT top-level field
+(BUG-114: it always compares today's spending to today's take-home pay, on purpose, regardless of
+which basis the meter's headline shows). The toggle correctly left the percentage unconverted — that
+part was intentional — but nothing stopped the two from sitting in the same baseline-aligned row once
+the headline dollar figure could diverge from the one the percentage was actually computed against.
+
+**Fix.** The replacement-ratio clause now renders only while the ACTIVE basis is the one it was built
+to sit beside. Rather than have the screen inspect `activeBasisId`/compare it to a string literal
+(rule 10), `dollarBasisOptions` in `App.jsx` gained a model-provided `showsReplacementPct` flag per
+option (`true` for "today", `false` for "retirement" — the same render-ready-field pattern
+`label`/`caption`/`cardSub` already use), and `IncomeMeter` gates on
+`basisOption?.showsReplacementPct === true` instead of testing `incomeReplacementPct`'s nullness
+alone. In retirement-year mode the clause simply disappears — there is no on-screen referent for it to
+reconcile against, so hiding it (rather than converting it, which would defeat BUG-114's deliberate
+design) is the honest behavior.
+**Where:** `src/App.jsx` (`dollarBasisOptions`), `src/horizon/screens/PlanScreen.jsx` (`IncomeMeter`).
+
+**Tests:** `src/horizon/__tests__/plan-screen.test.js` — one new test proving the clause is present at
+the default ("today") basis and gone after switching to "At 65" (while the meter's own dollar figure
+visibly changes to $10,000/mo, proving this isn't a no-op); the pre-existing "leaves basis-invariant
+values alone" test had its now-incorrect "replaces 82%" assertion removed (that value is no longer
+basis-invariant in the sense the test claimed — it's basis-GATED). **Revert-and-confirm:** reverted
+`IncomeMeter`'s gate to its old unconditional check, confirmed the new test fails (the clause stayed
+present after toggling to "At 65"), then restored the fix and confirmed it passes. Also verified
+against a live App mount at the exact reported repro (default state, click "At 65"): before the fix
+the row read "$18,900/mo replaces 84% of today's take-home pay"; after, "$18,900/mo" with no
+replacement clause at all.
+**Golden master:** all four confirmed unchanged — a pure copy/gating change with no numeric output;
+confirmed by direct test run, no values moved.
+
+---
+
+### BUG-131 — "Guaranteed for life" named the wrong sources, or none at all, and could claim "100%" beside "the rest comes from your savings" (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — the card's headline percentage and its own sub-copy could
+directly contradict each other, and separately, a source supplying the majority of a "100%" claim
+could go completely unnamed — on the app's main dashboard, for the class of user (a first-time,
+financially-inexperienced saver) this whole PR exists to protect.**
+**Found by:** the final adversarial review of PR #66.
+**Repro A** — default state · `retirementAge` 60 · `pensionMonthly` 4000 · `pensionStartAge` 70: the
+Income Meter shows a single Portfolio-only band (SS/pension haven't started at retirement), and
+"Guaranteed for life › 100% · Social Security starts at 67 — savings cover you until then" — the
+pension supplying roughly 76 of those 100 points was never mentioned at all, and Numbers → Statement
+(the card's own navigate target) shows SS at 24% with no pension row.
+**Repro B** — default state · `pensionMonthly` 4000 · `pensionStartAge` 60 (retire 65): "Guaranteed
+for life › 100% · Your pension — the rest comes from your savings · more from 67" while the meter
+directly above shows Pension $4,000/mo AND Portfolio $800/mo — "100%" and "the rest comes from your
+savings" cannot both be true, and "more from 67" implies additional guaranteed income stacking on top
+of an already-100% card.
+
+**Root cause.** `planHighlights.guaranteed` in `App.jsx` computed its headline `pct` from the UNGATED,
+eventual SS + pension streams (BUG-122's own deliberate fix — a lifetime claim shouldn't read 0%
+just because SS hasn't started yet), but named its SOURCES (`hasSS`/`hasPension`) off
+`flowRetirement`, the retirement-year-GATED snapshot — a different question ("has this started by
+retirement") that the sub-copy conflated with "does pct count this stream at all." A source that
+counts toward `pct` but hasn't started yet (repro A's pension) was invisible to the naming logic
+entirely. Separately, `nextGuaranteedStart` built a full list of every pending source but only ever
+exposed `[0]` (the earliest) to the screen, so a second pending source (repro A's pension, again) had
+no field to be named from even if the naming logic had been fixed in isolation. And nothing anywhere
+checked whether `pct` had already reached 100% before appending "the rest comes from your savings" —
+a clause that is unconditionally false once there is no "rest" left by the model's own number.
+
+**Fix.** Three changes, all in the model layer (`App.jsx`) except the copy-selection itself
+(`PlanScreen.jsx`), per rule 10:
+1. New UNGATED booleans `everHasSS`/`everHasPension` (does this household eventually get Social
+   Security / a pension at all — the same eligibility test `pct`'s own numerator already uses) drive
+   source NAMING; the existing gated `hasSS`/`hasPension` are left untouched (still used for a
+   different question — see below) rather than repurposed, so nothing that already read them breaks.
+2. `pendingGuaranteedStarts`, the full sorted array `nextGuaranteedStart` already built internally, is
+   now surfaced in full as `guaranteed.pendingSources` (each entry: `age`, `label`, its own
+   `savingsCoverUntilStart`) — `startsAtAge`/`startsLabel`/`savingsCoverUntilStart` (the single
+   earliest entry) are kept byte-identical for backward compatibility.
+3. New `fullyCovered` boolean (`pct >= 100`) suppresses "the rest comes from your savings" once true.
+   `PlanScreen.jsx`'s copy-selection also keeps a gated `activeNow = hasSS || hasPension` check (the
+   ORIGINAL gated flags, now used for their own correct purpose): whether ANYTHING is already paying
+   right now, which decides between the "X starts at N — savings cover you until then" safety framing
+   (nothing active yet — the honest question is whether savings bridge the gap) and the "source — the
+   rest comes from savings · more from N" framing (something is already active). This is what
+   preserves BUG-122's own already-tested "savings cover you until then" / "may not stretch that far"
+   behavior for the still-common case (SS not yet started, nothing else active) while fixing the two
+   repros above.
+**Where:** `src/App.jsx` (`planHighlights.guaranteed`, `pendingGuaranteedStarts`), `src/horizon/screens/PlanScreen.jsx` (`guaranteedSub`).
+
+**Tests:** `src/horizon/__tests__/plan-screen.test.js` — two new tests using the REAL
+`planHighlights.guaranteed` App computes for repro A and repro B (verified via a live App mount)
+proving the fixed copy ("Social Security + pension — full coverage once Social Security at 67, Your
+pension at 70" / "Social Security + pension — full coverage starts at 67") and the absence of the old
+buggy strings. Three pre-existing tests (the base fixture, the spouse-income test, both BUG-122
+"savings cover you until then" tests) updated with the new fields so their existing assertions keep
+holding under the new logic. **Revert-and-confirm:** reverted `App.jsx` + `PlanScreen.jsx` together
+(`git stash`), confirmed all four new/updated regression assertions failed with the EXACT pre-fix
+strings quoted in the two repros above, then restored the fix and confirmed all pass.
+**Golden master:** all four confirmed unchanged — `guaranteed.hasSS`/`.startsAtAge`/`.startsLabel`/
+`.savingsCoverUntilStart` (the fields `golden-master-app-wiring.test.js` locks) are computed
+byte-identically to before; the new fields are purely additive; confirmed by direct test run, no
+values moved.
+**Not fixed here — still open:** BUG-125 (a spouse claiming SS on a different timeline than the
+primary isn't reflected in `pct`'s source list either) is a pre-existing, separate, filed issue this
+fix does not touch — `everHasSS`/`pendingGuaranteedStarts` still read the same primary-only-gated
+`householdSS`/`ssClaimingAge` BUG-125 already documents as incomplete for that household shape.
+
+---
+
+### BUG-130 — the Plan verdict's "won't fix it" sentence asserted something the model never tested (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — a confidently-stated NEGATIVE claim ("retiring later
+alone won't close the gap") that the app's own retirement-age slider can falsify in one drag, steering
+a first-time user away from the plan's strongest lever.**
+**Found by:** the final adversarial review of PR #66. `calcWorkLongerBreakEven` only ever simulates
+`offsets = [1, 3, 5]` (by design — its own docstring says so); `minYearsToSustain` is `null` when none
+of those three tested offsets cover the plan. That correctly means "none of the offsets I tested
+worked" — but `PlanVerdict`'s `leverText` converted the `null` into a blanket claim about EVERY
+possible later retirement age. Repro: default state · `retirementAge` 60 · `annualExpenses` 58,000
+renders "Retiring later alone won't close the gap — trimming monthly spending is the other lever." —
+but setting `retirementAge` to 68 on the same household gives `outlastsPlan: true`. Measuring the
+first offset that actually works at each spend level (58k→+8, 60k→+9, 62k→+10, 64k–70k→+12, 72k+→
+never) confirms the model's own null case does not mean "no later age would ever work," and the app's
+own slider reaches `lifeExpect − 1` — well past `safeRetAge + 5`.
+
+**Root cause.** `calcWorkLongerBreakEven`'s own docstring already documents that it "does not
+interpolate" and only ever reports one of the tested offsets — the null case was ALWAYS meant to mean
+"none of the three I tried," never "none exist." `PlanScreen.jsx`'s `PlanVerdict` had no way to say
+which offsets were actually tried, so it fell back to a blanket, unqualified claim.
+
+**Fix (decided): weaken the copy to exactly what the model knows, rather than widen `offsets`** —
+widening means a full extra multi-decade scenario re-simulation on every Plan render (a real cost on
+the app's main screen), and the function's own contract already documents that it intentionally
+doesn't interpolate. New `maxOffsetTested` field on `calcWorkLongerBreakEven`'s return
+(`Math.max(...offsets)`, the tested set — not `rows.length`, which would silently follow a
+filtered/failed row instead of what was actually asked for) lets `PlanVerdict` render "Working up to
+N more years isn't enough on its own — trimming monthly spending is the other lever." (N = the actual
+largest tested offset, never a hardcoded "5" in JSX, per rule 10) instead of the blanket claim.
+**Where:** `src/model/what-if.js` (`calcWorkLongerBreakEven`, new `maxOffsetTested`),
+`src/horizon/screens/PlanScreen.jsx` (`PlanVerdict.leverText`).
+
+**Tests:** `src/model/__tests__/what-if.test.js` — one new test proving `maxOffsetTested` is
+`Math.max` of whatever `offsets` were actually passed (default `[1,3,5]` → 5; custom out-of-order
+`[9,1,5]` → 9, not just the largest index; a single-offset `[2]` → 2).
+`src/horizon/__tests__/plan-screen.test.js` — the existing null-case test rewritten to assert the new
+sentence ("Working up to 5 more years isn't enough on its own") and the ABSENCE of the old blanket
+claim. **Revert-and-confirm:** reverted `what-if.js` + `PlanScreen.jsx` together (`git stash`),
+confirmed both new/updated tests failed (the model test with `expected undefined to be 5`, the screen
+test rendering the old "Retiring later alone won't close the gap" copy), then restored the fix and
+confirmed both pass. Also verified against a live App mount at the exact reported repro (`retirementAge`
+60, `annualExpenses` 58,000): the verdict sentence now reads "…Working up to 5 more years isn't enough
+on its own — trimming monthly spending is the other lever."
+**Golden master:** all four confirmed unchanged — a pure copy/gating change plus one additive field;
+confirmed by direct test run, no values moved.
+
+---
+
 ### BUG-129 — `calcRetIncomeFlow`'s `guaranteedPct` had no non-finite guard, unlike `buildBarSegments` one function away in the same PR (found 2026-09-02, final adversarial review of PR #66; fixed same day)
 
 **Owner:** me_theguy. **Severity: LOW — a defensive-contract gap only. No live App input path
