@@ -689,7 +689,16 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
   const openLevers = () => { setTrayOpen("change"); setPendingTrayScroll(true); };
 
   const { progressPct } = planView;
+  // BUG-133 (Item 4): this used to gate on the withdrawal driver ALONE
+  // (`wrOk`) — a plan can read a healthy withdrawal RATE while still failing
+  // to cover its horizon (e.g. a still-working spouse's temporary income
+  // flatters the rate — `temporaryIncomeBasis`, rule 5b), which let this pill
+  // read "on target" on the very same screen as "Your savings run out…"
+  // (PlanVerdict, built from this SAME planView). Gated on `outlastsPlan` —
+  // the model's own consolidated verdict, the exact field the verdict
+  // sentence itself reads — rather than inventing a second, competing rule.
   const wrOk = planView.drivers.find(d => d.id === "withdrawal")?.ok;
+  const onTarget = wrOk === true && planView.outlastsPlan === true;
 
   const progressLabel = isSustainable ? "self-sustaining ↗" : `${progressPct}% there`;
   const progressColor = isSustainable ? t.good : progressPct >= 75 ? t.good : t.warm;
@@ -699,7 +708,7 @@ export default function PlanScreen({ t, props, glow, strokeWidth = 3, isMobile =
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
         <span style={{ font: `600 12px ${HF}`, color: t.ink }}>{progressLabel}</span>
         <span style={{ font: `600 11.5px ${HF}`, color: progressColor }}>
-          {isSustainable ? "↗ gaining" : wrOk ? "↗ on target" : "↗ adjust"}
+          {isSustainable ? "↗ gaining" : onTarget ? "↗ on target" : "↗ adjust"}
         </span>
       </div>
       <div style={{ height: 7, borderRadius: 6, background: t.line, overflow: "hidden" }}>

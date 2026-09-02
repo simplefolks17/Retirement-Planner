@@ -345,9 +345,43 @@ describe("PlanScreen — command center survivors", () => {
     act(() => renderer.unmount());
   });
 
-  // No tested offset fixes the plan → a designed sentence, never a made-up
-  // number of years.
-  it("renders the designed 'later retirement alone won't fix it' state when minYearsToSustain is null", () => {
+  // BUG-133 (Item 4): the progress pill used to gate "on target" on the
+  // withdrawal driver ALONE — a plan can read a healthy withdrawal RATE
+  // (e.g. flattered by a still-working spouse's temporary income,
+  // temporaryIncomeBasis/rule 5b) while still failing to cover its horizon,
+  // letting the pill read "on target" on the same screen as "Your savings run
+  // out…" beside it. Fixture values below are the REAL planView App computes
+  // for this exact repro (MFJ, spouseCurrentAge 22, spouseIncome 500000,
+  // annualExpenses 120000, retirementAge 55) — verified against a live App
+  // mount: withdrawal.ok true, outlastsPlan false.
+  it("does not read 'on target' when the withdrawal driver passes but the plan's own verdict says it doesn't cover the horizon", () => {
+    const { renderer } = mount({
+      isSustainable: false,
+      planView: {
+        progressPct: 92, outlastsPlan: false, depletionAge: 88, yearsShortOfPlan: 2,
+        drivers: [
+          { id: "withdrawal", ok: true, temporaryIncomeBasis: true, basisEndsAtAge: 55 },
+          { id: "longevity", ok: false },
+          { id: "savings", ok: false },
+          { id: "confidence", ok: false },
+        ],
+      },
+      workLongerView: { applicable: true, rows: [], minYearsToSustain: 5, maxOffsetTested: 5 },
+    });
+    const text = allText(renderer.root);
+    expect(text).toContain("Your savings run out at");
+    expect(text).toContain("age 88");
+    expect(text).not.toContain("on target");
+    expect(text).toContain("adjust");
+    act(() => renderer.unmount());
+  });
+
+  // No tested offset fixes the plan → a designed sentence naming what was
+  // ACTUALLY tested (BUG-130, Item 1), never a made-up number of years and
+  // never a blanket claim about every possible later retirement age (the old
+  // "Retiring later alone won't close the gap" copy asserted something the
+  // model never tested past +5 — falsifiable by the app's own slider).
+  it("names the largest TESTED offset instead of a blanket claim when minYearsToSustain is null (BUG-130, Item 1)", () => {
     const { renderer } = mount({
       isSustainable: false,
       planView: {
