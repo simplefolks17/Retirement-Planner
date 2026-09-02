@@ -649,6 +649,61 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-134 — BUG-127's own fix left the engine's spouse hold-out gate on the BASE plan's retirement age, so a work-longer scenario drained a still-working spouse's 401k silently and unpenalised (found 2026-09-02, CodeRabbit review of the final pre-merge round, PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — scenarios read systematically optimistic for exactly the
+households #30 exists to serve, and the mechanism was invisible: the money simply appeared, with no
+spillover recorded and no early-withdrawal penalty charged.**
+
+**What:** BUG-127 (same PR, hours earlier) fixed the scenario path to rebuild the spouse's SEED and
+gap-year MAPS against the scenario's own retirement age via `resolveSpouseRetAge`. But
+`calcWhatIfScenario`'s `buildRetirementPhase` call still took `spouseRetirementAge` from the
+`...retPhaseBase` spread — the BASE plan's value. `retirement-engine.js` reads that field for its
+Option-A hold-out (`spouseHoldout`, `retirement-engine.js:236`:
+`spouseOptionA && (spouseAge == null || spouseAge < spouseRetirementAge)`), so with a raw
+`spouseRetirementAge` of `null` ("auto") the walk **released the spouse's Traditional bucket into
+the drawable pool at the BASE retirement age while the very same walk still had them working and
+contributing up to the SCENARIO age.** Seed and draw gate describing two different households.
+
+**Why the old code was right until it wasn't.** The call site carried an explicit comment —
+*"spouseRetirementAge itself is left alone (via the `...retPhaseBase` spread above) since the
+spouse's OWN age doesn't change in a primary-retirement-age scenario"* — which was TRUE before
+BUG-127: `retPhaseBase.spouseRetirementAge` and the seed's own age were the same number. BUG-127
+changed one of them and not the other, and the comment kept vouching for the old invariant. A
+reminder that a comment asserting an invariant is not the same as a test enforcing it.
+
+**Measured** (fixture: primary retires at 52 on a $50k Trad balance, $150k spend, spouse aged 22
+holding $900k Trad and earning $60k — so the walk must reach for the spouse bucket during the gap):
+
+| scenario retirement age | `totalSpouseSpillover` pre-fix | post-fix |
+|---|---|---|
+| 55 | **0** | 982,500 |
+| 58 | **0** | 1,120,964 |
+| 62 | **0** | 926,336 |
+
+Pre-fix those scenarios also reported MORE sustained years (e.g. 12.588 vs 12.321 at 55) — the
+optimistic bias, quantified.
+
+**Fix:** resolve the scenario's spouse retirement age ONCE into `scenarioSpouseRetAge` and feed it
+to BOTH consumers — `buildSpouseRetirementSeed` (as before) and `buildRetirementPhase`'s
+`spouseRetirementAge` (new). One value, one resolution, both consumers — the same BUG-31 "two
+implementations of one concept" discipline BUG-127 itself invoked, applied one level deeper.
+
+**Tests:** `src/__tests__/spouse-household.test.js` — a hold-out-binding fixture asserting
+`totalSpouseSpillover > 0` for scenarios at 55/58/62, plus a base-plan-unaffected control.
+Revert-and-confirm: removing the one-line fix fails the new test with `expected 0 to be greater
+than 0`; restoring it passes. 1353 → **1355 tests**.
+
+**Golden masters:** all four unmoved (the two spouse fixtures pin `spouseRetirementAge`
+explicitly, so their hold-out gate never depended on the auto-resolution — which is precisely why
+neither they nor BUG-127's own new tests could see this).
+
+**Where:** `src/model/what-if.js` (`calcWhatIfScenario` — `scenarioSpouseRetAge`, and the
+`buildRetirementPhase` call's `spouseRetirementAge`), consumed by
+`src/model/retirement-engine.js`'s `spouseHoldout`.
+
+---
+
 ### BUG-133 — the Plan progress pill could read "↗ on target" on the same screen as "Your savings run out…" (found 2026-09-02, final adversarial review of PR #66; fixed same day)
 
 **Owner:** me_theguy. **Severity: LOW — a small directional badge, but it directly contradicts the

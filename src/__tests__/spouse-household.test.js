@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
 import { runSimulation } from "../model/simulation.js";
+import { calcWhatIfScenario } from "../model/what-if.js";
 import { calcEmployerMatch } from "../model/employer-match.js";
 import { HSA_LIMIT_2026, HSA_FAMILY_LIMIT_2026 } from "../config/irs-2026.js";
 
@@ -293,6 +294,65 @@ describe("BUG-127 — work-longer scenarios resolve the spouse's own retirement 
     expect(plan.outlastsPlan).toBe(true);
     expect(plan.depletionAge).toBeNull();
     app.unmount();
+  });
+
+  // BUG-134 (CodeRabbit, final pre-merge review of PR #66) — BUG-127's OWN
+  // regression, caught before merge. BUG-127 rebuilt the scenario's spouse SEED
+  // and gap-year MAPS at the scenario's retirement age, but buildRetirementPhase
+  // still received `spouseRetirementAge` from the `...retPhaseBase` spread — the
+  // BASE plan's value. The engine reads that field for its Option-A hold-out
+  // (retirement-engine.js, `spouseHoldout`), so with a raw null ("auto") spouse
+  // age the walk RELEASED the spouse's Traditional bucket into the drawable pool
+  // at the BASE retirement age while the SAME walk still had them working and
+  // contributing up to the SCENARIO age.
+  //
+  // Measured on the fixture below (primary lean, spouse holding the household's
+  // real money, so the walk must reach for that bucket during the gap):
+  //   pre-fix  scenario ret 55 / 58 / 62 → totalSpouseSpillover 0 / 0 / 0
+  //   post-fix                           → 982,500 / 1,120,964 / 926,336
+  // Pre-fix the bucket was drained silently and WITHOUT the early-withdrawal
+  // penalty the hold-out exists to charge, so those scenarios also reported
+  // MORE sustained years than they had earned — the optimistic bias this pins.
+  describe("BUG-134 — the scenario's spouse hold-out gate moves with its seed", () => {
+    function buildHoldoutBindingHousehold() {
+      const app = mount();
+      app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+      app.fire(() => app.latest().ss.isMarried.set(true));
+      app.fire(() => app.latest().ss.spouseCurrentAge.set(22));
+      app.fire(() => app.latest().profile.spouseIncome.set(60_000));
+      app.fire(() => app.latest().spending.annualExpenses.set(150_000));
+      app.fire(() => app.latest().assumptions.retirementAge.set(52));
+      app.fire(() => app.latest().accounts.trad401k.bal.set(50_000));
+      app.fire(() => app.latest().accounts.roth.bal.set(0));
+      app.fire(() => app.latest().accounts.taxable.bal.set(0));
+      app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(900_000));
+      // spouseRetirementAge stays null ("auto") — the case the bug corrupted.
+      return app;
+    }
+
+    it("a work-longer scenario still holds the spouse's 401k out of the pool, charging spillover instead of draining it silently", () => {
+      const app = buildHoldoutBindingHousehold();
+      const bundle = app.latest().whatIfSimInputs;
+      for (const retAge of [55, 58, 62]) {
+        const scen = calcWhatIfScenario(bundle, { retirementAge: retAge });
+        expect(scen).not.toBeNull();
+        // The hold-out is active, so any reach into the spouse bucket is
+        // recorded (and penalised) as spillover. Pre-fix this was exactly 0 —
+        // the gate had already released the bucket at the base age of 52.
+        expect(scen.totalSpouseSpillover).toBeGreaterThan(0);
+      }
+      app.unmount();
+    });
+
+    it("the base plan's own spillover is unaffected — only the SCENARIO path changed", () => {
+      const app = buildHoldoutBindingHousehold();
+      // Directly committing the later retirement age exercises the base-plan
+      // path, which was already correct; this pins that the fix didn't move it.
+      app.fire(() => app.latest().assumptions.retirementAge.set(58));
+      expect(app.latest().retirementWalk).toBeTruthy();
+      expect(app.latest().planView.depletionAge).toBeGreaterThan(58);
+      app.unmount();
+    });
   });
 
   it("the what-if bundle carries the RAW spouseRetirementAge (null) and lifeExp, not a pre-resolved age — the contract resolveSpouseRetAge needs", () => {

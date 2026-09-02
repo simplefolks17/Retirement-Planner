@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1353 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`).
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1355 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`).
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -506,7 +506,18 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
      numerically — every stream converts by the same factor), `marginForScenario`'s `-Infinity`
      sentinel is fully contained and reaches no formatter, and `calcPlanProgress` is correct at
      every boundary.
-  1076 → **1353 tests**. Every behavioural fix carries revert-and-confirm evidence (revert the fix,
+  10. **CodeRabbit then caught a regression in fix #9 itself (BUG-134) — the third instance of this
+     PR's signature failure, and the reason the merge was held.** BUG-127's fix rebuilt the
+     scenario's spouse seed and gap-year maps at the scenario's retirement age but left
+     `buildRetirementPhase`'s `spouseRetirementAge` on the `...retPhaseBase` spread — the BASE
+     plan's value — which the engine reads for its Option-A hold-out. So a work-longer scenario
+     RELEASED a still-working spouse's Traditional bucket into the drawable pool years early and
+     drained it silently, with no spillover recorded and no early-withdrawal penalty charged
+     (measured: `totalSpouseSpillover` 0 / 0 / 0 pre-fix vs 982,500 / 1,120,964 / 926,336 post-fix
+     for scenarios at 55/58/62, and pre-fix scenarios reported MORE sustained years). The call site
+     even carried a comment vouching for the old invariant — true before BUG-127, false after it.
+     A comment asserting an invariant is not a test enforcing one.
+  1076 → **1355 tests**. Every behavioural fix carries revert-and-confirm evidence (revert the fix,
   confirm the new test fails, restore) per this repo's standard — including, for the two HIGH
   findings above, an independent re-run of that evidence by the orchestrator rather than trusting
   the implementing agent's report. All four golden masters confirmed unmoved throughout —
@@ -514,12 +525,12 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
   and verified to catch a real App-level wiring break that the hand-built `golden-master.test.js`
   stays green through; the two spouse-household fixtures pin `spouseRetirementAge` explicitly, which
   is precisely why BUG-127 could hide from them. Full root cause / fix / verification for every
-  item: `docs/BUGS.md` → BUG-104 through BUG-133.
+  item: `docs/BUGS.md` → BUG-104 through BUG-134.
 
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (1353 tests)
+- `npm test` — run model + formatter + render-smoke tests (1355 tests)
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

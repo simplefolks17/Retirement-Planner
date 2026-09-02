@@ -664,17 +664,29 @@ export function calcWhatIfScenario({
     // BUG-127: same resolution as calcWhatIfDelta above — the spouse's own
     // retirement age must be resolved against THIS scenario's retirement age,
     // not the frozen base-plan value spouseSeedInputs used to carry directly.
+    // BUG-134: resolved ONCE and reused for BOTH the seed below and the engine's
+    // own Option-A hold-out gate (`spouseRetirementAge`, passed to
+    // buildRetirementPhase further down). BUG-127's fix rebuilt the seed and the
+    // gap-year maps at the scenario's retirement age but left the hold-out gate
+    // reading retPhaseBase's base-plan value, so the walk could release the
+    // spouse's Traditional bucket into the drawable pool at the BASE age while
+    // the very same walk still modelled them working (and contributing) up to
+    // the SCENARIO age — seed and draw gate disagreeing, biasing scenarios
+    // optimistic. One value, one resolution, both consumers.
+    const scenarioSpouseRetAge = spouseSeedInputs
+      ? resolveSpouseRetAge({
+          spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
+          primaryRetAge: scenarioRetAge,
+          spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+          lifeExp: spouseSeedInputs.lifeExp,
+        })
+      : null;
     const spouseSeed = (needsResim && spouseSeedInputs)
       ? buildSpouseRetirementSeed({
           ...spouseSeedInputs,
           currentAge: simInputs.currentAge,
           primaryRetAge: scenarioRetAge,
-          spouseRetAge: resolveSpouseRetAge({
-            spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
-            primaryRetAge: scenarioRetAge,
-            spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
-            lifeExp: spouseSeedInputs.lifeExp,
-          }),
+          spouseRetAge: scenarioSpouseRetAge,
         })
       : null;   // no override → retPhaseBase's base values are already correct
 
@@ -745,9 +757,18 @@ export function calcWhatIfScenario({
         moneyEvents: mergedEvents,
         // BUG-77: use the re-seeded spouse values when a resim produced them;
         // otherwise fall back to retPhaseBase's own (already-correct base-
-        // retirement-age) spouse fields — spouseRetirementAge itself is left
-        // alone (via the `...retPhaseBase` spread above) since the spouse's OWN
-        // age doesn't change in a primary-retirement-age scenario.
+        // retirement-age) spouse fields.
+        // BUG-134: spouseRetirementAge must move WITH them. It used to be left
+        // to the `...retPhaseBase` spread on the reasoning that "the spouse's
+        // OWN age doesn't change in a primary-retirement-age scenario" — true
+        // before BUG-127, when retPhaseBase's value and the seed's were the same
+        // number, but false after it: with a raw spouseRetirementAge of null
+        // ("auto") the seed now resolves to the SCENARIO's retirement age while
+        // the spread still carried the BASE plan's. The engine reads this field
+        // for its Option-A hold-out (retirement-engine.js, `spouseHoldout`), so
+        // the mismatch let a scenario draw down the spouse's Traditional bucket
+        // years before the same walk stopped their contributions.
+        spouseRetirementAge:      spouseSeed ? scenarioSpouseRetAge              : retPhaseBase.spouseRetirementAge,
         tradGrossSpouse:          spouseSeed ? spouseSeed.tradSeed                 : retPhaseBase.tradGrossSpouse,
         spouseContribByAge:       spouseSeed ? spouseSeed.spouseContribByAge       : retPhaseBase.spouseContribByAge,
         spouseTaxableIncomeByAge: spouseSeed ? spouseSeed.spouseTaxableIncomeByAge : retPhaseBase.spouseTaxableIncomeByAge,
