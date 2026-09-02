@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt, resolveSpouseRetAge } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -296,9 +296,9 @@ export default function App() {
   // render, so a value valid when written can still fall outside a moved range.
   const spouseRetAgeMin = spouseCurrentAge + 1;
   const spouseRetAgeMax = Math.max(spouseRetAgeMin, lifeExpect - 1);
-  const effectiveSpouseRetAge = Math.min(
-    spouseRetAgeMax,
-    Math.max(spouseRetAgeMin, spouseRetirementAge ?? retirementAge));
+  const effectiveSpouseRetAge = resolveSpouseRetAge({
+    spouseRetirementAge, primaryRetAge: retirementAge, spouseCurrentAge, lifeExp: lifeExpect,
+  });
   // HSA family HDHP limit is a SHARED household ceiling (rule 4). Under 'self' each
   // person keeps the self-only cap (runSimulation's default, HSA_LIMIT_2026 — the
   // existing behavior, byte-identical). Under 'family' the household shares
@@ -1470,9 +1470,15 @@ export default function App() {
     // point (read at the SCENARIO's retirement age) and the gap-year maps need to be
     // rebuilt, via the SAME buildSpouseRetirementSeed builder the main path uses. null
     // with no spouse (inert).
+    // BUG-127: carry the RAW spouseRetirementAge (may be null = "auto") plus
+    // spouseCurrentAge/lifeExp, not the already-resolved effectiveSpouseRetAge
+    // — a scenario must resolve the spouse's retirement age against ITS OWN
+    // retirement age (resolveSpouseRetAge, retirement-phase.js), never the base
+    // plan's frozen value, or a "work longer" scenario silently deletes a year
+    // of spouse gap-year income for every year worked instead of adding one.
     spouseSeedInputs: hasSpouse ? {
       spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-      spouseRetAge: effectiveSpouseRetAge, spouseNetRate, inflationRate,
+      spouseRetirementAge, lifeExp: lifeExpect, spouseNetRate, inflationRate,
     } : null,
     // #30 interop: the same two args App's own buildAccumChart call passes, so a
     // resim's accumulation chart is HOUSEHOLD like the main path's (a pre-existing
@@ -1485,7 +1491,7 @@ export default function App() {
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
        addlPreTaxBal, depletionAge,
        hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-       effectiveSpouseRetAge, spouseNetRate, inflationRate,
+       spouseRetirementAge, lifeExpect, spouseNetRate, inflationRate,
        spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME

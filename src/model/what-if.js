@@ -11,7 +11,7 @@
 
 import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
-import { buildRetirementPhase, buildSpouseRetirementSeed } from "./retirement-phase.js";
+import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
@@ -377,11 +377,22 @@ export function calcWhatIfDelta({
       // Re-seed the spouse at the SCENARIO's retirement age (mirrors
       // calcWhatIfScenario's BUG-77 fix exactly — same builder, so the two
       // functions can never diverge on what the spouse's re-seeded balance is).
+      // BUG-127: resolve the spouse's own retirement age against THIS
+      // scenario's retirement age (not a frozen base-plan value) — the SAME
+      // helper App.jsx's base-plan effectiveSpouseRetAge uses, so "auto" (null)
+      // means "same calendar year as whichever retirement age is in play" for
+      // both the base plan and every scenario, never a stale mix of the two.
       const spouseSeed = spouseSeedInputs
         ? buildSpouseRetirementSeed({
             ...spouseSeedInputs,
             currentAge: simInputs.currentAge,
             primaryRetAge: scenarioRetAge,
+            spouseRetAge: resolveSpouseRetAge({
+              spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
+              primaryRetAge: scenarioRetAge,
+              spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+              lifeExp: spouseSeedInputs.lifeExp,
+            }),
           })
         : null;
       const spouseTotal = spouseSeed
@@ -650,11 +661,20 @@ export function calcWhatIfScenario({
     // scenario event forced a re-sim, or an excluded committed event); otherwise
     // retPhaseBase's own spouse fields (already correct for the base retirement
     // age) are used unchanged below.
+    // BUG-127: same resolution as calcWhatIfDelta above — the spouse's own
+    // retirement age must be resolved against THIS scenario's retirement age,
+    // not the frozen base-plan value spouseSeedInputs used to carry directly.
     const spouseSeed = (needsResim && spouseSeedInputs)
       ? buildSpouseRetirementSeed({
           ...spouseSeedInputs,
           currentAge: simInputs.currentAge,
           primaryRetAge: scenarioRetAge,
+          spouseRetAge: resolveSpouseRetAge({
+            spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
+            primaryRetAge: scenarioRetAge,
+            spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+            lifeExp: spouseSeedInputs.lifeExp,
+          }),
         })
       : null;   // no override → retPhaseBase's base values are already correct
 

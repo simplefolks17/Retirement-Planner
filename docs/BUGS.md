@@ -649,6 +649,87 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-127 — a what-if scenario's spouse retirement age was frozen at the BASE plan's resolved value, so a "work longer" scenario silently deleted a year of the spouse's gap-year income for every extra year worked (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: HIGH — the household's headline "work longer" comparison reported
+the OPPOSITE of reality: retiring later made the plan monotonically WORSE in the tool, while
+actually setting the retirement age later made it sustainable.**
+**Found by:** a final adversarial review of PR #66, tracing `App.jsx`'s `effectiveSpouseRetAge`
+through both `what-if.js` re-seed call sites into `buildSpouseRetirementSeed`'s loop-termination
+condition.
+
+**Root cause.** `App.jsx`'s `effectiveSpouseRetAge = clamp(spouseRetirementAge ?? retirementAge)`
+resolves the spouse's own retirement age from the raw input (`spouseRetirementAge`, default
+`null` = "auto") against the PRIMARY's retirement age. That resolved (not raw) value was the ONLY
+thing `spouseSeedInputs` carried into `what-if.js`. Both what-if re-seed sites
+(`calcWhatIfDelta`, `calcWhatIfScenario`) spread `spouseSeedInputs` straight into
+`buildSpouseRetirementSeed({ ...spouseSeedInputs, primaryRetAge: scenarioRetAge })` — overriding
+`primaryRetAge` for the scenario but leaving `spouseRetAge` at the BASE plan's frozen value. In
+auto mode, that frozen value equals the base plan's OWN retirement age (e.g. 55) — a fixed
+calendar year that never moves with the scenario. `buildSpouseRetirementSeed`'s gap-year loop
+(`if (sAge > spouseRetAge) break;`) then breaks earlier and earlier as the scenario's own
+retirement age creeps toward (and past) that frozen calendar year, so **every extra year worked
+shrinks, then deletes, the spouse's gap-year income window** instead of extending it (a scenario
+retiring later should let the spouse work `spouseRetirementAge ?? scenarioRetAge` years too, not
+fewer).
+
+**Verified live** (MFJ, `spouseCurrentAge` 22, `spouseIncome` 500,000, `annualExpenses` 120,000,
+`retirementAge` 55, `spouseRetirementAge` left at its default/null): `calcWorkLongerBreakEven`
+reported the portfolio lasting to age 86 / 82 / 78 for +1 / +3 / +5 years worked —
+**monotonically WORSE** — while directly setting `retirementAge` to 58 (no scenario, the real base
+plan) made the plan sustainable outright (`outlastsPlan: true`, `depletionAge: null`). A no-spouse
+control household gave correctly monotone rows (74 → 76 → 78 → 81), isolating the bug to the
+spouse re-seed path.
+
+**Fix.** Extracted the resolution into ONE shared pure helper, `resolveSpouseRetAge({
+spouseRetirementAge, primaryRetAge, spouseCurrentAge, lifeExp })` (`src/model/retirement-phase.js`,
+next to `spouseAgeAt`/`primaryAgeAt`) — `spouseRetirementAge ?? primaryRetAge`, clamped to
+`[spouseCurrentAge+1, max(that, lifeExp-1)]`, defensively `Number.isFinite`-guarded (BUG-98's
+convention: a non-finite `spouseCurrentAge`/`lifeExp` fails open on the unclamped raw age rather
+than producing a NaN that silently disables the loop's break condition). `App.jsx`'s
+`effectiveSpouseRetAge` (the BASE plan) now calls this helper directly instead of its old inline
+`Math.min(...Math.max(...))` — byte-identical result, verified unchanged. `spouseSeedInputs` was
+changed to carry the RAW `spouseRetirementAge` (may be `null`) plus `lifeExp`, not the pre-resolved
+age; both what-if.js re-seed sites now call `resolveSpouseRetAge` themselves, resolving against
+**their own** `scenarioRetAge` before calling `buildSpouseRetirementSeed` — the same pattern this
+codebase's BUG-31 précis exists to enforce (one implementation of a concept, not two silently
+drifting copies). An explicit (non-null) `spouseRetirementAge` is unaffected — it already resolved
+to the same literal value regardless of which primary age it's compared against, so every existing
+fixture using an explicit spouse retirement age (including both the T-X.2/T-X.3 spouse-household
+golden masters) produces byte-identical output; two `what-if.test.js` fixtures that had been
+passing an already-resolved `spouseRetAge` directly (bypassing the new resolver) were updated to
+the new `spouseRetirementAge`/`lifeExp` contract for correctness, confirmed to still resolve to the
+exact same numbers in both cases (no scenario in either fixture overrides the retirement age, or
+the explicit spouse age is later than every tested scenario age either way).
+
+**Tests:** `src/model/__tests__/retirement-phase.test.js` — 6 new unit tests on `resolveSpouseRetAge`
+directly (auto fallback, explicit-value invariance to `primaryRetAge`, the bug's own before/after
+values, both clamp directions, a same-age-or-older spouse's non-inverted range, non-finite-input
+fail-open). `src/__tests__/spouse-household.test.js` — a new `BUG-127` describe block reproducing
+the task's exact repro end-to-end through a mounted `App`: `calcWorkLongerBreakEven`'s rows are
+monotone (a later retirement age never ranks below an earlier one, treating "sustainable" as
+ranking above every finite depletion age), the +5-year row `coversPlan`, directly retiring at 58 is
+sustainable (`planView.outlastsPlan`), `whatIfSimInputs.spouseSeedInputs` carries the raw `null`
+`spouseRetirementAge` (not a pre-resolved age), and the BASE plan's own resolved
+`spouseAccounts.spouseRetirementAge.value` still tracks the base `retirementAge` exactly (unchanged
+by this fix — only the SCENARIO path changed). **Revert-and-confirm:** reverted `App.jsx`,
+`what-if.js`, and `retirement-phase.js` to their pre-fix state (`git stash` on just those three
+files), confirmed all 8 new assertions fail against the pre-fix code — including the monotonicity
+test failing with the exact reported shape (`expected 82 to be greater than or equal to 86`) — then
+restored the fix and confirmed all 8 pass.
+**Golden master:** all four confirmed unchanged — `golden-master.test.js` (no spouse, inert),
+`golden-master-app-wiring.test.js` (no spouse, inert), `spouse-household.test.js`'s T-X.2 and T-X.3
+(both set `spouseRetirementAge` explicitly, so the fix's "auto" branch never activates for them —
+confirmed by direct test run, no values moved), `unit-contract.test.js` (unaffected — no basis
+change). Lint clean, build OK.
+**Where:** `src/model/retirement-phase.js` (new `resolveSpouseRetAge`), `src/App.jsx`
+(`effectiveSpouseRetAge`, `spouseSeedInputs`), `src/model/what-if.js` (`calcWhatIfDelta`'s and
+`calcWhatIfScenario`'s spouse re-seed sites), `src/model/__tests__/retirement-phase.test.js`,
+`src/__tests__/spouse-household.test.js`, `src/model/__tests__/what-if.test.js` (two fixture
+updates to the new contract).
+
+---
+
 ### BUG-126 — `useDialogBehaviour` had no Tab/Shift+Tab focus trap, and implementing the fix straightforwardly reintroduced a shorthand/longhand CSS conflict a live-browser check caught (found + fixed 2026-08-19, Batch B of the BUG-122 review-fix batch, CodeRabbit round 2 + own live verification)
 
 **Owner:** me_theguy. **Severity: Medium — every Horizon dialog (ConfirmModal, LifeEventSheet,

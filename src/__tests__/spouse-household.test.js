@@ -244,6 +244,75 @@ describe("BUG-93/94 — Option-A hold-out gated on real spouse income, not just 
   });
 });
 
+// BUG-127 (final adversarial review of PR #66) — a scenario's spouse retirement age
+// was frozen at the BASE plan's resolved value (App.jsx's effectiveSpouseRetAge),
+// so a "work longer" scenario re-seeded the spouse's accounts via
+// buildSpouseRetirementSeed with the SCENARIO's own (later) primaryRetAge but the
+// BASE plan's spouseRetAge — silently shrinking, then deleting, the spouse's
+// gap-year income window as the offset grew, instead of extending it. Fixed by
+// resolving the spouse's retirement age from the RAW spouseRetirementAge input
+// against each caller's OWN primary age (resolveSpouseRetAge, retirement-phase.js;
+// retirement-phase.test.js unit-tests the resolver itself). Repro verified live
+// (2026-08 review) at exactly this fixture: pre-fix, calcWorkLongerBreakEven
+// reported depletion ages 86 / 82 / 78 for +1 / +3 / +5 years worked — MONOTONICALLY
+// WORSE — while directly retiring at 58 made the plan sustainable outright.
+describe("BUG-127 — work-longer scenarios resolve the spouse's own retirement age against the scenario's own age, not the frozen base value", () => {
+  function buildGapHousehold() {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(22));
+    app.fire(() => app.latest().profile.spouseIncome.set(500_000));
+    app.fire(() => app.latest().spending.annualExpenses.set(120_000));
+    app.fire(() => app.latest().assumptions.retirementAge.set(55));
+    // spouseAccounts.spouseRetirementAge stays at its default (null / "auto") —
+    // the exact case this bug corrupted.
+    return app;
+  }
+
+  it("calcWorkLongerBreakEven's rows are monotone: a later retirement age never reduces the depletion age (repro fixture)", () => {
+    const app = buildGapHousehold();
+    const wl = app.latest().workLongerView;
+    expect(wl).not.toBeNull();
+    const rows = [...wl.rows].sort((a, b) => a.years - b.years);
+    expect(rows.map(r => r.years)).toEqual([1, 3, 5]);
+    // A sustainable row (never depletes) ranks above any finite depletion age.
+    const rank = (r) => (r.sustainable ? Infinity : r.depletionAge);
+    for (let i = 1; i < rows.length; i++) {
+      expect(rank(rows[i])).toBeGreaterThanOrEqual(rank(rows[i - 1]));
+    }
+    // The task's own verified repro: +5 years covers the whole plan horizon.
+    expect(rows.find(r => r.years === 5).coversPlan).toBe(true);
+    app.unmount();
+  });
+
+  it("directly retiring at 58 (not a what-if scenario) is sustainable — the base-plan path this scenario path must agree with", () => {
+    const app = buildGapHousehold();
+    app.fire(() => app.latest().assumptions.retirementAge.set(58));
+    const plan = app.latest().planView;
+    expect(plan.outlastsPlan).toBe(true);
+    expect(plan.depletionAge).toBeNull();
+    app.unmount();
+  });
+
+  it("the what-if bundle carries the RAW spouseRetirementAge (null) and lifeExp, not a pre-resolved age — the contract resolveSpouseRetAge needs", () => {
+    const app = buildGapHousehold();
+    const inputs = app.latest().whatIfSimInputs.spouseSeedInputs;
+    expect(inputs).not.toBeNull();
+    expect(inputs.spouseRetirementAge).toBeNull();
+    expect(inputs.lifeExp).toBe(app.latest().assumptions.lifeExpect.value);
+    app.unmount();
+  });
+
+  it("the BASE plan's own resolved spouse retirement age is unaffected by this fix (still tracks the base retirementAge exactly)", () => {
+    const app = buildGapHousehold();
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(55);
+    app.fire(() => app.latest().assumptions.retirementAge.set(58));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(58);
+    app.unmount();
+  });
+});
+
 // Finding 3 (adversarial review, 2026-07-26) — wiring gate (T-F3.4). The model-only
 // fix (retirement-phase.test.js) proves the deflator works in isolation; this proves
 // BOTH App.jsx call sites actually hand it a live inflationRate, not a stale default,

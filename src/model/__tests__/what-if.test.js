@@ -274,9 +274,16 @@ describe("calcWhatIfDelta", () => {
       "Roth IRA": 40_000, "Taxable": 20_000, "HSA": 0,
     }));
     const spouseCurrentSnapshotFixture = { age: currentAge, tradGross: 0, "Roth IRA": 0, "Taxable": 0, "HSA": 0 };
+    // Carries BOTH the resolved spouseRetAge (consumed directly by the
+    // buildSpouseRetirementSeed call right below) and the raw
+    // spouseRetirementAge/lifeExp pair (BUG-127 — consumed by calcWhatIfDelta's
+    // own resolveSpouseRetAge call, via spouseSeedInputs below). No scenario in
+    // this describe block overrides the retirement age, so both resolve to the
+    // same safeRetAge either way.
     const spouseSeedInputsFixture = {
       spouseSimData: spouseSimDataFixture, spouseCurrentSnapshot: spouseCurrentSnapshotFixture,
-      spouseCurrentAge: spouseCurrentAgeFixture, spouseRetAge: safeRetAge, spouseNetRate: 0.7,
+      spouseCurrentAge: spouseCurrentAgeFixture, spouseRetAge: safeRetAge,
+      spouseRetirementAge: safeRetAge, lifeExp: safeLifeExp, spouseNetRate: 0.7,
     };
     const baseSpouseSeed = buildSpouseRetirementSeed({
       ...spouseSeedInputsFixture, currentAge, primaryRetAge: safeRetAge,
@@ -1052,9 +1059,13 @@ describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
     baseTotalAtRet: householdBaseTotalAtRet, baseYearsSustained: householdRetPhase.yearsSustained,
     retPhaseBase: householdRetPhaseBase, conversionByAge: {},
     baseChart: householdTotalChartData, addlPreTaxBal: 0,
+    // BUG-127: spouseSeedInputs carries the RAW spouseRetirementAge (here an
+    // explicit, non-null literal — spouseRetAge=75 — so it stays fixed across
+    // every scenario tested below, exactly like the pre-fix contract did for
+    // this fixture) plus lifeExp for the shared clamp.
     spouseSeedInputs: {
       spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
-      spouseRetAge, spouseNetRate,
+      spouseRetirementAge: spouseRetAge, lifeExp: spSafeLifeExp, spouseNetRate,
     },
     spouseChartInputs: { spouseSimData, spouseStartingBal },
   };
