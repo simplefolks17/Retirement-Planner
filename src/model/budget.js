@@ -196,12 +196,30 @@ export function calcStatementView({
   // retirement-YEAR dollars, matching householdSS's own frame, so the three
   // bands actually reconcile to monthlyTotal — unlike incomeReplacementPct
   // below, which is a deliberately different (today's-dollars) comparison.
+  //
+  // BUG-128: an over-funded household (SS + pension alone exceed spending) used
+  // to clamp ONLY the portfolio draw at 0 while leaving ss/pension unscaled, so
+  // the three bands summed to MORE than monthlyTotal — the same over-count
+  // calcRetIncomeFlow (drawdown.js) already guards against for its own SS/
+  // pension/portfolio-draw bands. Reuse that exact scaling here instead of a
+  // second implementation: when income covers spending, ss/pension are scaled
+  // down proportionally to fill exactly `exp` (the surplus isn't "funding
+  // expenses"). A no-op (scale = 1, byte-identical) whenever income doesn't
+  // exceed spending — the ordinary, non-over-funded case.
   const ss              = householdSS ?? 0;        // guard null/undefined → NaN leaking to the UI
   const pension         = effectivePensionRetYear ?? 0;
-  const exp             = effectiveExpensesRetYear ?? 0;
-  const monthlyHHSS     = Math.round(ss / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPension  = Math.round(pension / ASSUMPTIONS.MONTHS_PER_YEAR);
-  const monthlyPortDraw = Math.round(Math.max(0, exp - ss - pension) / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const exp             = Math.max(0, effectiveExpensesRetYear ?? 0);
+  const ssRaw            = Math.max(0, ss);
+  const pensionRaw       = Math.max(0, pension);
+  const incomeTotal      = ssRaw + pensionRaw;
+  const portDraw         = Math.max(0, exp - incomeTotal);
+  const incomeCovered    = exp - portDraw;             // == min(incomeTotal, exp)
+  const incomeScale      = incomeTotal > 0 ? incomeCovered / incomeTotal : 0;
+  const ssBand           = ssRaw * incomeScale;
+  const pensionBand      = pensionRaw * incomeScale;
+  const monthlyHHSS     = Math.round(ssBand / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPension  = Math.round(pensionBand / ASSUMPTIONS.MONTHS_PER_YEAR);
+  const monthlyPortDraw = Math.round(portDraw / ASSUMPTIONS.MONTHS_PER_YEAR);
   const monthlyTotal    = Math.round(exp / ASSUMPTIONS.MONTHS_PER_YEAR);
   // Each band's share of monthlyTotal, as a display-ready integer percent — the
   // Statement tab's "Where retirement income comes from" companion strip used

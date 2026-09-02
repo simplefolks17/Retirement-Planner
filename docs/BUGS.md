@@ -649,6 +649,62 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ---
 
+### BUG-128 — the Statement income ledger's rows summed to MORE than the bolded total for an over-funded household (SS + pension alone exceed spending) (found 2026-09-02, final adversarial review of PR #66; fixed same day)
+
+**Owner:** me_theguy. **Severity: LOW-MEDIUM — a real, live-reachable arithmetic mismatch on the
+Statement tab's headline ledger (not a rare edge case: any household whose SS + pension already
+covers spending hits it), and the "Where retirement income comes from" companion strip's bars
+overflow their `overflow: hidden` track because their percentages summed past 100%.**
+**Found by:** the same final adversarial review of PR #66. `src/horizon/screens/NumbersScreen.jsx`'s
+own comment (lines 508-511) claims the ledger column "visibly reconciles to the bolded total" — it
+didn't, for this household shape.
+
+**Root cause.** `calcStatementView` (`src/model/budget.js`) computed
+`monthlyPortDraw = Math.round(Math.max(0, exp − ss − pension) / 12)` — clamping ONLY the portfolio
+draw at 0 when SS + pension already exceed spending — while `monthlyHHSS`/`monthlyPension` stayed
+the raw, unscaled monthly SS/pension figures. So the three "Where the money comes from" rows summed
+to `ss + pension` (unclamped) instead of `exp`, overshooting the bolded "Total monthly" by exactly
+the amount income exceeds spending. The `ssSharePct`/`pensionSharePct`/`portDrawSharePct` fields
+(added in the same PR) inherited the same bug, summing to ~105% at the reported live default
+(`pensionMonthly` 4000, `pensionStartAge` 60, retire 65: SS $4,010 + pension $15,784 + draw $0 =
+$19,794 against a stated total of $18,868/mo). `calcRetIncomeFlow` (`src/model/drawdown.js`) — the
+Money-flow tab's equivalent bands — already solves this exact over-funded edge (its own header
+comment documents it), but `calcStatementView` never reused that scaling, so the same bug class
+existed in two places with only one of them fixed.
+
+**Fix.** Reused `calcRetIncomeFlow`'s own scaling approach instead of inventing a second one:
+`incomeTotal = ssRaw + pensionRaw`; `portDraw = max(0, exp − incomeTotal)`; `incomeCovered = exp −
+portDraw` (== `min(incomeTotal, exp)`); `scale = incomeTotal > 0 ? incomeCovered / incomeTotal : 0`;
+`ssBand = ssRaw * scale`, `pensionBand = pensionRaw * scale`. The monthly SS/pension figures are now
+derived from these scaled bands rather than the raw values. In the ordinary (non-over-funded) case
+`scale` is always exactly 1, so the fix is byte-identical to before whenever income doesn't exceed
+spending — it only changes behavior in the over-funded edge case. `ssSharePct`/`pensionSharePct`/
+`portDrawSharePct` (already derived from the monthly bands) inherit the fix automatically — no
+separate change needed. `NumbersScreen.jsx` needed NO change (rule 10: it only renders
+`sv.monthlyHHSS`/`sv.monthlyPension`/`sv.monthlyPortDraw`/`sv.ssSharePct`/etc. — the model fix alone
+makes its existing "reconciles to the bolded total" comment true again); `buildBarSegments`
+similarly needed no change since it self-normalizes off the sum of the values it's given, which now
+correctly equals `monthlyTotal`.
+
+**Tests:** `src/model/__tests__/budget.test.js` — two new tests: a clean-numbers case (exp=$12,000/yr,
+ss=$6,000/yr, pension=$9,000/yr — income 25% over spending) proving the exact scaled values
+($400/mo SS, $600/mo pension) and that the three bands + share percentages now sum exactly to
+`monthlyTotal`/100; and the task's own live repro reproduced at the model level (SS raw $4,010/mo,
+pension raw $15,784/mo, exp $18,868/mo) proving the fix's output reconciles. **Revert-and-confirm:**
+reverted `budget.js` alone (`git stash`), confirmed both new tests fail with the exact reported
+numbers (`expected 19794 to be 18868`), then restored the fix and confirmed both pass. Also
+reproduced the identical live App-level repro (mounted `App`, set `pensionMonthly`/`pensionStartAge`/
+`retirementAge` to the task's exact values) before writing the unit tests, confirming
+`statementView.monthlyHHSS + monthlyPension + monthlyPortDraw` moved from 19,794 (pre-fix) to
+18,868 == `monthlyTotal` (post-fix), and the share percentages from summing to 105% down to exactly
+100%.
+**Golden master:** all four confirmed unchanged — the default state (all four golden masters) has
+`pensionMonthly = 0`/SS+pension well under spending, so `scale = 1` and the fix is a no-op there;
+confirmed by direct test run, no values moved.
+**Where:** `src/model/budget.js` (`calcStatementView`), `src/model/__tests__/budget.test.js`.
+
+---
+
 ### BUG-127 — a what-if scenario's spouse retirement age was frozen at the BASE plan's resolved value, so a "work longer" scenario silently deleted a year of the spouse's gap-year income for every extra year worked (found 2026-09-02, final adversarial review of PR #66; fixed same day)
 
 **Owner:** me_theguy. **Severity: HIGH — the household's headline "work longer" comparison reported

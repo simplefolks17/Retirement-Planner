@@ -192,6 +192,51 @@ describe("calcStatementView", () => {
     expect(total).toBeLessThanOrEqual(101);
   });
 
+  // BUG-128: monthlyPortDraw clamped at 0 for an over-funded household but left
+  // ss/pension unscaled, so the three bands summed to MORE than monthlyTotal
+  // (the task's own live repro: $4,010 SS + $15,784 pension + $0 draw = $19,794
+  // against a stated total of $18,868/mo, shares summing to 105%). Fixed by
+  // reusing calcRetIncomeFlow's (drawdown.js) own over-funded scaling: ss/pension
+  // are scaled down proportionally to fill exactly monthlyTotal, the same way
+  // calcRetIncomeFlow already does for its own SS/pension/portfolio-draw bands.
+  it("BUG-128: an over-funded household (SS + pension exceed spending) scales ss/pension so the three bands sum to monthlyTotal", () => {
+    // Round numbers, chosen so the fix's arithmetic is exact (no rounding
+    // ambiguity): exp=$12,000/yr (monthly total $1,000), ss=$6,000/yr,
+    // pension=$9,000/yr — income ($15,000) exceeds spending ($12,000) by 25%.
+    const v = calcStatementView({
+      ...base, effectiveExpenses: 12_000, householdSS: 6_000, effectivePension: 9_000,
+    });
+    expect(v.monthlyTotal).toBe(1_000);
+    expect(v.monthlyPortDraw).toBe(0);
+    // scale = 12,000/15,000 = 0.8 → ss $4,800/yr = $400/mo, pension $7,200/yr = $600/mo.
+    expect(v.monthlyHHSS).toBe(400);
+    expect(v.monthlyPension).toBe(600);
+    // The bug this fixes: pre-fix these three summed to $500 (unscaled ss) +
+    // $750 (unscaled pension) + $0 = $1,250 — 25% over monthlyTotal.
+    expect(v.monthlyHHSS + v.monthlyPension + v.monthlyPortDraw).toBe(v.monthlyTotal);
+    // The companion strip's bars (ssSharePct/pensionSharePct/portDrawSharePct)
+    // must sum to (at most, given rounding) 100 — not 105+ like the live repro.
+    const totalSharePct = v.ssSharePct + v.pensionSharePct + v.portDrawSharePct;
+    expect(totalSharePct).toBe(100);
+  });
+
+  // The task's own live repro, reproduced with the exact App-level inputs
+  // (pensionMonthly $4,000 from age 60, retire at 65 — the default state
+  // otherwise): pre-fix, SS $4,010 + pension $15,784 + draw $0 summed to
+  // $19,794 against a stated total of $18,868/mo. Locked here at the model
+  // level (calcStatementView) so a future change can't silently reopen it.
+  it("BUG-128 live repro: SS + pension + portfolio draw reconcile to monthlyTotal at the reported household shape", () => {
+    const v = calcStatementView({
+      ...base,
+      effectiveExpenses: 226_416, // $18,868/mo
+      householdSS: 48_120,        // raw $4,010/mo
+      effectivePension: 189_408,  // raw $15,784/mo
+    });
+    expect(v.monthlyPortDraw).toBe(0);
+    expect(v.monthlyHHSS + v.monthlyPension + v.monthlyPortDraw).toBe(v.monthlyTotal);
+    expect(v.ssSharePct + v.pensionSharePct + v.portDrawSharePct).toBeLessThanOrEqual(100);
+  });
+
   it("share percentages are 0, not NaN/Infinity, when monthlyTotal is 0", () => {
     const v = calcStatementView({ ...base, effectiveExpenses: 0, householdSS: 0 });
     expect(v.monthlyTotal).toBe(0);
