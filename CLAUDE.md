@@ -470,12 +470,51 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
      new toggle, entangled with BUG-38's known undercounting), **BUG-125** (the guaranteed-for-life
      card ignores a spouse's own SS claiming age — traces to a model-wide simplification in
      `retirement-income.js`; needs an owner product decision, not a quick fix).
-  1076 → **1335 tests**. Every behavioural fix carries revert-and-confirm evidence (revert the fix,
-  confirm the new test fails, restore) per this repo's standard. All four golden masters confirmed
-  unmoved throughout — `golden-master-app-wiring.test.js` was extended for the 7 new
-  `planHighlights`/`planView` fields and verified to catch a real App-level wiring break that the
-  hand-built `golden-master.test.js` stays green through. Full root cause / fix / verification for
-  every item: `docs/BUGS.md` → BUG-104 through BUG-126.
+  9. **A FINAL adversarial review before merge found 7 more — including two the PR itself had
+     introduced (BUG-127 → BUG-133).** Worth recording because the method is what found them: the
+     reviewer was told to EXECUTE the diff (mount the real App, drive the real setter bundles,
+     compare rendered copy against model output) rather than read it, and every finding came with a
+     live repro. **BUG-127 (HIGH)** — `spouseSeedInputs` carried the base plan's already-RESOLVED
+     `effectiveSpouseRetAge` into `what-if.js`, whose re-seed sites override only `primaryRetAge`.
+     Since `spouseRetirementAge` defaults to null and falls back to the PRIMARY's age, a spouse's
+     retirement age tracked correctly in the committed plan but FROZE in every scenario — so each
+     extra year of "work longer" deleted a year of the spouse's gap income instead of adding one.
+     The work-longer card reported depletion at 86 → 82 → 78 for +1/+3/+5 (monotonically worse,
+     while adding $949k of portfolio), and the Plan screen turned that into an assertive, false
+     "retiring later alone won't close the gap" — for a household where retiring 3 years later
+     actually fixes the plan outright. Fixed with ONE shared `resolveSpouseRetAge` helper called by
+     the base plan AND both scenario sites, so "auto" can never be interpreted two ways (BUG-31's
+     signature class). **BUG-131 (HIGH)** — "Guaranteed for life" read its percentage off UNGATED
+     lifetime streams but its sub-copy off the GATED retirement-year snapshot, so the card could
+     say "100%" while the copy said "the rest comes from your savings", the meter above showed
+     100% PORTFOLIO, and the tap-through destination said 24% — with a pension supplying ~76 of
+     those 100 points never named anywhere, because `nextGuaranteedStart` rendered only `[0]`.
+     Fixed with model-provided `everHasSS`/`everHasPension`/`fullyCovered`/`pendingSources`.
+     **BUG-130** — the verdict sentence converted `minYearsToSustain: null` into a negative
+     existential the model never tested (it only ever simulates +1/+3/+5; measured, the real answer
+     was +8 to +12 for a range of households, and the app's own slider lets a user falsify it in one
+     drag). **BUG-132** — the basis toggle moved the headline but left "replaces 84% of today's
+     take-home pay" glued beside it ($18,900 is 332% of the $5,700 paycheck shown elsewhere on the
+     same screen) — BUG-114/115's exact "two numbers a reader reconciles at a glance" failure,
+     recreated by the new toggle. Plus **BUG-128** (over-funded households' ledger rows summed past
+     their own bolded total, the new share percentages hitting 105% and overflowing the bar track),
+     **BUG-129** (a missing non-finite guard, asymmetric with its sibling one function away), and
+     **BUG-133** (the progress pill could read "on target" beside "your savings run out", because it
+     gated on the withdrawal driver alone rather than the plan's actual verdict). The same review
+     came back explicitly CLEAN on the areas most at risk: no golden-master assertion anywhere in
+     the diff was deleted or weakened, both toggle bases are individually correct (verified
+     numerically — every stream converts by the same factor), `marginForScenario`'s `-Infinity`
+     sentinel is fully contained and reaches no formatter, and `calcPlanProgress` is correct at
+     every boundary.
+  1076 → **1353 tests**. Every behavioural fix carries revert-and-confirm evidence (revert the fix,
+  confirm the new test fails, restore) per this repo's standard — including, for the two HIGH
+  findings above, an independent re-run of that evidence by the orchestrator rather than trusting
+  the implementing agent's report. All four golden masters confirmed unmoved throughout —
+  `golden-master-app-wiring.test.js` was extended for the 7 new `planHighlights`/`planView` fields
+  and verified to catch a real App-level wiring break that the hand-built `golden-master.test.js`
+  stays green through; the two spouse-household fixtures pin `spouseRetirementAge` explicitly, which
+  is precisely why BUG-127 could hide from them. Full root cause / fix / verification for every
+  item: `docs/BUGS.md` → BUG-104 through BUG-133.
 
 ## Commands
 
