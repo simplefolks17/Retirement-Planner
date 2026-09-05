@@ -1007,3 +1007,85 @@ describe("spouse-household golden master (T-X.4, exact-locked — the auto/null 
     app.unmount();
   });
 });
+
+// ── BUG-102 (closed 2026-09-05 as obsolete) — regression pin ─────────────────
+// BUG-102 claimed a lever preview would render "as if Option A never engages"
+// for a household whose COMMITTED plan has no active spouse gap but whose
+// PREVIEW creates one, because App gates the engine's hold-out on
+// `hasActiveSpouseGap` computed from the committed seed maps (App.jsx:644/:777).
+// BUG-134's fix made the scenario read its OWN re-seeded value instead, so the
+// claim no longer reproduces — but nothing pinned that, and the gate line in
+// App.jsx is unchanged and still correct for the base plan. This test pins the
+// behaviour so the entry cannot quietly re-open.
+//
+// Building a household that actually REACHES the precondition needs one
+// non-obvious property, which is why two earlier close-out attempts were
+// recorded as inconclusive: under "auto" the gap window's WIDTH is invariant to
+// the primary's retirement age (resolveSpouseRetAge returns that age, and
+// spouseAgeAtPrimaryRet shifts with it, so both ends move together). An
+// EXPLICIT spouseRetirementAge with an OLDER spouse is required — then the
+// window is (spouseCurrentAge + primaryRetAge - currentAge, spouseRetAge] and
+// retiring the primary earlier lowers only the lower bound, widening it from
+// empty to non-empty.
+describe("BUG-102 — a scenario that itself creates a spouse gap engages Option A in the PREVIEW", () => {
+  function buildGateFlipHousehold() {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().assumptions.currentAge.set(50));
+    app.fire(() => app.latest().assumptions.retirementAge.set(65));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(55));         // OLDER spouse
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(70)); // EXPLICIT
+    app.fire(() => app.latest().profile.spouseIncome.set(40_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(900_000));
+    app.fire(() => app.latest().accounts.trad401k.bal.set(80_000));
+    app.fire(() => app.latest().accounts.roth.bal.set(0));
+    app.fire(() => app.latest().accounts.taxable.bal.set(0));
+    app.fire(() => app.latest().spending.annualExpenses.set(140_000));
+    return app;
+  }
+
+  it("the precondition really is reached: the gate is null at base and finite once committed", () => {
+    const app = buildGateFlipHousehold();
+    // Base: spouse is already 70 when the primary retires at 65 -> empty window.
+    expect(app.latest().whatIfSimInputs.retPhaseBase.spouseRetirementAge).toBeNull();
+    // Commit the previewed change: spouse is 60 at the primary's retirement ->
+    // a real 10-year gap window opens.
+    app.fire(() => app.latest().assumptions.retirementAge.set(55));
+    expect(app.latest().whatIfSimInputs.retPhaseBase.spouseRetirementAge).toBe(70);
+    app.unmount();
+  });
+
+  it("the preview engages the hold-out (nonzero spillover), not 'as if Option A never engages'", () => {
+    const app = buildGateFlipHousehold();
+    const scen = calcWhatIfScenario(app.latest().whatIfSimInputs, { retirementAge: 55 });
+    expect(scen).not.toBeNull();
+    // BUG-102's claim predicted 0 here (bucket pooled, hold-out inert).
+    expect(scen.totalSpouseSpillover).toBeGreaterThan(0);
+    app.unmount();
+  });
+
+  it("preview and commit agree byte-identically once BUG-135 and BUG-136's inputs are removed", () => {
+    // The ~0.6% residual on this fixture is NOT BUG-102: it decomposes into
+    // BUG-135 (SS never re-derived for the scenario's own working years) and
+    // BUG-136 (the conversion schedule inherited from the base plan). Removing
+    // both inputs must leave the two paths in exact agreement — this is the
+    // assertion that will START FAILING, informatively, when either is fixed
+    // (at which point the corresponding setter below can be dropped).
+    const app = buildGateFlipHousehold();
+    app.fire(() => app.latest().assumptions.inflationRate.set(0));
+    app.fire(() => app.latest().ss.includeSS.set(false));                    // removes BUG-135's input
+    app.fire(() => app.latest().conversion.conversionMode.set("custom"));
+    app.fire(() => app.latest().conversion.annualConversionAmt.set(0));      // removes BUG-136's input
+
+    const scen = calcWhatIfScenario(app.latest().whatIfSimInputs, { retirementAge: 55 });
+    app.fire(() => app.latest().assumptions.retirementAge.set(55));
+    const committed = app.latest();
+
+    expect(scen.totalSpouseSpillover).toBe(committed.retirementWalk.totalSpouseSpillover);
+    expect(scen.scenarioYears).toBe(committed.yearsSustained);
+    expect(scen.scenarioDepletionAge).toBe(committed.planView.depletionAge);
+    expect(scen.scenarioTotalAtRet).toBe(committed.totalAtRet);
+    app.unmount();
+  });
+});
