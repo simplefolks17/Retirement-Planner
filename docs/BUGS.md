@@ -185,6 +185,25 @@ escape hatch) active. The preview over-promises relative to what Applying it act
 **Inert at the default state** (no spouse) and for any household whose base plan already has an
 active spouse gap (the common case for a household with a real age difference) — only exposed by a
 lever preview that ITSELF creates or removes a gap window relative to the committed plan.
+
+**⚠ MECHANISM CHANGED 2026-09-02 (BUG-134) — this entry's "Where" is now partly stale; re-derive
+before working it.** BUG-134 changed `calcWhatIfScenario`'s `buildRetirementPhase` call so that
+`spouseRetirementAge` no longer reaches the scenario "only via `...retPhaseBase`": when a re-seed
+happened it is now the scenario-resolved `scenarioSpouseRetAge`, unconditionally, with no
+`hasActiveSpouseGap`-equivalent gate on the scenario's own maps. So the VALUE half of this entry is
+addressed; the GATE half (App's `hasActiveSpouseGap`, `src/App.jsx:644`/`:777`, computed from the
+COMMITTED base-plan seed maps and still baking `spouseRetirementAge: null` into `retPhaseBase` for a
+household with no base-plan gap) is untouched and still describes live code.
+**Close-out re-verification (2026-09-02) was INCONCLUSIVE, not a refutation.** Two attempted repro
+fixtures (older spouse with auto resolution; younger spouse with an explicit spouse age of 62 against
+a previewed primary retirement of 58) both produced preview/commit AGREEMENT (depletion age 70 in
+each), but in neither could `hasActiveSpouseGap` be driven true — so the precondition was never
+reached and the runs prove nothing either way. A proper re-verification needs a fixture that first
+demonstrably sets `hasActiveSpouseGap` false at base AND true after committing the previewed change.
+**Also checked and CLEARED in the same pass:** BUG-134's unconditional scenario value does NOT
+reintroduce **BUG-93** (a spouse holding a balance but earning nothing being wrongly penalised) —
+measured pre- and post-BUG-134 on a no-income/no-contribution spouse household, results were
+byte-identical (spillover 0, depletion 68/71 at scenario ages 57/60).
 **Not fixed here.** Filed for a future session; flagged by the interoperability audit as contained
 (same file/function family as BUG-93's fix) but requiring its own verification pass, not a one-line
 change made under review-fix time pressure.
