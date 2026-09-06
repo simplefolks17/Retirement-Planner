@@ -554,7 +554,13 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (1381 tests)
+- `npm test` — run model + formatter + render-smoke tests (1381 tests). Excludes throwaway
+  `zz-*.test.js` probes, so the reported count is trustworthy: `.gitignore` stops them being
+  committed but vitest still COLLECTED them, which twice inflated the count and once turned
+  the suite red on a failure that was not a regression. The exclusion lives in the npm script,
+  deliberately NOT in `vite.config.js` — a config-level `exclude` also blocks running a probe
+  by name (verified), which would break the probe-driven verification this repo relies on.
+  Run one deliberately with `npx vitest run src/__tests__/zz-my-probe.test.js`.
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all
