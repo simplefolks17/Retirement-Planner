@@ -14,7 +14,7 @@ import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, c
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt, resolveSpouseRetAge } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -641,10 +641,7 @@ export default function App() {
   // review fix): buildSpouseRetirementSeed writes a key for every gap year
   // regardless of amount, so a married household with $0 spouse income/
   // balances would otherwise wall off a balance for a gap that offsets nothing.
-  const hasActiveSpouseGap = hasSpouse && (
-    Object.values(spouseSeed?.spouseContribByAge ?? {}).some(v => v > 0)
-    || Object.values(spouseSeed?.spouseIncomeFloorByAge ?? {}).some(v => v > 0)
-  );
+  const hasActiveSpouseGap = hasSpouse && seedHasActiveSpouseGap(spouseSeed);
 
   const netPortfolioNeed = calcNetPortfolioNeed(retSpendBasis, ssAtRet, retPensionBasis, spouseIncomeAtRet);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);

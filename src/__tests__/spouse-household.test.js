@@ -1089,3 +1089,75 @@ describe("BUG-102 — a scenario that itself creates a spouse gap engages Option
     app.unmount();
   });
 });
+
+// ── BUG-137 — the scenario path must apply the SAME hold-out gate as the base plan
+// ─────────────────────────────────────────────────────────────────────────────
+// App gates the engine's Option-A hold-out on real gap-year money (App.jsx:644/:777,
+// BUG-93's fix). what-if.js applied NO gate: it computed scenarioSpouseRetAge for any
+// married household, so merely forcing a resim turned the hold-out on for a household
+// whose committed plan correctly had it off — inventing penalized early spouse-401k
+// withdrawal that the committed plan never charges.
+//
+// The fixture is the household BUG-93 exists for: a spouse with a real rollover
+// BALANCE and ZERO income, plus a real gap window by AGE so the hold-out could bite
+// if it were wrongly enabled. (A fixture without that age window cannot exhibit the
+// bug at all — which is exactly why BUG-102's 2026-09-02 "cleared" check was a false
+// negative.)
+describe("BUG-137 — a scenario applies the spouse hold-out gate, not just the base plan", () => {
+  function buildNoIncomeSpouseHousehold() {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().assumptions.currentAge.set(55));
+    app.fire(() => app.latest().assumptions.retirementAge.set(60));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(45));
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62)); // real gap BY AGE
+    app.fire(() => app.latest().profile.spouseIncome.set(0));                // but NO income
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(600_000));
+    app.fire(() => app.latest().accounts.trad401k.bal.set(200_000));
+    app.fire(() => app.latest().spending.annualExpenses.set(90_000));
+    return app;
+  }
+
+  it("the base plan's gate is OFF for a spouse with a balance but no income (BUG-93)", () => {
+    const app = buildNoIncomeSpouseHousehold();
+    expect(app.latest().whatIfSimInputs.retPhaseBase.spouseRetirementAge).toBeNull();
+    expect(app.latest().retirementWalk.totalSpouseSpillover).toBe(0);
+    app.unmount();
+  });
+
+  // The cleanest possible statement of the bug: nothing about the plan changes, only
+  // whether the resim branch runs. Pre-fix this pair read 0 vs 712,623.
+  it("forcing a resim with NO actual change does not invent spillover", () => {
+    const app = buildNoIncomeSpouseHousehold();
+    const bundle = app.latest().whatIfSimInputs;
+    const noResim = calcWhatIfScenario(bundle, {});
+    // excludeEventId strips nothing here — it only flips `needsResim` true.
+    const resim = calcWhatIfScenario(bundle, { excludeEventId: "no-such-event" });
+    expect(noResim.totalSpouseSpillover).toBe(0);
+    expect(resim.totalSpouseSpillover).toBe(0);
+    // and the walk itself must be unchanged, not merely un-penalised
+    expect(resim.scenarioYears).toBe(noResim.scenarioYears);
+    app.unmount();
+  });
+
+  it("work-longer scenarios charge no spillover when the committed plan charges none", () => {
+    const app = buildNoIncomeSpouseHousehold();
+    const bundle = app.latest().whatIfSimInputs;
+    for (const retAge of [58, 62]) {
+      expect(calcWhatIfScenario(bundle, { retirementAge: retAge }).totalSpouseSpillover).toBe(0);
+    }
+    app.unmount();
+  });
+
+  // The other half of the contract: a household with REAL gap-year income must still
+  // get the hold-out in scenarios (this is BUG-134's guarantee, which the BUG-137 fix
+  // must not undo). T-X.4's locked scenario spillovers cover this exactly, but assert
+  // it here too so the two halves of the gate sit side by side.
+  it("a spouse WITH real gap-year income still gets the hold-out in scenarios", () => {
+    const app = buildTX4Household();
+    const scen = calcWhatIfScenario(app.latest().whatIfSimInputs, { retirementAge: 60 });
+    expect(scen.totalSpouseSpillover).toBeGreaterThan(0);
+    app.unmount();
+  });
+});

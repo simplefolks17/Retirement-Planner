@@ -11,7 +11,7 @@
 
 import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
-import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge } from "./retirement-phase.js";
+import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
@@ -768,7 +768,14 @@ export function calcWhatIfScenario({
         // for its Option-A hold-out (retirement-engine.js, `spouseHoldout`), so
         // the mismatch let a scenario draw down the spouse's Traditional bucket
         // years before the same walk stopped their contributions.
-        spouseRetirementAge:      spouseSeed ? scenarioSpouseRetAge              : retPhaseBase.spouseRetirementAge,
+        // BUG-137: gate the scenario's hold-out on the SCENARIO's OWN re-seeded maps,
+        // the same nonzero-VALUE predicate App.jsx applies to the committed plan
+        // (seedHasActiveSpouseGap). Without it this branch engaged Option A for any
+        // married household the moment a resim fired, inventing penalized spouse-401k
+        // spillover the committed plan never charges (BUG-93's defect, scenario-side).
+        spouseRetirementAge:      spouseSeed
+          ? (seedHasActiveSpouseGap(spouseSeed) ? scenarioSpouseRetAge : null)
+          : retPhaseBase.spouseRetirementAge,
         tradGrossSpouse:          spouseSeed ? spouseSeed.tradSeed                 : retPhaseBase.tradGrossSpouse,
         spouseContribByAge:       spouseSeed ? spouseSeed.spouseContribByAge       : retPhaseBase.spouseContribByAge,
         spouseTaxableIncomeByAge: spouseSeed ? spouseSeed.spouseTaxableIncomeByAge : retPhaseBase.spouseTaxableIncomeByAge,

@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 17 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 16 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,7 +15,6 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
-| **BUG-137** | **HIGH** | A what-if scenario ignores the `hasActiveSpouseGap` hold-out gate — forcing a resim with NO change invents $712,623 of penalized spouse-401k spillover (BUG-93 alive in every preview) | `src/model/what-if.js` |
 | **BUG-138** | **HIGH** | `contribEnd*` frozen at the base retirement age, so every work-longer preview drops the extra contributions committing the same change would make — $315k / 0.37 yrs at +5 on the DEFAULT household | `src/App.jsx`, `src/model/what-if.js` |
 | **BUG-135** | **HIGH** | What-if scenarios never re-derive Social Security for the scenario's OWN working years — only an inflation re-base. Retiring 10 yrs earlier previews +90% too much SS; working 5 yrs longer previews −23% too little | `src/model/what-if.js` |
 | **BUG-136** | Medium-High | What-if scenarios inherit the BASE plan's Roth-conversion schedule/window instead of rebuilding it at the scenario's retirement age — a retire-earlier preview converts $420k where committing the same change converts $1,020,000 | `src/model/what-if.js`, `src/App.jsx` |
@@ -36,55 +35,6 @@ place this gets checked).
 ---
 
 ## Open Issues
-
-### BUG-137 — a what-if scenario ignores App's `hasActiveSpouseGap` hold-out gate, so every preview that forces a resim re-introduces BUG-93 (found 2026-09-06, preview/commit parity audit; verified independently)
-
-**Owner:** me_theguy. **Severity: HIGH — invents a large penalized early withdrawal that the
-committed plan does not make, for exactly the household shape BUG-93 was filed to protect (a
-spouse holding a rollover balance with no ongoing income). It makes previews systematically
-PESSIMISTIC and can cap the verdict at "tight" (BUG-92) for a plan that is not.**
-**What:** App gates the engine's Option-A hold-out on real gap-year money
-(`src/App.jsx:777`): `spouseRetirementAge: hasActiveSpouseGap ? effectiveSpouseRetAge : null`.
-That gate is BUG-93's fix. `what-if.js:771` does **not** apply it:
-`spouseRetirementAge: spouseSeed ? scenarioSpouseRetAge : retPhaseBase.spouseRetirementAge` —
-and `scenarioSpouseRetAge` is computed whenever `spouseSeedInputs` exists (i.e. merely
-`hasSpouse`), with **no check that the scenario's own re-seeded maps carry any income**. So any
-scenario that forces a resim switches the hold-out ON for a household whose committed plan
-correctly has it OFF.
-**Gate-isolation repro — same bundle, same retirement age, NO actual change** (only
-`needsResim` differs; `excludeEventId: "no-such-event"` strips nothing but forces the branch).
-MFJ, primary 55→60, spouse 45 retiring 62, spouse 401k $600k, **spouse income $0** ⇒
-`hasActiveSpouseGap === false` ⇒ base gate `null`:
-
-```
-committed          years=12.6145  spillover=       0
-preview  no-resim  years=12.6145  spillover=       0   <- identical, correct
-preview   +resim   years=12.1597  spillover= 712,623   <- gate silently ON
-```
-
-Real work-longer scenarios on the same household (committed gate stays `null` throughout):
-
-```
-retire 58: preview years=10.766 spill=749,310 | committed years=11.290 spill=0
-retire 62: preview years=12.983 spill=468,115 | committed years=13.802 spill=0
-```
-
-**This supersedes a "cleared" note.** BUG-102's 2026-09-02 close-out recorded that BUG-134's
-unconditional scenario value does NOT reintroduce BUG-93, "measured pre- and post-BUG-134 on a
-no-income/no-contribution spouse household, results byte-identical". That was a **false
-negative**: the check needs a household where the hold-out can actually bite (a real gap window
-by AGE, plus a spouse balance the walk must reach). With one, it reproduces immediately.
-**Relationship to BUG-102 (closed obsolete the same day):** BUG-102's stated symptom — a preview
-UNDER-restricting — is genuinely refuted. This is the same gate asymmetry with the **opposite
-sign**: the preview OVER-restricts. Notably, **BUG-102's sketched fix is the correct fix for
-this**, so the closed entry's fix-shape note was right even though its symptom was not.
-**Fix shape:** derive a scenario-local `hasActiveSpouseGap` from the SCENARIO's own re-seeded
-maps (`spouseSeed.spouseContribByAge` / `spouseIncomeFloorByAge`, the same nonzero-VALUE test
-App.jsx:644 uses — key presence is not enough) and gate `scenarioSpouseRetAge` on it. Extract
-the predicate once and share it with App.jsx rather than writing a second copy (BUG-31's class).
-**Where:** `src/model/what-if.js:771`, `src/App.jsx:644`/`:777`.
-
----
 
 ### BUG-138 — `contribEnd*` is frozen at the base retirement age, so every "work longer" preview silently drops the contributions committing the same change would make (found 2026-09-06, preview/commit parity audit; verified independently on the default household)
 
@@ -783,6 +733,71 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+
+### BUG-137 — a what-if scenario ignores App's `hasActiveSpouseGap` hold-out gate, so every preview that forces a resim re-introduces BUG-93 (found 2026-09-06, preview/commit parity audit; verified independently; FIXED same day)
+
+**Owner:** me_theguy. **Severity: HIGH — invents a large penalized early withdrawal that the
+committed plan does not make, for exactly the household shape BUG-93 was filed to protect (a
+spouse holding a rollover balance with no ongoing income). It makes previews systematically
+PESSIMISTIC and can cap the verdict at "tight" (BUG-92) for a plan that is not.**
+**What:** App gates the engine's Option-A hold-out on real gap-year money
+(`src/App.jsx:777`): `spouseRetirementAge: hasActiveSpouseGap ? effectiveSpouseRetAge : null`.
+That gate is BUG-93's fix. `what-if.js:771` does **not** apply it:
+`spouseRetirementAge: spouseSeed ? scenarioSpouseRetAge : retPhaseBase.spouseRetirementAge` —
+and `scenarioSpouseRetAge` is computed whenever `spouseSeedInputs` exists (i.e. merely
+`hasSpouse`), with **no check that the scenario's own re-seeded maps carry any income**. So any
+scenario that forces a resim switches the hold-out ON for a household whose committed plan
+correctly has it OFF.
+**Gate-isolation repro — same bundle, same retirement age, NO actual change** (only
+`needsResim` differs; `excludeEventId: "no-such-event"` strips nothing but forces the branch).
+MFJ, primary 55→60, spouse 45 retiring 62, spouse 401k $600k, **spouse income $0** ⇒
+`hasActiveSpouseGap === false` ⇒ base gate `null`:
+
+```
+committed          years=12.6145  spillover=       0
+preview  no-resim  years=12.6145  spillover=       0   <- identical, correct
+preview   +resim   years=12.1597  spillover= 712,623   <- gate silently ON
+```
+
+Real work-longer scenarios on the same household (committed gate stays `null` throughout):
+
+```
+retire 58: preview years=10.766 spill=749,310 | committed years=11.290 spill=0
+retire 62: preview years=12.983 spill=468,115 | committed years=13.802 spill=0
+```
+
+**This supersedes a "cleared" note.** BUG-102's 2026-09-02 close-out recorded that BUG-134's
+unconditional scenario value does NOT reintroduce BUG-93, "measured pre- and post-BUG-134 on a
+no-income/no-contribution spouse household, results byte-identical". That was a **false
+negative**: the check needs a household where the hold-out can actually bite (a real gap window
+by AGE, plus a spouse balance the walk must reach). With one, it reproduces immediately.
+**Relationship to BUG-102 (closed obsolete the same day):** BUG-102's stated symptom — a preview
+UNDER-restricting — is genuinely refuted. This is the same gate asymmetry with the **opposite
+sign**: the preview OVER-restricts. Notably, **BUG-102's sketched fix is the correct fix for
+this**, so the closed entry's fix-shape note was right even though its symptom was not.
+**Fix shape:** derive a scenario-local `hasActiveSpouseGap` from the SCENARIO's own re-seeded
+maps (`spouseSeed.spouseContribByAge` / `spouseIncomeFloorByAge`, the same nonzero-VALUE test
+App.jsx:644 uses — key presence is not enough) and gate `scenarioSpouseRetAge` on it. Extract
+the predicate once and share it with App.jsx rather than writing a second copy (BUG-31's class).
+**Where:** `src/model/what-if.js:771`, `src/App.jsx:644`/`:777`.
+
+**FIXED 2026-09-06.** Extracted the predicate as `seedHasActiveSpouseGap(seed)` in
+`src/model/retirement-phase.js` — one implementation, called by BOTH App.jsx's committed plan
+and what-if.js's scenario branch, so the two cannot drift again (deliberately not a second copy
+of the four-line check inside `what-if.js`; that duplication IS BUG-31's class and is what
+produced this bug). `what-if.js:771` now reads
+`spouseSeed ? (seedHasActiveSpouseGap(spouseSeed) ? scenarioSpouseRetAge : null) : retPhaseBase.spouseRetirementAge`.
+**Verification:** the gate-isolation pair (no change at all, only `needsResim` flipped) now
+returns spillover 0 on both sides AND an identical `scenarioYears` — not merely un-penalised but
+the same walk. Revert-and-confirm run and restored: reverting the fix reproduces exactly the
+filed numbers (712,623 on the isolation repro, 749,310 at retire-58). Four regression tests added,
+including the other half of the contract — a spouse WITH real gap-year income must still get the
+hold-out in scenarios (BUG-134's guarantee), which T-X.4's locked scenario spillovers also cover.
+All four golden masters unmoved: T-X.4 has real gap-year income, so its locked spillovers are
+correctly unaffected.
+
+---
 
 
 ### BUG-102 — RESOLVED 2026-09-05 as OBSOLETE (superseded by BUG-134's fix). Lever-preview's spouse-gap gating inherited from the BASE plan (filed 2026-07-27, interoperability review agent, PR #62)
