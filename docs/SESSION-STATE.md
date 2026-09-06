@@ -43,19 +43,23 @@ self-reports and are NOT trusted until re-verified here** — status below.
 |---|---|---|
 | SS never re-derived for a scenario's working years | mine | VERIFIED by me -> **BUG-135** |
 | Conversion window inherited from base plan | mine + agent | VERIFIED by me -> **BUG-136** |
-| `contribEnd*` frozen at base retirement age; work-longer previews drop the extra contributions | agent | **VERIFY NEXT** — claims $175k / +3yr on the DEFAULT household |
+| `contribEnd*` frozen at base retirement age; work-longer previews drop the extra contributions | agent | **VERIFIED by me** -> **BUG-138** (HIGH) |
 | `spouseSimData` frozen: scenario models the spouse working but not contributing | agent | UNVERIFIED |
-| `hasActiveSpouseGap` hold-out gate not applied in scenarios (BUG-93 alive in previews) | agent | **VERIFY NEXT** — contradicts BUG-102's 2026-09-02 "cleared" note |
+| `hasActiveSpouseGap` hold-out gate not applied in scenarios (BUG-93 alive in previews) | agent | **VERIFIED by me** -> **BUG-137** (HIGH); BUG-102's closure amended |
 | `calcWhatIfDelta` never got the per-account engine; disagrees with `calcWhatIfScenario` | agent | UNVERIFIED |
 
 ### NEXT STEPS (in order)
-1. Verify the `contribEnd*` freeze myself (highest impact; hits the default household).
-2. Verify the scenario hold-out gate myself; if real, file it and AMEND BUG-102's closure
-   (the original claim stays refuted — this is the same gate asymmetry with the opposite
-   sign, so it is a NEW bug, not a re-open).
-3. Skim/verify the other three audit reports; file what survives.
-4. Implement BUG-135 + BUG-136.
-5. Then BUG-125 (per-person SS timing gating) — owner-approved shape.
+1. ~~Verify the `contribEnd*` freeze~~ DONE -> BUG-138 filed.
+2. ~~Verify the scenario hold-out gate~~ DONE -> BUG-137 filed, BUG-102's closure amended.
+3. **Implement the four what-if fixes together** — all four live in `calcWhatIfScenario`
+   and share one test fixture: BUG-137 (scenario gate), BUG-138 (contribEnd coupling),
+   BUG-135 (SS re-derivation), BUG-136 (conversion window). Extract shared predicates
+   rather than copying logic into what-if.js (BUG-31's class).
+4. Verify the two remaining unverified agent findings (`spouseSimData` freeze;
+   `calcWhatIfDelta` never got the engine) and file what survives.
+5. Skim the other three audit reports (auto-resolution, basis/scope, test-coverage); file
+   what survives.
+6. Then BUG-125 (per-person SS timing gating) — owner-approved shape.
 6. Housekeeping: `vite.config.js` has no `exclude`, so gitignored `zz-*.test.js` probes are
    still collected by `npm test` (inflates the count, can turn the suite red — documented
    as having happened twice). Add `configDefaults.exclude` + zz patterns, but first confirm

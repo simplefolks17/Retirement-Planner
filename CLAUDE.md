@@ -25,6 +25,30 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 - **`docs/BUGS.md` is the bug record.** Every bug fix must be logged there before merging, whether or not a PR is opened.
 - **Test count in `CLAUDE.md` must stay current.** Update the test count in the Commands section whenever new tests are added.
 
+## Save Points (run continuously, not at the end)
+A session can be cut off mid-task with no warning — API rate limits and container
+reclamation both do it, and both happened repeatedly on 2026-09-05. **Verified work must
+never exist only in the conversation or in `/tmp`.** The scratchpad and agent transcripts do
+not survive the container; the repo does.
+
+1. **`docs/SESSION-STATE.md` is the live handoff.** Update and COMMIT it at every natural
+   checkpoint: after each verified finding, before launching a long-running agent, before a
+   multi-step edit. It records owner decisions taken, what is done, what is mid-flight, the
+   ordered next steps, and any non-obvious gotcha a resuming session would otherwise
+   rediscover the hard way.
+2. **Commit in small, self-contained units** — a fixture plus its revert-and-confirm
+   evidence, a bug filing plus its repro. Never batch a session's work into one end-of-session
+   commit; that is the unit most likely to be lost.
+3. **Every agent brief must require INCREMENTAL writes to a named file**, as its first
+   action, appending each finding the moment it is verified. Agents that hold results in
+   context lose everything when they are killed. This is not optional: on 2026-09-05 the
+   first round of four agents was killed and lost 100% of its work; the second round, with
+   this instruction, lost none.
+4. **Persist agent output into the repo** (e.g. `docs/audit-<date>/`) before acting on it,
+   marked as an unverified self-report until re-verified per the rule below.
+5. **Never trust an agent's self-report.** Re-run `npm test`, `npm run lint`, `npm run build`
+   and the golden masters yourself, and re-run any revert-and-confirm evidence directly.
+
 ## Session Close-Out (run when the user ends/closes a session, or asks to "make sure files are up to date")
 "Up to date" means a **thorough read + re-verification pass**, never a quick append. Do all of the following before reporting the session done:
 
