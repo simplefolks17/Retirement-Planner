@@ -943,10 +943,25 @@ describe("spouse-household golden master (T-X.4, exact-locked — the auto/null 
   //                because a better-funded primary reaches less often into the
   //                spouse's held-out bucket. The hold-out is still binding (all three
   //                nonzero), so this fixture keeps its BUG-134 sensitivity.
+  //
+  // RE-LOCKED again 2026-09-06 (BUG-135). Scenarios now re-derive Social Security from
+  // their OWN working years instead of carrying the base plan's figure, so a later
+  // retirement correctly earns a larger benefit (committed householdSS rises
+  // 42,528 -> 43,368 -> 45,108 -> 46,956 across retire 57/58/60/62). totalAtRet is
+  // UNCHANGED at all three ages, which is the sanity check that this touched only the
+  // retirement walk and not accumulation. The spillovers moved TOWARD the committed
+  // truth in every case — the direction that proves the fix rather than merely
+  // asserting it:
+  //        preview before -> after   (committed truth)
+  //   58:       738,930 -> 743,001   (742,667)
+  //   60:       426,975 -> 444,590   (474,771)
+  //   62:        99,220 -> 134,194   (187,641)
+  // The residual gap is BUG-136 (the conversion schedule is still inherited from the
+  // base plan); these locks are expected to close onto the truth column when it lands.
   const S = {
-    58: { depletionAge: 112,  totalAtRet: 3_831_682, spillover: 738_930 },
-    60: { depletionAge: 137,  totalAtRet: 4_453_337, spillover: 426_975 },
-    62: { depletionAge: null, totalAtRet: 5_163_187, spillover:  99_220 },
+    58: { depletionAge: 112,  totalAtRet: 3_831_682, spillover: 743_001 },
+    60: { depletionAge: 135,  totalAtRet: 4_453_337, spillover: 444_590 },
+    62: { depletionAge: null, totalAtRet: 5_163_187, spillover: 134_194 },
   };
 
   it("resolves the spouse's retirement age from the AUTO default, not an explicit input", () => {

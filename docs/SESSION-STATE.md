@@ -52,10 +52,15 @@ self-reports and are NOT trusted until re-verified here** — status below.
 1. ~~Verify the `contribEnd*` freeze~~ DONE -> BUG-138 filed.
 2. ~~Verify the scenario hold-out gate~~ DONE -> BUG-137 filed, BUG-102's closure amended.
 3. ~~BUG-137 (scenario hold-out gate)~~ FIXED + pushed.
-   ~~BUG-138 (contribEnd coupling)~~ FIXED. Remaining: **BUG-135** (SS re-derivation),
-   **BUG-136** (conversion window). Both are pinned as CURRENT behaviour in
-   `src/__tests__/whatif-parity-wiring.test.js` — fixing either will fail that file
-   loudly, by design; replace the inverted assertion and drop its bug reference.
+   ~~BUG-138 (contribEnd coupling)~~ FIXED. ~~BUG-135 (SS re-derivation)~~ FIXED.
+   Remaining: **BUG-136** (conversion window). It is pinned as CURRENT behaviour in
+   `src/__tests__/whatif-parity-wiring.test.js`; fixing it will fail that file loudly
+   by design. NOTE: BUG-136's bracket-fill mode is downstream of BUG-135 — the
+   per-year amounts come from income floors that include SS — so it was correctly
+   sequenced second. Custom (flat-amount) mode is the easy half; bracket mode needs
+   `calcBracketFillTargets` re-run against floors rebuilt at the scenario's age.
+   With conversions OFF, preview and commit are now byte-identical in both
+   directions, so BUG-136 is the last known gap for a no-spouse household.
 4. Verify the two remaining unverified agent findings (`spouseSimData` freeze;
    `calcWhatIfDelta` never got the engine) and file what survives.
 5. Skim the other three audit reports (auto-resolution, basis/scope, test-coverage); file

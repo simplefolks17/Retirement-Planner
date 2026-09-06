@@ -117,33 +117,8 @@ describe("preview/commit parity — known remaining gaps (asserted as CURRENT be
   // that fixing BUG-135/BUG-136 fails HERE with a clear pointer rather than silently
   // changing behaviour somewhere else. Replace each with an equality assertion, and
   // delete its bug reference, as part of that fix.
-  it("BUG-135: Social Security is NOT re-derived for the scenario's own working years", () => {
-    // currentAge 50 / retire 60: a 10-year-earlier scenario cuts working years 10 -> 0
-    // (floored at 1 by ssWorkYears), so the error is at its most severe. The DEFAULT
-    // household (currentAge 30) shows the same defect more mildly — 35 vs 25 working
-    // years is only a ~1.20x overstatement — which is why this test pins a household
-    // near retirement rather than the default: the bug's magnitude scales with how
-    // large a FRACTION of the career the scenario moves.
-    const setup = (a) => {
-      a.fire(() => a.latest().assumptions.currentAge.set(50));
-      a.fire(() => a.latest().assumptions.inflationRate.set(0));
-      a.fire(() => a.latest().assumptions.retirementAge.set(60));
-    };
-    const a1 = mount(); setup(a1);
-    const baseSS = a1.latest().householdSS;
-    a1.unmount();
-
-    const a2 = mount(); setup(a2);
-    a2.fire(() => a2.latest().assumptions.retirementAge.set(50));
-    const committedSS = a2.latest().householdSS;
-    a2.unmount();
-
-    // Retiring 10 years earlier genuinely earns a much smaller benefit (fewer indexed
-    // earning years via calcAIME/calcPIA) — but the scenario path still carries the
-    // base plan's figure, inflation-re-based only (a no-op at 0% inflation).
-    expect(committedSS).toBeLessThan(baseSS);
-    expect(baseSS / committedSS).toBeGreaterThan(1.5);   // measured 1.90x
-  });
+  // (BUG-135 was fixed 2026-09-06 — its parity assertion now lives in the
+  // "full parity" block below, as an equality rather than an inverted pin.)
 
   it("BUG-136: the Roth-conversion window is inherited from the base plan", () => {
     const a1 = mount();
@@ -163,5 +138,63 @@ describe("preview/commit parity — known remaining gaps (asserted as CURRENT be
     // Committing a 10-years-earlier retirement opens a much longer conversion runway;
     // the preview reuses the short base-plan window.
     expect(committedAges.length).toBeGreaterThan(baseAges.length + 5);
+  });
+});
+
+describe("FULL PARITY — preview equals commit exactly when no known gap is in play", () => {
+  // The strongest form of this file's invariant, and the one that would have caught
+  // BUG-135 and BUG-138 on their own. No spouse (so BUG-137's gate is not involved)
+  // and conversions off (so BUG-136's inherited window is not involved): with those
+  // removed, previewing a retirement age and committing it must produce byte-identical
+  // numbers, in BOTH directions.
+  //
+  // When BUG-136 is fixed, delete the two conversion setters from `setup` — this block
+  // should then hold with conversions ON as well, which is the real end state.
+  const setup = (a) => {
+    a.fire(() => a.latest().assumptions.currentAge.set(50));
+    a.fire(() => a.latest().assumptions.retirementAge.set(60));
+    a.fire(() => a.latest().accounts.trad401k.bal.set(600_000));
+    a.fire(() => a.latest().spending.annualExpenses.set(75_000));
+    a.fire(() => a.latest().conversion.conversionMode.set("custom"));
+    a.fire(() => a.latest().conversion.annualConversionAmt.set(0));   // remove BUG-136's input
+  };
+
+  for (const target of [52, 55, 58, 63, 66, 70]) {
+    it(`retire at ${target}: scenarioTotalAtRet and scenarioYears match the committed plan exactly`, () => {
+      const a1 = mount(); setup(a1);
+      const preview = calcWhatIfScenario(a1.latest().whatIfSimInputs, { retirementAge: target });
+      a1.unmount();
+
+      const a2 = mount(); setup(a2);
+      a2.fire(() => a2.latest().assumptions.retirementAge.set(target));
+      const committed = a2.latest();
+
+      expect(preview.scenarioTotalAtRet).toBe(committed.totalAtRet);
+      expect(preview.scenarioYears).toBe(committed.yearsSustained);
+      a2.unmount();
+    });
+  }
+
+  it("Social Security itself moves with the scenario's own working years (BUG-135)", () => {
+    // Direct statement of the mechanism: the benefit is derived from ssWorkYears via
+    // calcAIME/calcPIA, so a scenario 10 years earlier must model a materially smaller
+    // benefit. Pre-fix the scenario carried the base plan's figure unchanged (measured
+    // 25,956 where the truth was 13,656 — a 90% overstatement).
+    const a1 = mount(); setup(a1);
+    // 53, not 50: retiring AT currentAge leaves no accumulation row to read, and
+    // calcWhatIfScenario correctly returns null there.
+    const early = calcWhatIfScenario(a1.latest().whatIfSimInputs, { retirementAge: 53 });
+    const late  = calcWhatIfScenario(a1.latest().whatIfSimInputs, { retirementAge: 70 });
+    a1.unmount();
+
+    const commit = (t) => {
+      const a = mount(); setup(a);
+      a.fire(() => a.latest().assumptions.retirementAge.set(t));
+      const v = { years: a.latest().yearsSustained, atRet: a.latest().totalAtRet };
+      a.unmount();
+      return v;
+    };
+    expect(early.scenarioYears).toBe(commit(53).years);
+    expect(late.scenarioYears).toBe(commit(70).years);
   });
 });

@@ -1491,12 +1491,30 @@ export default function App() {
       spouseSimData,
       spouseStartingBal: spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
     } : null,
+    // BUG-135: everything calcRetirementIncome needs to RE-DERIVE Social Security at a
+    // scenario's own retirement age. The benefit is a function of ssWorkYears
+    // (safeRetAge - currentAge) via calcAIME/calcPIA, so a scenario that moves the
+    // retirement age genuinely changes it — previously the scenario paths only
+    // inflation-re-based the base plan's figure, which both missed the working-years
+    // effect and applied an inflation factor to a figure that has none (householdSS is
+    // inflation-independent by construction). safeRetAge is deliberately OMITTED: the
+    // scenario supplies its own, and carrying the base plan's here is exactly the
+    // freeze that caused the bug (BUG-127's lesson, same shape).
+    ssInputs: {
+      currentIncome, incomeGrowth, incomeGrowthEndAge,
+      ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
+      pensionMonthly, pensionStartAge,
+      isMarried, spouseClaimingAge, spouseBenefitBasis,
+    },
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
        addlPreTaxBal, depletionAge,
        hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
        spouseRetirementAge, lifeExpect, spouseNetRate, inflationRate,
-       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
+       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
+       currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge, includeSS,
+       ssOverride, spouseSsEstimate, pensionMonthly, pensionStartAge,
+       isMarried, spouseClaimingAge, spouseBenefitBasis]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
   // scenario engine as every lever (calcWhatIfScenario) + SS helpers + a pure

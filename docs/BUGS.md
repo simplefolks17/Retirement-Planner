@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 15 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 14 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,7 +15,6 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
-| **BUG-135** | **HIGH** | What-if scenarios never re-derive Social Security for the scenario's OWN working years — only an inflation re-base. Retiring 10 yrs earlier previews +90% too much SS; working 5 yrs longer previews −23% too little | `src/model/what-if.js` |
 | **BUG-136** | Medium-High | What-if scenarios inherit the BASE plan's Roth-conversion schedule/window instead of rebuilding it at the scenario's retirement age — a retire-earlier preview converts $420k where committing the same change converts $1,020,000 | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-125** | Medium | "Guaranteed for life" ignores a spouse's own SS claiming age — only the primary's timing gates the card | `src/App.jsx`, `src/model/retirement-income.js` |
 | **BUG-124** | Low | "Tax in retirement" isn't wired to the dollar-basis toggle, and is entangled with BUG-38's known undercounting | `src/horizon/screens/PlanScreen.jsx`, `src/model/retirement-engine.js` |
@@ -34,56 +33,6 @@ place this gets checked).
 ---
 
 ## Open Issues
-
-### BUG-135 — a what-if scenario never re-derives Social Security for the scenario's OWN working years; it only inflation-re-bases the base plan's benefit (found 2026-09-05, preview/commit decomposition while settling BUG-102)
-
-**Owner:** me_theguy. **Severity: HIGH — bidirectional, large (−36% to +90% on the SS figure itself),
-live on the two most-used levers (the Plan "Try a change" retirement-age dial and the Strategies
-"Working longer" card), and NOT a documented simplification: `docs/FINANCIAL-MODEL.md`'s Known
-Simplifications table (the BUG-91 row) actively claims a scenario "re-derives BOTH the expense
-conversion and a bidirectional SS/pension re-basing", which overstates what the code does.**
-**What:** `calcWhatIfScenario` and `calcWhatIfDelta` both take the base plan's SS figure and apply
-only an inflation re-base for the scenario's different retirement year:
-`retDrawShared.ssAmount * scenarioRetYearFactor` (`what-if.js:339`, `:748`, `:864`, `:875`). But the
-benefit is not a fixed dollar amount — it is derived from `ssWorkYears = safeRetAge - currentAge`
-through `calcAIME` → `calcPIA` → `calcBenefit` (`retirement-income.js:25-29`). Retiring earlier means
-fewer years of indexed earnings and a genuinely smaller benefit; working longer earns a bigger one.
-The scenario path models neither. Pension is correctly handled by the same re-base (a user-entered
-monthly amount really is working-years-independent) — **this is an SS-only defect.**
-**Measured (no spouse, single earner, inflation 0 to isolate the re-base; `currentAge` 50):**
-
-| scenario | preview SS (base plan's, re-based) | committed truth | error |
-|---|---|---|---|
-| retire at 50 (base 60) | 25,956 | 13,656 | **+90.1%** |
-| retire at 55 (base 60) | 25,956 | 19,428 | **+33.6%** |
-| retire at 65 (base 60) | 25,956 | 33,516 | **−22.6%** |
-| retire at 70 (base 60) | 25,956 | 40,212 | **−35.5%** |
-
-**User-visible today:** the Strategies "Working longer" card (`workLongerView`) on a
-`currentAge` 50 / retire-62 / $300k-Trad / $80k-spend household reports money running out at
-**76 / 79** for +3 / +5 years worked; committing those exact ages gives **77 / 80**. The card
-understates the benefit of working longer because it withholds the SS increase those extra
-working years actually earn. In the retire-EARLIER direction the error flips to optimistic, which
-is the dangerous one: the preview credits a benefit the user has not earned.
-**Why it hid:** no golden master locks any what-if/scenario output (T-X.2 and T-X.3 lock only
-base-plan headline numbers; T-X.4, added 2026-09-05, is the first to lock scenario output at all,
-and it locks depletion/spillover, not SS). And the two most obvious repro households mask it — a
-plan that depletes before `ssClaimingAge` never sees the difference at all (this is why the first
-isolation run showed SS-on and SS-off as byte-identical).
-**Fix shape (sketched, not implemented):** re-derive the benefit inside the scenario from the
-scenario's own `ssWorkYears`, reusing `calcRetirementIncome`/`calcAIME` rather than a second copy of
-the formula (BUG-31's signature class — the whole point is to have ONE derivation). The scenario
-already re-runs `runSimulation` when `needsResim` is true, so the hook exists; the SS derivation
-simply is not part of it. Note `spouseSsEstimate` is a user-entered at-FRA figure and is NOT
-working-years-derived, so only the PRIMARY's benefit needs re-deriving.
-**Where:** `src/model/what-if.js:339` (`calcWhatIfDelta`), `:748` (`calcWhatIfScenario`, engine
-branch), `:864`/`:875` (the legacy blended branch); `src/model/retirement-income.js:25-29` (the
-derivation being skipped). `docs/FINANCIAL-MODEL.md`'s BUG-91 row needs its "re-derives" wording
-corrected either way.
-**Not fixed here.** Filed with a live repro; needs its own verification pass and will move any
-golden master that locks a scenario output.
-
----
 
 ### BUG-136 — a what-if scenario inherits the BASE plan's Roth-conversion schedule instead of rebuilding the window at the scenario's own retirement age (found 2026-09-05, same decomposition)
 
@@ -699,6 +648,95 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+
+### BUG-135 — a what-if scenario never re-derives Social Security for the scenario's OWN working years; it only inflation-re-bases the base plan's benefit (found 2026-09-05, preview/commit decomposition while settling BUG-102; FIXED 2026-09-06)
+
+**Owner:** me_theguy. **Severity: HIGH — bidirectional, large (−36% to +90% on the SS figure itself),
+live on the two most-used levers (the Plan "Try a change" retirement-age dial and the Strategies
+"Working longer" card), and NOT a documented simplification: `docs/FINANCIAL-MODEL.md`'s Known
+Simplifications table (the BUG-91 row) actively claims a scenario "re-derives BOTH the expense
+conversion and a bidirectional SS/pension re-basing", which overstates what the code does.**
+**What:** `calcWhatIfScenario` and `calcWhatIfDelta` both take the base plan's SS figure and apply
+only an inflation re-base for the scenario's different retirement year:
+`retDrawShared.ssAmount * scenarioRetYearFactor` (`what-if.js:339`, `:748`, `:864`, `:875`). But the
+benefit is not a fixed dollar amount — it is derived from `ssWorkYears = safeRetAge - currentAge`
+through `calcAIME` → `calcPIA` → `calcBenefit` (`retirement-income.js:25-29`). Retiring earlier means
+fewer years of indexed earnings and a genuinely smaller benefit; working longer earns a bigger one.
+The scenario path models neither. Pension is correctly handled by the same re-base (a user-entered
+monthly amount really is working-years-independent) — **this is an SS-only defect.**
+**Measured (no spouse, single earner, inflation 0 to isolate the re-base; `currentAge` 50):**
+
+| scenario | preview SS (base plan's, re-based) | committed truth | error |
+|---|---|---|---|
+| retire at 50 (base 60) | 25,956 | 13,656 | **+90.1%** |
+| retire at 55 (base 60) | 25,956 | 19,428 | **+33.6%** |
+| retire at 65 (base 60) | 25,956 | 33,516 | **−22.6%** |
+| retire at 70 (base 60) | 25,956 | 40,212 | **−35.5%** |
+
+**User-visible today:** the Strategies "Working longer" card (`workLongerView`) on a
+`currentAge` 50 / retire-62 / $300k-Trad / $80k-spend household reports money running out at
+**76 / 79** for +3 / +5 years worked; committing those exact ages gives **77 / 80**. The card
+understates the benefit of working longer because it withholds the SS increase those extra
+working years actually earn. In the retire-EARLIER direction the error flips to optimistic, which
+is the dangerous one: the preview credits a benefit the user has not earned.
+**Why it hid:** no golden master locks any what-if/scenario output (T-X.2 and T-X.3 lock only
+base-plan headline numbers; T-X.4, added 2026-09-05, is the first to lock scenario output at all,
+and it locks depletion/spillover, not SS). And the two most obvious repro households mask it — a
+plan that depletes before `ssClaimingAge` never sees the difference at all (this is why the first
+isolation run showed SS-on and SS-off as byte-identical).
+**Fix shape (sketched, not implemented):** re-derive the benefit inside the scenario from the
+scenario's own `ssWorkYears`, reusing `calcRetirementIncome`/`calcAIME` rather than a second copy of
+the formula (BUG-31's signature class — the whole point is to have ONE derivation). The scenario
+already re-runs `runSimulation` when `needsResim` is true, so the hook exists; the SS derivation
+simply is not part of it. Note `spouseSsEstimate` is a user-entered at-FRA figure and is NOT
+working-years-derived, so only the PRIMARY's benefit needs re-deriving.
+**Where:** `src/model/what-if.js:339` (`calcWhatIfDelta`), `:748` (`calcWhatIfScenario`, engine
+branch), `:864`/`:875` (the legacy blended branch); `src/model/retirement-income.js:25-29` (the
+derivation being skipped). `docs/FINANCIAL-MODEL.md`'s BUG-91 row needs its "re-derives" wording
+corrected either way.
+**Not fixed here.** Filed with a live repro; needs its own verification pass and will move any
+golden master that locks a scenario output.
+
+**FIXED 2026-09-06.** Scenarios now re-derive the benefit through the SHARED
+`calcRetirementIncome` at their own retirement age (`scenarioSocialSecurity`, what-if.js) —
+never a second copy of the AIME/PIA formula. Applied at all four sites: `calcWhatIfDelta`'s
+`scenarioSSAmount`, `calcWhatIfScenario`'s engine branch (`ssGross`/`ssTaxable`), and the two
+legacy blended-walk sites. App.jsx supplies a new `ssInputs` bundle field; it deliberately
+OMITS `safeRetAge`, since carrying the base plan's age is exactly the freeze that caused this
+class of bug (BUG-127's lesson).
+
+**Re-derivation REPLACES the inflation re-base rather than composing with it**, and this was
+settled by measurement rather than argument: `householdSS` is completely inflation-independent
+(25,956 at 0%, 2.5%, 4% and 6% on the same household) because `calcAIME` grows income by
+`incomeGrowth`, not inflation. So the old `* scenarioRetYearFactor` was wrong twice — it missed
+the working-years effect AND applied an inflation adjustment to a figure with no inflation
+component. Two inputs are deliberately left on the old path because they are genuinely not
+working-years-derived: a user-pinned `ssOverride`, and `spouseSsEstimate` (a user-entered at-FRA
+figure). `ssInputs` absent ⇒ previous behaviour, so every hand-built test bundle is inert.
+
+**Verification.** With conversions off and no spouse — i.e. with BUG-136's and BUG-137's inputs
+removed — preview and commit now agree **byte-identically** in BOTH directions across six
+retirement ages (52/55/58/63/66/70): `scenarioTotalAtRet` and `scenarioYears` exact. Reverting
+the fix fails 7 assertions across two files. Locked in
+`src/__tests__/whatif-parity-wiring.test.js` ("FULL PARITY").
+
+**Golden master moved, deliberately — T-X.4's scenario spillovers, TOWARD the committed truth**,
+which is the direction that proves the fix rather than merely asserting it:
+
+| scenario | preview before | after | committed truth |
+|---|---|---|---|
+| retire 58 | 738,930 | **743,001** | 742,667 |
+| retire 60 | 426,975 | **444,590** | 474,771 |
+| retire 62 | 99,220 | **134,194** | 187,641 |
+
+`totalAtRet` is unchanged at all three ages — the sanity check that this touched only the
+retirement walk, not accumulation. The residual gap to truth is BUG-136. T-X.4 was re-confirmed
+to still catch reverts of BUG-127, BUG-134 and BUG-138 afterwards.
+`docs/FINANCIAL-MODEL.md`'s BUG-91 row, which had claimed scenarios already "re-derive" SS, is
+corrected in the same commit.
+
+---
 
 
 ### BUG-138 — `contribEnd*` is frozen at the base retirement age, so every "work longer" preview silently drops the contributions committing the same change would make (found 2026-09-06, preview/commit parity audit; verified independently on the default household; FIXED same day)
