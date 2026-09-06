@@ -60,18 +60,43 @@ any multi-step edit. Never let verified work exist only in the conversation or i
   Also unexplored: Pullfrog (open-source, GitHub Actions + BYO key), Cursor Bugbot.
 
 ### Audit reports — PERSISTED to `docs/audit-2026-09-05/`
-Four Opus agents ran (twice; both rounds killed by rate limits, but incremental-save meant
-nothing was lost). Their reports are committed in that directory. **They are agent
-self-reports and are NOT trusted until re-verified here** — status below.
+**NONE of the four agents completed.** Round 1 (four agents) was killed by rate limits and lost
+100% of its work. Round 2 (four agents) was also killed — but the briefs required INCREMENTAL
+writes to a named file, so all four reports survived and are committed. That instruction is the
+only reason anything exists here.
 
-| Finding | Source | Status |
-|---|---|---|
-| SS never re-derived for a scenario's working years | mine | VERIFIED by me -> **BUG-135** |
-| Conversion window inherited from base plan | mine + agent | VERIFIED by me -> **BUG-136** |
-| `contribEnd*` frozen at base retirement age; work-longer previews drop the extra contributions | agent | **VERIFIED by me** -> **BUG-138** (HIGH) |
-| `spouseSimData` frozen: scenario models the spouse working but not contributing | agent | UNVERIFIED |
-| `hasActiveSpouseGap` hold-out gate not applied in scenarios (BUG-93 alive in previews) | agent | **VERIFIED by me** -> **BUG-137** (HIGH); BUG-102's closure amended |
-| `calcWhatIfDelta` never got the per-account engine; disagrees with `calcWhatIfScenario` | agent | UNVERIFIED |
+Completeness at time of death:
+
+| Report | Lines | Findings | State |
+|---|---|---|---|
+| `audit-preview-parity.md` | 344 | **7 verified** + a CLEAN/negative-space section | died mid-Finding 7 |
+| `audit-basis-scope.md` | 228 | **8 (F1–F8)** | died mid-F8; no summary table |
+| `audit-auto-resolution.md` | 199 | **6 (A–F)** | Sections 1–3 still say "to be filled" — the sentinel inventory TABLE, its headline deliverable, was never written |
+| `audit-test-coverage.md` | 555 | coverage matrix + ranked cells + weak-assertion sweep | most complete; died at the end of §3 |
+
+**MINED SO FAR: only `audit-preview-parity`, and only Findings 1/3/4** (-> BUG-138, BUG-137,
+BUG-136). Roughly **22 findings across the other three reports remain unmined** — they are
+committed and safe, but nobody has verified or filed them.
+
+Two spot-checks done cold, both CONFIRMED, which is the evidence that mining beats re-running:
+- **basis-scope F3 (HIGH, shipped default)** — `contribSeries` (App.jsx:1003) reads `row.trad`/
+  `.roth`/`.taxable`/`.hsa`, but `runSimulation` rows are keyed `"Trad 401k"`/`"Roth IRA"`/
+  `"Taxable"`/`"HSA"`/`tradGross`. All four are `undefined` -> `?? 0` -> `rowTotal === 0` ->
+  `Math.min(..., 0)` clamps the series to zero permanently. Measured: **1 nonzero point of 60**
+  (165,000 at 31, then 0). The Plan "Sources" chart therefore credits 100% of the portfolio to
+  "Market growth". Asserted by no test. (Also noticed while verifying: `contribSeries[10]` is
+  age 41 while `chartData[10]` is age 40 — an indexing offset to handle in the same fix.)
+  F3b: even once fixed, `contribSeries` is PRIMARY-only while `chartData` is HOUSEHOLD.
+- **parity Finding 7** — a correct critique of T-X.4 as first committed: it is a REGRESSION lock
+  (preview vs its own past self), not a PARITY lock (preview vs commit). Its "committed truth"
+  numbers match what I later measured independently. Partly addressed by the FULL PARITY block
+  in `whatif-parity-wiring.test.js`, but that block is a NO-SPOUSE household — there is still no
+  parity assertion for a spouse household, and T-X.4's spillover locks remain preview-only values
+  known to be wrong by BUG-136.
+
+**Recommendation: mine the three unmined reports BEFORE spending any more agent budget.** Their
+findings are on disk; re-running would mostly re-derive them and re-incur the rate limit that
+killed both rounds. The only genuinely missing deliverable is auto-resolution's sentinel table.
 
 ### NEXT STEPS (in order)
 1. ~~Verify the `contribEnd*` freeze~~ DONE -> BUG-138 filed.
