@@ -674,6 +674,62 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 
+### BUG-143 / BUG-144 — the Statement tab renders two figures in two dollar bases with nothing on screen to reconcile them (found 2026-09-06, basis/scope audit F1+F2; both verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — both live at the SHIPPED DEFAULT, both on the
+"Statement of your plan" tab, and both are BUG-132's exact failure on the screen that never
+received BUG-132's fix.**
+
+**BUG-143 (F2) — the replacement ratio had no on-screen referent.** `NumbersScreen.jsx` renders the
+ledger's "Total monthly" from `statementView.monthlyTotal` (RETIREMENT-YEAR dollars, correctly
+captioned) and, ~40px below, "Retirement income replaces X% of your working paycheck deposit" from
+`incomeReplacementPct` — which `budget.js` deliberately builds from TODAY's-dollar spending against
+today's take-home. Both figures are individually correct and the model says so; the defect is the
+CO-RENDER. Measured at the default state, no fixture:
+
+```
+"Paycheck deposit"  $5,698/mo   TODAY's dollars
+"Total monthly"    $18,868/mo   RETIREMENT-YEAR dollars
+18,868 / 5,698  =  3.31x   ->  the numbers on screen read 331%
+sentence 2 lines below     ->  "replaces 84%"
+```
+
+PR #66 fixed exactly this on the Plan screen by gating the replacement copy behind
+`dollarBasisOptions[].showsReplacementPct`. The Statement tab was never swept.
+**Fixed** by exporting `monthlyTodaysExp` — the ratio's OWN numerator, already computed inside
+`calcStatementView` and simply not returned — and naming both operands in the sentence
+("…— $4,781/mo vs $5,698/mo, both in today's dollars"). The screen selects; it does not compute
+(rule 10). A gate would have hidden a true statement; naming the operands keeps the information and
+removes the contradiction.
+
+**BUG-144 (F1) — a retirement-year figure printed under an explicit "in today's dollars" caption.**
+The "bottom line" block prints `fmtMo(effectiveExpenses)` (today's dollars — correct), then
+"with {balAt90} remaining at age 90", then the caption "in today's dollars" covering the block.
+But `balAt90 = walkBalanceAt(retirementWalk.rows, safeLifeExp)` is a retirement-phase WALK balance,
+i.e. the primary's retirement-year purchasing power (BUG-90/91's frame). Measured (default plus
+balances so the plan survives to 90): balAt90 **5,341,525**, which in today's dollars is
+**1,353,625** — the caption overstated the reader's understood value by the full **3.946x**
+inflation factor. The block's own code comment defended the caption by pointing at the monthly
+figure, having missed the second figure in the same block.
+**Fixed** with a model-provided `balAt90Today`, converted ONCE in App.jsx via the same
+bidirectional `inflationRebaseFactor` (negative year count) the Plan screen's `toTodayFactor` uses
+— never a second inline conversion (rule 11). `balAt90` itself is unchanged for its other consumers.
+
+**A test-gap found while fixing these, worth recording.** `numbers-tabs.test.js` hand-builds its
+props, so when the screen was changed to read `balAt90Today` the fixture kept supplying `balAt90`
+and **nothing failed** — `fmt(undefined)` renders a graceful "—", so the figure silently vanished
+from the tab. This is `golden-master.test.js`'s structural blindness in miniature. Closed on both
+sides: the component fixture now supplies the real props AND asserts the value renders, and
+App-level wiring assertions were added alongside (`contrib-series-wiring.test.js`).
+
+**Verification.** Each fix reverted independently and confirmed to fail its own test with the exact
+filed numbers: BUG-144 → "expected 5341525 to be 1353625"; BUG-143 model → "expected undefined to
+be 4781"; BUG-143 screen → the operand "4,320" absent from the render. All four golden masters
+unmoved (both changes are display-layer additions; no model quantity moved).
+
+---
+
+
 ### BUG-139 / BUG-140 / BUG-141 — the Sources chart's contribution line was pinned to zero, primary-only, and drawn out of register (found 2026-09-06, basis/scope audit F3+F3b; all three verified independently and FIXED same day)
 
 **Owner:** me_theguy. **Severity: HIGH — wrong at the SHIPPED DEFAULT, on a whole chart view, and

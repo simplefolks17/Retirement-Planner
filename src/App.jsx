@@ -991,6 +991,18 @@ export default function App() {
   const balAt90 = useMemo(
     () => walkBalanceAt(retirementWalk.rows, safeLifeExp),
     [retirementWalk, safeLifeExp]);
+  // BUG-144: the same balance in TODAY's dollars. balAt90 is a retirement-phase WALK
+  // balance, so it is in the primary's retirement-year purchasing power (BUG-90/91's
+  // frame) — but the Statement tab's "bottom line" block prints it one line under a
+  // monthly figure that IS today's dollars, with a single "in today's dollars" caption
+  // covering both. At the shipped default that caption overstated the reader's
+  // understood value by the full inflation factor (3.946x: $5,341,525 read as today's
+  // money when it is $1,353,625). Converted ONCE here, via the same bidirectional
+  // helper (negative year count) the Plan screen's toTodayFactor uses — never a second
+  // inline conversion (rule 11).
+  const balAt90Today = useMemo(
+    () => Math.round(balAt90 * inflationRebaseFactor(inflationRate, -yearsToRetForBasis)),
+    [balAt90, inflationRate, yearsToRetForBasis]);
 
   // Approximate contribution series for Horizon's Sources view: cumulative money PUT IN
   // (starting balances + contributions, no growth), which the chart subtracts from the
@@ -2677,7 +2689,7 @@ export default function App() {
     currentAge, retirementAge, lifeExpect,
     totalAtRet, yearsSustained, isSustainable,
     takeHome, effectiveExpenses, withdrawalRate,
-    balAt90, contribSeries,
+    balAt90, balAt90Today, contribSeries,
     householdSS, effectivePension, activity, setActivity: guardWrite(setActivity, readOnly),
     currentIncome,
     fedTax, ficaTotal: fica, stateTaxAmt: stateTax,
@@ -2803,7 +2815,7 @@ export default function App() {
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
-       balAt90, contribSeries, householdSS, effectivePension, activity, setActivity,
+       balAt90, balAt90Today, contribSeries, householdSS, effectivePension, activity, setActivity,
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
        bal401k, balRoth, balTaxable, balHSA, spendableAtRet,

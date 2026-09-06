@@ -130,3 +130,42 @@ describe("contribSeries (Sources view)", () => {
     app.unmount();
   });
 });
+
+// ── Statement-tab dollar basis, at the App level (BUG-143 / BUG-144) ──────────
+// The component test (horizon/__tests__/numbers-tabs.test.js) hand-builds its props,
+// so it is structurally blind to a WIRING break — and in fact its fixture carried
+// `balAt90` while the screen was changed to read `balAt90Today`, with nothing failing
+// (fmt(undefined) renders a graceful "—"). These App-level assertions cover that gap.
+describe("Statement tab basis wiring (BUG-143 / BUG-144)", () => {
+  it("BUG-144: balAt90Today is balAt90 deflated to today's dollars, not a copy of it", () => {
+    const app = mount();
+    app.fire(() => app.latest().accounts.trad401k.bal.set(600_000));
+    app.fire(() => app.latest().accounts.roth.bal.set(200_000));
+    app.fire(() => app.latest().accounts.taxable.bal.set(300_000));
+    const l = app.latest();
+
+    const yrs = l.assumptions.retirementAge.value - l.assumptions.currentAge.value;
+    const factor = Math.pow(1 + l.assumptions.inflationRate.value / 100, yrs);
+    expect(l.balAt90).toBeGreaterThan(0);          // fixture must actually survive to 90
+    expect(factor).toBeGreaterThan(1);             // ...and have something to deflate
+    expect(l.balAt90Today).toBe(Math.round(l.balAt90 / factor));
+    // The bug was showing balAt90 under an "in today's dollars" caption.
+    expect(l.balAt90Today).toBeLessThan(l.balAt90);
+    app.unmount();
+  });
+
+  it("BUG-143: statementView exports the replacement ratio's own numerator", () => {
+    const app = mount();
+    const l = app.latest();
+    const sv = l.statementView;
+    expect(sv.monthlyTodaysExp).toBe(Math.round(l.effectiveExpenses / 12));
+    // The ratio must be reconstructible from the two operands the screen now names —
+    // otherwise the sentence and its parenthetical could drift apart.
+    expect(sv.incomeReplacementPct).toBe(
+      Math.round((sv.monthlyTodaysExp / sv.monthlyTakeHome) * 100));
+    // And it is genuinely a DIFFERENT basis from the ledger total beside it: that
+    // difference is the whole reason the operands have to be named on screen.
+    expect(sv.monthlyTotal).not.toBe(sv.monthlyTodaysExp);
+    app.unmount();
+  });
+});

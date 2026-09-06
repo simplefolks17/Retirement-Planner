@@ -70,6 +70,8 @@ const statementView = {
   // Session-4: income replacement ratio
   monthlyTakeHome:      6_000,
   incomeReplacementPct:    72,
+  // BUG-143: the ratio's own numerator, so the sentence can name both operands.
+  monthlyTodaysExp:     4_320,
 };
 
 // ── Minimal chartMilestones shape ─────────────────────────────────────────────
@@ -201,7 +203,9 @@ const minimalProps = {
     "HSA":         184_197,
   },
   effectiveExpenses:   120_000,
-  balAt90:           3_566_026,
+  // BUG-144: the Statement block reads the TODAY's-dollars balance (the block's
+  // own caption says "in today's dollars"); balAt90 itself is retirement-year.
+  balAt90Today:      3_566_026,
   householdSS:          45_924,
   effectivePension:          0,
   isSustainable:         true,
@@ -1143,5 +1147,49 @@ describe("Year-by-year table declares a scroll affordance on mobile only", () =>
     expect(maskOf(renderer)).toEqual([]);
     expect(textOf(renderer.root)).not.toContain("Swipe the table sideways");
     act(() => renderer.unmount());
+  });
+});
+
+// ── Statement tab dollar-basis contract (BUG-143 / BUG-144) ───────────────────
+// Both bugs were "two figures in different bases rendered together, with nothing
+// on screen to reconcile them" — BUG-132's exact failure, on the screen that never
+// got BUG-132's fix. These assertions exist because the previous props fixture
+// carried `balAt90` while the screen was later changed to read `balAt90Today`, and
+// NOTHING failed: fmt(undefined) renders a graceful "—", so the value silently
+// vanished from the tab. A rendered-value assertion is what makes that loud.
+describe("Statement tab — dollar basis (BUG-143 / BUG-144)", () => {
+  it("BUG-144: renders the today's-dollars balance, not an em-dash placeholder", () => {
+    const renderer = mountTab("statement");
+    const out = JSON.stringify(renderer.toJSON());
+    // $3,566,026 formats as "$3.6M" via fmt(); the point is that SOMETHING real
+    // renders where balAt90Today is read.
+    expect(out).toContain("$3.6M");
+    expect(out).toContain("remaining at age 90");
+    renderer.unmount();
+  });
+
+  it("BUG-143: the replacement ratio names both of its operands, in one basis", () => {
+    const renderer = mountTab("statement");
+    const out = JSON.stringify(renderer.toJSON());
+    expect(out).toContain("Retirement income replaces");
+    // Both sides of the comparison must be on screen, so the ratio has a referent
+    // rather than sitting beside a retirement-year ledger total it cannot explain.
+    expect(out).toContain("4,320");   // monthlyTodaysExp
+    expect(out).toContain("6,000");   // monthlyTakeHome
+    expect(out).toContain("today");   // the explicit basis note
+    renderer.unmount();
+  });
+
+  it("BUG-143: degrades cleanly when the model cannot supply the operands", () => {
+    const renderer = mountTab("statement", {
+      statementView: { ...statementView, monthlyTodaysExp: null },
+    });
+    const out = JSON.stringify(renderer.toJSON());
+    // The sentence still renders; only the parenthetical is dropped. (A bare
+    // .not.toContain("null") would be wrong here: react-test-renderer emits
+    // "children":null for every childless node, so it matches everywhere.)
+    expect(out).toContain("Retirement income replaces");
+    expect(out).not.toContain("both in today");
+    renderer.unmount();
   });
 });

@@ -239,7 +239,7 @@ export const NUMBERS_TABS = [
 export default function NumbersScreen({ t, props, isMobile = false, initialTab = null, navigate = null }) {
   const {
     currentIncome, fedTax, takeHome,
-    totalAtRet, spendableAtRet, retVals, effectiveExpenses, balAt90,
+    totalAtRet, spendableAtRet, retVals, effectiveExpenses, balAt90Today,
     effectivePension, isSustainable, withdrawalRate,
     retirementAge, currentAge,
     netConversionBenefit, yr1TaxSavings,
@@ -406,7 +406,14 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 <span style={{ font: `400 16px ${SERIF}`, color: t.mut }}>/ month in retirement</span>
               </div>
               <div style={{ font: `400 13px ${SERIF}`, color: t.mut, marginTop: 5 }}>
-                with <span style={{ color: t.warm, fontWeight: 700 }}>{fmt(balAt90)}</span> remaining at age 90.
+                {/* BUG-144: balAt90Today, not balAt90. This line sits INSIDE the block
+                    whose caption below reads "in today's dollars", one line under a
+                    monthly figure that really is today's dollars — but balAt90 is a
+                    retirement-phase walk balance (retirement-year purchasing power), so
+                    the caption overstated it by the whole inflation factor (3.946x at
+                    the shipped default). The model converts it once (App.jsx); the
+                    screen only selects, per rule 10. */}
+                with <span style={{ color: t.warm, fontWeight: 700 }}>{fmt(balAt90Today)}</span> remaining at age 90.
               </div>
               {/* Rule 11: a scoped, LOCAL basis note — the removed banner above
                   claimed one basis for the whole tab, which was false for the
@@ -541,10 +548,25 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                 : pct >= ASSUMPTIONS.INCOME_REPLACEMENT_WARN_PCT ? t.warm : "#c0392b";
               return (
                 <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  {/* BUG-143: this ratio compares TODAY's-dollar spending to TODAY's
+                      take-home, but it renders ~40px under a ledger total in
+                      RETIREMENT-YEAR dollars — so at the shipped default a reader saw
+                      $18,868/mo beside a $5,698/mo paycheck (3.31x) under a sentence
+                      saying 84%, with nothing on screen to reconcile them. This is
+                      BUG-132's failure exactly, on the screen that never got its fix.
+                      Naming both operands gives the ratio its referent; both come from
+                      the model (sv.monthlyTodaysExp / sv.monthlyTakeHome), never
+                      recomputed here. */}
                   <div style={{ font: `400 13px ${SERIF}`, color: t.mut }}>
                     Retirement income replaces{" "}
                     <span style={{ font: `700 15px ${HM}`, color }}>{pct}%</span>
-                    {" "}of your working paycheck deposit.
+                    {" "}of your working paycheck deposit
+                    {sv.monthlyTodaysExp != null && sv.monthlyTakeHome != null && (
+                      <span style={{ color: t.faint }}>
+                        {" "}— {fmtFull(sv.monthlyTodaysExp)}/mo vs {fmtFull(sv.monthlyTakeHome)}/mo,
+                        both in today&rsquo;s dollars
+                      </span>
+                    )}.
                   </div>
                   {navigate && (
                     <Btn t={t} size="sm" variant="ghost" tone="accent"

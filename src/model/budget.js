@@ -264,6 +264,13 @@ export function calcStatementView({
     monthlyHHSS, monthlyPension, monthlyPortDraw, monthlyTotal,
     ssSharePct, pensionSharePct, portDrawSharePct,
     monthlyTakeHome, incomeReplacementPct,
+    // BUG-143: incomeReplacementPct's OWN numerator, in today's dollars. The
+    // Statement tab renders the retirement-YEAR monthlyTotal and this today's-dollars
+    // ratio ~40px apart, so the ratio had no on-screen referent: at the shipped
+    // default a reader saw $18,868/mo beside a $5,698/mo paycheck (3.31x) under a
+    // sentence claiming 84%. Exporting the numerator lets the screen NAME both sides
+    // of the comparison instead of leaving the reader to reconcile two bases.
+    monthlyTodaysExp,
     effFedRatePct,
     lifetimeContribROI,
   };
