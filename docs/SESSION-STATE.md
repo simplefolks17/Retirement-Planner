@@ -24,15 +24,40 @@ any multi-step edit. Never let verified work exist only in the conversation or i
    fixture, and they are the recurring pattern ("the resim path doesn't re-derive what the
    main path does", now 6+ occurrences).
 
-### DONE and committed
-- Folded in `a3490de` (the unmerged BUG-102 annotation from `claude/design-review-plan-page-j3by51`).
+### DONE and committed (PR #67)
+- Folded in `a3490de` (the unmerged BUG-102 annotation).
 - **T-X.4** — fourth golden master, on the auto/`null` `spouseRetirementAge` path. Locks
-  base-plan AND scenario outputs. Revert-and-confirm verified: reverting BUG-127 fails it
-  (110 vs 111), reverting BUG-134 fails it (spillover 649,746 vs 793,729). Both restored.
-- **BUG-102 closed as obsolete** with the fixture that finally reaches the precondition
-  (gate `null` -> `70`). Three regression tests pin the closure; verified load-bearing.
-- **BUG-135 / BUG-136 filed** with live repros (see docs/BUGS.md).
-- Suite 1355 -> 1362, 64 files. Lint clean, build OK. All four golden masters unmoved.
+  base-plan AND scenario outputs. Revert-and-confirm verified against BUG-127 and BUG-134,
+  and RE-verified after each of the two subsequent re-locks.
+- **BUG-102 closed as obsolete** with the fixture that reaches the precondition; closure
+  **amended** the same day when BUG-137 proved the gate asymmetry real with the opposite sign.
+- **BUG-137 FIXED** (HIGH) — scenarios applied no spouse hold-out gate; forcing a resim with no
+  change invented 712,623 of phantom spillover. Shared `seedHasActiveSpouseGap` predicate.
+- **BUG-138 FIXED** (HIGH) — `contribEnd*` frozen at the base retirement age; work-longer
+  previews dropped up to $314,701 on the DEFAULT household. Shared `coupleContribEndAges` rule.
+- **BUG-135 FIXED** (HIGH) — SS never re-derived for a scenario's own working years (+90%/−36%).
+  Shared `calcRetirementIncome`; re-derivation REPLACES the inflation re-base (householdSS is
+  inflation-independent — measured identical at 0/2.5/4/6%).
+- **BUG-136 filed, not fixed** — the last known parity gap.
+- **`npm test` now excludes `zz-*` probes**, in the npm script (NOT `vite.config.js` — a
+  config-level exclude also blocks running a probe by name; verified both ways).
+- **New `src/__tests__/whatif-parity-wiring.test.js`** — organised by the INVARIANT
+  (preview X then commit X must agree) rather than by feature. This bug class has now hit
+  7 times and was missed every time because assertions were scattered across feature files.
+- **CodeRabbit round 1 fix**: the "byte-identically" tests compared only 4 scalars while
+  `calcWhatIfScenario` also returns `chart`. Charts verified to match (24 rows, 0 diffs),
+  and both assertions now compare the whole chart.
+- Suite 1355 -> **1381**, 65 files. Lint clean, build OK.
+
+### Review infrastructure — ANSWERED
+- **Manual `@coderabbitai review` WORKS.** Round 1 produced a substantive review with one
+  real Medium finding (now fixed). Auto-review does not fire; the trigger must be posted
+  on every push. Round 2 triggered after the three behavioural fixes landed.
+- **Qodo is billing-blocked** ("trial has ended") — confirmed live on PR #67.
+- Repo is PUBLIC with 0 stars, consistent with the owner's "needs 10+ stars" report.
+- Worth re-checking (not done): **Greptile** is reported free for public repos now; it was
+  ruled out earlier as paid-only, which may have been about private repos or an older policy.
+  Also unexplored: Pullfrog (open-source, GitHub Actions + BYO key), Cursor Bugbot.
 
 ### Audit reports — PERSISTED to `docs/audit-2026-09-05/`
 Four Opus agents ran (twice; both rounds killed by rate limits, but incremental-save meant
