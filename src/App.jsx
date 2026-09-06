@@ -582,6 +582,12 @@ export default function App() {
   // silently miss one the way the bug itself went undetected for so long.
   // SS is deliberately excluded (BUG-91's own scoping: SS is already nominal at
   // the claim date, matching the engine's convention) — only spend + pension.
+  // Is `takeHome` a HOUSEHOLD figure? Only for MFJ, because that is the only status
+  // whose income basis includes the spouse (rule 3, tax-basis.js). ONE definition,
+  // read by both Horizon's Plan card and Classic's "Est. Paycheck Deposit" label —
+  // Classic used to gate on `spouseIncome > 0` alone and so called a primary-only
+  // figure "Household" (BUG-145).
+  const takeHomeIsHousehold = filingStatus === "mfj" && spouseIncome > 0;
   const yearsToRetForBasis = Math.max(0, safeRetAge - currentAge);
   // retSpendBasis / retPensionBasis: the "gated" figures (effectivePension is
   // already 0 unless pension has started BY retirement) — used wherever the
@@ -1848,7 +1854,7 @@ export default function App() {
       // filingStatus/spouseIncome itself (rule 8) — the same shape as Classic's
       // own conditional "Est. Household Paycheck Deposit" and BUG-96's
       // showHouseholdTotal.
-      takeHomeIsHousehold: filingStatus === "mfj" && spouseIncome > 0,
+      takeHomeIsHousehold,
       // #30 / BUG-82: passed through (not computed here) — see spouseIncomeScopeNote
       // and spouseSpilloverNote (Finding 1) above.
       spouseIncomeScopeNote,
@@ -1856,7 +1862,7 @@ export default function App() {
     };
   }, [currentSaved, totalAtRet, takeHome, effectiveExpenses, retSpendBasis,
       ssAtRet, retPensionBasis, retPensionAnnualBasis, effectivePension, inflationRate, yearsToRetForBasis,
-      safeRetAge, safeLifeExp, currentAge, filingStatus, spouseIncome,
+      safeRetAge, safeLifeExp, currentAge, takeHomeIsHousehold,
       includeSS, householdSS, ssClaimingAge, pensionMonthly, pensionStartAge,
       spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote, planView]);
 
@@ -3165,7 +3171,12 @@ export default function App() {
               { label: "Federal Tax",               val: fmt(fedTax),                                   color: C.orange  },
               { label: `State Tax (${selectedState})`, val: noStateTax ? "-" : fmt(stateTax),           color: noStateTax ? C.muted : C.purple },
               { label: spouseIncome > 0 ? "FICA (both earners)" : "FICA (7.65%)", val: fmt(fica),      color: "#6e7681" },
-              { label: spouseIncome > 0 ? "Est. Household Paycheck Deposit" : "Est. Paycheck Deposit", val: fmt(takeHome), color: C.green },
+              // BUG-145: gate on MFJ, not on spouseIncome alone. `takeHome` is
+              // primary-only unless the filer is MFJ, so calling it "Household"
+              // whenever a spouse has income mislabelled a primary-only figure.
+              // Horizon's `takeHomeIsHousehold` has always used this gate; Classic
+              // never got the fix.
+              { label: takeHomeIsHousehold ? "Est. Household Paycheck Deposit" : "Est. Paycheck Deposit", val: fmt(takeHome), color: C.green },
             ].map(({ label, val, color }) => (
               <div key={label} className="breakdown-row">
                 <span style={{ color: C.muted }}>{label}</span>

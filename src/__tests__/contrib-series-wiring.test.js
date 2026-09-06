@@ -169,3 +169,46 @@ describe("Statement tab basis wiring (BUG-143 / BUG-144)", () => {
     app.unmount();
   });
 });
+
+// ── BUG-145 at the App level — the spending target must not follow a spouse's FICA ──
+// The model unit tests (model/__tests__/tax-basis.test.js) pin the FICA basis itself.
+// This pins the consequence that actually reaches the user: effectiveExpenses is
+// derived from take-home, so the pre-fix bug lowered the filer's OWN retirement
+// spending target by exactly their spouse's payroll tax.
+describe("BUG-145 — a spouse's income does not move a single filer's plan", () => {
+  it("take-home and the retirement spending target are unchanged", () => {
+    const app = mount();
+    const before = app.latest();
+    expect(before.profile.filingStatus.value).toBe("single");   // fixture precondition
+    const takeHomeBefore = before.statementView.takeHomePay;
+    const expensesBefore = before.effectiveExpenses;
+
+    app.fire(() => app.latest().profile.spouseIncome.set(120_000));
+    const after = app.latest();
+
+    // Filing status deliberately NOT changed — this is the inconsistent-but-reachable
+    // state the app already flags with spouseFilingMismatch.
+    expect(after.profile.filingStatus.value).toBe("single");
+    // Pre-fix: −9,360 on both, exactly the spouse's FICA.
+    expect(after.statementView.takeHomePay).toBe(takeHomeBefore);
+    expect(after.effectiveExpenses).toBe(expensesBefore);
+    app.unmount();
+  });
+
+  it("the existing filing-status guardrail still fires (this fix does not replace it)", () => {
+    const app = mount();
+    app.fire(() => app.latest().profile.spouseIncome.set(120_000));
+    expect(app.latest().spouseFilingMismatch).toBe(true);
+    app.unmount();
+  });
+
+  it("takeHomeIsHousehold gates on MFJ, not on spouse income alone", () => {
+    const app = mount();
+    app.fire(() => app.latest().profile.spouseIncome.set(120_000));
+    // One definition now drives both Horizon's Plan card and Classic's label.
+    expect(app.latest().planHighlights.takeHomeIsHousehold).toBe(false);
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    expect(app.latest().planHighlights.takeHomeIsHousehold).toBe(true);
+    app.unmount();
+  });
+});

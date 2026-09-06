@@ -674,6 +674,52 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 
+### BUG-145 — a non-MFJ filer is charged their spouse's FICA, lowering their own take-home and retirement spending target (found 2026-09-06, basis/scope audit F6; verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — a real MODEL error (not a display one) reachable
+from the shipped default in a single edit, and it moves the plan's most load-bearing input.**
+**What:** `calcTaxBasis` (`src/model/tax-basis.js`) sets
+`householdIncome = isMFJ ? combinedIncome : currentIncome` (rule 3 — primary-only for every status
+except MFJ), but computed FICA from BOTH earners unconditionally: `ssWages`/`medWages` always
+included `spouseIncome`. Every consumer pairs the two — `takeHome`, `combinedEffRate`,
+`grossAfterTax`, and `budget.js`'s `taxTotal`/`ficaPlusState` — so a filer who entered a spouse's
+income while still filing "single" had the SPOUSE's payroll tax deducted from their OWN paycheck.
+**Measured** (`currentIncome` 100k, 401k 10k, HSA 3,850, TX):
+
+```
+single, spouseIncome=0        householdIncome=100,000  fica= 7,650  takeHome=68,377  effRate=17.8%
+single, spouseIncome=120,000  householdIncome=100,000  fica=17,010  takeHome=59,017  effRate=27.1%
+mfj,    spouseIncome=120,000  householdIncome=220,000  fica=16,830  takeHome=161,627 effRate=20.2%
+```
+
+The consequence that actually reaches the user, measured live in the App with filing status left
+at its default: setting `spouseIncome` 0 → 120,000 moved `takeHome` 68,377 → 59,017 **and
+`effectiveExpenses` 57,377 → 48,017** — both by exactly the spouse's 9,360 of FICA. The living-spend
+target is derived from take-home, so **the user's own retirement spending target fell because their
+spouse earns money.** `hoh` has the identical defect.
+**Why the rule allowed it.** CLAUDE.md rule 9 said "FICA is always computed per-earner separately"
+and quoted the two-earner formula. That sentence is about the WAGE-BASE CAP — two salaries cannot
+be capped under one base — not about which earners belong in the household. Combined with rule 3's
+primary-only basis it produced this inconsistency. Rule 9 has been rewritten to separate the two
+ideas, and a test now pins the per-earner cap explicitly so the fix cannot be "simplified" into
+losing it.
+**Fixed:** `ficaSpouseIncome = isMFJ ? spouseIncome : 0`, feeding both `ssWages` and `medWages`.
+Per-earner capping is untouched.
+**Adjacent, fixed in the same commit:** Classic's `"Est. Household Paycheck Deposit"` label gated on
+`spouseIncome > 0` alone, so it called a primary-only figure "Household". Horizon's
+`takeHomeIsHousehold` has always used the correct `filingStatus === "mfj" && spouseIncome > 0`
+gate; Classic never got that fix. The predicate is now hoisted to ONE definition read by both.
+**Not a replacement for the existing guardrail:** `spouseFilingMismatch` still fires for this
+state, and a test pins that it does — it warns about the RMD/tax math, which is a separate concern
+from the paycheck figures this entry fixes.
+**Verification.** Reverting reproduces the filed numbers exactly (takeHome 59,017 vs 68,377; hoh
+62,073 vs 71,433). All four golden masters unmoved — every fixture is either single-with-no-spouse-
+income or MFJ, which is precisely why none of them could ever have caught this.
+**Where:** `src/model/tax-basis.js`, `src/App.jsx` (`takeHomeIsHousehold`, Classic label).
+
+---
+
+
 ### BUG-143 / BUG-144 — the Statement tab renders two figures in two dollar bases with nothing on screen to reconcile them (found 2026-09-06, basis/scope audit F1+F2; both verified independently and FIXED same day)
 
 **Owner:** me_theguy. **Severity: MEDIUM-HIGH — both live at the SHIPPED DEFAULT, both on the
