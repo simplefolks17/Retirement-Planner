@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 14 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 16 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,11 +15,13 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
+| **BUG-149** | Medium | Conversion benefit subtracts 2026-nominal IRMAA / today's-dollar ACA costs from a retirement-year engine figure — the healthcare drag is understated ~3.95x, flipping the recommendation | `src/model/conversion-evaluation.js`, `src/model/healthcare.js` |
+| **BUG-142** | Low-Medium | Sources chart's contribution line uses STATIC contribution scalars while Journey/Statement's "you'll contribute $X" uses actual per-year amounts — 2,134,750 vs 2,393,343 on the same MFJ household | `src/App.jsx`, `src/model/flow-down.js` |
+| **BUG-136** | Medium-High | What-if scenarios inherit the BASE plan's Roth-conversion schedule/window instead of rebuilding it at the scenario's retirement age — a retire-earlier preview converts $420k where committing the same change converts $1,020,000 | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-125** | Medium | "Guaranteed for life" ignores a spouse's own SS claiming age — only the primary's timing gates the card | `src/App.jsx`, `src/model/retirement-income.js` |
 | **BUG-124** | Low | "Tax in retirement" isn't wired to the dollar-basis toggle, and is entangled with BUG-38's known undercounting | `src/horizon/screens/PlanScreen.jsx`, `src/model/retirement-engine.js` |
 | **BUG-113** | Low-Medium | Journey's flow-bar `%` labels are 9px white on an `opacity:.72` composited fill — 1.54–3.45:1, a compositing failure the flat-token contrast contract (BUG-112) structurally can't cover | `src/horizon/screens/JourneyScreen.jsx` |
 | **BUG-103** | Medium | Monte Carlo `successPct` counts paths rescued only by the penalized spouse-401k spillover hatch as plain successes, with no visibility (BUG-92's problem class, new surface) | `src/model/monte-carlo.js`, `src/App.jsx`, `src/components/ArcGraph.jsx` |
-| **BUG-102** | Medium | Lever-preview's spouse-gap gating inherited from the base plan, not the scenario's own re-seeded maps | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-101** | Low-Medium | Accumulation-phase `contrib401k` stays nominal (tracks `incomeGrowth`, not inflation) | `src/model/simulation.js` |
 | **BUG-100** | Low | Tax brackets aren't inflated forward — BUG-91's fix removed an error that was accidentally offsetting this | `src/model/taxes.js`, `src/model/retirement-engine.js` |
 | **BUG-99** | Medium | Money events (Goals/LifeEventSheet) still entered/applied in nominal dollars against the now-corrected retirement-year walk | `src/model/money-events.js`, `src/model/retirement-engine.js`, `src/horizon/LifeEventSheet.jsx` |
@@ -33,6 +35,105 @@ place this gets checked).
 ---
 
 ## Open Issues
+
+### BUG-149 — the conversion verdict subtracts today's-dollar healthcare costs from a retirement-year engine benefit (found 2026-09-06, basis/scope audit F8; verified, filed for an owner decision)
+
+**Owner:** me_theguy. **Severity: MEDIUM — it does not move any headline balance, but it materially
+overstates the case FOR a Roth conversion on the screen whose whole job is to make that call.**
+**What:** `adjustedNetConversionBenefit = netConversionBenefit − irmaaCost − acaLoss`
+(`src/model/conversion-evaluation.js`). The minuend comes from the engine and is in the primary's
+RETIREMENT-YEAR real dollars (BUG-90/91's frame). The subtrahends are not:
+`irmaaCost` sums `IRMAA_BRACKETS_2026` surcharges (2026 nominal dollars) and `acaLoss` is the user's
+TODAY's-dollar `marketplaceMonthlyPremium × 12 × cliffYears` (`healthcare.js` `calcConversionCosts`).
+**Measured** (default + 600k/200k/300k balances, Medicare on, marketplace on at $1,200/mo):
+
+```
+netConversionBenefit (engine, retirement-year $) = 32,070
+irmaaCost            (2026 nominal $)            =  8,036   (7 x $1,148, ages 66-72)
+adjustedNetConversionBenefit as shipped          = 24,034
+the same surcharges in the engine's own basis    = 8,036 x 3.946 = 31,710
+adjusted, same-basis                             =    ~360
+```
+
+So the healthcare drag is understated by roughly the full inflation factor, and the verdict moves
+from "clearly worth converting" to "essentially a wash".
+**Why this is filed rather than fixed.** Two genuine choices belong to the owner, not to a
+mechanical fix:
+1. **Where to convert.** Converting inside `calcConversionCosts` would also inflate the DISPLAYED
+   per-year IRMAA rows ("$1,148 at age 66"), which users recognise from Medicare's published
+   tables. Converting only at the subtraction site keeps those rows recognisable and corrects only
+   the arithmetic — almost certainly right, but it means the strip's rows and its total are
+   deliberately in different bases, which needs a label.
+2. **Flat or per-year.** These surcharges land at specific ages (66…72), so an exact conversion
+   uses each year's own factor. The engine's own convention (BUG-91) converts flat to the
+   retirement year. Flat is consistent; per-year is more accurate. Picking flat inherits BUG-100's
+   known "brackets aren't inflated" simplification here too.
+**Related but distinct:** BUG-100 is about tax brackets inside the engine. This is a display/verdict
+figure assembled from two bases outside it.
+**Where:** `src/model/conversion-evaluation.js` (the subtraction), `src/model/healthcare.js`
+(`calcConversionCosts`).
+
+---
+
+### BUG-142 — the Sources chart's contribution line and Journey/Statement's "you'll contribute $X over your career" state the same concept from two different bases (found 2026-09-06, while fixing BUG-139/140/141)
+
+**Owner:** me_theguy. **Severity: LOW-MEDIUM — both figures are household and both are now
+correctly scoped, so this is no longer a scope bug; it is an accuracy mismatch between an
+acknowledged approximation and an exact figure, on two surfaces a user can compare.**
+**What:** `contribSeries` sums STATIC contribution scalars (`contrib401k + contribRoth + … +
+spouseContrib…`) once per year — the memo has always been labelled "approximate". `flowDown`
+(`src/model/flow-down.js:47`) sums the simulation's ACTUAL per-year contributions, which grow with
+income and respect the IRS limit ramps. Measured on the same MFJ household (spouse 30, $120k spouse
+income, $400k/$20k spouse 401k): the Sources line reaches **2,134,750** at retirement while
+`flowDown.totalContrib` reports **2,393,343** — a $258,593 (12%) gap between two surfaces
+describing "what you put in".
+**Why not fixed with BUG-139/140/141:** those three were defects (a wrong key, a wrong scope, a
+wrong shape). This one is a deliberate approximation that is now merely *visible*, and closing it
+means reading `c401k`/`cRoth`/`cTaxable`/`cHSA` off the sim rows for both earners — which also
+raises a product question the static version never had to answer: does "Your contributions" include
+the EMPLOYER MATCH (`c401k` is employee + employer; `c401kEmployee` is the employee half)? Matching
+`flowDown` exactly requires picking one, and that choice changes the headline on two screens.
+**Where:** `src/App.jsx` (`contribSeries`), `src/model/flow-down.js:47` (`totalContrib`).
+**Not fixed here.** Filed with the measured gap.
+
+---
+
+### BUG-136 — a what-if scenario inherits the BASE plan's Roth-conversion schedule instead of rebuilding the window at the scenario's own retirement age (found 2026-09-05, same decomposition)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — structural and unambiguous (the window is simply the
+wrong set of years), but its dollar impact varies from negligible in a cash-starved household to
+2.4× on the total converted in one where conversions are the dominant lever.**
+**What:** App.jsx derives the conversion window from `safeRetAge` (`convWindowFloor = safeRetAge + 1`,
+ceiling `RMD_START_AGE - 1`) and builds `conversionByAge` from it. `calcWhatIfScenario` passes that
+object straight through — `conversionByAge: conversionByAge ?? {}` (`what-if.js:756`) — and never
+rebuilds it, even on the `needsResim` path that rebuilds the spouse seed and gap-year maps right
+beside it. So a scenario that moves the retirement age keeps the BASE plan's conversion years.
+**Measured** (single earner, `currentAge` 50, base retire 65, scenario retire 55, custom $60k/yr):
+
+```
+BASE   retire 65 -> conversion ages 66..72  ( 7 yrs)   total converted   420,000
+COMMIT retire 55 -> conversion ages 56..72  (17 yrs)   total converted 1,020,000
+PREVIEW of "retire at 55" reuses the BASE 7-year window -> 420,000
+```
+
+The preview shows a plan doing **$420,000** of conversions where committing the identical change
+does **$1,020,000** — and the whole point of retiring early is the longer pre-RMD conversion runway,
+so the preview understates precisely the benefit the lever exists to demonstrate. In the
+work-longer direction it inverts: the window shortens, and the preview over-converts.
+**Confirmed as the sole remaining preview/commit residual** on the BUG-102 fixture: with
+`annualConversionAmt` set to 0, preview and committed agree **byte-identically** (spillover delta 0,
+`scenarioYears` delta 0); restoring conversions reintroduces the divergence. That is what
+identified this as a separate, second defect rather than noise.
+**Fix shape (sketched, not implemented):** rebuild the window and schedule at `scenarioRetAge` using
+the SAME `buildConversionByAge` helper (`retirement-phase.js`) App.jsx already uses, inside the
+existing `needsResim` branch. The bracket-fill mode also re-derives its target from the income
+floors, which themselves move with the retirement age — so this must reuse the shared builder, not
+re-implement the window arithmetic.
+**Where:** `src/model/what-if.js:756` (the pass-through), `src/App.jsx` (`convWindowFloor`/
+`convWindowCeil`/`conversionByAge`, ~line 672).
+**Not fixed here.** Filed with a live repro.
+
+---
 
 ### BUG-113 — Journey's flow-bar percentage labels are 9px white text on an `opacity: 0.72` composited fill (1.54–3.45:1), a compositing failure the flat-token contrast contract structurally cannot cover (found 2026-08-13, Horizon design-review Slice 3)
 
@@ -153,41 +254,6 @@ masters T-X.2/T-X.3 both have `totalSpouseSpillover: 0` on their own determinist
 individual sampled Monte Carlo PATHS under variance were not separately audited for this session).
 **Not fixed here.** Filed for a future session, per the same in-PR triage discipline used throughout
 this arc (fix what's small and contained, file what's a genuine separate product decision).
-
-### BUG-102 — Lever-preview's spouse-gap gating is inherited from the BASE plan, not the scenario's own re-seeded maps — a retire-earlier preview can under-restrict relative to what Applying it actually produces (found 2026-07-27, interoperability review agent, PR #62)
-
-**Owner:** me_theguy. **Severity: MEDIUM — a preview/commit disagreement, the same class as BUG-61/79/97
-(three prior "the resim path silently drops something the main path has" bugs), not a headline-number
-error at the default state.**
-**What:** `calcWhatIfScenario`'s spouse-aware paths (BUG-77's re-seed, threaded through
-`spouseSeedInputs`) correctly rebuild the spouse's gap-year contribution/income maps at the SCENARIO's
-own retirement age when a lever preview shifts it (e.g. Plan's "Try a change" retire-2-years-earlier
-dial) — verified by the interoperability audit to compose correctly with BUG-91's basis conversion, no
-mismatch there. But `spouseRetirementAge` — the flag that actually ACTIVATES the Option-A hold-out and
-BUG-88's penalized escape hatch inside the engine — reaches the scenario only via `...retPhaseBase`
-(`src/App.jsx` `whatIfBundle`), where App gates it on `hasActiveSpouseGap` computed from the married
-household's **committed** (base-plan) spouse-seed maps, not the scenario's re-seeded ones. A household
-whose committed plan has no active spouse gap (`effectiveSpouseRetAge === retirementAge`, the common
-default) gets `spouseRetirementAge: null` baked into every scenario preview — even a scenario that
-itself creates a two-year gap by retiring the primary earlier. The dashed preview overlay and its
-delta chip therefore show the household as if Option A never engages (no hold-out, no possible
-BUG-92 verdict cap) — while clicking Apply commits the new retirement age, `hasActiveSpouseGap`
-recomputes true on the next render, and the REAL committed walk now has the hold-out (and possibly the
-escape hatch) active. The preview over-promises relative to what Applying it actually produces.
-**Fix shape (sketched, not implemented):** derive the gate the scenario passes to
-`spouseRetirementAge` from the SCENARIO's own re-seeded maps (mirroring how BUG-77 already re-seeds
-`tradGrossSpouse`/the contribution maps for the scenario's retirement age) rather than inheriting
-`hasActiveSpouseGap` computed at the base plan's age. Likely a new scenario-local
-`hasActiveSpouseGapAt(scenarioRetAge)` helper alongside `buildSpouseRetirementSeed`, called from
-`calcWhatIfScenario` wherever it currently spreads `...retPhaseBase`.
-**Where:** `src/model/what-if.js` (`calcWhatIfScenario`'s `retPhaseBase` spread, the engine branch),
-`src/App.jsx` (`hasActiveSpouseGap`, `whatIfBundle`'s `retPhaseBase`).
-**Inert at the default state** (no spouse) and for any household whose base plan already has an
-active spouse gap (the common case for a household with a real age difference) — only exposed by a
-lever preview that ITSELF creates or removes a gap window relative to the committed plan.
-**Not fixed here.** Filed for a future session; flagged by the interoperability audit as contained
-(same file/function family as BUG-93's fix) but requiring its own verification pass, not a one-line
-change made under review-fix time pressure.
 
 ### BUG-99 — Money events (Goals/LifeEventSheet) are entered/applied in nominal (today's) dollars against a retirement walk now denominated in retirement-year dollars (found 2026-07-27, BUG-91 fix-plan audit)
 
@@ -646,6 +712,515 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+
+### BUG-148 — Classic's Retirement Drawdown panel shows the same expense figure in two bases, 30px apart, with no label on either (found 2026-09-06, basis/scope audit F7; verified and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM — live at the shipped default, and verbatim BUG-114, which
+PR #66 fixed on the Plan screen only.**
+**What:** the slider "Estimated Annual Expenses in Retirement" renders `effectiveExpenses`
+(TODAY's dollars) with a "Monthly: $4,781" companion; ~30px below, the income breakdown box's first
+row renders `retSpendBasis` (RETIREMENT-YEAR dollars) under the near-identical label
+"Annual expenses". Neither carried a basis note. Measured at the shipped default: **57,377 vs
+226,415 — 3.946x**. The box is not an edge case: it renders whenever
+`householdSS > 0 || effectivePension > 0 || spouseIncomeAtRet > 0`, and `householdSS` is 48,120 at
+the default.
+**Fixed** by labelling both — "in today's dollars" on the slider's companion line, and the same
+"in age-{retirementAge} dollars — the same lifestyle after N years of inflation" note the Plan
+screen already uses under the breakdown. Both figures were always correct for their own purpose;
+the defect was that neither said which it was, so a reader compared them directly.
+**No behavioural test:** this change adds no computed value — both underlying figures
+(`effectiveExpenses`, `retSpendBasis`) are already locked by the golden masters, and the fix is
+label copy in Classic, which has no mounting harness. Recorded here rather than asserted.
+
+---
+
+
+### BUG-146 / BUG-147 — "grows Nx from today" and the Accounts banner compared a household retirement-year figure against a primary-only today's-dollar one (found 2026-09-06, basis/scope audit F4+F5; verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — both axes of rule 11 wrong inside a single
+comparison, on two prominent surfaces, and neither was locked by any golden master.**
+
+**BUG-146 — `planHighlights.wealthMultiplier`.** Rendered by `PlanScreen.jsx` as
+"grows {wealthMultiplier}× from today". The numerator was `totalAtRet` (HOUSEHOLD, RETIREMENT-YEAR
+dollars); the denominator was `currentSaved` (PRIMARY-ONLY, TODAY's dollars). "From today" is the
+falsifiable part: the numerator is not in today's dollars, and in a spouse household it is not even
+the same household.
+
+| household | shown | honest (same scope, same basis) |
+|---|---|---|
+| no-spouse default | **24.5×** | **6.2×** |
+| MFJ + $500k spouse balances | **57.2×** | **3.6×** |
+
+**Fixed** by putting both ends in household today's dollars: `totalAtRetToday /
+flowData.startPortfolio`. `totalAtRetToday` is converted ONCE in App.jsx with the same
+bidirectional helper `balAt90Today` uses (rule 11 — no second inline conversion), and
+`flowData.startPortfolio` is the SAME household starting balance the Flow-Down waterfall already
+uses, not a fifth inline sum.
+
+**BUG-147 — the Numbers → Accounts "Today → At retirement" banner.** `currentTotalSaved` was
+`bal401k + balRoth + balTaxable + balHSA` — primary-only — while the figure on the other end of the
+arrow (`totalAtRet`) is household. So a spouse's balances were absent from "Today" but present at
+"At retirement", and the arrow between them read as growth: measured 165,000 → 9,435,542 for a
+household whose real starting portfolio is 665,000.
+**This also silently falsified an existing invariant.** `accumulation.js` states that this figure
+and the chart's "Today" anchor "agree by construction" — but the chart's first row is
+`bal* + spouseStartingBal` (`buildAccumChart`), i.e. household. The comment was true only for
+households without a spouse. **Fixed** by making `currentTotalSaved` household; a test now asserts
+`currentTotalSaved === chartData[0].total`, which turns that comment from an aspiration into an
+enforced contract.
+**Basis, separately:** the two ends of the arrow are now the same scope but still different bases
+(today's vs retirement-year) — inherent to what the banner is showing. Rather than convert (which
+would make the headline disagree with every other surface showing `totalAtRet`), the retirement side
+now carries the same scoped local basis note this tab already uses on its income ledger:
+"in retirement-year dollars".
+
+**Verification.** Reverting each reproduces the filed numbers exactly: BUG-146 → "expected 24.5 to
+be 6.2" (and 39.1 vs 2.9 on the spouse fixture); BUG-147 → "expected 165000 to be 665000". All four
+golden masters unmoved — neither field is locked by any of them, which is precisely why a 24.5×
+claim could ship.
+**Where:** `src/App.jsx` (`totalAtRetToday`, `wealthMultiplier`, `currentTotalSaved`),
+`src/horizon/screens/NumbersScreen.jsx` (the banner's basis note).
+
+---
+
+
+### BUG-145 — a non-MFJ filer is charged their spouse's FICA, lowering their own take-home and retirement spending target (found 2026-09-06, basis/scope audit F6; verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — a real MODEL error (not a display one) reachable
+from the shipped default in a single edit, and it moves the plan's most load-bearing input.**
+**What:** `calcTaxBasis` (`src/model/tax-basis.js`) sets
+`householdIncome = isMFJ ? combinedIncome : currentIncome` (rule 3 — primary-only for every status
+except MFJ), but computed FICA from BOTH earners unconditionally: `ssWages`/`medWages` always
+included `spouseIncome`. Every consumer pairs the two — `takeHome`, `combinedEffRate`,
+`grossAfterTax`, and `budget.js`'s `taxTotal`/`ficaPlusState` — so a filer who entered a spouse's
+income while still filing "single" had the SPOUSE's payroll tax deducted from their OWN paycheck.
+**Measured** (`currentIncome` 100k, 401k 10k, HSA 3,850, TX):
+
+```
+single, spouseIncome=0        householdIncome=100,000  fica= 7,650  takeHome=68,377  effRate=17.8%
+single, spouseIncome=120,000  householdIncome=100,000  fica=17,010  takeHome=59,017  effRate=27.1%
+mfj,    spouseIncome=120,000  householdIncome=220,000  fica=16,830  takeHome=161,627 effRate=20.2%
+```
+
+The consequence that actually reaches the user, measured live in the App with filing status left
+at its default: setting `spouseIncome` 0 → 120,000 moved `takeHome` 68,377 → 59,017 **and
+`effectiveExpenses` 57,377 → 48,017** — both by exactly the spouse's 9,360 of FICA. The living-spend
+target is derived from take-home, so **the user's own retirement spending target fell because their
+spouse earns money.** `hoh` has the identical defect.
+**Why the rule allowed it.** CLAUDE.md rule 9 said "FICA is always computed per-earner separately"
+and quoted the two-earner formula. That sentence is about the WAGE-BASE CAP — two salaries cannot
+be capped under one base — not about which earners belong in the household. Combined with rule 3's
+primary-only basis it produced this inconsistency. Rule 9 has been rewritten to separate the two
+ideas, and a test now pins the per-earner cap explicitly so the fix cannot be "simplified" into
+losing it.
+**Fixed:** `ficaSpouseIncome = isMFJ ? spouseIncome : 0`, feeding both `ssWages` and `medWages`.
+Per-earner capping is untouched.
+**Adjacent, fixed in the same commit:** Classic's `"Est. Household Paycheck Deposit"` label gated on
+`spouseIncome > 0` alone, so it called a primary-only figure "Household". Horizon's
+`takeHomeIsHousehold` has always used the correct `filingStatus === "mfj" && spouseIncome > 0`
+gate; Classic never got that fix. The predicate is now hoisted to ONE definition read by both.
+**Not a replacement for the existing guardrail:** `spouseFilingMismatch` still fires for this
+state, and a test pins that it does — it warns about the RMD/tax math, which is a separate concern
+from the paycheck figures this entry fixes.
+**Verification.** Reverting reproduces the filed numbers exactly (takeHome 59,017 vs 68,377; hoh
+62,073 vs 71,433). All four golden masters unmoved — every fixture is either single-with-no-spouse-
+income or MFJ, which is precisely why none of them could ever have caught this.
+**Where:** `src/model/tax-basis.js`, `src/App.jsx` (`takeHomeIsHousehold`, Classic label).
+
+---
+
+
+### BUG-143 / BUG-144 — the Statement tab renders two figures in two dollar bases with nothing on screen to reconcile them (found 2026-09-06, basis/scope audit F1+F2; both verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — both live at the SHIPPED DEFAULT, both on the
+"Statement of your plan" tab, and both are BUG-132's exact failure on the screen that never
+received BUG-132's fix.**
+
+**BUG-143 (F2) — the replacement ratio had no on-screen referent.** `NumbersScreen.jsx` renders the
+ledger's "Total monthly" from `statementView.monthlyTotal` (RETIREMENT-YEAR dollars, correctly
+captioned) and, ~40px below, "Retirement income replaces X% of your working paycheck deposit" from
+`incomeReplacementPct` — which `budget.js` deliberately builds from TODAY's-dollar spending against
+today's take-home. Both figures are individually correct and the model says so; the defect is the
+CO-RENDER. Measured at the default state, no fixture:
+
+```
+"Paycheck deposit"  $5,698/mo   TODAY's dollars
+"Total monthly"    $18,868/mo   RETIREMENT-YEAR dollars
+18,868 / 5,698  =  3.31x   ->  the numbers on screen read 331%
+sentence 2 lines below     ->  "replaces 84%"
+```
+
+PR #66 fixed exactly this on the Plan screen by gating the replacement copy behind
+`dollarBasisOptions[].showsReplacementPct`. The Statement tab was never swept.
+**Fixed** by exporting `monthlyTodaysExp` — the ratio's OWN numerator, already computed inside
+`calcStatementView` and simply not returned — and naming both operands in the sentence
+("…— $4,781/mo vs $5,698/mo, both in today's dollars"). The screen selects; it does not compute
+(rule 10). A gate would have hidden a true statement; naming the operands keeps the information and
+removes the contradiction.
+
+**BUG-144 (F1) — a retirement-year figure printed under an explicit "in today's dollars" caption.**
+The "bottom line" block prints `fmtMo(effectiveExpenses)` (today's dollars — correct), then
+"with {balAt90} remaining at age 90", then the caption "in today's dollars" covering the block.
+But `balAt90 = walkBalanceAt(retirementWalk.rows, safeLifeExp)` is a retirement-phase WALK balance,
+i.e. the primary's retirement-year purchasing power (BUG-90/91's frame). Measured (default plus
+balances so the plan survives to 90): balAt90 **5,341,525**, which in today's dollars is
+**1,353,625** — the caption overstated the reader's understood value by the full **3.946x**
+inflation factor. The block's own code comment defended the caption by pointing at the monthly
+figure, having missed the second figure in the same block.
+**Fixed** with a model-provided `balAt90Today`, converted ONCE in App.jsx via the same
+bidirectional `inflationRebaseFactor` (negative year count) the Plan screen's `toTodayFactor` uses
+— never a second inline conversion (rule 11). `balAt90` itself is unchanged for its other consumers.
+
+**A test-gap found while fixing these, worth recording.** `numbers-tabs.test.js` hand-builds its
+props, so when the screen was changed to read `balAt90Today` the fixture kept supplying `balAt90`
+and **nothing failed** — `fmt(undefined)` renders a graceful "—", so the figure silently vanished
+from the tab. This is `golden-master.test.js`'s structural blindness in miniature. Closed on both
+sides: the component fixture now supplies the real props AND asserts the value renders, and
+App-level wiring assertions were added alongside (`contrib-series-wiring.test.js`).
+
+**Verification.** Each fix reverted independently and confirmed to fail its own test with the exact
+filed numbers: BUG-144 → "expected 5341525 to be 1353625"; BUG-143 model → "expected undefined to
+be 4781"; BUG-143 screen → the operand "4,320" absent from the render. All four golden masters
+unmoved (both changes are display-layer additions; no model quantity moved).
+
+---
+
+
+### BUG-139 / BUG-140 / BUG-141 — the Sources chart's contribution line was pinned to zero, primary-only, and drawn out of register (found 2026-09-06, basis/scope audit F3+F3b; all three verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: HIGH — wrong at the SHIPPED DEFAULT, on a whole chart view, and
+wrong in the most flattering possible direction: it credited every contributed dollar to market
+growth.** Asserted by **no test at all** before this fix, which is why it survived.
+
+**BUG-139 (the root).** `contribSeries` (`src/App.jsx`) capped each year's cumulative contributions
+at the account total, but computed that cap with an inlined FOURTH copy of the account-sum reading
+`row.trad` / `.roth` / `.taxable` / `.hsa`. `runSimulation` has never emitted those names — its rows
+are keyed `"Trad 401k"` / `"Roth IRA"` / `"Taxable"` / `"HSA"` / `tradGross`. All four coalesced to
+0 through `?? 0`, so `rowTotal === 0` and `Math.min(cum + contrib, 0)` pinned the series to zero
+from the second point onward.
+Measured at the shipped default: **1 nonzero point out of 60** (165,000 at age 31, then 0 forever),
+while the chart at age 40 read 655,024. The entire $4,035,855 arc rendered as "Market growth".
+The `?? 0` fallbacks are what hid the drift — precisely the fabrication CLAUDE.md rule 10 forbids.
+**Fixed** by calling the canonical `sumAccountRow` (`accumulation.js`), so the key names cannot
+drift again.
+
+**BUG-140 (scope).** The series was PRIMARY-only while `accumChart` — the arc it is subtracted from
+— is HOUSEHOLD (`buildAccumChart` folds in `spouseSimData` + spouse starting balances). A spouse's
+entire rollover was therefore shaded as market growth: measured 165,000 vs a chart starting at
+565,000 with a $400k spouse balance. **Fixed** by including the spouse's starting balances and
+contribution scalars, zipping the spouse sim by INDEX exactly as `buildAccumChart` does. No spouse
+⇒ `spouseSimData` is `[]` and the four scalars are 0 ⇒ byte-identical to the primary-only series.
+
+**BUG-141 (geometry) — exposed BY the BUG-139 fix, not pre-existing in visible form.** The series
+started at `currentAge + 1` and ran the FULL 60-year sim to age 90, while `ArcGraph`'s
+`sourcesModel` closes the growth band with `tPts.slice(0, cPts.length)` — a slice by **count**, not
+by age. So the band was drawn a year out of register and extended decades past retirement, into
+ages where the portfolio is being DRAWN DOWN and a cumulative-contributions line is meaningless.
+Invisible while the series was flat at zero. `sourcesModel`'s own comment ("cPts covers
+currentAge→retirementAge") was documenting an intent the code did not have. **Fixed** by shaping
+the series row-for-row like `buildAccumChart`: same first row at `currentAge`, same end-of-year
+semantics, same `break` at the retirement age.
+
+**Verification.** Post-fix the default series is 36 points spanning age 30→65, strictly increasing,
+first point equal to `chartData[0].total`, and never exceeding the chart total at any age (the
+invariant that makes the growth band non-negative). Arithmetic checks exactly:
+`165,000 + 35 × 24,850 = 1,034,750` at retirement (default), `565,000 + 35 × 44,850 = 2,134,750`
+(MFJ). Each of the three fixes was reverted independently and confirmed to fail its own test:
+BUG-139 → "expected 1 to be 36"; BUG-140 → "expected 165000 to be 565000"; BUG-141 → "expected 31
+to be 30" and a contribution line exceeding the chart total. Six regression tests added in the new
+`src/__tests__/contrib-series-wiring.test.js`. All four golden masters unmoved — `contribSeries`
+feeds only the Sources view.
+
+---
+
+
+### BUG-135 — a what-if scenario never re-derives Social Security for the scenario's OWN working years; it only inflation-re-bases the base plan's benefit (found 2026-09-05, preview/commit decomposition while settling BUG-102; FIXED 2026-09-06)
+
+**Owner:** me_theguy. **Severity: HIGH — bidirectional, large (−36% to +90% on the SS figure itself),
+live on the two most-used levers (the Plan "Try a change" retirement-age dial and the Strategies
+"Working longer" card), and NOT a documented simplification: `docs/FINANCIAL-MODEL.md`'s Known
+Simplifications table (the BUG-91 row) actively claims a scenario "re-derives BOTH the expense
+conversion and a bidirectional SS/pension re-basing", which overstates what the code does.**
+**What:** `calcWhatIfScenario` and `calcWhatIfDelta` both take the base plan's SS figure and apply
+only an inflation re-base for the scenario's different retirement year:
+`retDrawShared.ssAmount * scenarioRetYearFactor` (`what-if.js:339`, `:748`, `:864`, `:875`). But the
+benefit is not a fixed dollar amount — it is derived from `ssWorkYears = safeRetAge - currentAge`
+through `calcAIME` → `calcPIA` → `calcBenefit` (`retirement-income.js:25-29`). Retiring earlier means
+fewer years of indexed earnings and a genuinely smaller benefit; working longer earns a bigger one.
+The scenario path models neither. Pension is correctly handled by the same re-base (a user-entered
+monthly amount really is working-years-independent) — **this is an SS-only defect.**
+**Measured (no spouse, single earner, inflation 0 to isolate the re-base; `currentAge` 50):**
+
+| scenario | preview SS (base plan's, re-based) | committed truth | error |
+|---|---|---|---|
+| retire at 50 (base 60) | 25,956 | 13,656 | **+90.1%** |
+| retire at 55 (base 60) | 25,956 | 19,428 | **+33.6%** |
+| retire at 65 (base 60) | 25,956 | 33,516 | **−22.6%** |
+| retire at 70 (base 60) | 25,956 | 40,212 | **−35.5%** |
+
+**User-visible today:** the Strategies "Working longer" card (`workLongerView`) on a
+`currentAge` 50 / retire-62 / $300k-Trad / $80k-spend household reports money running out at
+**76 / 79** for +3 / +5 years worked; committing those exact ages gives **77 / 80**. The card
+understates the benefit of working longer because it withholds the SS increase those extra
+working years actually earn. In the retire-EARLIER direction the error flips to optimistic, which
+is the dangerous one: the preview credits a benefit the user has not earned.
+**Why it hid:** no golden master locks any what-if/scenario output (T-X.2 and T-X.3 lock only
+base-plan headline numbers; T-X.4, added 2026-09-05, is the first to lock scenario output at all,
+and it locks depletion/spillover, not SS). And the two most obvious repro households mask it — a
+plan that depletes before `ssClaimingAge` never sees the difference at all (this is why the first
+isolation run showed SS-on and SS-off as byte-identical).
+**Fix shape (sketched, not implemented):** re-derive the benefit inside the scenario from the
+scenario's own `ssWorkYears`, reusing `calcRetirementIncome`/`calcAIME` rather than a second copy of
+the formula (BUG-31's signature class — the whole point is to have ONE derivation). The scenario
+already re-runs `runSimulation` when `needsResim` is true, so the hook exists; the SS derivation
+simply is not part of it. Note `spouseSsEstimate` is a user-entered at-FRA figure and is NOT
+working-years-derived, so only the PRIMARY's benefit needs re-deriving.
+**Where:** `src/model/what-if.js:339` (`calcWhatIfDelta`), `:748` (`calcWhatIfScenario`, engine
+branch), `:864`/`:875` (the legacy blended branch); `src/model/retirement-income.js:25-29` (the
+derivation being skipped). `docs/FINANCIAL-MODEL.md`'s BUG-91 row needs its "re-derives" wording
+corrected either way.
+**Not fixed here.** Filed with a live repro; needs its own verification pass and will move any
+golden master that locks a scenario output.
+
+**FIXED 2026-09-06.** Scenarios now re-derive the benefit through the SHARED
+`calcRetirementIncome` at their own retirement age (`scenarioSocialSecurity`, what-if.js) —
+never a second copy of the AIME/PIA formula. Applied at all four sites: `calcWhatIfDelta`'s
+`scenarioSSAmount`, `calcWhatIfScenario`'s engine branch (`ssGross`/`ssTaxable`), and the two
+legacy blended-walk sites. App.jsx supplies a new `ssInputs` bundle field; it deliberately
+OMITS `safeRetAge`, since carrying the base plan's age is exactly the freeze that caused this
+class of bug (BUG-127's lesson).
+
+**Re-derivation REPLACES the inflation re-base rather than composing with it**, and this was
+settled by measurement rather than argument: `householdSS` is completely inflation-independent
+(25,956 at 0%, 2.5%, 4% and 6% on the same household) because `calcAIME` grows income by
+`incomeGrowth`, not inflation. So the old `* scenarioRetYearFactor` was wrong twice — it missed
+the working-years effect AND applied an inflation adjustment to a figure with no inflation
+component. Two inputs are deliberately left on the old path because they are genuinely not
+working-years-derived: a user-pinned `ssOverride`, and `spouseSsEstimate` (a user-entered at-FRA
+figure). `ssInputs` absent ⇒ previous behaviour, so every hand-built test bundle is inert.
+
+**Verification.** With conversions off and no spouse — i.e. with BUG-136's and BUG-137's inputs
+removed — preview and commit now agree **byte-identically** in BOTH directions across six
+retirement ages (52/55/58/63/66/70): `scenarioTotalAtRet` and `scenarioYears` exact. Reverting
+the fix fails 7 assertions across two files. Locked in
+`src/__tests__/whatif-parity-wiring.test.js` ("FULL PARITY").
+
+**Golden master moved, deliberately — T-X.4's scenario spillovers, TOWARD the committed truth**,
+which is the direction that proves the fix rather than merely asserting it:
+
+| scenario | preview before | after | committed truth |
+|---|---|---|---|
+| retire 58 | 738,930 | **743,001** | 742,667 |
+| retire 60 | 426,975 | **444,590** | 474,771 |
+| retire 62 | 99,220 | **134,194** | 187,641 |
+
+`totalAtRet` is unchanged at all three ages — the sanity check that this touched only the
+retirement walk, not accumulation. The residual gap to truth is BUG-136. T-X.4 was re-confirmed
+to still catch reverts of BUG-127, BUG-134 and BUG-138 afterwards.
+`docs/FINANCIAL-MODEL.md`'s BUG-91 row, which had claimed scenarios already "re-derive" SS, is
+corrected in the same commit.
+
+---
+
+
+### BUG-138 — `contribEnd*` is frozen at the base retirement age, so every "work longer" preview silently drops the contributions committing the same change would make (found 2026-09-06, preview/commit parity audit; verified independently on the default household; FIXED same day)
+
+**Owner:** me_theguy. **Severity: HIGH — live on the golden-master DEFAULT household (no spouse,
+no unusual inputs), on the Strategies "Working longer" card, and it is systematically
+PESSIMISTIC: it under-reports the benefit of the exact action the card exists to recommend.**
+**What:** `whatIfSimInputs` (`src/App.jsx:1283-1304`) carries `contribEnd401k/Roth/Taxable/HSA`
+verbatim, so the preview's re-sim (`what-if.js:604`) stops contributions at the BASE plan's
+retirement age. Committing the same age goes through `setRetirementAgeCoupled`
+(`src/App.jsx:1307-1315`), which bumps every `contribEnd*` that tracks the retirement age
+forward — so the committed plan gets N extra years of contributions the preview never modelled.
+**Measured on the DEFAULT household** (no setters at all; `retirementAge` 65, all `contribEnd*`
+65). `retirementWalk.depletionAge` used for both sides — `planView.depletionAge` is
+lifeExpect-bounded and reads `null` past 90, which is not the comparable field:
+
+| scenario | preview `totalAtRet` | committed | diff | preview years | committed years |
+|---|---|---|---|---|---|
+| +1 (retire 66) | 4,231,373 | 4,285,559 | **−54,186** | 22.170 | 22.250 |
+| +3 (retire 68) | 4,651,405 | 4,826,584 | **−175,179** | 22.501 | 22.726 |
+| +5 (retire 70) | 5,113,300 | 5,428,001 | **−314,701** | 22.804 | 23.177 (depl 93 vs 94) |
+
+**Mechanism confirmed by the asymmetry:** retiring EARLIER shows diff **exactly 0** (retire 62:
+preview and committed both 3,361,963), because the coupling only fires when
+`contribEnd === retirementAge` and only moves it upward. Work-longer scenarios only.
+**Fix shape:** apply the same coupling inside the scenario — when the scenario's retirement age
+differs, advance any `contribEnd*` that equals the BASE `retirementAge` to the scenario's age
+before the re-sim. The rule already exists in `setRetirementAgeCoupled`; extract it into a shared
+pure helper so the preview and the commit path cannot drift (BUG-31's class), rather than
+copying the four comparisons into `what-if.js`.
+**Where:** `src/App.jsx:1283-1304` (the bundle), `src/App.jsx:1307-1315` (the coupling),
+`src/model/what-if.js:604` (the re-sim that consumes the frozen values).
+
+**FIXED 2026-09-06.** The rule — "a `contribEnd*` equal to the retirement age tracks it" — now
+lives once, as `coupleContribEndAges(ends, baseRetAge, scenarioRetAge)` in
+`src/model/simulation.js`, and is applied by BOTH `setRetirementAgeCoupled` (the committed plan)
+and what-if.js's TWO resim sites (`calcWhatIfScenario` and `calcWhatIfDelta`). A `contribEnd*`
+the user deliberately set away from the retirement age is left alone, so "stop contributing at 60
+but retire at 65" still survives a scenario.
+**Verification:** `scenarioTotalAtRet` now equals the committed plan EXACTLY at +1/+3/+5 on the
+default household (was −54,186 / −175,179 / −314,701), and retiring earlier stays at diff 0.
+Revert-and-confirm run and restored: reverting reproduces exactly the filed numbers.
+**Golden master moved, deliberately — T-X.4's scenario locks.** `totalAtRet` +35,127 / +114,400 /
++207,149 (rising with the number of extra contribution years), `depletionAge` 111→112, 129→137,
+164→never, and spillover FALLING 793,729→738,930, 606,529→426,975, 425,758→99,220 (a better-funded
+primary reaches less often into the spouse's held-out bucket). Every sign was checked before
+re-locking, and T-X.4 was re-confirmed to still catch a BUG-127 revert (111 vs 112) and a BUG-134
+revert (113 vs 112) afterwards, so the re-lock did not cost its sensitivity.
+**Three test expectations in `what-if.test.js` also updated** — they computed their own expected
+values with a bare `runSimulation`, so they were silently asserting the ABSENCE of the coupling.
+They now call the shared helper, which keeps them asserting what they claim to (the spouse
+re-seed, the household accumulation chart) rather than being weakened.
+**New home for this bug class:** `src/__tests__/whatif-parity-wiring.test.js`, organised by the
+INVARIANT (preview X then commit X must agree) rather than by feature — the six bugs in this class
+were all missed because the relevant assertions were scattered across feature-organised files.
+
+---
+
+
+### BUG-137 — a what-if scenario ignores App's `hasActiveSpouseGap` hold-out gate, so every preview that forces a resim re-introduces BUG-93 (found 2026-09-06, preview/commit parity audit; verified independently; FIXED same day)
+
+**Owner:** me_theguy. **Severity: HIGH — invents a large penalized early withdrawal that the
+committed plan does not make, for exactly the household shape BUG-93 was filed to protect (a
+spouse holding a rollover balance with no ongoing income). It makes previews systematically
+PESSIMISTIC and can cap the verdict at "tight" (BUG-92) for a plan that is not.**
+**What:** App gates the engine's Option-A hold-out on real gap-year money
+(`src/App.jsx:777`): `spouseRetirementAge: hasActiveSpouseGap ? effectiveSpouseRetAge : null`.
+That gate is BUG-93's fix. `what-if.js:771` does **not** apply it:
+`spouseRetirementAge: spouseSeed ? scenarioSpouseRetAge : retPhaseBase.spouseRetirementAge` —
+and `scenarioSpouseRetAge` is computed whenever `spouseSeedInputs` exists (i.e. merely
+`hasSpouse`), with **no check that the scenario's own re-seeded maps carry any income**. So any
+scenario that forces a resim switches the hold-out ON for a household whose committed plan
+correctly has it OFF.
+**Gate-isolation repro — same bundle, same retirement age, NO actual change** (only
+`needsResim` differs; `excludeEventId: "no-such-event"` strips nothing but forces the branch).
+MFJ, primary 55→60, spouse 45 retiring 62, spouse 401k $600k, **spouse income $0** ⇒
+`hasActiveSpouseGap === false` ⇒ base gate `null`:
+
+```
+committed          years=12.6145  spillover=       0
+preview  no-resim  years=12.6145  spillover=       0   <- identical, correct
+preview   +resim   years=12.1597  spillover= 712,623   <- gate silently ON
+```
+
+Real work-longer scenarios on the same household (committed gate stays `null` throughout):
+
+```
+retire 58: preview years=10.766 spill=749,310 | committed years=11.290 spill=0
+retire 62: preview years=12.983 spill=468,115 | committed years=13.802 spill=0
+```
+
+**This supersedes a "cleared" note.** BUG-102's 2026-09-02 close-out recorded that BUG-134's
+unconditional scenario value does NOT reintroduce BUG-93, "measured pre- and post-BUG-134 on a
+no-income/no-contribution spouse household, results byte-identical". That was a **false
+negative**: the check needs a household where the hold-out can actually bite (a real gap window
+by AGE, plus a spouse balance the walk must reach). With one, it reproduces immediately.
+**Relationship to BUG-102 (closed obsolete the same day):** BUG-102's stated symptom — a preview
+UNDER-restricting — is genuinely refuted. This is the same gate asymmetry with the **opposite
+sign**: the preview OVER-restricts. Notably, **BUG-102's sketched fix is the correct fix for
+this**, so the closed entry's fix-shape note was right even though its symptom was not.
+**Fix shape:** derive a scenario-local `hasActiveSpouseGap` from the SCENARIO's own re-seeded
+maps (`spouseSeed.spouseContribByAge` / `spouseIncomeFloorByAge`, the same nonzero-VALUE test
+App.jsx:644 uses — key presence is not enough) and gate `scenarioSpouseRetAge` on it. Extract
+the predicate once and share it with App.jsx rather than writing a second copy (BUG-31's class).
+**Where:** `src/model/what-if.js:771`, `src/App.jsx:644`/`:777`.
+
+**FIXED 2026-09-06.** Extracted the predicate as `seedHasActiveSpouseGap(seed)` in
+`src/model/retirement-phase.js` — one implementation, called by BOTH App.jsx's committed plan
+and what-if.js's scenario branch, so the two cannot drift again (deliberately not a second copy
+of the four-line check inside `what-if.js`; that duplication IS BUG-31's class and is what
+produced this bug). `what-if.js:771` now reads
+`spouseSeed ? (seedHasActiveSpouseGap(spouseSeed) ? scenarioSpouseRetAge : null) : retPhaseBase.spouseRetirementAge`.
+**Verification:** the gate-isolation pair (no change at all, only `needsResim` flipped) now
+returns spillover 0 on both sides AND an identical `scenarioYears` — not merely un-penalised but
+the same walk. Revert-and-confirm run and restored: reverting the fix reproduces exactly the
+filed numbers (712,623 on the isolation repro, 749,310 at retire-58). Four regression tests added,
+including the other half of the contract — a spouse WITH real gap-year income must still get the
+hold-out in scenarios (BUG-134's guarantee), which T-X.4's locked scenario spillovers also cover.
+All four golden masters unmoved: T-X.4 has real gap-year income, so its locked spillovers are
+correctly unaffected.
+
+---
+
+
+### BUG-102 — RESOLVED 2026-09-05 as OBSOLETE (superseded by BUG-134's fix). Lever-preview's spouse-gap gating inherited from the BASE plan (filed 2026-07-27, interoperability review agent, PR #62)
+
+**Original claim:** a household whose committed plan has no active spouse gap gets
+`spouseRetirementAge: null` baked into every scenario preview (App gates it on `hasActiveSpouseGap`,
+computed from the COMMITTED base-plan seed maps, `src/App.jsx:644`/`:777`), so a preview that itself
+creates a gap by retiring earlier would render "as if Option A never engages" — no hold-out, no
+possible spillover — while Applying it would produce a walk that DOES have them. Two close-out
+re-verification attempts (2026-09-02) were recorded as INCONCLUSIVE because neither fixture managed
+to drive `hasActiveSpouseGap` true, so the precondition was never reached.
+
+**The precondition has now been reached, and the claim does not reproduce.**
+
+Constructing the fixture needed one non-obvious insight the earlier attempts missed: under "auto"
+(`spouseRetirementAge: null`) the gap window's WIDTH is invariant to the primary's retirement age —
+`resolveSpouseRetAge` returns the primary's retirement age, and `spouseAgeAtPrimaryRet` shifts by the
+same amount, so both ends of the window move together and a scenario can never create or destroy a
+gap. **An EXPLICIT `spouseRetirementAge` plus an OLDER spouse is required**: then the window is
+`(spouseCurrentAge + primaryRetAge − currentAge, spouseRetAge]`, and retiring the primary earlier
+lowers only the lower bound, widening it from empty to non-empty.
+
+Fixture (`currentAge` 50, `spouseCurrentAge` 55, explicit `spouseRetirementAge` 70, MFJ, spouse
+income $40k, spouse Trad $900k vs primary $80k, spend $140k): base retire 65 ⇒
+`spouseAgeAtPrimaryRet` = 70 ⇒ empty window ⇒ **gate `null`**; commit retire 55 ⇒
+`spouseAgeAtPrimaryRet` = 60 ⇒ 10-year window ⇒ **gate `70`**. Precondition demonstrably satisfied
+in both directions.
+
+Result — the preview does NOT behave "as if Option A never engages":
+
+```
+                     PREVIEW (scenario 55)   COMMITTED (retire 55)
+depletionAge                 65                      65     MATCH
+totalSpouseSpillover  1,128,017               1,134,507     both engaged (claim predicted 0)
+totalAtRet            1,437,742               1,437,742     MATCH
+```
+
+The spillover being ~$1.13M in the PREVIEW is the disproof: Option A is active there. **BUG-134's fix
+(2026-08, PR #66) is what changed this** — it made `buildRetirementPhase`'s `spouseRetirementAge`
+follow the scenario's own re-seeded maps (`spouseSeed ? scenarioSpouseRetAge : …`, `what-if.js:771`)
+instead of riding the `...retPhaseBase` spread, so the scenario no longer inherits App's base-plan
+gate at all on any resim path. The 2026-09-02 annotation suspected exactly this ("the VALUE half is
+now addressed") but could not confirm it without the fixture above.
+
+**The residual ~0.6% divergence was chased to the end and is NOT this bug.** It decomposes entirely
+into two other defects, both filed separately with their own repros: **BUG-135** (Social Security
+never re-derived for the scenario's own working years) and **BUG-136** (the conversion schedule
+inherited from the base plan). Proof that nothing else remains: with `annualConversionAmt` = 0 and
+`includeSS` off, preview and committed agree **byte-identically** on the same fixture — spillover
+delta 0, `scenarioYears` delta 0. Re-enabling either input reintroduces exactly its own bug's
+divergence.
+
+**Note on the gate itself.** `src/App.jsx:644`/`:777` still computes `hasActiveSpouseGap` from the
+committed seed maps, exactly as the original entry describes — that code is unchanged. It is simply
+no longer *load-bearing for scenario previews*, because the scenario path stopped reading it. It
+remains correct and necessary for the BASE plan (it is BUG-93's fix, keeping a non-working spouse's
+balance out of the hold-out). Closing this entry does not mean that line was removed.
+
+**⚠ AMENDED SAME DAY — the gate asymmetry is real, with the OPPOSITE sign: see BUG-137.**
+Hours after this closure, the preview/commit parity audit found that because the scenario path
+stopped reading App's gate, it now applies NO gate at all — so a scenario that forces a resim turns
+the hold-out ON for a household whose committed plan correctly has it OFF (a spouse with a balance
+but no income). Verified independently: same bundle, same retirement age, no change at all, only
+`needsResim` flipped — spillover 0 → **712,623**.
+
+This does **not** re-open this entry. BUG-102's stated symptom (the preview UNDER-restricting,
+showing the household "as if Option A never engages") remains genuinely refuted, and the disproof
+above stands. BUG-137 is the mirror-image defect and is filed on its own. Two things are worth
+carrying forward:
+1. **BUG-102's sketched fix was right even though its symptom was wrong** — "derive the gate from
+   the SCENARIO's own re-seeded maps" is exactly what BUG-137 needs. The fix-shape note outlived
+   the diagnosis.
+2. **The 2026-09-02 "Also checked and CLEARED" note in this entry was a false negative.** It
+   concluded BUG-134 did not reintroduce BUG-93 from a household where the hold-out could not bite
+   (no real gap window by AGE, so `spouseHoldout` was false on every row regardless of the gate).
+   A "cleared" result is only as strong as the fixture's ability to exhibit the failure — the same
+   lesson this entry's own two inconclusive repro attempts taught, one level up.
 
 ---
 

@@ -828,3 +828,369 @@ describe("spouse-household golden master (T-X.3, exact-locked — MFJ + pension 
     app.unmount();
   });
 });
+
+// ── T-X.4 — fourth golden master: the "auto" (null) spouseRetirementAge path
+// ─────────────────────────────────────────────────────────────────────────────
+// THE BLIND SPOT THIS CLOSES. `spouseRetirementAge` defaults to null, meaning
+// "auto — resolve it from the primary's own retirement age" (resolveSpouseRetAge,
+// retirement-phase.js). Every OTHER spouse fixture in this file pins it to an
+// explicit number: T-X.2 sets 65, T-X.3 sets 65, the Monte Carlo and BUG-93/94
+// blocks set 62. So the auto path — the DEFAULT every real user starts on — had
+// no exact-locked coverage at all.
+//
+// That is not a hypothetical gap. BUG-127 and BUG-134 (PR #66, both HIGH, both
+// found only by adversarial review after the full suite went green) BOTH live on
+// exactly this path, and the PR's own retrospective says so: "the two
+// spouse-household fixtures pin spouseRetirementAge explicitly, which is
+// precisely why BUG-127 could hide from them."
+//
+// TWO DESIGN CONSTRAINTS, both learned from those bugs:
+//
+//   1. It must lock SCENARIO outputs, not just base-plan ones. T-X.2 and T-X.3
+//      lock only the committed plan's headline numbers — but BUG-127 and BUG-134
+//      are both what-if/scenario-path bugs, so a base-plan-only lock is
+//      structurally incapable of catching them no matter which path it runs on.
+//      Hence the second `it` below, which locks calcWhatIfScenario's own output.
+//
+//   2. The Option-A hold-out must actually BIND. BUG-134's defect was the
+//      scenario releasing the spouse's Traditional bucket early; a household that
+//      never reaches for that bucket records spillover 0 either way and cannot
+//      tell the two apart. This fixture is therefore deliberately built with the
+//      SPOUSE holding the household's money (1.6M) and the PRIMARY lean (75k),
+//      so the walk must reach the held-out bucket and the hold-out's presence or
+//      absence is worth hundreds of thousands of dollars of recorded spillover.
+//
+// Under "auto", resolveSpouseRetAge returns the primary's retirement age read in
+// the SPOUSE's own age frame — so a YOUNGER spouse automatically gets a gap
+// window equal to the age difference (here 11 years: spouse is 37 to the
+// primary's 48). An older spouse would get none, which is why this fixture uses a
+// younger one.
+//
+// Also covers a cell NO other fixture exercises: spouseClaimingAge (70) DIFFERENT
+// from the primary's ssClaimingAge (62). BUG-125 (open) lives in exactly that
+// cell — household SS is currently gated entirely on the PRIMARY's claim age, so
+// when that bug is fixed this fixture's householdSS-dependent values are EXPECTED
+// to move, and that movement is the proof the fix is live.
+function buildTX4Household() {
+  const app = mount();
+  app.fire(() => app.latest().assumptions.currentAge.set(48));
+  app.fire(() => app.latest().assumptions.retirementAge.set(57));
+  app.fire(() => app.latest().assumptions.returnRate.set(6.5));
+  app.fire(() => app.latest().assumptions.inflationRate.set(3));
+  app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+  app.fire(() => app.latest().ss.isMarried.set(true));
+  app.fire(() => app.latest().ss.spouseCurrentAge.set(37)); // 11 yrs younger -> 11-yr AUTO gap
+  // Different claim ages for the two earners — the uncovered cell above.
+  app.fire(() => app.latest().ss.ssClaimingAge.set(62));
+  app.fire(() => app.latest().ss.spouseClaimingAge.set(70));
+  app.fire(() => app.latest().ss.spouseSsEstimate.set(24_000));
+  app.fire(() => app.latest().profile.spouseIncome.set(48_000));
+  // Spouse holds the household's money; primary is lean -> the hold-out binds.
+  app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(1_600_000));
+  app.fire(() => app.latest().spouseAccounts.trad401k.contrib.set(10_000));
+  app.fire(() => app.latest().accounts.trad401k.bal.set(75_000));
+  app.fire(() => app.latest().accounts.roth.bal.set(20_000));
+  app.fire(() => app.latest().accounts.taxable.bal.set(10_000));
+  app.fire(() => app.latest().spending.annualExpenses.set(140_000));
+  // spouseAccounts.spouseRetirementAge is DELIBERATELY NEVER SET — that is the
+  // entire point of this fixture. Setting it would recreate T-X.2/T-X.3's blind
+  // spot and silently retire this file's only auto-path coverage.
+  return app;
+}
+
+describe("spouse-household golden master (T-X.4, exact-locked — the auto/null spouseRetirementAge path)", () => {
+  const E = {
+    // Base plan
+    totalAtRet:              3_550_547,
+    withdrawalRate:          4.001334040532185,
+    yearsSustained:          46.45640512515648,
+    depletionAge:            104,
+    endVal:                  0,          // the far-horizon walk does deplete here
+    firstRMD:                0,          // primary Trad drained by conversions (BUG-96 shape)
+    totalRMDs:               656_669,    // household — real, spouse-bucket driven
+    rmdTaxBite:              75_881,
+    totalDrawTax:            804_133,
+    conversionCost:          34_338,
+    rmdTaxSaved:             2_362,
+    grossNetBenefit:         -31_976,
+    netConversionBenefit:    -31_976,
+    conversionWindowYrs:     15,
+    convPeakTarget:          207_451,
+    convSteadyTarget:        159_313,
+    householdSS:             42_528,
+    effectiveExpenses:       140_000,
+    rangeSuccessPct:         58,
+    // The Option-A hold-out actually binds here — these three are the values
+    // BUG-134 would move (it recorded 0 spillover by releasing the bucket early).
+    totalSpouseSpillover:    857_142,
+    totalSpouseSpilloverTax: 242_698,
+    firstSpouseSpilloverAge: 61,
+  };
+
+  // Scenario locks. BUG-127 (the spouse's retirement age frozen at the base
+  // plan's value) and BUG-134 (the hold-out gate not moving with the re-seeded
+  // maps) are BOTH scenario-path bugs, invisible to any base-plan-only lock.
+  //
+  // RE-LOCKED 2026-09-06 (BUG-138). A work-longer scenario now couples the
+  // contribEnd* ages that track the retirement age, exactly as committing the same
+  // change does — so these scenarios gained the extra contribution years the preview
+  // used to drop. Every movement is monotone in the scenario's own direction and was
+  // checked for sign before re-locking, not just pasted:
+  //   totalAtRet   +35,127 / +114,400 / +207,149 — rising with the number of extra
+  //                contribution years (1 / 3 / 5). Was: 3,796,555 / 4,338,937 / 4,956,038.
+  //   depletionAge 111->112, 129->137, 164->never — more money lasts longer.
+  //   spillover    793,729->738,930, 606,529->426,975, 425,758->99,220 — FALLING,
+  //                because a better-funded primary reaches less often into the
+  //                spouse's held-out bucket. The hold-out is still binding (all three
+  //                nonzero), so this fixture keeps its BUG-134 sensitivity.
+  //
+  // RE-LOCKED again 2026-09-06 (BUG-135). Scenarios now re-derive Social Security from
+  // their OWN working years instead of carrying the base plan's figure, so a later
+  // retirement correctly earns a larger benefit (committed householdSS rises
+  // 42,528 -> 43,368 -> 45,108 -> 46,956 across retire 57/58/60/62). totalAtRet is
+  // UNCHANGED at all three ages, which is the sanity check that this touched only the
+  // retirement walk and not accumulation. The spillovers moved TOWARD the committed
+  // truth in every case — the direction that proves the fix rather than merely
+  // asserting it:
+  //        preview before -> after   (committed truth)
+  //   58:       738,930 -> 743,001   (742,667)
+  //   60:       426,975 -> 444,590   (474,771)
+  //   62:        99,220 -> 134,194   (187,641)
+  // The residual gap is BUG-136 (the conversion schedule is still inherited from the
+  // base plan); these locks are expected to close onto the truth column when it lands.
+  const S = {
+    58: { depletionAge: 112,  totalAtRet: 3_831_682, spillover: 743_001 },
+    60: { depletionAge: 135,  totalAtRet: 4_453_337, spillover: 444_590 },
+    62: { depletionAge: null, totalAtRet: 5_163_187, spillover: 134_194 },
+  };
+
+  it("resolves the spouse's retirement age from the AUTO default, not an explicit input", () => {
+    const app = buildTX4Household();
+    const latest = app.latest();
+    // The raw input really is still null — if a future edit sets it, this fails
+    // loudly rather than silently converting this file back to explicit-only.
+    expect(latest.whatIfSimInputs.spouseSeedInputs.spouseRetirementAge).toBeNull();
+    // ...and "auto" resolved to the primary's own retirement age.
+    expect(latest.spouseAccounts.spouseRetirementAge.value).toBe(57);
+    // The gap is real, so the engine's Option-A gate is live (not null).
+    expect(latest.whatIfSimInputs.retPhaseBase.spouseRetirementAge).toBe(57);
+    app.unmount();
+  });
+
+  it("locks the retirement-walk headline numbers", () => {
+    const app = buildTX4Household();
+    const latest = app.latest();
+    const rw = latest.retirementWalk;
+
+    expect(latest.totalAtRet).toBe(E.totalAtRet);
+    expect(latest.withdrawalRate).toBeCloseTo(E.withdrawalRate, 8);
+    expect(latest.yearsSustained).toBeCloseTo(E.yearsSustained, 8);
+    expect(latest.effectiveExpenses).toBe(E.effectiveExpenses);
+    expect(latest.householdSS).toBe(E.householdSS);
+
+    expect(rw.depletionAge).toBe(E.depletionAge);
+    expect(rw.endVal).toBe(E.endVal);
+    expect(rw.firstRMD).toBe(E.firstRMD);
+    expect(rw.totalRMDs).toBe(E.totalRMDs);
+    expect(rw.rmdTaxBite).toBe(E.rmdTaxBite);
+    expect(rw.totalDrawTax).toBe(E.totalDrawTax);
+    expect(rw.conversionCost).toBe(E.conversionCost);
+    expect(rw.rmdTaxSaved).toBe(E.rmdTaxSaved);
+    expect(rw.grossNetBenefit).toBe(E.grossNetBenefit);
+
+    // The hold-out's own signature.
+    expect(rw.totalSpouseSpillover).toBe(E.totalSpouseSpillover);
+    expect(rw.totalSpouseSpilloverTax).toBe(E.totalSpouseSpilloverTax);
+    expect(rw.firstSpouseSpilloverAge).toBe(E.firstSpouseSpilloverAge);
+
+    app.unmount();
+  });
+
+  it("locks the conversion planner + Range lens numbers", () => {
+    const app = buildTX4Household();
+    const latest = app.latest();
+    expect(latest.netConversionBenefit).toBe(E.netConversionBenefit);
+    expect(latest.conversionWindowYrs).toBe(E.conversionWindowYrs);
+    expect(latest.conversionView.targets.convPeakTarget).toBe(E.convPeakTarget);
+    expect(latest.conversionView.targets.convSteadyTarget).toBe(E.convSteadyTarget);
+    expect(latest.rangeView.successPct).toBe(E.rangeSuccessPct);
+    app.unmount();
+  });
+
+  // The lock BUG-127 and BUG-134 would actually break. Both bugs left every
+  // base-plan number above untouched and corrupted only the scenario path.
+  it("locks the what-if SCENARIO outputs on the auto path (the BUG-127/BUG-134 surface)", () => {
+    const app = buildTX4Household();
+    const bundle = app.latest().whatIfSimInputs;
+    for (const [retAgeStr, exp] of Object.entries(S)) {
+      const retAge = Number(retAgeStr);
+      const scen = calcWhatIfScenario(bundle, { retirementAge: retAge });
+      expect(scen).not.toBeNull();
+      expect(scen.scenarioDepletionAge).toBe(exp.depletionAge);
+      expect(scen.scenarioTotalAtRet).toBe(exp.totalAtRet);
+      // Nonzero by construction (the hold-out binds), so a regression that
+      // silently released the bucket would read 0 here and fail loudly.
+      expect(scen.totalSpouseSpillover).toBe(exp.spillover);
+    }
+    app.unmount();
+  });
+});
+
+// ── BUG-102 (closed 2026-09-05 as obsolete) — regression pin ─────────────────
+// BUG-102 claimed a lever preview would render "as if Option A never engages"
+// for a household whose COMMITTED plan has no active spouse gap but whose
+// PREVIEW creates one, because App gates the engine's hold-out on
+// `hasActiveSpouseGap` computed from the committed seed maps (App.jsx:644/:777).
+// BUG-134's fix made the scenario read its OWN re-seeded value instead, so the
+// claim no longer reproduces — but nothing pinned that, and the gate line in
+// App.jsx is unchanged and still correct for the base plan. This test pins the
+// behaviour so the entry cannot quietly re-open.
+//
+// Building a household that actually REACHES the precondition needs one
+// non-obvious property, which is why two earlier close-out attempts were
+// recorded as inconclusive: under "auto" the gap window's WIDTH is invariant to
+// the primary's retirement age (resolveSpouseRetAge returns that age, and
+// spouseAgeAtPrimaryRet shifts with it, so both ends move together). An
+// EXPLICIT spouseRetirementAge with an OLDER spouse is required — then the
+// window is (spouseCurrentAge + primaryRetAge - currentAge, spouseRetAge] and
+// retiring the primary earlier lowers only the lower bound, widening it from
+// empty to non-empty.
+describe("BUG-102 — a scenario that itself creates a spouse gap engages Option A in the PREVIEW", () => {
+  function buildGateFlipHousehold() {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().assumptions.currentAge.set(50));
+    app.fire(() => app.latest().assumptions.retirementAge.set(65));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(55));         // OLDER spouse
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(70)); // EXPLICIT
+    app.fire(() => app.latest().profile.spouseIncome.set(40_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(900_000));
+    app.fire(() => app.latest().accounts.trad401k.bal.set(80_000));
+    app.fire(() => app.latest().accounts.roth.bal.set(0));
+    app.fire(() => app.latest().accounts.taxable.bal.set(0));
+    app.fire(() => app.latest().spending.annualExpenses.set(140_000));
+    return app;
+  }
+
+  it("the precondition really is reached: the gate is null at base and finite once committed", () => {
+    const app = buildGateFlipHousehold();
+    // Base: spouse is already 70 when the primary retires at 65 -> empty window.
+    expect(app.latest().whatIfSimInputs.retPhaseBase.spouseRetirementAge).toBeNull();
+    // Commit the previewed change: spouse is 60 at the primary's retirement ->
+    // a real 10-year gap window opens.
+    app.fire(() => app.latest().assumptions.retirementAge.set(55));
+    expect(app.latest().whatIfSimInputs.retPhaseBase.spouseRetirementAge).toBe(70);
+    app.unmount();
+  });
+
+  it("the preview engages the hold-out (nonzero spillover), not 'as if Option A never engages'", () => {
+    const app = buildGateFlipHousehold();
+    const scen = calcWhatIfScenario(app.latest().whatIfSimInputs, { retirementAge: 55 });
+    expect(scen).not.toBeNull();
+    // BUG-102's claim predicted 0 here (bucket pooled, hold-out inert).
+    expect(scen.totalSpouseSpillover).toBeGreaterThan(0);
+    app.unmount();
+  });
+
+  it("preview and commit agree byte-identically once BUG-135 and BUG-136's inputs are removed", () => {
+    // The ~0.6% residual on this fixture is NOT BUG-102: it decomposes into
+    // BUG-135 (SS never re-derived for the scenario's own working years) and
+    // BUG-136 (the conversion schedule inherited from the base plan). Removing
+    // both inputs must leave the two paths in exact agreement — this is the
+    // assertion that will START FAILING, informatively, when either is fixed
+    // (at which point the corresponding setter below can be dropped).
+    const app = buildGateFlipHousehold();
+    app.fire(() => app.latest().assumptions.inflationRate.set(0));
+    app.fire(() => app.latest().ss.includeSS.set(false));                    // removes BUG-135's input
+    app.fire(() => app.latest().conversion.conversionMode.set("custom"));
+    app.fire(() => app.latest().conversion.annualConversionAmt.set(0));      // removes BUG-136's input
+
+    const scen = calcWhatIfScenario(app.latest().whatIfSimInputs, { retirementAge: 55 });
+    app.fire(() => app.latest().assumptions.retirementAge.set(55));
+    const committed = app.latest();
+
+    expect(scen.totalSpouseSpillover).toBe(committed.retirementWalk.totalSpouseSpillover);
+    expect(scen.scenarioYears).toBe(committed.yearsSustained);
+    expect(scen.scenarioDepletionAge).toBe(committed.planView.depletionAge);
+    expect(scen.scenarioTotalAtRet).toBe(committed.totalAtRet);
+    // CodeRabbit (PR #67): the four scalars above do not establish the "byte-identical"
+    // claim on their own — calcWhatIfScenario also returns `chart`, which App exposes as
+    // horizonProps.chartData, and a divergence in any row could pass while invalidating
+    // the decomposition this test exists to prove. Measured: 24 rows, zero differences.
+    expect(scen.chart).toEqual(committed.chartData);
+    app.unmount();
+  });
+});
+
+// ── BUG-137 — the scenario path must apply the SAME hold-out gate as the base plan
+// ─────────────────────────────────────────────────────────────────────────────
+// App gates the engine's Option-A hold-out on real gap-year money (App.jsx:644/:777,
+// BUG-93's fix). what-if.js applied NO gate: it computed scenarioSpouseRetAge for any
+// married household, so merely forcing a resim turned the hold-out on for a household
+// whose committed plan correctly had it off — inventing penalized early spouse-401k
+// withdrawal that the committed plan never charges.
+//
+// The fixture is the household BUG-93 exists for: a spouse with a real rollover
+// BALANCE and ZERO income, plus a real gap window by AGE so the hold-out could bite
+// if it were wrongly enabled. (A fixture without that age window cannot exhibit the
+// bug at all — which is exactly why BUG-102's 2026-09-02 "cleared" check was a false
+// negative.)
+describe("BUG-137 — a scenario applies the spouse hold-out gate, not just the base plan", () => {
+  function buildNoIncomeSpouseHousehold() {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().assumptions.currentAge.set(55));
+    app.fire(() => app.latest().assumptions.retirementAge.set(60));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(45));
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(62)); // real gap BY AGE
+    app.fire(() => app.latest().profile.spouseIncome.set(0));                // but NO income
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(600_000));
+    app.fire(() => app.latest().accounts.trad401k.bal.set(200_000));
+    app.fire(() => app.latest().spending.annualExpenses.set(90_000));
+    return app;
+  }
+
+  it("the base plan's gate is OFF for a spouse with a balance but no income (BUG-93)", () => {
+    const app = buildNoIncomeSpouseHousehold();
+    expect(app.latest().whatIfSimInputs.retPhaseBase.spouseRetirementAge).toBeNull();
+    expect(app.latest().retirementWalk.totalSpouseSpillover).toBe(0);
+    app.unmount();
+  });
+
+  // The cleanest possible statement of the bug: nothing about the plan changes, only
+  // whether the resim branch runs. Pre-fix this pair read 0 vs 712,623.
+  it("forcing a resim with NO actual change does not invent spillover", () => {
+    const app = buildNoIncomeSpouseHousehold();
+    const bundle = app.latest().whatIfSimInputs;
+    const noResim = calcWhatIfScenario(bundle, {});
+    // excludeEventId strips nothing here — it only flips `needsResim` true.
+    const resim = calcWhatIfScenario(bundle, { excludeEventId: "no-such-event" });
+    expect(noResim.totalSpouseSpillover).toBe(0);
+    expect(resim.totalSpouseSpillover).toBe(0);
+    // and the walk itself must be unchanged, not merely un-penalised
+    expect(resim.scenarioYears).toBe(noResim.scenarioYears);
+    app.unmount();
+  });
+
+  it("work-longer scenarios charge no spillover when the committed plan charges none", () => {
+    const app = buildNoIncomeSpouseHousehold();
+    const bundle = app.latest().whatIfSimInputs;
+    for (const retAge of [58, 62]) {
+      expect(calcWhatIfScenario(bundle, { retirementAge: retAge }).totalSpouseSpillover).toBe(0);
+    }
+    app.unmount();
+  });
+
+  // The other half of the contract: a household with REAL gap-year income must still
+  // get the hold-out in scenarios (this is BUG-134's guarantee, which the BUG-137 fix
+  // must not undo). T-X.4's locked scenario spillovers cover this exactly, but assert
+  // it here too so the two halves of the gate sit side by side.
+  it("a spouse WITH real gap-year income still gets the hold-out in scenarios", () => {
+    const app = buildTX4Household();
+    const scen = calcWhatIfScenario(app.latest().whatIfSimInputs, { retirementAge: 60 });
+    expect(scen.totalSpouseSpillover).toBeGreaterThan(0);
+    app.unmount();
+  });
+});

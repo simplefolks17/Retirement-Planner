@@ -9,9 +9,10 @@
 // accumulation-phase events) — never reimplements the walk (BUG-31 rule).
 // Baseline values are passed in from App.jsx to avoid re-computing them.
 
-import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
+import { runSimulation, projectedIncomeAtAge, coupleContribEndAges } from "./simulation.js";
+import { calcRetirementIncome } from "./retirement-income.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
-import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge } from "./retirement-phase.js";
+import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
 import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
@@ -265,6 +266,34 @@ export function verdictInfoForScenario(scenario, safeLifeExp) {
   };
 }
 
+
+// Social Security re-derived for a SCENARIO's own retirement age (BUG-135).
+//
+// SS is NOT a fixed dollar amount: the benefit comes from ssWorkYears
+// (= safeRetAge - currentAge) through calcAIME -> calcPIA -> calcBenefit, so retiring
+// earlier genuinely earns less and working longer earns more. The scenario paths used
+// to apply only an inflation re-base (`ssAmount * scenarioRetYearFactor`), which is
+// wrong twice over: it misses the working-years effect entirely, AND householdSS is
+// measured to be completely inflation-INDEPENDENT (25,956 at 0%, 2.5%, 4% and 6% on
+// the same household), so the factor was adding an inflation adjustment to a figure
+// that has no inflation component. Re-derivation therefore REPLACES the factor rather
+// than composing with it.
+//
+// Returns null (caller keeps its existing behaviour) when:
+//   - no ssInputs were supplied — every hand-built test bundle, so this is inert by
+//     default and pre-existing callers are byte-identical;
+//   - the scenario's retirement age equals the base plan's — nothing to re-derive;
+//   - ssOverride is set — the user pinned their own annual figure, so it is not
+//     working-years-derived and must not be recomputed.
+// spouseSsEstimate is a user-entered at-FRA figure and is likewise not
+// working-years-derived; calcRetirementIncome already treats it that way, so the
+// spouse's half of householdSS is unaffected by design.
+function scenarioSocialSecurity(ssInputs, currentAge, baseRetAge, scenarioRetAge) {
+  if (!ssInputs || scenarioRetAge === baseRetAge) return null;
+  if (ssInputs.ssOverride != null) return null;
+  return calcRetirementIncome({ ...ssInputs, currentAge, safeRetAge: scenarioRetAge });
+}
+
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
 // Computes the impact of scenario overrides vs the baseline.
 //
@@ -314,6 +343,9 @@ export function calcWhatIfDelta({
   // re-simulated the PRIMARY — so a forced resim silently dropped the spouse's
   // entire balance from scenarioTotalAtRet. null with no spouse (inert).
   spouseSeedInputs = null,
+  // BUG-135: inputs for re-deriving Social Security at the scenario's own
+  // retirement age. null (every hand-built bundle) => previous behaviour.
+  ssInputs = null,
 }) {
   const scenarioRetAge    = retirementAgeOverride ?? safeRetAge;
   // BUG-91: retDrawShared.effectiveExpenses is TODAY's dollars (kept raw so the
@@ -336,7 +368,10 @@ export function calcWhatIfDelta({
   // (unlike toRetirementYearDollars) handles retiring EARLIER too (a negative
   // years difference divides, it doesn't clamp to a no-op).
   const scenarioRetYearFactor = inflationRebaseFactor(retDrawShared.inflationRate, scenarioRetAge - safeRetAge);
-  const scenarioSSAmount = retDrawShared.ssAmount * scenarioRetYearFactor;
+  // BUG-135: re-derive SS from the scenario's OWN working years when we can; the
+  // inflation re-base is the fallback for callers that supply no ssInputs.
+  const scenarioSS = scenarioSocialSecurity(ssInputs, simInputs?.currentAge, safeRetAge, scenarioRetAge);
+  const scenarioSSAmount = scenarioSS ? scenarioSS.householdSS : retDrawShared.ssAmount * scenarioRetYearFactor;
   const scenarioPensionAmount = retDrawShared.pensionAmount * scenarioRetYearFactor;
 
   // Split events by phase — kind-aware (money-events.js): a duration event
@@ -367,7 +402,10 @@ export function calcWhatIfDelta({
     // them here would make a forced re-sim's basis asymmetric (BUG-75 fix; same
     // class as the BUG-34/BUG-61 basis mismatches).
     const raw = runSimulation({
-      ...simInputs, ...(contribOverrides ?? {}),
+      // BUG-138: same contribEnd coupling as calcWhatIfScenario's resim above —
+      // one shared rule, applied at both resim sites.
+      ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+      ...(contribOverrides ?? {}),
       moneyEvents: [...(simInputs.moneyEvents ?? []), ...accumEvents],
     });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
@@ -540,6 +578,8 @@ export function calcWhatIfScenario({
   // forced resim's accumulation chart is household, not primary-only (A8).
   spouseSeedInputs = null,
   spouseChartInputs = null,
+  // BUG-135: see calcWhatIfDelta's identical parameter above.
+  ssInputs = null,
 }, overrides = {}) {
   if (!simInputs || !retDrawShared || safeRetAge == null || safeLifeExp == null) return null;
 
@@ -560,6 +600,12 @@ export function calcWhatIfScenario({
   // retirement age differs (inflationRebaseFactor, unlike toRetirementYearDollars,
   // handles retiring EARLIER too — a negative years difference divides).
   const scenarioRetYearFactor = inflationRebaseFactor(retDrawShared.inflationRate, scenarioRetAge - safeRetAge);
+  // BUG-135: Social Security re-derived from the SCENARIO's own working years (null
+  // when no ssInputs were supplied, when the age is unchanged, or when the user pinned
+  // an ssOverride — see scenarioSocialSecurity above). Where it is non-null it
+  // REPLACES the inflation re-base rather than composing with it: householdSS is
+  // inflation-independent by construction, so the factor never belonged on it.
+  const scenarioSS = scenarioSocialSecurity(ssInputs, simInputs?.currentAge, safeRetAge, scenarioRetAge);
   const scenarioEvents   = overrides.scenarioEvents ?? [];
   const excludeEventId   = overrides.excludeEventId ?? null;
 
@@ -602,8 +648,13 @@ export function calcWhatIfScenario({
       // the "Trad 401k" key (added after runSimulation from tradGross), which
       // the raw simulation rows don't carry — without this, a re-sim's
       // accumulation chart would silently drop the 401k balance (BUG-35 display key).
-      resimRaw = runSimulation({ ...simInputs, moneyEvents: accumEvents })
-        .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+      // BUG-138: a contribEnd* that tracks the retirement age must move WITH the
+      // scenario, exactly as App.jsx's setRetirementAgeCoupled moves it on commit.
+      // Without this a work-longer preview stopped contributing at the BASE age.
+      resimRaw = runSimulation({
+        ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+        moneyEvents: accumEvents,
+      }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     } catch {
       return null;
     }
@@ -745,8 +796,10 @@ export function calcWhatIfScenario({
         // BUG-91: retPhaseBase's ssGross/ssTaxable/pension are converted at the
         // BASE plan's safeRetAge — re-express in the scenario's own retirement-
         // year frame (inert, factor 1, when the retirement age is unchanged).
-        ssGross: retPhaseBase.ssGross * scenarioRetYearFactor,
-        ssTaxable: retPhaseBase.ssTaxable * scenarioRetYearFactor,
+        // BUG-135: re-derived from the scenario's own working years when ssInputs
+        // are supplied (the inflation re-base is the no-ssInputs fallback).
+        ssGross: scenarioSS ? scenarioSS.householdSS : retPhaseBase.ssGross * scenarioRetYearFactor,
+        ssTaxable: scenarioSS ? scenarioSS.ssTaxableRet : retPhaseBase.ssTaxable * scenarioRetYearFactor,
         pension: retPhaseBase.pension * scenarioRetYearFactor,
         // The conversion schedule stays at ABSOLUTE ages even when the retirement
         // age shifts — the same approximation the blended walk already made with
@@ -768,7 +821,14 @@ export function calcWhatIfScenario({
         // for its Option-A hold-out (retirement-engine.js, `spouseHoldout`), so
         // the mismatch let a scenario draw down the spouse's Traditional bucket
         // years before the same walk stopped their contributions.
-        spouseRetirementAge:      spouseSeed ? scenarioSpouseRetAge              : retPhaseBase.spouseRetirementAge,
+        // BUG-137: gate the scenario's hold-out on the SCENARIO's OWN re-seeded maps,
+        // the same nonzero-VALUE predicate App.jsx applies to the committed plan
+        // (seedHasActiveSpouseGap). Without it this branch engaged Option A for any
+        // married household the moment a resim fired, inventing penalized spouse-401k
+        // spillover the committed plan never charges (BUG-93's defect, scenario-side).
+        spouseRetirementAge:      spouseSeed
+          ? (seedHasActiveSpouseGap(spouseSeed) ? scenarioSpouseRetAge : null)
+          : retPhaseBase.spouseRetirementAge,
         tradGrossSpouse:          spouseSeed ? spouseSeed.tradSeed                 : retPhaseBase.tradGrossSpouse,
         spouseContribByAge:       spouseSeed ? spouseSeed.spouseContribByAge       : retPhaseBase.spouseContribByAge,
         spouseTaxableIncomeByAge: spouseSeed ? spouseSeed.spouseTaxableIncomeByAge : retPhaseBase.spouseTaxableIncomeByAge,
@@ -861,7 +921,7 @@ export function calcWhatIfScenario({
     lifeWalk = buildRetirementDrawdown({
       ...retDrawShared,
       effectiveExpenses: scenarioExpenses,
-      ssAmount: retDrawShared.ssAmount * scenarioRetYearFactor,
+      ssAmount: scenarioSS ? scenarioSS.householdSS : retDrawShared.ssAmount * scenarioRetYearFactor,
       pensionAmount: retDrawShared.pensionAmount * scenarioRetYearFactor,
       startBal,
       startAge: scenarioRetAge,
@@ -872,7 +932,7 @@ export function calcWhatIfScenario({
     farWalk = buildRetirementDrawdown({
       ...retDrawShared,
       effectiveExpenses: scenarioExpenses,
-      ssAmount: retDrawShared.ssAmount * scenarioRetYearFactor,
+      ssAmount: scenarioSS ? scenarioSS.householdSS : retDrawShared.ssAmount * scenarioRetYearFactor,
       pensionAmount: retDrawShared.pensionAmount * scenarioRetYearFactor,
       startBal,
       startAge: scenarioRetAge,
