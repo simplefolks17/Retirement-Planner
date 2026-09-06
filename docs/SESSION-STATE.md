@@ -74,9 +74,9 @@ Completeness at time of death:
 | `audit-auto-resolution.md` | 199 | **6 (A–F)** | Sections 1–3 still say "to be filled" — the sentinel inventory TABLE, its headline deliverable, was never written |
 | `audit-test-coverage.md` | 555 | coverage matrix + ranked cells + weak-assertion sweep | most complete; died at the end of §3 |
 
-**MINED SO FAR: only `audit-preview-parity`, and only Findings 1/3/4** (-> BUG-138, BUG-137,
-BUG-136). Roughly **22 findings across the other three reports remain unmined** — they are
-committed and safe, but nobody has verified or filed them.
+**MINED SO FAR: `audit-preview-parity` Findings 1/3/4, and `audit-basis-scope` F3+F3b** (-> BUG-138, BUG-137,
+BUG-136). (-> BUG-139/140/141 fixed, BUG-142 filed). Roughly **19 findings remain unmined** — committed and
+safe, but not yet verified or filed. Mining is IN PROGRESS, working basis-scope F1..F8 in order.
 
 Two spot-checks done cold, both CONFIRMED, which is the evidence that mining beats re-running:
 - **basis-scope F3 (HIGH, shipped default)** — `contribSeries` (App.jsx:1003) reads `row.trad`/

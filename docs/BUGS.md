@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 14 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 15 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,6 +15,7 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
+| **BUG-142** | Low-Medium | Sources chart's contribution line uses STATIC contribution scalars while Journey/Statement's "you'll contribute $X" uses actual per-year amounts — 2,134,750 vs 2,393,343 on the same MFJ household | `src/App.jsx`, `src/model/flow-down.js` |
 | **BUG-136** | Medium-High | What-if scenarios inherit the BASE plan's Roth-conversion schedule/window instead of rebuilding it at the scenario's retirement age — a retire-earlier preview converts $420k where committing the same change converts $1,020,000 | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-125** | Medium | "Guaranteed for life" ignores a spouse's own SS claiming age — only the primary's timing gates the card | `src/App.jsx`, `src/model/retirement-income.js` |
 | **BUG-124** | Low | "Tax in retirement" isn't wired to the dollar-basis toggle, and is entangled with BUG-38's known undercounting | `src/horizon/screens/PlanScreen.jsx`, `src/model/retirement-engine.js` |
@@ -33,6 +34,29 @@ place this gets checked).
 ---
 
 ## Open Issues
+
+### BUG-142 — the Sources chart's contribution line and Journey/Statement's "you'll contribute $X over your career" state the same concept from two different bases (found 2026-09-06, while fixing BUG-139/140/141)
+
+**Owner:** me_theguy. **Severity: LOW-MEDIUM — both figures are household and both are now
+correctly scoped, so this is no longer a scope bug; it is an accuracy mismatch between an
+acknowledged approximation and an exact figure, on two surfaces a user can compare.**
+**What:** `contribSeries` sums STATIC contribution scalars (`contrib401k + contribRoth + … +
+spouseContrib…`) once per year — the memo has always been labelled "approximate". `flowDown`
+(`src/model/flow-down.js:47`) sums the simulation's ACTUAL per-year contributions, which grow with
+income and respect the IRS limit ramps. Measured on the same MFJ household (spouse 30, $120k spouse
+income, $400k/$20k spouse 401k): the Sources line reaches **2,134,750** at retirement while
+`flowDown.totalContrib` reports **2,393,343** — a $258,593 (12%) gap between two surfaces
+describing "what you put in".
+**Why not fixed with BUG-139/140/141:** those three were defects (a wrong key, a wrong scope, a
+wrong shape). This one is a deliberate approximation that is now merely *visible*, and closing it
+means reading `c401k`/`cRoth`/`cTaxable`/`cHSA` off the sim rows for both earners — which also
+raises a product question the static version never had to answer: does "Your contributions" include
+the EMPLOYER MATCH (`c401k` is employee + employer; `c401kEmployee` is the employee half)? Matching
+`flowDown` exactly requires picking one, and that choice changes the headline on two screens.
+**Where:** `src/App.jsx` (`contribSeries`), `src/model/flow-down.js:47` (`totalContrib`).
+**Not fixed here.** Filed with the measured gap.
+
+---
 
 ### BUG-136 — a what-if scenario inherits the BASE plan's Roth-conversion schedule instead of rebuilding the window at the scenario's own retirement age (found 2026-09-05, same decomposition)
 
@@ -648,6 +672,54 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+
+### BUG-139 / BUG-140 / BUG-141 — the Sources chart's contribution line was pinned to zero, primary-only, and drawn out of register (found 2026-09-06, basis/scope audit F3+F3b; all three verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: HIGH — wrong at the SHIPPED DEFAULT, on a whole chart view, and
+wrong in the most flattering possible direction: it credited every contributed dollar to market
+growth.** Asserted by **no test at all** before this fix, which is why it survived.
+
+**BUG-139 (the root).** `contribSeries` (`src/App.jsx`) capped each year's cumulative contributions
+at the account total, but computed that cap with an inlined FOURTH copy of the account-sum reading
+`row.trad` / `.roth` / `.taxable` / `.hsa`. `runSimulation` has never emitted those names — its rows
+are keyed `"Trad 401k"` / `"Roth IRA"` / `"Taxable"` / `"HSA"` / `tradGross`. All four coalesced to
+0 through `?? 0`, so `rowTotal === 0` and `Math.min(cum + contrib, 0)` pinned the series to zero
+from the second point onward.
+Measured at the shipped default: **1 nonzero point out of 60** (165,000 at age 31, then 0 forever),
+while the chart at age 40 read 655,024. The entire $4,035,855 arc rendered as "Market growth".
+The `?? 0` fallbacks are what hid the drift — precisely the fabrication CLAUDE.md rule 10 forbids.
+**Fixed** by calling the canonical `sumAccountRow` (`accumulation.js`), so the key names cannot
+drift again.
+
+**BUG-140 (scope).** The series was PRIMARY-only while `accumChart` — the arc it is subtracted from
+— is HOUSEHOLD (`buildAccumChart` folds in `spouseSimData` + spouse starting balances). A spouse's
+entire rollover was therefore shaded as market growth: measured 165,000 vs a chart starting at
+565,000 with a $400k spouse balance. **Fixed** by including the spouse's starting balances and
+contribution scalars, zipping the spouse sim by INDEX exactly as `buildAccumChart` does. No spouse
+⇒ `spouseSimData` is `[]` and the four scalars are 0 ⇒ byte-identical to the primary-only series.
+
+**BUG-141 (geometry) — exposed BY the BUG-139 fix, not pre-existing in visible form.** The series
+started at `currentAge + 1` and ran the FULL 60-year sim to age 90, while `ArcGraph`'s
+`sourcesModel` closes the growth band with `tPts.slice(0, cPts.length)` — a slice by **count**, not
+by age. So the band was drawn a year out of register and extended decades past retirement, into
+ages where the portfolio is being DRAWN DOWN and a cumulative-contributions line is meaningless.
+Invisible while the series was flat at zero. `sourcesModel`'s own comment ("cPts covers
+currentAge→retirementAge") was documenting an intent the code did not have. **Fixed** by shaping
+the series row-for-row like `buildAccumChart`: same first row at `currentAge`, same end-of-year
+semantics, same `break` at the retirement age.
+
+**Verification.** Post-fix the default series is 36 points spanning age 30→65, strictly increasing,
+first point equal to `chartData[0].total`, and never exceeding the chart total at any age (the
+invariant that makes the growth band non-negative). Arithmetic checks exactly:
+`165,000 + 35 × 24,850 = 1,034,750` at retirement (default), `565,000 + 35 × 44,850 = 2,134,750`
+(MFJ). Each of the three fixes was reverted independently and confirmed to fail its own test:
+BUG-139 → "expected 1 to be 36"; BUG-140 → "expected 165000 to be 565000"; BUG-141 → "expected 31
+to be 30" and a contribution line exceeding the chart total. Six regression tests added in the new
+`src/__tests__/contrib-series-wiring.test.js`. All four golden masters unmoved — `contribSeries`
+feeds only the Sources view.
+
+---
 
 
 ### BUG-135 — a what-if scenario never re-derives Social Security for the scenario's OWN working years; it only inflation-re-bases the base plan's benefit (found 2026-09-05, preview/commit decomposition while settling BUG-102; FIXED 2026-09-06)

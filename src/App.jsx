@@ -25,7 +25,7 @@ import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification, sumAccountRow } from "./model/accumulation.js";
 import { fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
@@ -992,19 +992,56 @@ export default function App() {
     () => walkBalanceAt(retirementWalk.rows, safeLifeExp),
     [retirementWalk, safeLifeExp]);
 
-  // Approximate contribution series for Horizon Sources view (cumulative contributions, no growth)
+  // Approximate contribution series for Horizon's Sources view: cumulative money PUT IN
+  // (starting balances + contributions, no growth), which the chart subtracts from the
+  // total arc to shade the "Market growth" band.
+  //
+  // BUG-139: the per-row cap used to be an inlined FOURTH copy of the account-sum, and it
+  // read `row.trad`/`.roth`/`.taxable`/`.hsa` — names `runSimulation` has never produced
+  // (its rows are keyed "Trad 401k"/"Roth IRA"/"Taxable"/"HSA"). All four coalesced to 0
+  // via `?? 0`, so the cap was 0 and `Math.min` pinned the whole series to zero from the
+  // second point on: the chart credited 100% of the portfolio to market growth at the
+  // SHIPPED DEFAULT. Now uses the canonical `sumAccountRow` — one implementation, so the
+  // key names cannot drift again (this is exactly the `?? 0`-fabrication rule 10 forbids).
+  //
+  // BUG-140: HOUSEHOLD, matching the chart it is drawn against. `accumChart` folds in the
+  // spouse's balances/growth via buildAccumChart, so a primary-only contribution line
+  // silently attributed the spouse's entire rollover to "Market growth". The spouse is
+  // zipped by INDEX here for the same reason buildAccumChart does it (see its comment).
+  // No spouse ⇒ spouseSimData is [] and the four spouse scalars are 0 ⇒ byte-identical to
+  // the primary-only series.
   const contribSeries = useMemo(() => {
     if (!simData.length) return null;
-    const initBal = (bal401k ?? 0) + (balRoth ?? 0) + (balTaxable ?? 0) + (balHSA ?? 0);
+    const initBal = (bal401k ?? 0) + (balRoth ?? 0) + (balTaxable ?? 0) + (balHSA ?? 0)
+      + (spouseBal401k ?? 0) + (spouseBalRoth ?? 0) + (spouseBalTaxable ?? 0) + (spouseBalHSA ?? 0);
+    const annualContrib = contrib401k + contribRoth + contribTaxable + contribHSA
+      + spouseContrib401k + spouseContribRoth + spouseContribTaxable + spouseContribHSA;
+    // BUG-141: shaped to match buildAccumChart ROW FOR ROW — same first row at
+    // currentAge, same end-of-year semantics, same `break` at the retirement age.
+    // It used to start a year late (currentAge+1) and run the FULL 60-year sim to
+    // age 90, while ArcGraph's sourcesModel closes the growth band with
+    // `tPts.slice(0, cPts.length)` — a slice by COUNT, not by age. So the band was
+    // drawn a year out of register and extended decades past retirement, into ages
+    // where the portfolio is being DRAWN DOWN and a cumulative-contributions line is
+    // meaningless. Invisible until now only because the series was pinned to zero
+    // (BUG-139); fixing that exposed it. sourcesModel's own comment ("cPts covers
+    // currentAge→retirementAge") describes the behaviour implemented here — it was
+    // documenting an intent the code did not have.
     let cumContrib = initBal;
-    const series = [];
-    for (const row of simData) {
+    const series = [{ age: currentAge, contrib: cumContrib }];
+    for (let i = 0; i < simData.length; i++) {
+      const row = simData[i];
+      const rowTotal = sumAccountRow(row)
+        + (spouseSimData[i] ? sumAccountRow(spouseSimData[i]) : 0);
+      cumContrib = Math.min(cumContrib + annualContrib, rowTotal);
       series.push({ age: row.age, contrib: cumContrib });
-      const rowTotal = (row.trad ?? 0) + (row.roth ?? 0) + (row.taxable ?? 0) + (row.hsa ?? 0);
-      cumContrib = Math.min(cumContrib + (contrib401k + contribRoth + contribTaxable + contribHSA), rowTotal);
+      if (row.age >= safeRetAge) break;
     }
     return series;
-  }, [simData, bal401k, balRoth, balTaxable, balHSA, contrib401k, contribRoth, contribTaxable, contribHSA]);
+  }, [simData, spouseSimData, currentAge, safeRetAge, bal401k, balRoth, balTaxable, balHSA,
+      spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
+      contrib401k, contribRoth, contribTaxable, contribHSA,
+      spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA]);
 
   // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA + ACA.
   // Only runs in custom mode — bracket mode uses per-year targets derived from the bracket
