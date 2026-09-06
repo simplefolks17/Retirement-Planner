@@ -1114,6 +1114,11 @@ describe("BUG-102 — a scenario that itself creates a spouse gap engages Option
     expect(scen.scenarioYears).toBe(committed.yearsSustained);
     expect(scen.scenarioDepletionAge).toBe(committed.planView.depletionAge);
     expect(scen.scenarioTotalAtRet).toBe(committed.totalAtRet);
+    // CodeRabbit (PR #67): the four scalars above do not establish the "byte-identical"
+    // claim on their own — calcWhatIfScenario also returns `chart`, which App exposes as
+    // horizonProps.chartData, and a divergence in any row could pass while invalidating
+    // the decomposition this test exists to prove. Measured: 24 rows, zero differences.
+    expect(scen.chart).toEqual(committed.chartData);
     app.unmount();
   });
 });

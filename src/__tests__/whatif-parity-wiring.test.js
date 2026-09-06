@@ -171,6 +171,10 @@ describe("FULL PARITY — preview equals commit exactly when no known gap is in 
 
       expect(preview.scenarioTotalAtRet).toBe(committed.totalAtRet);
       expect(preview.scenarioYears).toBe(committed.yearsSustained);
+      // The whole chart, not just the summary scalars (CodeRabbit, PR #67): a
+      // divergence in any accumulation or retirement row would otherwise pass a test
+      // whose name promises exact agreement.
+      expect(preview.chart).toEqual(committed.chartData);
       a2.unmount();
     });
   }
