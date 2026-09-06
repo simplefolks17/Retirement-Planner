@@ -9,7 +9,7 @@
 // accumulation-phase events) — never reimplements the walk (BUG-31 rule).
 // Baseline values are passed in from App.jsx to avoid re-computing them.
 
-import { runSimulation, projectedIncomeAtAge } from "./simulation.js";
+import { runSimulation, projectedIncomeAtAge, coupleContribEndAges } from "./simulation.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
@@ -367,7 +367,10 @@ export function calcWhatIfDelta({
     // them here would make a forced re-sim's basis asymmetric (BUG-75 fix; same
     // class as the BUG-34/BUG-61 basis mismatches).
     const raw = runSimulation({
-      ...simInputs, ...(contribOverrides ?? {}),
+      // BUG-138: same contribEnd coupling as calcWhatIfScenario's resim above —
+      // one shared rule, applied at both resim sites.
+      ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+      ...(contribOverrides ?? {}),
       moneyEvents: [...(simInputs.moneyEvents ?? []), ...accumEvents],
     });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
@@ -602,8 +605,13 @@ export function calcWhatIfScenario({
       // the "Trad 401k" key (added after runSimulation from tradGross), which
       // the raw simulation rows don't carry — without this, a re-sim's
       // accumulation chart would silently drop the 401k balance (BUG-35 display key).
-      resimRaw = runSimulation({ ...simInputs, moneyEvents: accumEvents })
-        .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+      // BUG-138: a contribEnd* that tracks the retirement age must move WITH the
+      // scenario, exactly as App.jsx's setRetirementAgeCoupled moves it on commit.
+      // Without this a work-longer preview stopped contributing at the BASE age.
+      resimRaw = runSimulation({
+        ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+        moneyEvents: accumEvents,
+      }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     } catch {
       return null;
     }

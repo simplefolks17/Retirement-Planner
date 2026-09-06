@@ -7,7 +7,7 @@ import {
 } from "../what-if.js";
 import { ASSUMPTIONS } from "../../config/irs-2026.js";
 import { calcEmployerMatch } from "../employer-match.js";
-import { runSimulation } from "../simulation.js";
+import { runSimulation, coupleContribEndAges } from "../simulation.js";
 import { buildRetirementDrawdown } from "../retirement-drawdown.js";
 import { buildRetirementPhase, buildSpouseRetirementSeed } from "../retirement-phase.js";
 import { buildAccumChart } from "../accumulation.js";
@@ -1077,8 +1077,15 @@ describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
     // Expected primary-only portion: re-sim the primary directly (same pattern the
     // "retire-earlier" engine-migration test above uses) and read the row at the
     // scenario's own retirement age.
-    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
-      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    // BUG-138: a scenario couples contribEnd* ages that track the retirement age, so
+    // the expected PRIMARY side must model the same extra contribution years. Uses the
+    // shared helper rather than hand-edited ages, so these tests keep asserting what
+    // they claim to (the spouse re-seed / the household chart) instead of accidentally
+    // asserting the absence of the coupling.
+    const primaryResim = runSimulation({
+      ...coupleContribEndAges(primarySimInputs, spSafeRetAge, laterRetAge),
+      moneyEvents: primarySimInputs.moneyEvents ?? [],
+    }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     const primaryAtScenario = primaryResim[laterRetAge - primarySimInputs.currentAge - 1];
     const primaryPortion = (primaryAtScenario.tradGross ?? 0)
       + (primaryAtScenario["Roth IRA"] ?? 0) + (primaryAtScenario["Taxable"] ?? 0) + (primaryAtScenario["HSA"] ?? 0);
@@ -1115,8 +1122,15 @@ describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
     // is about the resim path actually READING spouseSeed.rothSeed/taxableSeed/
     // hsaSeed at all — before the fix these three were silently dropped from
     // scenarioTotalAtRet on ANY forced resim, not just when they'd changed value.
-    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
-      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    // BUG-138: a scenario couples contribEnd* ages that track the retirement age, so
+    // the expected PRIMARY side must model the same extra contribution years. Uses the
+    // shared helper rather than hand-edited ages, so these tests keep asserting what
+    // they claim to (the spouse re-seed / the household chart) instead of accidentally
+    // asserting the absence of the coupling.
+    const primaryResim = runSimulation({
+      ...coupleContribEndAges(primarySimInputs, spSafeRetAge, laterRetAge),
+      moneyEvents: primarySimInputs.moneyEvents ?? [],
+    }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     const primaryAtScenario = primaryResim[laterRetAge - primarySimInputs.currentAge - 1];
     const primaryRothTaxableHsa = (primaryAtScenario["Roth IRA"] ?? 0)
       + (primaryAtScenario["Taxable"] ?? 0) + (primaryAtScenario["HSA"] ?? 0);
@@ -1134,8 +1148,15 @@ describe("calcWhatIfScenario — spouse re-seed (BUG-77)", () => {
     const laterRetAge = spSafeRetAge + 5;
     const s = calcWhatIfScenario(householdBundle, { retirementAge: laterRetAge });
 
-    const primaryResim = runSimulation({ ...primarySimInputs, moneyEvents: primarySimInputs.moneyEvents ?? [] })
-      .map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    // BUG-138: a scenario couples contribEnd* ages that track the retirement age, so
+    // the expected PRIMARY side must model the same extra contribution years. Uses the
+    // shared helper rather than hand-edited ages, so these tests keep asserting what
+    // they claim to (the spouse re-seed / the household chart) instead of accidentally
+    // asserting the absence of the coupling.
+    const primaryResim = runSimulation({
+      ...coupleContribEndAges(primarySimInputs, spSafeRetAge, laterRetAge),
+      moneyEvents: primarySimInputs.moneyEvents ?? [],
+    }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     const expectedAccum = buildAccumChart({
       simData: primaryResim, safeRetAge: laterRetAge, currentAge: primarySimInputs.currentAge,
       bal401k: primarySimInputs.bal401k, balRoth: primarySimInputs.balRoth,

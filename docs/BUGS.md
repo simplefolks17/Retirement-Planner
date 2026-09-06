@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 16 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 15 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,7 +15,6 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
-| **BUG-138** | **HIGH** | `contribEnd*` frozen at the base retirement age, so every work-longer preview drops the extra contributions committing the same change would make — $315k / 0.37 yrs at +5 on the DEFAULT household | `src/App.jsx`, `src/model/what-if.js` |
 | **BUG-135** | **HIGH** | What-if scenarios never re-derive Social Security for the scenario's OWN working years — only an inflation re-base. Retiring 10 yrs earlier previews +90% too much SS; working 5 yrs longer previews −23% too little | `src/model/what-if.js` |
 | **BUG-136** | Medium-High | What-if scenarios inherit the BASE plan's Roth-conversion schedule/window instead of rebuilding it at the scenario's retirement age — a retire-earlier preview converts $420k where committing the same change converts $1,020,000 | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-125** | Medium | "Guaranteed for life" ignores a spouse's own SS claiming age — only the primary's timing gates the card | `src/App.jsx`, `src/model/retirement-income.js` |
@@ -35,39 +34,6 @@ place this gets checked).
 ---
 
 ## Open Issues
-
-### BUG-138 — `contribEnd*` is frozen at the base retirement age, so every "work longer" preview silently drops the contributions committing the same change would make (found 2026-09-06, preview/commit parity audit; verified independently on the default household)
-
-**Owner:** me_theguy. **Severity: HIGH — live on the golden-master DEFAULT household (no spouse,
-no unusual inputs), on the Strategies "Working longer" card, and it is systematically
-PESSIMISTIC: it under-reports the benefit of the exact action the card exists to recommend.**
-**What:** `whatIfSimInputs` (`src/App.jsx:1283-1304`) carries `contribEnd401k/Roth/Taxable/HSA`
-verbatim, so the preview's re-sim (`what-if.js:604`) stops contributions at the BASE plan's
-retirement age. Committing the same age goes through `setRetirementAgeCoupled`
-(`src/App.jsx:1307-1315`), which bumps every `contribEnd*` that tracks the retirement age
-forward — so the committed plan gets N extra years of contributions the preview never modelled.
-**Measured on the DEFAULT household** (no setters at all; `retirementAge` 65, all `contribEnd*`
-65). `retirementWalk.depletionAge` used for both sides — `planView.depletionAge` is
-lifeExpect-bounded and reads `null` past 90, which is not the comparable field:
-
-| scenario | preview `totalAtRet` | committed | diff | preview years | committed years |
-|---|---|---|---|---|---|
-| +1 (retire 66) | 4,231,373 | 4,285,559 | **−54,186** | 22.170 | 22.250 |
-| +3 (retire 68) | 4,651,405 | 4,826,584 | **−175,179** | 22.501 | 22.726 |
-| +5 (retire 70) | 5,113,300 | 5,428,001 | **−314,701** | 22.804 | 23.177 (depl 93 vs 94) |
-
-**Mechanism confirmed by the asymmetry:** retiring EARLIER shows diff **exactly 0** (retire 62:
-preview and committed both 3,361,963), because the coupling only fires when
-`contribEnd === retirementAge` and only moves it upward. Work-longer scenarios only.
-**Fix shape:** apply the same coupling inside the scenario — when the scenario's retirement age
-differs, advance any `contribEnd*` that equals the BASE `retirementAge` to the scenario's age
-before the re-sim. The rule already exists in `setRetirementAgeCoupled`; extract it into a shared
-pure helper so the preview and the commit path cannot drift (BUG-31's class), rather than
-copying the four comparisons into `what-if.js`.
-**Where:** `src/App.jsx:1283-1304` (the bundle), `src/App.jsx:1307-1315` (the coupling),
-`src/model/what-if.js:604` (the re-sim that consumes the frozen values).
-
----
 
 ### BUG-135 — a what-if scenario never re-derives Social Security for the scenario's OWN working years; it only inflation-re-bases the base plan's benefit (found 2026-09-05, preview/commit decomposition while settling BUG-102)
 
@@ -733,6 +699,63 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+
+### BUG-138 — `contribEnd*` is frozen at the base retirement age, so every "work longer" preview silently drops the contributions committing the same change would make (found 2026-09-06, preview/commit parity audit; verified independently on the default household; FIXED same day)
+
+**Owner:** me_theguy. **Severity: HIGH — live on the golden-master DEFAULT household (no spouse,
+no unusual inputs), on the Strategies "Working longer" card, and it is systematically
+PESSIMISTIC: it under-reports the benefit of the exact action the card exists to recommend.**
+**What:** `whatIfSimInputs` (`src/App.jsx:1283-1304`) carries `contribEnd401k/Roth/Taxable/HSA`
+verbatim, so the preview's re-sim (`what-if.js:604`) stops contributions at the BASE plan's
+retirement age. Committing the same age goes through `setRetirementAgeCoupled`
+(`src/App.jsx:1307-1315`), which bumps every `contribEnd*` that tracks the retirement age
+forward — so the committed plan gets N extra years of contributions the preview never modelled.
+**Measured on the DEFAULT household** (no setters at all; `retirementAge` 65, all `contribEnd*`
+65). `retirementWalk.depletionAge` used for both sides — `planView.depletionAge` is
+lifeExpect-bounded and reads `null` past 90, which is not the comparable field:
+
+| scenario | preview `totalAtRet` | committed | diff | preview years | committed years |
+|---|---|---|---|---|---|
+| +1 (retire 66) | 4,231,373 | 4,285,559 | **−54,186** | 22.170 | 22.250 |
+| +3 (retire 68) | 4,651,405 | 4,826,584 | **−175,179** | 22.501 | 22.726 |
+| +5 (retire 70) | 5,113,300 | 5,428,001 | **−314,701** | 22.804 | 23.177 (depl 93 vs 94) |
+
+**Mechanism confirmed by the asymmetry:** retiring EARLIER shows diff **exactly 0** (retire 62:
+preview and committed both 3,361,963), because the coupling only fires when
+`contribEnd === retirementAge` and only moves it upward. Work-longer scenarios only.
+**Fix shape:** apply the same coupling inside the scenario — when the scenario's retirement age
+differs, advance any `contribEnd*` that equals the BASE `retirementAge` to the scenario's age
+before the re-sim. The rule already exists in `setRetirementAgeCoupled`; extract it into a shared
+pure helper so the preview and the commit path cannot drift (BUG-31's class), rather than
+copying the four comparisons into `what-if.js`.
+**Where:** `src/App.jsx:1283-1304` (the bundle), `src/App.jsx:1307-1315` (the coupling),
+`src/model/what-if.js:604` (the re-sim that consumes the frozen values).
+
+**FIXED 2026-09-06.** The rule — "a `contribEnd*` equal to the retirement age tracks it" — now
+lives once, as `coupleContribEndAges(ends, baseRetAge, scenarioRetAge)` in
+`src/model/simulation.js`, and is applied by BOTH `setRetirementAgeCoupled` (the committed plan)
+and what-if.js's TWO resim sites (`calcWhatIfScenario` and `calcWhatIfDelta`). A `contribEnd*`
+the user deliberately set away from the retirement age is left alone, so "stop contributing at 60
+but retire at 65" still survives a scenario.
+**Verification:** `scenarioTotalAtRet` now equals the committed plan EXACTLY at +1/+3/+5 on the
+default household (was −54,186 / −175,179 / −314,701), and retiring earlier stays at diff 0.
+Revert-and-confirm run and restored: reverting reproduces exactly the filed numbers.
+**Golden master moved, deliberately — T-X.4's scenario locks.** `totalAtRet` +35,127 / +114,400 /
++207,149 (rising with the number of extra contribution years), `depletionAge` 111→112, 129→137,
+164→never, and spillover FALLING 793,729→738,930, 606,529→426,975, 425,758→99,220 (a better-funded
+primary reaches less often into the spouse's held-out bucket). Every sign was checked before
+re-locking, and T-X.4 was re-confirmed to still catch a BUG-127 revert (111 vs 112) and a BUG-134
+revert (113 vs 112) afterwards, so the re-lock did not cost its sensitivity.
+**Three test expectations in `what-if.test.js` also updated** — they computed their own expected
+values with a bare `runSimulation`, so they were silently asserting the ABSENCE of the coupling.
+They now call the shared helper, which keeps them asserting what they claim to (the spouse
+re-seed, the household accumulation chart) rather than being weakened.
+**New home for this bug class:** `src/__tests__/whatif-parity-wiring.test.js`, organised by the
+INVARIANT (preview X then commit X must agree) rather than by feature — the six bugs in this class
+were all missed because the relevant assertions were scattered across feature-organised files.
+
+---
 
 
 ### BUG-137 — a what-if scenario ignores App's `hasActiveSpouseGap` hold-out gate, so every preview that forces a resim re-introduces BUG-93 (found 2026-09-06, preview/commit parity audit; verified independently; FIXED same day)

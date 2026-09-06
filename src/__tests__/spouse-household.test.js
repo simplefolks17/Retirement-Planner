@@ -930,10 +930,23 @@ describe("spouse-household golden master (T-X.4, exact-locked — the auto/null 
   // Scenario locks. BUG-127 (the spouse's retirement age frozen at the base
   // plan's value) and BUG-134 (the hold-out gate not moving with the re-seeded
   // maps) are BOTH scenario-path bugs, invisible to any base-plan-only lock.
+  //
+  // RE-LOCKED 2026-09-06 (BUG-138). A work-longer scenario now couples the
+  // contribEnd* ages that track the retirement age, exactly as committing the same
+  // change does — so these scenarios gained the extra contribution years the preview
+  // used to drop. Every movement is monotone in the scenario's own direction and was
+  // checked for sign before re-locking, not just pasted:
+  //   totalAtRet   +35,127 / +114,400 / +207,149 — rising with the number of extra
+  //                contribution years (1 / 3 / 5). Was: 3,796,555 / 4,338,937 / 4,956,038.
+  //   depletionAge 111->112, 129->137, 164->never — more money lasts longer.
+  //   spillover    793,729->738,930, 606,529->426,975, 425,758->99,220 — FALLING,
+  //                because a better-funded primary reaches less often into the
+  //                spouse's held-out bucket. The hold-out is still binding (all three
+  //                nonzero), so this fixture keeps its BUG-134 sensitivity.
   const S = {
-    58: { depletionAge: 111, totalAtRet: 3_796_555, spillover: 793_729 },
-    60: { depletionAge: 129, totalAtRet: 4_338_937, spillover: 606_529 },
-    62: { depletionAge: 164, totalAtRet: 4_956_038, spillover: 425_758 },
+    58: { depletionAge: 112,  totalAtRet: 3_831_682, spillover: 738_930 },
+    60: { depletionAge: 137,  totalAtRet: 4_453_337, spillover: 426_975 },
+    62: { depletionAge: null, totalAtRet: 5_163_187, spillover:  99_220 },
   };
 
   it("resolves the spouse's retirement age from the AUTO default, not an explicit input", () => {

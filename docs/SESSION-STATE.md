@@ -51,10 +51,11 @@ self-reports and are NOT trusted until re-verified here** — status below.
 ### NEXT STEPS (in order)
 1. ~~Verify the `contribEnd*` freeze~~ DONE -> BUG-138 filed.
 2. ~~Verify the scenario hold-out gate~~ DONE -> BUG-137 filed, BUG-102's closure amended.
-3. **Implement the four what-if fixes together** — all four live in `calcWhatIfScenario`
-   and share one test fixture: BUG-137 (scenario gate), BUG-138 (contribEnd coupling),
-   BUG-135 (SS re-derivation), BUG-136 (conversion window). Extract shared predicates
-   rather than copying logic into what-if.js (BUG-31's class).
+3. ~~BUG-137 (scenario hold-out gate)~~ FIXED + pushed.
+   ~~BUG-138 (contribEnd coupling)~~ FIXED. Remaining: **BUG-135** (SS re-derivation),
+   **BUG-136** (conversion window). Both are pinned as CURRENT behaviour in
+   `src/__tests__/whatif-parity-wiring.test.js` — fixing either will fail that file
+   loudly, by design; replace the inverted assertion and drop its bug reference.
 4. Verify the two remaining unverified agent findings (`spouseSimData` freeze;
    `calcWhatIfDelta` never got the engine) and file what survives.
 5. Skim the other three audit reports (auto-resolution, basis/scope, test-coverage); file

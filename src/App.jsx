@@ -8,7 +8,7 @@ import {
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
-import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge } from "./model/simulation.js";
+import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge, coupleContribEndAges } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -1302,12 +1302,19 @@ export default function App() {
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.
+  // BUG-138: the "a contribEnd that equals the retirement age tracks it" rule now
+  // lives in ONE place (coupleContribEndAges, simulation.js) and is applied both here
+  // (the committed plan) and at what-if.js's two resim sites (previews). They used to
+  // disagree: previews kept the BASE age, so a work-longer scenario silently dropped
+  // the extra contributions committing the same change actually makes.
   const setRetirementAgeCoupled = useCallback(v => {
     setRetirementAge(v);
-    if (contribEnd401k    === retirementAge) setContribEnd401k(v);
-    if (contribEndRoth    === retirementAge) setContribEndRoth(v);
-    if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
-    if (contribEndHSA     === retirementAge) setContribEndHSA(v);
+    const next = coupleContribEndAges(
+      { contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA }, retirementAge, v);
+    if (next.contribEnd401k    !== contribEnd401k)    setContribEnd401k(next.contribEnd401k);
+    if (next.contribEndRoth    !== contribEndRoth)    setContribEndRoth(next.contribEndRoth);
+    if (next.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(next.contribEndTaxable);
+    if (next.contribEndHSA     !== contribEndHSA)     setContribEndHSA(next.contribEndHSA);
   }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
 
