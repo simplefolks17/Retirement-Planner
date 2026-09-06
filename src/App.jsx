@@ -1006,6 +1006,14 @@ export default function App() {
   // money when it is $1,353,625). Converted ONCE here, via the same bidirectional
   // helper (negative year count) the Plan screen's toTodayFactor uses — never a second
   // inline conversion (rule 11).
+  // BUG-146: totalAtRet expressed in TODAY's dollars. totalAtRet is a
+  // retirement-year figure; any claim of the form "grows Nx FROM TODAY" has to put
+  // both ends of the comparison in the same money. Converted ONCE here, with the same
+  // bidirectional helper balAt90Today uses (rule 11 — never a second inline
+  // conversion).
+  const totalAtRetToday = useMemo(
+    () => Math.round(totalAtRet * inflationRebaseFactor(inflationRate, -yearsToRetForBasis)),
+    [totalAtRet, inflationRate, yearsToRetForBasis]);
   const balAt90Today = useMemo(
     () => Math.round(balAt90 * inflationRebaseFactor(inflationRate, -yearsToRetForBasis)),
     [balAt90, inflationRate, yearsToRetForBasis]);
@@ -1748,8 +1756,16 @@ export default function App() {
     const savingsCoverUntil = (age) => planView.outlastsPlan === true
       || (planView.depletionAge != null && planView.depletionAge >= age);
     return {
-      wealthMultiplier: currentSaved > 0
-        ? Math.round((totalAtRet / currentSaved) * 10) / 10
+      // BUG-146: "grows Nx from today" was comparing a HOUSEHOLD, RETIREMENT-YEAR
+      // numerator against a PRIMARY-ONLY, TODAY's-dollar denominator — both axes of
+      // rule 11 wrong in one ratio. Measured: 24.5x shown vs 6.2x honest at the
+      // no-spouse default (basis only), and 57.2x vs 3.6x once a spouse has balances
+      // (basis + a $500k scope gap). Both ends are now household and both are in
+      // today's dollars, so the sentence the screen renders is the sentence the
+      // number supports. flowData.startPortfolio is the SAME household starting
+      // balance the Flow-Down waterfall uses — not a fifth inline sum.
+      wealthMultiplier: flowData.startPortfolio > 0
+        ? Math.round((totalAtRetToday / flowData.startPortfolio) * 10) / 10
         : null,
       // A DIFFERENT comparison from the flows above (today's spend vs. today's
       // take-home) — basis-invariant by construction, so it is NOT toggled.
@@ -1860,7 +1876,7 @@ export default function App() {
       spouseIncomeScopeNote,
       spouseSpilloverNote,
     };
-  }, [currentSaved, totalAtRet, takeHome, effectiveExpenses, retSpendBasis,
+  }, [flowData, totalAtRetToday, takeHome, effectiveExpenses, retSpendBasis,
       ssAtRet, retPensionBasis, retPensionAnnualBasis, effectivePension, inflationRate, yearsToRetForBasis,
       safeRetAge, safeLifeExp, currentAge, takeHomeIsHousehold,
       includeSS, householdSS, ssClaimingAge, pensionMonthly, pensionStartAge,
@@ -2703,7 +2719,15 @@ export default function App() {
     retVals, simData,
     netConversionBenefit, yr1TaxSavings,
     // Sum of all current account balances — used by onboarding "savings today" field
-    currentTotalSaved: bal401k + balRoth + balTaxable + balHSA,
+    // BUG-147: HOUSEHOLD. The Accounts banner pairs this with totalAtRet, which is
+    // household — so a spouse's balances were missing from "Today" but present at
+    // "At retirement", and the arrow between them read as growth. accumulation.js's
+    // own comment already asserted that this figure and the chart's Today anchor
+    // "agree by construction"; the chart's first row is
+    // bal* + spouseStartingBal (buildAccumChart), so the claim was false for exactly
+    // the households that have a spouse. This restores it.
+    currentTotalSaved: bal401k + balRoth + balTaxable + balHSA
+      + spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
     // After-tax spendable reference (display-only; never a formula input — BUG-35).
     // Haircuts the gross Trad 401k at the retirement effective rate; Roth/HSA/Taxable
     // are already net. Used by the Accounts tab "gross vs spendable" headline.
@@ -2824,7 +2848,7 @@ export default function App() {
        balAt90, balAt90Today, contribSeries, householdSS, effectivePension, activity, setActivity,
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
-       bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
+       bal401k, balRoth, balTaxable, balHSA, spendableAtRet, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
        moneyEvents, saveEvent, removeEvent, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
        lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,

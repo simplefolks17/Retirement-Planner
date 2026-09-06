@@ -674,6 +674,55 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 
+### BUG-146 / BUG-147 — "grows Nx from today" and the Accounts banner compared a household retirement-year figure against a primary-only today's-dollar one (found 2026-09-06, basis/scope audit F4+F5; verified independently and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM-HIGH — both axes of rule 11 wrong inside a single
+comparison, on two prominent surfaces, and neither was locked by any golden master.**
+
+**BUG-146 — `planHighlights.wealthMultiplier`.** Rendered by `PlanScreen.jsx` as
+"grows {wealthMultiplier}× from today". The numerator was `totalAtRet` (HOUSEHOLD, RETIREMENT-YEAR
+dollars); the denominator was `currentSaved` (PRIMARY-ONLY, TODAY's dollars). "From today" is the
+falsifiable part: the numerator is not in today's dollars, and in a spouse household it is not even
+the same household.
+
+| household | shown | honest (same scope, same basis) |
+|---|---|---|
+| no-spouse default | **24.5×** | **6.2×** |
+| MFJ + $500k spouse balances | **57.2×** | **3.6×** |
+
+**Fixed** by putting both ends in household today's dollars: `totalAtRetToday /
+flowData.startPortfolio`. `totalAtRetToday` is converted ONCE in App.jsx with the same
+bidirectional helper `balAt90Today` uses (rule 11 — no second inline conversion), and
+`flowData.startPortfolio` is the SAME household starting balance the Flow-Down waterfall already
+uses, not a fifth inline sum.
+
+**BUG-147 — the Numbers → Accounts "Today → At retirement" banner.** `currentTotalSaved` was
+`bal401k + balRoth + balTaxable + balHSA` — primary-only — while the figure on the other end of the
+arrow (`totalAtRet`) is household. So a spouse's balances were absent from "Today" but present at
+"At retirement", and the arrow between them read as growth: measured 165,000 → 9,435,542 for a
+household whose real starting portfolio is 665,000.
+**This also silently falsified an existing invariant.** `accumulation.js` states that this figure
+and the chart's "Today" anchor "agree by construction" — but the chart's first row is
+`bal* + spouseStartingBal` (`buildAccumChart`), i.e. household. The comment was true only for
+households without a spouse. **Fixed** by making `currentTotalSaved` household; a test now asserts
+`currentTotalSaved === chartData[0].total`, which turns that comment from an aspiration into an
+enforced contract.
+**Basis, separately:** the two ends of the arrow are now the same scope but still different bases
+(today's vs retirement-year) — inherent to what the banner is showing. Rather than convert (which
+would make the headline disagree with every other surface showing `totalAtRet`), the retirement side
+now carries the same scoped local basis note this tab already uses on its income ledger:
+"in retirement-year dollars".
+
+**Verification.** Reverting each reproduces the filed numbers exactly: BUG-146 → "expected 24.5 to
+be 6.2" (and 39.1 vs 2.9 on the spouse fixture); BUG-147 → "expected 165000 to be 665000". All four
+golden masters unmoved — neither field is locked by any of them, which is precisely why a 24.5×
+claim could ship.
+**Where:** `src/App.jsx` (`totalAtRetToday`, `wealthMultiplier`, `currentTotalSaved`),
+`src/horizon/screens/NumbersScreen.jsx` (the banner's basis note).
+
+---
+
+
 ### BUG-145 — a non-MFJ filer is charged their spouse's FICA, lowering their own take-home and retirement spending target (found 2026-09-06, basis/scope audit F6; verified independently and FIXED same day)
 
 **Owner:** me_theguy. **Severity: MEDIUM-HIGH — a real MODEL error (not a display one) reachable

@@ -888,6 +888,15 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     ≈ {fmt(spendableAtRet)} after retirement taxes
                   </div>
                 )}
+                {/* BUG-147: the two sides of this arrow are the same SCOPE (both
+                    household, since currentTotalSaved was corrected) but not the same
+                    BASIS — "Today" is today's dollars, this side is retirement-year
+                    dollars. Without saying so the arrow reads as pure growth when part
+                    of it is inflation. Same scoped local basis note this tab already
+                    uses on its income ledger, rather than a page-wide claim (rule 11). */}
+                <div style={{ font: `400 11px ${SERIF}`, color: t.faint, marginTop: 2, fontStyle: "italic" }}>
+                  in retirement-year dollars
+                </div>
               </div>
             </div>
 

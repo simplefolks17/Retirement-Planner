@@ -212,3 +212,54 @@ describe("BUG-145 — a spouse's income does not move a single filer's plan", ()
     app.unmount();
   });
 });
+
+// ── BUG-146 / BUG-147 — "grows Nx from today" and the Accounts banner ─────────
+// Both compared a HOUSEHOLD, RETIREMENT-YEAR figure against a PRIMARY-ONLY,
+// TODAY's-dollar one — rule 11's two axes wrong in a single comparison. Neither was
+// locked by any golden master, which is why a 24.5x claim (honest: 6.2x) shipped.
+describe("BUG-146 / BUG-147 — same-scope, same-basis comparisons", () => {
+  it("BUG-147: currentTotalSaved is HOUSEHOLD, matching the totalAtRet it is paired with", () => {
+    const app = mount();
+    const primaryOnly = app.latest().currentTotalSaved;
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(30));
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(400_000));
+    app.fire(() => app.latest().spouseAccounts.roth.bal.set(100_000));
+    const l = app.latest();
+    expect(l.currentTotalSaved).toBe(primaryOnly + 500_000);
+    // accumulation.js states the Accounts banner and the chart's "Today" anchor
+    // "agree by construction" — the chart's first row is household, so this is the
+    // assertion that makes that comment true rather than aspirational.
+    expect(l.currentTotalSaved).toBe(l.chartData[0].total);
+    app.unmount();
+  });
+
+  it("BUG-146: wealthMultiplier compares household-today against household-today", () => {
+    const app = mount();
+    const l = app.latest();
+    const yrs = l.assumptions.retirementAge.value - l.assumptions.currentAge.value;
+    const factor = Math.pow(1 + l.assumptions.inflationRate.value / 100, yrs);
+    const honest = Math.round((l.totalAtRet / factor / l.flowDown.startPortfolio) * 10) / 10;
+    expect(l.planHighlights.wealthMultiplier).toBe(honest);
+    // Pre-fix this read totalAtRet / primaryOnlyTodaysBalances = 24.5x at the default.
+    expect(l.planHighlights.wealthMultiplier).toBeLessThan(
+      Math.round((l.totalAtRet / l.flowDown.startPortfolio) * 10) / 10);
+    app.unmount();
+  });
+
+  it("BUG-146: the multiplier stays honest once a spouse has balances (both axes)", () => {
+    const app = mount();
+    app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+    app.fire(() => app.latest().ss.isMarried.set(true));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(30));
+    app.fire(() => app.latest().profile.spouseIncome.set(120_000));
+    app.fire(() => app.latest().spouseAccounts.trad401k.bal.set(400_000));
+    const l = app.latest();
+    const yrs = l.assumptions.retirementAge.value - l.assumptions.currentAge.value;
+    const factor = Math.pow(1 + l.assumptions.inflationRate.value / 100, yrs);
+    expect(l.planHighlights.wealthMultiplier).toBe(
+      Math.round((l.totalAtRet / factor / l.flowDown.startPortfolio) * 10) / 10);
+    app.unmount();
+  });
+});
