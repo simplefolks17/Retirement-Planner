@@ -7,7 +7,7 @@ Each entry records **what was found**, **why it happens** (root cause), **status
 
 **Added 2026-07-27 (PR #62 review battery, forward-compat audit follow-through)** so a session can
 find a relevant entry without reading the whole file. This table covers ONLY the "Open Issues"
-section below (currently 15 entries) — the "Resolved Issues" section (~100 entries) stays
+section below (currently 16 entries) — the "Resolved Issues" section (~100 entries) stays
 chronological (newest at top) with no separate index; search by `BUG-NN` or feature name instead.
 **Keep this table in sync**: when an entry moves from Open to Resolved, delete its row here in the
 SAME commit (the Session Close-Out procedure's re-verification pass, CLAUDE.md, is the natural
@@ -15,6 +15,7 @@ place this gets checked).
 
 | ID | Severity | One-line | Key files |
 |---|---|---|---|
+| **BUG-149** | Medium | Conversion benefit subtracts 2026-nominal IRMAA / today's-dollar ACA costs from a retirement-year engine figure — the healthcare drag is understated ~3.95x, flipping the recommendation | `src/model/conversion-evaluation.js`, `src/model/healthcare.js` |
 | **BUG-142** | Low-Medium | Sources chart's contribution line uses STATIC contribution scalars while Journey/Statement's "you'll contribute $X" uses actual per-year amounts — 2,134,750 vs 2,393,343 on the same MFJ household | `src/App.jsx`, `src/model/flow-down.js` |
 | **BUG-136** | Medium-High | What-if scenarios inherit the BASE plan's Roth-conversion schedule/window instead of rebuilding it at the scenario's retirement age — a retire-earlier preview converts $420k where committing the same change converts $1,020,000 | `src/model/what-if.js`, `src/App.jsx` |
 | **BUG-125** | Medium | "Guaranteed for life" ignores a spouse's own SS claiming age — only the primary's timing gates the card | `src/App.jsx`, `src/model/retirement-income.js` |
@@ -34,6 +35,45 @@ place this gets checked).
 ---
 
 ## Open Issues
+
+### BUG-149 — the conversion verdict subtracts today's-dollar healthcare costs from a retirement-year engine benefit (found 2026-09-06, basis/scope audit F8; verified, filed for an owner decision)
+
+**Owner:** me_theguy. **Severity: MEDIUM — it does not move any headline balance, but it materially
+overstates the case FOR a Roth conversion on the screen whose whole job is to make that call.**
+**What:** `adjustedNetConversionBenefit = netConversionBenefit − irmaaCost − acaLoss`
+(`src/model/conversion-evaluation.js`). The minuend comes from the engine and is in the primary's
+RETIREMENT-YEAR real dollars (BUG-90/91's frame). The subtrahends are not:
+`irmaaCost` sums `IRMAA_BRACKETS_2026` surcharges (2026 nominal dollars) and `acaLoss` is the user's
+TODAY's-dollar `marketplaceMonthlyPremium × 12 × cliffYears` (`healthcare.js` `calcConversionCosts`).
+**Measured** (default + 600k/200k/300k balances, Medicare on, marketplace on at $1,200/mo):
+
+```
+netConversionBenefit (engine, retirement-year $) = 32,070
+irmaaCost            (2026 nominal $)            =  8,036   (7 x $1,148, ages 66-72)
+adjustedNetConversionBenefit as shipped          = 24,034
+the same surcharges in the engine's own basis    = 8,036 x 3.946 = 31,710
+adjusted, same-basis                             =    ~360
+```
+
+So the healthcare drag is understated by roughly the full inflation factor, and the verdict moves
+from "clearly worth converting" to "essentially a wash".
+**Why this is filed rather than fixed.** Two genuine choices belong to the owner, not to a
+mechanical fix:
+1. **Where to convert.** Converting inside `calcConversionCosts` would also inflate the DISPLAYED
+   per-year IRMAA rows ("$1,148 at age 66"), which users recognise from Medicare's published
+   tables. Converting only at the subtraction site keeps those rows recognisable and corrects only
+   the arithmetic — almost certainly right, but it means the strip's rows and its total are
+   deliberately in different bases, which needs a label.
+2. **Flat or per-year.** These surcharges land at specific ages (66…72), so an exact conversion
+   uses each year's own factor. The engine's own convention (BUG-91) converts flat to the
+   retirement year. Flat is consistent; per-year is more accurate. Picking flat inherits BUG-100's
+   known "brackets aren't inflated" simplification here too.
+**Related but distinct:** BUG-100 is about tax brackets inside the engine. This is a display/verdict
+figure assembled from two bases outside it.
+**Where:** `src/model/conversion-evaluation.js` (the subtraction), `src/model/healthcare.js`
+(`calcConversionCosts`).
+
+---
 
 ### BUG-142 — the Sources chart's contribution line and Journey/Statement's "you'll contribute $X over your career" state the same concept from two different bases (found 2026-09-06, while fixing BUG-139/140/141)
 
@@ -672,6 +712,28 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+
+### BUG-148 — Classic's Retirement Drawdown panel shows the same expense figure in two bases, 30px apart, with no label on either (found 2026-09-06, basis/scope audit F7; verified and FIXED same day)
+
+**Owner:** me_theguy. **Severity: MEDIUM — live at the shipped default, and verbatim BUG-114, which
+PR #66 fixed on the Plan screen only.**
+**What:** the slider "Estimated Annual Expenses in Retirement" renders `effectiveExpenses`
+(TODAY's dollars) with a "Monthly: $4,781" companion; ~30px below, the income breakdown box's first
+row renders `retSpendBasis` (RETIREMENT-YEAR dollars) under the near-identical label
+"Annual expenses". Neither carried a basis note. Measured at the shipped default: **57,377 vs
+226,415 — 3.946x**. The box is not an edge case: it renders whenever
+`householdSS > 0 || effectivePension > 0 || spouseIncomeAtRet > 0`, and `householdSS` is 48,120 at
+the default.
+**Fixed** by labelling both — "in today's dollars" on the slider's companion line, and the same
+"in age-{retirementAge} dollars — the same lifestyle after N years of inflation" note the Plan
+screen already uses under the breakdown. Both figures were always correct for their own purpose;
+the defect was that neither said which it was, so a reader compared them directly.
+**No behavioural test:** this change adds no computed value — both underlying figures
+(`effectiveExpenses`, `retSpendBasis`) are already locked by the golden masters, and the fix is
+label copy in Classic, which has no mounting harness. Recorded here rather than asserted.
+
+---
 
 
 ### BUG-146 / BUG-147 — "grows Nx from today" and the Accounts banner compared a household retirement-year figure against a primary-only today's-dollar one (found 2026-09-06, basis/scope audit F4+F5; verified independently and FIXED same day)

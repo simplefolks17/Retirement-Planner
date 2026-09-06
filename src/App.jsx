@@ -3757,6 +3757,7 @@ export default function App() {
               onChange={v => setAnnualExpenses(v)} />
             <p style={{ margin: "4px 0 0", fontSize: 10, color: C.muted }}>
               Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}</span>
+              &nbsp;·&nbsp; in today&rsquo;s dollars
               &nbsp;·&nbsp; default = your current living spend ({fmt(effectiveLiving)}/yr)
               {annualExpenses !== null && (
                 <button onClick={() => setAnnualExpenses(null)} style={{
@@ -3769,9 +3770,20 @@ export default function App() {
             {(householdSS > 0 || effectivePension > 0 || spouseIncomeAtRet > 0) && (
               <div style={{ marginTop: 10, background: C.card, borderRadius: 7,
                 padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+                {/* BUG-148: this breakdown is in RETIREMENT-YEAR dollars (retSpendBasis,
+                    the figure the engine actually draws against), while the slider ~30px
+                    above shows the same quantity in TODAY's dollars (effectiveExpenses).
+                    At the shipped default that is $226,415 under $57,377 — a 3.946x gap
+                    with no label on either, which is BUG-114's exact failure, fixed on
+                    the Plan screen by PR #66 and never swept in Classic. Both figures are
+                    correct for what they do; the defect was that neither said which it
+                    was. A scoped local note on each is the rule-11 remedy. */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <span style={{ fontSize: 10, color: C.muted }}>Annual expenses</span>
                   <span style={{ fontSize: 11, color: C.text, ...mono }}>{fmt(retSpendBasis)}</span>
+                </div>
+                <div style={{ fontSize: 9, color: C.muted, marginTop: -2, fontStyle: "italic" }}>
+                  in age-{safeRetAge} dollars — the same lifestyle after {yearsToRetForBasis} years of inflation
                 </div>
                 {effectiveSS > 0 && ssClaimingAge <= safeRetAge && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>

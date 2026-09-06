@@ -74,13 +74,14 @@ Completeness at time of death:
 | `audit-auto-resolution.md` | 199 | **6 (A–F)** | Sections 1–3 still say "to be filled" — the sentinel inventory TABLE, its headline deliverable, was never written |
 | `audit-test-coverage.md` | 555 | coverage matrix + ranked cells + weak-assertion sweep | most complete; died at the end of §3 |
 
-**MINED SO FAR: `audit-preview-parity` Findings 1/3/4; `audit-basis-scope` F1, F2, F3+F3b, F6** (-> BUG-138, BUG-137,
-BUG-136). (-> BUG-139/140/141/143/144/145 fixed, BUG-142 filed). Roughly **16 findings remain unmined** —
-committed and safe, but not yet verified or filed. Mining is IN PROGRESS.
-**Next up: basis-scope F4, F5, F7, F8**, then `audit-auto-resolution` (6 findings A-F, none touched)
+**MINED SO FAR: `audit-preview-parity` Findings 1/3/4; `audit-basis-scope` COMPLETE (F1-F8)** (-> BUG-138, BUG-137,
+BUG-136). (-> BUG-139/140/141/143/144/145/146/147/148 fixed; BUG-142/149 filed for owner decisions).
+**basis-scope is fully mined: 8 findings, 8 confirmed, 0 false positives.**
+Roughly **13 findings remain unmined**.
+**Next up: `audit-auto-resolution` (6 findings A-F, none touched)
 and `audit-test-coverage` (matrix + a flagged CLAUDE.md rule-1 violation: stale hard-coded IRS
 constants in test names AND assertions), then parity Findings 2/5/6/7.
-Every finding verified so far has CONFIRMED — 6 for 6 — so the remaining ones are worth working.
+Every finding verified so far has CONFIRMED — **11 for 11** — so the remaining ones are worth working.
 
 Two spot-checks done cold, both CONFIRMED, which is the evidence that mining beats re-running:
 - **basis-scope F3 (HIGH, shipped default)** — `contribSeries` (App.jsx:1003) reads `row.trad`/
