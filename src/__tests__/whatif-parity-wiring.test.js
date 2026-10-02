@@ -202,3 +202,73 @@ describe("FULL PARITY — preview equals commit exactly when no known gap is in 
     expect(late.scenarioYears).toBe(commit(70).years);
   });
 });
+
+describe("BUG-150 — a pinned ssOverride must not freeze the spouse's spousal floor", () => {
+  // Found by CodeRabbit on PR #67, against this file's own BUG-135 fix.
+  //
+  // scenarioSocialSecurity used to return early whenever the user had pinned an
+  // ssOverride, on the reasoning that a pinned figure is not working-years-derived.
+  // True of the PRIMARY's half — but `householdSS` also carries the spouse's, and on
+  // the "spousal" basis that half is calcSpousal(ssPIA, spouseClaimingAge), derived
+  // from the PRIMARY's PIA, which does move with the scenario's working years.
+  //
+  // Measured (MFJ, spousal basis, override 30,000, currentAge 50): committed
+  // householdSS is 39,716 retiring at 60, 46,759 at 70, 33,974 at 53. The frozen base
+  // value was therefore off by −7,043 and +5,742 — and the retire-earlier direction is
+  // the optimistic one. The "own" basis is genuinely invariant (50,000 at every age),
+  // so re-deriving is a no-op there; both cases are asserted below so a future
+  // "optimisation" cannot reintroduce the early return for either.
+  const setup = (basis) => (a) => {
+    a.fire(() => a.latest().profile.filingStatus.set("mfj"));
+    a.fire(() => a.latest().ss.isMarried.set(true));
+    a.fire(() => a.latest().assumptions.currentAge.set(50));
+    a.fire(() => a.latest().assumptions.inflationRate.set(0));
+    a.fire(() => a.latest().assumptions.retirementAge.set(60));
+    a.fire(() => a.latest().ss.spouseCurrentAge.set(50));
+    a.fire(() => a.latest().ss.spouseBenefitBasis.set(basis));
+    a.fire(() => a.latest().ss.spouseSsEstimate.set(20_000));
+    a.fire(() => a.latest().ss.ssOverride.set(30_000));
+    a.fire(() => a.latest().accounts.trad401k.bal.set(600_000));
+    a.fire(() => a.latest().spending.annualExpenses.set(75_000));
+    a.fire(() => a.latest().conversion.conversionMode.set("custom"));
+    a.fire(() => a.latest().conversion.annualConversionAmt.set(0));
+  };
+
+  it("the spousal floor really does move with the retirement age (fixture precondition)", () => {
+    const a = mount(); setup("spousal")(a);
+    const at60 = a.latest().householdSS;
+    a.fire(() => a.latest().assumptions.retirementAge.set(70));
+    const at70 = a.latest().householdSS;
+    expect(at70).toBeGreaterThan(at60);          // 46,759 vs 39,716
+    // ...and the primary's pinned override is still honoured, not recomputed.
+    expect(a.latest().ss.ssOverride.value).toBe(30_000);
+    a.unmount();
+  });
+
+  it("the 'own' basis is genuinely invariant — re-deriving must be a no-op there", () => {
+    const a = mount(); setup("own")(a);
+    const at60 = a.latest().householdSS;
+    a.fire(() => a.latest().assumptions.retirementAge.set(70));
+    expect(a.latest().householdSS).toBe(at60);   // 50,000 at both
+    a.unmount();
+  });
+
+  for (const basis of ["spousal", "own"]) {
+    for (const target of [53, 70]) {
+      it(`basis=${basis}, retire ${target}: preview matches commit with an override set`, () => {
+        const a1 = mount(); setup(basis)(a1);
+        const preview = calcWhatIfScenario(a1.latest().whatIfSimInputs, { retirementAge: target });
+        a1.unmount();
+
+        const a2 = mount(); setup(basis)(a2);
+        a2.fire(() => a2.latest().assumptions.retirementAge.set(target));
+        const committed = a2.latest();
+
+        expect(preview.scenarioYears).toBe(committed.yearsSustained);
+        expect(preview.scenarioTotalAtRet).toBe(committed.totalAtRet);
+        expect(preview.chart).toEqual(committed.chartData);
+        a2.unmount();
+      });
+    }
+  }
+});

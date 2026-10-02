@@ -714,6 +714,52 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 
+### BUG-150 — a pinned `ssOverride` froze the spouse's spousal floor in every what-if scenario (found 2026-09-06 by CodeRabbit on PR #67, against BUG-135's own fix; verified independently and FIXED 2026-10-02)
+
+**Owner:** me_theguy. **Severity: MEDIUM — a 14–17% error on household SS, optimistic in the
+retire-earlier direction, and a regression introduced by BUG-135's fix rather than a pre-existing
+defect.**
+**What:** BUG-135's `scenarioSocialSecurity` carried a third early return — skip re-derivation
+whenever the user had pinned an `ssOverride` — on the reasoning that a pinned figure is not
+working-years-derived. That is true of the PRIMARY's half and false of the household total.
+`householdSS` is `effectiveSS + spouseSsBenefit`, and on the **"spousal" basis** the spouse's half
+is `calcSpousal(ssPIA, spouseClaimingAge)` (`retirement-income.js:40`) — derived from the
+**primary's PIA**, which genuinely does move with the scenario's working years. Returning early
+froze it at the base plan's value.
+**Measured** (MFJ, spousal basis, `ssOverride` 30,000, `currentAge` 50, committed `householdSS`):
+
+| committed retirement age | householdSS | frozen base value | error |
+|---|---|---|---|
+| 60 (base) | 39,716 | 39,716 | — |
+| 70 | 46,759 | 39,716 | **−7,043** (understates working longer) |
+| 53 | 33,974 | 39,716 | **+5,742** (overstates retiring earlier) |
+
+On the **"own" basis** the spouse's half is `spouseSsEstimate × claimFactor` — neither term
+working-years-derived — and is correctly invariant (50,000 at every age), so re-deriving is a no-op
+there.
+**Fixed** by deleting the early return outright. It was not merely wrong but unnecessary:
+`calcRetirementIncome` already honours the override internally
+(`effectiveSS = ssOverride ?? ssAnnualBenefit`), so re-deriving **preserves the pinned primary
+figure anyway** while correcting the spouse's half. One path, correct for both bases.
+**Verification.** Preview and commit now agree byte-identically — `scenarioYears`,
+`scenarioTotalAtRet` AND the full chart — for both spouse bases in both directions (retire 53 and
+70) with an override set. Reverting reproduces the defect: the preview reports **25.02 years where
+the committed truth is 22.91** (2.1 years optimistic), and the chart diverges as well. Six
+regression tests in `src/__tests__/whatif-parity-wiring.test.js`, including an explicit
+fixture-precondition test that the spousal floor really does move with the retirement age (so the
+suite cannot pass vacuously) and an assertion that the "own" basis stays invariant (so a future
+"optimisation" cannot reintroduce the early return for either basis). All four golden masters
+unmoved — none sets `spouseBenefitBasis` to "spousal" with an override, which is exactly why this
+needed an external reviewer to find.
+**Process note:** CodeRabbit's second review on PR #67 raised this *and* a chart-parity gap. The
+chart gap had already been fixed in the push that landed while the review was running (its own
+footer says "Head commit changed"), but this one went unaddressed for the rest of that session —
+found only on resuming. **A triggered review's findings are not closed by the push that happens to
+follow them.**
+
+---
+
+
 ### BUG-148 — Classic's Retirement Drawdown panel shows the same expense figure in two bases, 30px apart, with no label on either (found 2026-09-06, basis/scope audit F7; verified and FIXED same day)
 
 **Owner:** me_theguy. **Severity: MEDIUM — live at the shipped default, and verbatim BUG-114, which

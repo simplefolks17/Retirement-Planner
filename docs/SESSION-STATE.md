@@ -103,28 +103,41 @@ Two spot-checks done cold, both CONFIRMED, which is the evidence that mining bea
 findings are on disk; re-running would mostly re-derive them and re-incur the rate limit that
 killed both rounds. The only genuinely missing deliverable is auto-resolution's sentinel table.
 
-### NEXT STEPS (in order)
-1. ~~Verify the `contribEnd*` freeze~~ DONE -> BUG-138 filed.
-2. ~~Verify the scenario hold-out gate~~ DONE -> BUG-137 filed, BUG-102's closure amended.
-3. ~~BUG-137 (scenario hold-out gate)~~ FIXED + pushed.
-   ~~BUG-138 (contribEnd coupling)~~ FIXED. ~~BUG-135 (SS re-derivation)~~ FIXED.
-   Remaining: **BUG-136** (conversion window). It is pinned as CURRENT behaviour in
-   `src/__tests__/whatif-parity-wiring.test.js`; fixing it will fail that file loudly
-   by design. NOTE: BUG-136's bracket-fill mode is downstream of BUG-135 — the
-   per-year amounts come from income floors that include SS — so it was correctly
-   sequenced second. Custom (flat-amount) mode is the easy half; bracket mode needs
-   `calcBracketFillTargets` re-run against floors rebuilt at the scenario's age.
-   With conversions OFF, preview and commit are now byte-identical in both
-   directions, so BUG-136 is the last known gap for a no-spouse household.
-4. Verify the two remaining unverified agent findings (`spouseSimData` freeze;
-   `calcWhatIfDelta` never got the engine) and file what survives.
-5. Skim the other three audit reports (auto-resolution, basis/scope, test-coverage); file
-   what survives.
-6. Then BUG-125 (per-person SS timing gating) — owner-approved shape.
-6. Housekeeping: `vite.config.js` has no `exclude`, so gitignored `zz-*.test.js` probes are
-   still collected by `npm test` (inflates the count, can turn the suite red — documented
-   as having happened twice). Add `configDefaults.exclude` + zz patterns, but first confirm
-   an explicitly-named excluded file can still be run directly.
+### NEXT STEPS (in order) — reconciled 2026-10-02
+**PR #67 is OPEN and unmerged** (17+ commits, mergeable_state clean, 0 behind main). Nothing has
+touched the repo since 2026-09-06 until this reconciliation.
+
+Done since the last update:
+- ~~BUG-135 / 137 / 138~~ fixed. ~~basis-scope F1-F8~~ fully mined (BUG-139/140/141/143/144/145/146/147/148
+  fixed; BUG-142/149 filed for owner decisions).
+- ~~`npm test` probe exclusion~~ done (in the npm script, not vite.config.js).
+- ~~**BUG-150**~~ fixed 2026-10-02 — CodeRabbit's second review on PR #67 raised TWO findings; the
+  chart-parity one had already been fixed by the push that landed while the review ran, but the
+  `ssOverride`-freezes-the-spousal-floor one went unaddressed for the rest of the session and was
+  found only on resuming. **Lesson: a triggered review's findings are not closed by the push that
+  happens to follow them — read the review body before moving on.**
+- ~~CLAUDE.md `## Status` entry for this arc~~ written 2026-10-02 (it had been missed entirely,
+  against close-out step 3).
+
+Remaining, in order:
+1. **Mine `audit-auto-resolution.md`** — 6 verified findings (A-F), none touched. Highest-looking:
+   A (`spouseIncomeEndAge` frozen in scenarios, HIGH), C (`retirementState` seeded once and never
+   re-derived, HIGH), D (`ssOverride` not honoured on the delay-to-70 leg, MED-HIGH — note this is
+   ADJACENT to BUG-150 and may share a root), E (`incomeGrowthEndAge` has four resolution sites,
+   two missing the `Math.max(0, …)` guard the others have).
+2. **Mine `audit-test-coverage.md`** — the coverage matrix plus a flagged CLAUDE.md rule-1
+   violation (stale hard-coded IRS constants in test names AND assertions).
+3. **Mine parity Findings 2, 5, 6, 7** — `spouseSimData` frozen; `calcWhatIfDelta` never got the
+   per-account engine (so it disagrees with `calcWhatIfScenario` as well as with the commit, up to
+   3.4 years); the Plan screen's tick rail painting "unaffordable" over comfortable ages (8/20
+   verdict mismatches on one household); and Finding 7's critique that T-X.4 is a REGRESSION lock
+   rather than a PARITY lock — partly addressed by the FULL PARITY block, but that block is a
+   NO-SPOUSE household, so there is still no parity assertion for a spouse household.
+4. **BUG-136** — the last known parity gap. Custom (flat-amount) mode is the easy half; bracket
+   mode needs `calcBracketFillTargets` re-run against floors rebuilt at the scenario's age.
+5. **BUG-125** — per-person SS timing gating, owner-approved shape (fix the model properly).
+6. **Owner decisions pending:** BUG-142 (does "Your contributions" include the employer match?),
+   BUG-149 (where to convert the healthcare costs, and flat vs per-year).
 
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age

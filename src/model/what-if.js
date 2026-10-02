@@ -282,15 +282,24 @@ export function verdictInfoForScenario(scenario, safeLifeExp) {
 // Returns null (caller keeps its existing behaviour) when:
 //   - no ssInputs were supplied — every hand-built test bundle, so this is inert by
 //     default and pre-existing callers are byte-identical;
-//   - the scenario's retirement age equals the base plan's — nothing to re-derive;
-//   - ssOverride is set — the user pinned their own annual figure, so it is not
-//     working-years-derived and must not be recomputed.
-// spouseSsEstimate is a user-entered at-FRA figure and is likewise not
-// working-years-derived; calcRetirementIncome already treats it that way, so the
-// spouse's half of householdSS is unaffected by design.
+//   - the scenario's retirement age equals the base plan's — nothing to re-derive.
+//
+// BUG-150 (CodeRabbit, PR #67): there used to be a third early return, for a
+// user-pinned `ssOverride`. It was over-cautious and wrong. A pinned override fixes
+// the PRIMARY's benefit, and `calcRetirementIncome` already honours it internally
+// (`effectiveSS = ssOverride ?? ssAnnualBenefit`) — so re-deriving preserves it
+// anyway. But `householdSS` also carries the SPOUSE's half, and on the "spousal"
+// basis that half is `calcSpousal(ssPIA, spouseClaimingAge)` — derived from the
+// PRIMARY's PIA, which genuinely does move with the scenario's working years.
+// Returning early froze it. Measured (MFJ, spousal basis, override 30,000,
+// currentAge 50): householdSS is 39,716 retiring at 60, 46,759 at 70 and 33,974 at
+// 53, so a frozen base value was off by −7,043 and +5,742 — a 14–17% error on
+// household SS, in the optimistic direction for a retire-earlier preview.
+// The "own" basis is genuinely invariant (50,000 at all three ages — it is
+// `spouseSsEstimate × claimFactor`, neither working-years-derived), so letting it
+// re-derive is a no-op there. One path, correct for both.
 function scenarioSocialSecurity(ssInputs, currentAge, baseRetAge, scenarioRetAge) {
   if (!ssInputs || scenarioRetAge === baseRetAge) return null;
-  if (ssInputs.ssOverride != null) return null;
   return calcRetirementIncome({ ...ssInputs, currentAge, safeRetAge: scenarioRetAge });
 }
 
