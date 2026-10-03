@@ -171,6 +171,31 @@ feature-tracker 127 = 79 + 48 and deliberately untouched (this arc shipped 14 bu
 features). Local `main` ref was stale at `d49f854` and has been fast-forwarded to `origin/main`
 (`b992692`) — worth knowing, because `git log main..HEAD` was silently misleading before that.
 
+### Close-out addendum 2026-10-03 — `docs/ROADMAP.md` reconciled (the one doc the close-out missed)
+
+The 2026-10-03 close-out read `docs/BUGS.md`, `CLAUDE.md` and `feature-tracker.html` but **not**
+`docs/ROADMAP.md`, which is where CLAUDE.md rule 10 points for the Horizon design principles and
+the **Violations register**. Five of this arc's fixes were register-class findings, so the doc was
+stale in a way that mattered: it asserted the register was "fully resolved" as a standing property.
+
+Reconciled (docs only — no `src/` change, 1408 tests unchanged):
+- **Register restructured into one table per audit.** The Jun 12 2026 table (V1–V11) is unchanged;
+  a new **Audit Sep 6 2026** block adds **V12–V16** (BUG-139/140/141/143/144/146/147), each with
+  location, principle, bug link and resolution. BUG-148 is called out as deliberately NOT a row
+  (Classic is out of this doc's scope), as are the model-layer bugs.
+- **The "fully resolved" claim is now scoped to its own audit**, with a note that "empty" is a
+  target each audit clears, not a property the doc keeps. WI-0.1's Target line likewise.
+- **New design principle 16 — declared dollar basis**, group B's missing axis. Three of the five
+  new rows are basis failures and group B (rules 6–10) had no rule for basis at all; principle 16
+  is CLAUDE.md rule 11's Horizon-facing twin, not a new policy. Numbered 16 rather than inserted
+  as 11 so the register's Principle column, rule 14's "principles 6–12" and CLAUDE.md rule 10's
+  pointer all stay valid. CLAUDE.md rule 10 updated: "(15)" → "(16)".
+- The Jun-12 diagnosis quote's "307 tests" now says "at the time of the review — 1408 today".
+
+**Process note for the next close-out:** the checklist says "any `docs/*.md` this session touched".
+ROADMAP.md was not touched, which is exactly why it went stale — a doc that *should* have been
+touched is invisible to that test. Read the docs CLAUDE.md's rules point at, touched or not.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an
@@ -178,5 +203,7 @@ features). Local `main` ref was stale at `d49f854` and has been fast-forwarded t
   precisely because they missed this.
 - A plan that depletes before `ssClaimingAge` masks every SS-related bug — the first
   isolation run showed SS-on and SS-off as byte-identical for exactly this reason.
-- `npm test` includes agent probe files. Use
-  `npx vitest run --exclude '**/zz-*.test.js'` for a true count until step 6 lands.
+- `npm test` excludes agent probe files as of PR #67 — the exclusion lives in the
+  `package.json` script, deliberately NOT in `vite.config.js` (a config-level `exclude`
+  also blocks running a probe BY NAME, verified). Run one with
+  `npx vitest run src/__tests__/zz-my-probe.test.js`.
