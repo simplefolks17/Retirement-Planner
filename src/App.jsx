@@ -8,13 +8,13 @@ import {
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
-import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge } from "./model/simulation.js";
+import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge, coupleContribEndAges } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
 import { calcNetPortfolioNeed, calcWithdrawalRate, calcSSDelayGain, calcRetIncomeFlow } from "./model/drawdown.js";
 import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/retirement-drawdown.js";
-import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt, resolveSpouseRetAge } from "./model/retirement-phase.js";
+import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
 import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
@@ -25,7 +25,7 @@ import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification, sumAccountRow } from "./model/accumulation.js";
 import { fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
@@ -582,6 +582,12 @@ export default function App() {
   // silently miss one the way the bug itself went undetected for so long.
   // SS is deliberately excluded (BUG-91's own scoping: SS is already nominal at
   // the claim date, matching the engine's convention) — only spend + pension.
+  // Is `takeHome` a HOUSEHOLD figure? Only for MFJ, because that is the only status
+  // whose income basis includes the spouse (rule 3, tax-basis.js). ONE definition,
+  // read by both Horizon's Plan card and Classic's "Est. Paycheck Deposit" label —
+  // Classic used to gate on `spouseIncome > 0` alone and so called a primary-only
+  // figure "Household" (BUG-145).
+  const takeHomeIsHousehold = filingStatus === "mfj" && spouseIncome > 0;
   const yearsToRetForBasis = Math.max(0, safeRetAge - currentAge);
   // retSpendBasis / retPensionBasis: the "gated" figures (effectivePension is
   // already 0 unless pension has started BY retirement) — used wherever the
@@ -641,10 +647,7 @@ export default function App() {
   // review fix): buildSpouseRetirementSeed writes a key for every gap year
   // regardless of amount, so a married household with $0 spouse income/
   // balances would otherwise wall off a balance for a gap that offsets nothing.
-  const hasActiveSpouseGap = hasSpouse && (
-    Object.values(spouseSeed?.spouseContribByAge ?? {}).some(v => v > 0)
-    || Object.values(spouseSeed?.spouseIncomeFloorByAge ?? {}).some(v => v > 0)
-  );
+  const hasActiveSpouseGap = hasSpouse && seedHasActiveSpouseGap(spouseSeed);
 
   const netPortfolioNeed = calcNetPortfolioNeed(retSpendBasis, ssAtRet, retPensionBasis, spouseIncomeAtRet);
   const withdrawalRate   = calcWithdrawalRate(netPortfolioNeed, totalAtRet);
@@ -994,20 +997,77 @@ export default function App() {
   const balAt90 = useMemo(
     () => walkBalanceAt(retirementWalk.rows, safeLifeExp),
     [retirementWalk, safeLifeExp]);
+  // BUG-144: the same balance in TODAY's dollars. balAt90 is a retirement-phase WALK
+  // balance, so it is in the primary's retirement-year purchasing power (BUG-90/91's
+  // frame) — but the Statement tab's "bottom line" block prints it one line under a
+  // monthly figure that IS today's dollars, with a single "in today's dollars" caption
+  // covering both. At the shipped default that caption overstated the reader's
+  // understood value by the full inflation factor (3.946x: $5,341,525 read as today's
+  // money when it is $1,353,625). Converted ONCE here, via the same bidirectional
+  // helper (negative year count) the Plan screen's toTodayFactor uses — never a second
+  // inline conversion (rule 11).
+  // BUG-146: totalAtRet expressed in TODAY's dollars. totalAtRet is a
+  // retirement-year figure; any claim of the form "grows Nx FROM TODAY" has to put
+  // both ends of the comparison in the same money. Converted ONCE here, with the same
+  // bidirectional helper balAt90Today uses (rule 11 — never a second inline
+  // conversion).
+  const totalAtRetToday = useMemo(
+    () => Math.round(totalAtRet * inflationRebaseFactor(inflationRate, -yearsToRetForBasis)),
+    [totalAtRet, inflationRate, yearsToRetForBasis]);
+  const balAt90Today = useMemo(
+    () => Math.round(balAt90 * inflationRebaseFactor(inflationRate, -yearsToRetForBasis)),
+    [balAt90, inflationRate, yearsToRetForBasis]);
 
-  // Approximate contribution series for Horizon Sources view (cumulative contributions, no growth)
+  // Approximate contribution series for Horizon's Sources view: cumulative money PUT IN
+  // (starting balances + contributions, no growth), which the chart subtracts from the
+  // total arc to shade the "Market growth" band.
+  //
+  // BUG-139: the per-row cap used to be an inlined FOURTH copy of the account-sum, and it
+  // read `row.trad`/`.roth`/`.taxable`/`.hsa` — names `runSimulation` has never produced
+  // (its rows are keyed "Trad 401k"/"Roth IRA"/"Taxable"/"HSA"). All four coalesced to 0
+  // via `?? 0`, so the cap was 0 and `Math.min` pinned the whole series to zero from the
+  // second point on: the chart credited 100% of the portfolio to market growth at the
+  // SHIPPED DEFAULT. Now uses the canonical `sumAccountRow` — one implementation, so the
+  // key names cannot drift again (this is exactly the `?? 0`-fabrication rule 10 forbids).
+  //
+  // BUG-140: HOUSEHOLD, matching the chart it is drawn against. `accumChart` folds in the
+  // spouse's balances/growth via buildAccumChart, so a primary-only contribution line
+  // silently attributed the spouse's entire rollover to "Market growth". The spouse is
+  // zipped by INDEX here for the same reason buildAccumChart does it (see its comment).
+  // No spouse ⇒ spouseSimData is [] and the four spouse scalars are 0 ⇒ byte-identical to
+  // the primary-only series.
   const contribSeries = useMemo(() => {
     if (!simData.length) return null;
-    const initBal = (bal401k ?? 0) + (balRoth ?? 0) + (balTaxable ?? 0) + (balHSA ?? 0);
+    const initBal = (bal401k ?? 0) + (balRoth ?? 0) + (balTaxable ?? 0) + (balHSA ?? 0)
+      + (spouseBal401k ?? 0) + (spouseBalRoth ?? 0) + (spouseBalTaxable ?? 0) + (spouseBalHSA ?? 0);
+    const annualContrib = contrib401k + contribRoth + contribTaxable + contribHSA
+      + spouseContrib401k + spouseContribRoth + spouseContribTaxable + spouseContribHSA;
+    // BUG-141: shaped to match buildAccumChart ROW FOR ROW — same first row at
+    // currentAge, same end-of-year semantics, same `break` at the retirement age.
+    // It used to start a year late (currentAge+1) and run the FULL 60-year sim to
+    // age 90, while ArcGraph's sourcesModel closes the growth band with
+    // `tPts.slice(0, cPts.length)` — a slice by COUNT, not by age. So the band was
+    // drawn a year out of register and extended decades past retirement, into ages
+    // where the portfolio is being DRAWN DOWN and a cumulative-contributions line is
+    // meaningless. Invisible until now only because the series was pinned to zero
+    // (BUG-139); fixing that exposed it. sourcesModel's own comment ("cPts covers
+    // currentAge→retirementAge") describes the behaviour implemented here — it was
+    // documenting an intent the code did not have.
     let cumContrib = initBal;
-    const series = [];
-    for (const row of simData) {
+    const series = [{ age: currentAge, contrib: cumContrib }];
+    for (let i = 0; i < simData.length; i++) {
+      const row = simData[i];
+      const rowTotal = sumAccountRow(row)
+        + (spouseSimData[i] ? sumAccountRow(spouseSimData[i]) : 0);
+      cumContrib = Math.min(cumContrib + annualContrib, rowTotal);
       series.push({ age: row.age, contrib: cumContrib });
-      const rowTotal = (row.trad ?? 0) + (row.roth ?? 0) + (row.taxable ?? 0) + (row.hsa ?? 0);
-      cumContrib = Math.min(cumContrib + (contrib401k + contribRoth + contribTaxable + contribHSA), rowTotal);
+      if (row.age >= safeRetAge) break;
     }
     return series;
-  }, [simData, bal401k, balRoth, balTaxable, balHSA, contrib401k, contribRoth, contribTaxable, contribHSA]);
+  }, [simData, spouseSimData, currentAge, safeRetAge, bal401k, balRoth, balTaxable, balHSA,
+      spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
+      contrib401k, contribRoth, contribTaxable, contribHSA,
+      spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA]);
 
   // Optimizer: find the annual conversion amount that maximizes net benefit after IRMAA + ACA.
   // Only runs in custom mode — bracket mode uses per-year targets derived from the bracket
@@ -1305,12 +1365,19 @@ export default function App() {
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.
+  // BUG-138: the "a contribEnd that equals the retirement age tracks it" rule now
+  // lives in ONE place (coupleContribEndAges, simulation.js) and is applied both here
+  // (the committed plan) and at what-if.js's two resim sites (previews). They used to
+  // disagree: previews kept the BASE age, so a work-longer scenario silently dropped
+  // the extra contributions committing the same change actually makes.
   const setRetirementAgeCoupled = useCallback(v => {
     setRetirementAge(v);
-    if (contribEnd401k    === retirementAge) setContribEnd401k(v);
-    if (contribEndRoth    === retirementAge) setContribEndRoth(v);
-    if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
-    if (contribEndHSA     === retirementAge) setContribEndHSA(v);
+    const next = coupleContribEndAges(
+      { contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA }, retirementAge, v);
+    if (next.contribEnd401k    !== contribEnd401k)    setContribEnd401k(next.contribEnd401k);
+    if (next.contribEndRoth    !== contribEndRoth)    setContribEndRoth(next.contribEndRoth);
+    if (next.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(next.contribEndTaxable);
+    if (next.contribEndHSA     !== contribEndHSA)     setContribEndHSA(next.contribEndHSA);
   }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
 
@@ -1487,12 +1554,30 @@ export default function App() {
       spouseSimData,
       spouseStartingBal: spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
     } : null,
+    // BUG-135: everything calcRetirementIncome needs to RE-DERIVE Social Security at a
+    // scenario's own retirement age. The benefit is a function of ssWorkYears
+    // (safeRetAge - currentAge) via calcAIME/calcPIA, so a scenario that moves the
+    // retirement age genuinely changes it — previously the scenario paths only
+    // inflation-re-based the base plan's figure, which both missed the working-years
+    // effect and applied an inflation factor to a figure that has none (householdSS is
+    // inflation-independent by construction). safeRetAge is deliberately OMITTED: the
+    // scenario supplies its own, and carrying the base plan's here is exactly the
+    // freeze that caused the bug (BUG-127's lesson, same shape).
+    ssInputs: {
+      currentIncome, incomeGrowth, incomeGrowthEndAge,
+      ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
+      pensionMonthly, pensionStartAge,
+      isMarried, spouseClaimingAge, spouseBenefitBasis,
+    },
   }), [whatIfSimInputs, fedMarginal, retDrawShared, safeRetAge, safeLifeExp,
        totalAtRet, yearsSustained, retPhaseBase, conversionByAge, totalChartData,
        addlPreTaxBal, depletionAge,
        hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
        spouseRetirementAge, lifeExpect, spouseNetRate, inflationRate,
-       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA]);
+       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
+       currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge, includeSS,
+       ssOverride, spouseSsEstimate, pensionMonthly, pensionStartAge,
+       isMarried, spouseClaimingAge, spouseBenefitBasis]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
   // scenario engine as every lever (calcWhatIfScenario) + SS helpers + a pure
@@ -1671,8 +1756,16 @@ export default function App() {
     const savingsCoverUntil = (age) => planView.outlastsPlan === true
       || (planView.depletionAge != null && planView.depletionAge >= age);
     return {
-      wealthMultiplier: currentSaved > 0
-        ? Math.round((totalAtRet / currentSaved) * 10) / 10
+      // BUG-146: "grows Nx from today" was comparing a HOUSEHOLD, RETIREMENT-YEAR
+      // numerator against a PRIMARY-ONLY, TODAY's-dollar denominator — both axes of
+      // rule 11 wrong in one ratio. Measured: 24.5x shown vs 6.2x honest at the
+      // no-spouse default (basis only), and 57.2x vs 3.6x once a spouse has balances
+      // (basis + a $500k scope gap). Both ends are now household and both are in
+      // today's dollars, so the sentence the screen renders is the sentence the
+      // number supports. flowData.startPortfolio is the SAME household starting
+      // balance the Flow-Down waterfall uses — not a fifth inline sum.
+      wealthMultiplier: flowData.startPortfolio > 0
+        ? Math.round((totalAtRetToday / flowData.startPortfolio) * 10) / 10
         : null,
       // A DIFFERENT comparison from the flows above (today's spend vs. today's
       // take-home) — basis-invariant by construction, so it is NOT toggled.
@@ -1777,15 +1870,15 @@ export default function App() {
       // filingStatus/spouseIncome itself (rule 8) — the same shape as Classic's
       // own conditional "Est. Household Paycheck Deposit" and BUG-96's
       // showHouseholdTotal.
-      takeHomeIsHousehold: filingStatus === "mfj" && spouseIncome > 0,
+      takeHomeIsHousehold,
       // #30 / BUG-82: passed through (not computed here) — see spouseIncomeScopeNote
       // and spouseSpilloverNote (Finding 1) above.
       spouseIncomeScopeNote,
       spouseSpilloverNote,
     };
-  }, [currentSaved, totalAtRet, takeHome, effectiveExpenses, retSpendBasis,
+  }, [flowData, totalAtRetToday, takeHome, effectiveExpenses, retSpendBasis,
       ssAtRet, retPensionBasis, retPensionAnnualBasis, effectivePension, inflationRate, yearsToRetForBasis,
-      safeRetAge, safeLifeExp, currentAge, filingStatus, spouseIncome,
+      safeRetAge, safeLifeExp, currentAge, takeHomeIsHousehold,
       includeSS, householdSS, ssClaimingAge, pensionMonthly, pensionStartAge,
       spouseIncomeAtRet, spouseIncomeScopeNote, spouseSpilloverNote, planView]);
 
@@ -2618,7 +2711,7 @@ export default function App() {
     currentAge, retirementAge, lifeExpect,
     totalAtRet, yearsSustained, isSustainable,
     takeHome, effectiveExpenses, withdrawalRate,
-    balAt90, contribSeries,
+    balAt90, balAt90Today, contribSeries,
     householdSS, effectivePension, activity, setActivity: guardWrite(setActivity, readOnly),
     currentIncome,
     fedTax, ficaTotal: fica, stateTaxAmt: stateTax,
@@ -2626,7 +2719,15 @@ export default function App() {
     retVals, simData,
     netConversionBenefit, yr1TaxSavings,
     // Sum of all current account balances — used by onboarding "savings today" field
-    currentTotalSaved: bal401k + balRoth + balTaxable + balHSA,
+    // BUG-147: HOUSEHOLD. The Accounts banner pairs this with totalAtRet, which is
+    // household — so a spouse's balances were missing from "Today" but present at
+    // "At retirement", and the arrow between them read as growth. accumulation.js's
+    // own comment already asserted that this figure and the chart's Today anchor
+    // "agree by construction"; the chart's first row is
+    // bal* + spouseStartingBal (buildAccumChart), so the claim was false for exactly
+    // the households that have a spouse. This restores it.
+    currentTotalSaved: bal401k + balRoth + balTaxable + balHSA
+      + spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA,
     // After-tax spendable reference (display-only; never a formula input — BUG-35).
     // Haircuts the gross Trad 401k at the retirement effective rate; Roth/HSA/Taxable
     // are already net. Used by the Accounts tab "gross vs spendable" headline.
@@ -2744,10 +2845,10 @@ export default function App() {
   }), [totalChartData, currentAge, retirementAge, lifeExpect,
        totalAtRet, yearsSustained, isSustainable,
        takeHome, effectiveExpenses, withdrawalRate,
-       balAt90, contribSeries, householdSS, effectivePension, activity, setActivity,
+       balAt90, balAt90Today, contribSeries, householdSS, effectivePension, activity, setActivity,
        currentIncome, fedTax, fica, stateTax, currentContribTotal,
        retVals, simData, netConversionBenefit, yr1TaxSavings,
-       bal401k, balRoth, balTaxable, balHSA, spendableAtRet,
+       bal401k, balRoth, balTaxable, balHSA, spendableAtRet, spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
        moneyEvents, saveEvent, removeEvent, whatIfBundle, commitPlan, applyPlanLevers, retirementWalk,
        lifeEventBounds,
        statementView, chartMilestones, planView, yearlyRows, signals,
@@ -3094,7 +3195,12 @@ export default function App() {
               { label: "Federal Tax",               val: fmt(fedTax),                                   color: C.orange  },
               { label: `State Tax (${selectedState})`, val: noStateTax ? "-" : fmt(stateTax),           color: noStateTax ? C.muted : C.purple },
               { label: spouseIncome > 0 ? "FICA (both earners)" : "FICA (7.65%)", val: fmt(fica),      color: "#6e7681" },
-              { label: spouseIncome > 0 ? "Est. Household Paycheck Deposit" : "Est. Paycheck Deposit", val: fmt(takeHome), color: C.green },
+              // BUG-145: gate on MFJ, not on spouseIncome alone. `takeHome` is
+              // primary-only unless the filer is MFJ, so calling it "Household"
+              // whenever a spouse has income mislabelled a primary-only figure.
+              // Horizon's `takeHomeIsHousehold` has always used this gate; Classic
+              // never got the fix.
+              { label: takeHomeIsHousehold ? "Est. Household Paycheck Deposit" : "Est. Paycheck Deposit", val: fmt(takeHome), color: C.green },
             ].map(({ label, val, color }) => (
               <div key={label} className="breakdown-row">
                 <span style={{ color: C.muted }}>{label}</span>
@@ -3651,6 +3757,7 @@ export default function App() {
               onChange={v => setAnnualExpenses(v)} />
             <p style={{ margin: "4px 0 0", fontSize: 10, color: C.muted }}>
               Monthly: <span style={{ color: C.text, ...mono }}>${Math.round(effectiveExpenses / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString()}</span>
+              &nbsp;·&nbsp; in today&rsquo;s dollars
               &nbsp;·&nbsp; default = your current living spend ({fmt(effectiveLiving)}/yr)
               {annualExpenses !== null && (
                 <button onClick={() => setAnnualExpenses(null)} style={{
@@ -3663,9 +3770,20 @@ export default function App() {
             {(householdSS > 0 || effectivePension > 0 || spouseIncomeAtRet > 0) && (
               <div style={{ marginTop: 10, background: C.card, borderRadius: 7,
                 padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+                {/* BUG-148: this breakdown is in RETIREMENT-YEAR dollars (retSpendBasis,
+                    the figure the engine actually draws against), while the slider ~30px
+                    above shows the same quantity in TODAY's dollars (effectiveExpenses).
+                    At the shipped default that is $226,415 under $57,377 — a 3.946x gap
+                    with no label on either, which is BUG-114's exact failure, fixed on
+                    the Plan screen by PR #66 and never swept in Classic. Both figures are
+                    correct for what they do; the defect was that neither said which it
+                    was. A scoped local note on each is the rule-11 remedy. */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <span style={{ fontSize: 10, color: C.muted }}>Annual expenses</span>
                   <span style={{ fontSize: 11, color: C.text, ...mono }}>{fmt(retSpendBasis)}</span>
+                </div>
+                <div style={{ fontSize: 9, color: C.muted, marginTop: -2, fontStyle: "italic" }}>
+                  in age-{safeRetAge} dollars — the same lifestyle after {yearsToRetForBasis} years of inflation
                 </div>
                 {effectiveSS > 0 && ssClaimingAge <= safeRetAge && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>

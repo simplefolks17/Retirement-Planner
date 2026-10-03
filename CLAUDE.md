@@ -12,9 +12,9 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1355 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`).
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1408 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`). That file now holds THREE locked fixtures: T-X.2 and T-X.3 pin `spouseRetirementAge` explicitly, and **T-X.4 leaves it at its `null` default ("auto")** — the path every real user starts on, and the one BUG-127/BUG-134 both hid on precisely because no locked fixture exercised it. **A fixture intended to catch a what-if/scenario bug must lock SCENARIO outputs, not just base-plan headline numbers** — T-X.2/T-X.3 lock only the committed plan, which is structurally incapable of catching either bug; T-X.4 locks `calcWhatIfScenario` output too, and both reverts were confirmed to fail it.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
-9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. FICA is always computed per-earner separately (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)`). Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
+9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. **FICA follows the same basis**: the spouse's wages enter FICA only when they are also in the income basis it is charged against — i.e. MFJ only (BUG-145; charging a single filer their spouse's payroll tax lowered that filer's own take-home AND, downstream, their own retirement spending target). Within whatever earners are included, the Social Security wage base is capped PER EARNER, never against combined wages (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)` for MFJ) — that per-earner capping is what this rule has always been about. Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (15) + violations register: `docs/ROADMAP.md` → Design principles.
 11. **Every dollar figure has a declared basis — today's dollars or retirement-year real dollars — and mixing them is the single most common bug class in this codebase (BUG-91's diagnosis: 14+ bugs, #77–#101, decompose into this or the sibling primary-vs-household scope axis).** The retirement engine walks in the PRIMARY's RETIREMENT-YEAR real dollars (`rReal`, proven by BUG-90); `effectiveExpenses`/`effectivePension`/user-entered dollar inputs are TODAY's dollars. Converting forward uses `toRetirementYearDollars` (App.jsx computes this ONCE per quantity — `retSpendBasis`, `retPensionBasis`, `retPensionAnnualBasis`, `retPensionAtRMDAge`, `retPensionAt70`, etc. — never inline a second conversion); a what-if scenario re-basing SS/pension to a DIFFERENT retirement age uses the bidirectional `inflationRebaseFactor` instead (a scenario can retire earlier than the base plan — `toRetirementYearDollars` clamps negative years to 0, which is wrong there). **Before wiring any pension/expense/income figure into a new call site, ask which basis that specific consumer needs** — a function that does its own internal timing gate (like `calcRMDIncomeFloor`) needs the UNGATED annual figure; a function with no internal gate (like `projectRetirementBracket`) needs a figure PRE-gated to that function's own horizon, not the retirement age (this exact mismatch — "double-gating" — was found and fixed three separate times in one PR: BUG-91/Qodo's original finding, then `wr70`, review-fix round, PR #62). Deliberately-mixed-basis bundles (e.g. `retDrawShared`, which keeps `effectiveExpenses` raw but converts `pensionAmount`) carry an explicit `⚠ MIXED-BASIS BUNDLE` comment — never "tidy" one without reading it first. A display site captioning or describing another already-converted value (a chart, a breakdown total) must read the SAME converted figure, not re-derive or re-read the raw one — three such sites (a Classic chart caption, a Horizon income-meter headline, two pension display pills) were found still on the raw figure after BUG-91 landed everywhere else, in the PR #62 review-fix round, precisely because this rule didn't exist yet to check against. **The Plan screen now lets the USER pick a basis** (`planHighlights.incomeFlowByBasis` = `{ today, retirement }`, built once in App.jsx and selected — never converted — by the screen; BUG-114). Only genuinely dollar-denominated figures may be wired to that toggle: ages, percentages, ratios (`guaranteed.pct`), "money lasts to age N" and cumulative totals are basis-INVARIANT and must read a single fixed source, or the same number will visibly flicker by a rounding step when the user switches.
 
@@ -24,6 +24,30 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 - **Bug fixes** are the exception — small, contained bug fixes can be committed directly to the feature branch and merged without a formal PR, as long as `docs/BUGS.md` is updated with root cause, files changed, and fix description.
 - **`docs/BUGS.md` is the bug record.** Every bug fix must be logged there before merging, whether or not a PR is opened.
 - **Test count in `CLAUDE.md` must stay current.** Update the test count in the Commands section whenever new tests are added.
+
+## Save Points (run continuously, not at the end)
+A session can be cut off mid-task with no warning — API rate limits and container
+reclamation both do it, and both happened repeatedly on 2026-09-05. **Verified work must
+never exist only in the conversation or in `/tmp`.** The scratchpad and agent transcripts do
+not survive the container; the repo does.
+
+1. **`docs/SESSION-STATE.md` is the live handoff.** Update and COMMIT it at every natural
+   checkpoint: after each verified finding, before launching a long-running agent, before a
+   multi-step edit. It records owner decisions taken, what is done, what is mid-flight, the
+   ordered next steps, and any non-obvious gotcha a resuming session would otherwise
+   rediscover the hard way.
+2. **Commit in small, self-contained units** — a fixture plus its revert-and-confirm
+   evidence, a bug filing plus its repro. Never batch a session's work into one end-of-session
+   commit; that is the unit most likely to be lost.
+3. **Every agent brief must require INCREMENTAL writes to a named file**, as its first
+   action, appending each finding the moment it is verified. Agents that hold results in
+   context lose everything when they are killed. This is not optional: on 2026-09-05 the
+   first round of four agents was killed and lost 100% of its work; the second round, with
+   this instruction, lost none.
+4. **Persist agent output into the repo** (e.g. `docs/audit-<date>/`) before acting on it,
+   marked as an unverified self-report until re-verified per the rule below.
+5. **Never trust an agent's self-report.** Re-run `npm test`, `npm run lint`, `npm run build`
+   and the golden masters yourself, and re-run any revert-and-confirm evidence directly.
 
 ## Session Close-Out (run when the user ends/closes a session, or asks to "make sure files are up to date")
 "Up to date" means a **thorough read + re-verification pass**, never a quick append. Do all of the following before reporting the session done:
@@ -527,10 +551,76 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
   is precisely why BUG-127 could hide from them. Full root cause / fix / verification for every
   item: `docs/BUGS.md` → BUG-104 through BUG-134.
 
+- **Preview/commit parity arc + the 2026-09-05 audit harvest (2026-09-05 → 10-02, branch
+  `claude/retirement-planner-bug-audit-incp1z`, PR #67 — OPEN, not yet merged).** Owner asked for a
+  whole-codebase look for hiding problems *before* tackling a prompt, on the grounds that bugs kept
+  slipping past multiple adversarial reviews per PR. That framing is what produced the session: the
+  diagnosis came first, and the fixes followed from it.
+  1. **The diagnosis.** `calcWhatIfScenario` is a parallel re-implementation of the pipeline App.jsx
+     builds via memos, so anything App derives from the retirement age must be RE-DERIVED for the
+     scenario's own age rather than inherited. **Eight bugs have now been exactly this** — BUG-61,
+     79, 97, 102, 134, and this session's 135, 137, 138 — and every one was found by adversarial
+     review, never by the suite, because the relevant assertions lived in files organised by
+     FEATURE. New `src/__tests__/whatif-parity-wiring.test.js` is organised by the INVARIANT
+     instead (preview change X, then commit change X, must agree). That is where this class lands
+     from now on.
+  2. **P1 — T-X.4, the fourth golden master**, on the auto/`null` `spouseRetirementAge` path (see
+     rule 7). The design constraint worth remembering: a fixture meant to catch a what-if bug must
+     lock SCENARIO outputs, and the Option-A hold-out must actually BIND, or spillover reads 0 either
+     way and the fixture cannot tell a released bucket from a held one.
+  3. **P2 — BUG-102 closed as obsolete**, with the fixture two earlier close-out attempts could not
+     build. It needed a non-obvious property: under "auto" the gap window's WIDTH is invariant to the
+     primary's retirement age, so an EXPLICIT `spouseRetirementAge` with an OLDER spouse is required.
+     **Then amended the same day** — its 2026-09-02 "cleared" note was a false negative (its fixture
+     could not exhibit the failure), and the gate asymmetry is real with the opposite sign: BUG-137.
+     Two lessons recorded there: a "cleared" result is only as strong as the fixture's ability to
+     exhibit the failure, and BUG-102's *sketched fix* was right even though its *symptom* was wrong.
+  4. **Fixed, each with revert-and-confirm evidence re-run directly:** BUG-135 (scenarios never
+     re-derived SS for their own working years — +90.1% retiring 10 years earlier; re-derivation
+     REPLACES the inflation re-base, since `householdSS` is measurably inflation-independent),
+     BUG-137 (scenarios applied NO spouse hold-out gate — forcing a resim with *no change at all*
+     invented $712,623 of phantom penalised withdrawal), BUG-138 (`contribEnd*` frozen, so
+     work-longer previews dropped up to $314,701 on the DEFAULT household), BUG-139/140/141 (the
+     Sources chart's contribution line was pinned to zero by a key-name drift hidden behind `?? 0`
+     — 1 nonzero point of 60, crediting the whole arc to market growth — plus primary-only scope and
+     a band drawn out of register), BUG-143/144 (the Statement tab's two dollar bases: 331% on
+     screen under a sentence saying 84%; a 3.946x overstatement under an "in today's dollars"
+     caption), **BUG-145** (a non-MFJ filer charged their spouse's FICA, dragging down their own
+     retirement spending target — this one required refining rule 9, whose "per-earner" wording was
+     about the wage-base CAP, not about which earners belong in the household), BUG-146/147
+     ("grows 24.5x from today" where the honest figure is 6.2x), BUG-148, and **BUG-150** (a pinned
+     `ssOverride` froze the spouse's spousal floor — a regression in BUG-135's own fix, caught by
+     CodeRabbit).
+  5. **Filed, not fixed, each for a stated reason:** BUG-136 (the last known parity gap — its
+     bracket-fill half is downstream of BUG-135), BUG-142 and BUG-149 (both need an owner product
+     call, not a mechanical fix; BUG-149 would flip a conversion recommendation from "clearly worth
+     it" to "a wash").
+  6. **Process changes that outlast the session.** Two rounds of four Opus audit agents were killed
+     by rate limits; the first lost 100% of its work, the second lost none, because its briefs
+     required INCREMENTAL writes to a named file — 88KB of findings with printed repros recovered.
+     That is now the **Save Points** section above, along with `docs/SESSION-STATE.md` as a committed
+     live handoff. The reports are preserved verbatim in `docs/audit-2026-09-05/`, marked as
+     unverified self-reports; **11 of 11 findings acted on so far have confirmed** under independent
+     re-verification, and one (basis/scope F7) was a correct critique of this session's own T-X.4.
+     `npm test` also now excludes `zz-*` probes — in the npm script, deliberately NOT in
+     `vite.config.js` (see Commands).
+  1355 → **1408 tests**. All four golden masters either unmoved or re-locked with the direction and
+  mechanism of every movement checked and recorded — T-X.4's scenario locks moved twice, both times
+  TOWARD the committed truth, and were re-confirmed afterwards to still catch BUG-127/134/138
+  reverts. Lint clean, build OK. **Still open on this arc:** the three unmined audit reports
+  (auto-resolution, test-coverage, and 4 of the 7 parity findings), BUG-136, and BUG-125's
+  owner-approved model fix — all sequenced in `docs/SESSION-STATE.md`.
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (1355 tests)
+- `npm test` — run model + formatter + render-smoke tests (1408 tests). Excludes throwaway
+  `zz-*.test.js` probes, so the reported count is trustworthy: `.gitignore` stops them being
+  committed but vitest still COLLECTED them, which twice inflated the count and once turned
+  the suite red on a failure that was not a regression. The exclusion lives in the npm script,
+  deliberately NOT in `vite.config.js` — a config-level `exclude` also blocks running a probe
+  by name (verified), which would break the probe-driven verification this repo relies on.
+  Run one deliberately with `npx vitest run src/__tests__/zz-my-probe.test.js`.
 - `npm run lint` — ESLint over `src/` (react-hooks `rules-of-hooks` + `exhaustive-deps` as errors; must exit clean)
 - `npm run build` — production build
 - `node .claude/skills/verifier-browser.cjs` — Playwright visual check of all

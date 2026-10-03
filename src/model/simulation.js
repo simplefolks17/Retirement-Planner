@@ -15,6 +15,33 @@ import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
 import { eventSimAdjustmentForYear, eventsIncomeAdjustment } from "./money-events.js";
 
+// Contribution-end ages that TRACK the retirement age (BUG-138).
+//
+// A `contribEnd*` equal to the current retirement age is understood to mean "I
+// contribute until I retire", so moving the retirement age must move it too. App.jsx's
+// `setRetirementAgeCoupled` has always done this for the COMMITTED plan; what-if
+// scenarios did not, so a "work longer" preview stopped contributions at the BASE
+// retirement age while committing the identical change kept them going — the preview
+// under-reporting the benefit of the exact action it was recommending (measured on the
+// default household: -$314,701 of portfolio at +5 years).
+//
+// Pure, and shared by both callers so the preview and the commit path cannot drift
+// (BUG-31's class). A `contribEnd*` the user has deliberately set AWAY from the
+// retirement age is left alone — that is the same rule the coupled setter uses, and it
+// is what makes "stop contributing at 55 but retire at 65" survive a scenario.
+export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge) {
+  if (!Number.isFinite(baseRetAge) || !Number.isFinite(scenarioRetAge)
+      || scenarioRetAge === baseRetAge) return ends;
+  const track = (v) => (v === baseRetAge ? scenarioRetAge : v);
+  return {
+    ...ends,
+    contribEnd401k:    track(ends.contribEnd401k),
+    contribEndRoth:    track(ends.contribEndRoth),
+    contribEndTaxable: track(ends.contribEndTaxable),
+    contribEndHSA:     track(ends.contribEndHSA),
+  };
+}
+
 // The NO-EVENT baseline salary in the year the person turns `age`
 // (incomeGrowthEndAge plateau included). Used by the UI's "usual pay" seed
 // (buildProjectedIncomeByAge) and eventIncomeImpact's usualPay side. The sim

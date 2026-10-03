@@ -36,6 +36,27 @@ export function resolveSpouseRetAge({ spouseRetirementAge, primaryRetAge, spouse
   return Math.min(max, Math.max(min, raw));
 }
 
+// Does a spouse seed carry REAL gap-year money? (#30 / BUG-93 / BUG-137)
+//
+// This is the predicate that decides whether the engine's Option-A hold-out should
+// engage at all. It checks for an actual nonzero VALUE, not merely key presence:
+// buildSpouseRetirementSeed writes a key for every gap year regardless of amount, so
+// a married household with a rollover balance but no ongoing spouse income would
+// otherwise get its balance walled out of the drawable pool — and charged the
+// penalized escape hatch — for a gap that offsets nothing (BUG-93).
+//
+// Lives here, shared, because it must be applied in TWO places that were found
+// disagreeing: App.jsx's committed plan and what-if.js's scenario path. The scenario
+// path applied no gate at all, so merely forcing a resim (with no actual change)
+// turned the hold-out on for a household whose committed plan correctly had it off —
+// BUG-137, measured at 712,623 of phantom spillover. One predicate, two callers, so
+// they cannot drift again (BUG-31's signature class).
+export function seedHasActiveSpouseGap(seed) {
+  if (!seed) return false;
+  return Object.values(seed.spouseContribByAge ?? {}).some(v => v > 0)
+      || Object.values(seed.spouseIncomeFloorByAge ?? {}).some(v => v > 0);
+}
+
 // Build the engine's { [age]: amount } Roth-conversion schedule from the plan's
 // per-year (bracket-fill) or flat conversion targets. Conversions occur at ages
 // startAge .. endAge (inclusive). At the default window (startAge = safeRetAge+1,

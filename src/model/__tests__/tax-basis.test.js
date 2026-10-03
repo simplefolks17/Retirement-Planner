@@ -94,3 +94,62 @@ describe("calcTaxBasis — state rate override", () => {
     expect(b.noStateTax).toBe(false);
   });
 });
+
+// ── BUG-145 — a non-MFJ filer must not be charged their spouse's FICA ─────────
+//
+// `householdIncome` is primary-only for every status except MFJ (rule 3), but FICA
+// used to include `spouseIncome` unconditionally — and every consumer pairs the two
+// (takeHome, combinedEffRate, grossAfterTax, and budget.js's taxTotal/ficaPlusState).
+// So entering a spouse's income while still filing "single" deducted the SPOUSE's
+// payroll tax from the user's OWN paycheck, and because the living-spend target is
+// derived from take-home, it dragged the user's own retirement spending target down
+// with it.
+//
+// Rule 9's "FICA is always computed per-earner" is about the WAGE-BASE CAP — you
+// cannot cap two salaries under one base — which is preserved exactly and asserted
+// below for MFJ. It was never a licence to charge a second earner's tax to a filer
+// whose income basis excludes that earner.
+describe("BUG-145 — FICA follows the income basis it is charged against", () => {
+  const base = {
+    currentIncome: 100_000, contrib401k: 10_000, contribHSA: 3_850,
+    otherPreTaxDeduc: 0, selectedState: "TX", stateRateOverride: null,
+  };
+
+  it("a single filer's take-home is unaffected by a spouse's income", () => {
+    const alone  = calcTaxBasis({ ...base, filingStatus: "single", spouseIncome: 0 });
+    const withSp = calcTaxBasis({ ...base, filingStatus: "single", spouseIncome: 120_000 });
+    // Pre-fix: takeHome fell 68,377 -> 59,017, exactly the spouse's 9,360 of FICA.
+    expect(withSp.takeHome).toBe(alone.takeHome);
+    expect(withSp.fica).toBe(alone.fica);
+    expect(withSp.grossAfterTax).toBe(alone.grossAfterTax);
+    expect(withSp.combinedEffRate).toBe(alone.combinedEffRate);
+  });
+
+  it("head-of-household behaves the same way (it is also primary-only)", () => {
+    const alone  = calcTaxBasis({ ...base, filingStatus: "hoh", spouseIncome: 0 });
+    const withSp = calcTaxBasis({ ...base, filingStatus: "hoh", spouseIncome: 120_000 });
+    expect(withSp.takeHome).toBe(alone.takeHome);
+    expect(withSp.fica).toBe(alone.fica);
+  });
+
+  it("MFJ still charges BOTH earners' FICA — the fix must not narrow the household case", () => {
+    const solo = calcTaxBasis({ ...base, filingStatus: "mfj", spouseIncome: 0 });
+    const both = calcTaxBasis({ ...base, filingStatus: "mfj", spouseIncome: 120_000 });
+    expect(both.fica).toBeGreaterThan(solo.fica);
+    expect(both.householdIncome).toBe(220_000);
+  });
+
+  it("MFJ keeps the PER-EARNER Social Security wage-base cap (rule 9's actual point)", () => {
+    // Two earners well above the wage base: capping their COMBINED wages under one
+    // base would understate SS tax by roughly a full earner's worth.
+    const perEarner = calcTaxBasis({
+      ...base, currentIncome: 200_000, filingStatus: "mfj", spouseIncome: 200_000,
+    });
+    const singleHighEarner = calcTaxBasis({
+      ...base, currentIncome: 200_000, filingStatus: "mfj", spouseIncome: 0,
+    });
+    // The second earner adds real SS tax, so the household total is strictly larger
+    // than one capped earner's — the property a combined cap would destroy.
+    expect(perEarner.fica).toBeGreaterThan(singleHighEarner.fica * 1.5);
+  });
+});

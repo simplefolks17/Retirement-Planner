@@ -48,8 +48,20 @@ export function calcTaxBasis({
   // UNCAPPED) + Additional Medicare (0.9% on wages above a filing-status threshold). Lumping
   // all three under one capped rate understated FICA for high earners (review fix). SS stays
   // per-earner (rule 9); Medicare/surtax apply to total FICA wages.
-  const ssWages   = Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE);
-  const medWages  = currentIncome + spouseIncome;
+  // BUG-145: the spouse's wages enter FICA only when they are also in the income
+  // basis this FICA is charged against. `householdIncome` below is primary-only for
+  // every status except MFJ (rule 3), but FICA used to include the spouse
+  // unconditionally — so a user who entered a spouse's income while still filing
+  // "single" had the SPOUSE's payroll tax deducted from their OWN paycheck. Measured:
+  // takeHome 68,377 -> 59,017 (exactly the spouse's 9,360 of FICA) and, because the
+  // living-spend target is derived from take-home, `effectiveExpenses` fell by the
+  // same 9,360 — the user's own retirement spending target dropped because their
+  // spouse earns money. Rule 9's "FICA is always per-earner" is about the WAGE-BASE
+  // CAP (you cannot cap two salaries under one base), which is preserved exactly
+  // below; it was never a licence to charge a second earner's tax to a single filer.
+  const ficaSpouseIncome = isMFJ ? spouseIncome : 0;
+  const ssWages   = Math.min(currentIncome, FICA_WAGE_BASE) + Math.min(ficaSpouseIncome, FICA_WAGE_BASE);
+  const medWages  = currentIncome + ficaSpouseIncome;
   const addlThreshold = ADDL_MEDICARE_THRESHOLD[filingStatus] ?? ADDL_MEDICARE_THRESHOLD.single;
   const fica = ssWages * SS_TAX_RATE
              + medWages * MEDICARE_RATE
