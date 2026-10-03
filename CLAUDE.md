@@ -552,7 +552,7 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
   item: `docs/BUGS.md` → BUG-104 through BUG-134.
 
 - **Preview/commit parity arc + the 2026-09-05 audit harvest (2026-09-05 → 10-02, branch
-  `claude/retirement-planner-bug-audit-incp1z`, PR #67 — OPEN, not yet merged).** Owner asked for a
+  `claude/retirement-planner-bug-audit-incp1z`, PR #67 — **merged 2026-10-03 as `ce316db`**).** Owner asked for a
   whole-codebase look for hiding problems *before* tackling a prompt, on the grounds that bugs kept
   slipping past multiple adversarial reviews per PR. That framing is what produced the session: the
   diagnosis came first, and the fixes followed from it.
@@ -600,8 +600,12 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
      required INCREMENTAL writes to a named file — 88KB of findings with printed repros recovered.
      That is now the **Save Points** section above, along with `docs/SESSION-STATE.md` as a committed
      live handoff. The reports are preserved verbatim in `docs/audit-2026-09-05/`, marked as
-     unverified self-reports; **11 of 11 findings acted on so far have confirmed** under independent
-     re-verification, and one (basis/scope F7) was a correct critique of this session's own T-X.4.
+     unverified self-reports; **11 of 11 audit findings acted on have confirmed** under independent
+     re-verification (parity Findings 1/3/4 + basis-scope F1–F8), and one (basis/scope F7) was a
+     correct critique of this session's own T-X.4. Separately, CodeRabbit's manual-trigger reviews
+     on PR #67 raised two findings: one was already fixed by the push that landed while the review
+     ran, the other became BUG-150 — **a triggered review's findings are not closed by the push
+     that happens to follow them.**
      `npm test` also now excludes `zz-*` probes — in the npm script, deliberately NOT in
      `vite.config.js` (see Commands).
   1355 → **1408 tests**. All four golden masters either unmoved or re-locked with the direction and
