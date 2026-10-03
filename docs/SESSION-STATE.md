@@ -104,8 +104,10 @@ findings are on disk; re-running would mostly re-derive them and re-incur the ra
 killed both rounds. The only genuinely missing deliverable is auto-resolution's sentinel table.
 
 ### NEXT STEPS (in order) — reconciled 2026-10-02
-**PR #67 is OPEN and unmerged** (17+ commits, mergeable_state clean, 0 behind main). Nothing has
-touched the repo since 2026-09-06 until this reconciliation.
+**PR #67 MERGED 2026-10-03** as `ce316db` (squash, matching this repo's convention — every prior
+PR is single-parent with a `(#NN)` suffix). The squash was verified clean: main's tree came out
+byte-identical to the branch. The arc below is therefore HISTORY, not work in flight; what remains
+is listed under "Remaining" and is a fresh-session concern.
 
 Done since the last update:
 - ~~BUG-135 / 137 / 138~~ fixed. ~~basis-scope F1-F8~~ fully mined (BUG-139/140/141/143/144/145/146/147/148
