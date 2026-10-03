@@ -422,8 +422,13 @@ card (`withdrawalView.scopeNote`, both Horizon's `WithdrawalOrderFlow.jsx` and t
 now notes "these amounts are your own accounts; your spouse's accounts sequence separately" in a
 spouse household, so the primary-only scope is at least honestly labeled while this design question
 stays open. Copy-only — the underlying per-person-vs-pooled question above is unchanged.
-**Where:** `src/App.jsx:463-465` (the scalars), `:961` (`calcWithdrawalOrderTax` call), `:1033,1039`
-(`conversionSim`), `:4215-4217` (Classic display).
+**Where (line refs re-verified 2026-10-03 — every one had drifted):** `src/App.jsx:505-507` (the
+scalars `retTrad`/`retRoth`/`retTaxable`, still primary-only: `pRoth`/`pTaxable`), `:1215`
+(`calcWithdrawalOrderTax` call), `:853-854` and `:1118` (`conversionSim`'s
+`rothBalAtRet`/`taxableBalAtRet`), `:4876-4878` (Classic's withdrawal-order display) and `:5085`
+(the Classic prop pass-through). Previously documented as `:463-465` / `:961` / `:1033,1039` /
+`:4215-4217`, none of which point at this bug any more — a reminder that a "Where" line is only
+trustworthy as of its last re-verification date.
 **Inert at default state:** no spouse data → no effect. Golden master untouched.
 **Addendum (2026-07-26, adversarial-review three-findings pass, ND-3):** `calcRMDIncomeFloor`
 (`retirement-tax.js:23`, `rmdIncomeFloor` at `App.jsx:667`) is also spouse-blind, and is *reachable*

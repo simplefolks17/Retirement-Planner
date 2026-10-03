@@ -139,6 +139,36 @@ Remaining, in order:
 6. **Owner decisions pending:** BUG-142 (does "Your contributions" include the employer match?),
    BUG-149 (where to convert the healthcare costs, and flat vs per-year).
 
+### Close-out run 2026-10-03 — all 16 open bugs re-verified
+Every entry under "Open Issues" was checked against the CURRENT code, per close-out step 2.
+**All 16 still reproduce** — none has been fixed, mooted by a refactor, or was never live:
+
+| still live | evidence checked |
+|---|---|
+| BUG-113 | `JourneyScreen.jsx` still `opacity: 0.72` + hardcoded `#fff` at `600 9px` |
+| BUG-125 | `retirement-income.js:49` still gates household SS on the primary's claim age; `pendingGuaranteedStarts` still considers only `ssClaimingAge` |
+| BUG-124 | the "Tax in retirement" `StatCard` still reads `taxView.composition.total` with a fixed "in retirement-year dollars" sub, off the toggle |
+| BUG-103 | `runMonteCarlo` returns `successRate` with no spillover-rescued field |
+| BUG-99 | `money-events.js` has zero basis-conversion calls |
+| BUG-100 | `taxes.js` has zero inflation handling |
+| BUG-101 | `simulation.js:166` still scales contributions by `growFactor` (incomeGrowth), not inflation |
+| BUG-85 | `rothSeed`/`taxableSeed`/`hsaSeed` still "merged into the hh pools unchanged" |
+| BUG-84 | scalars still primary-only (`pRoth`/`pTaxable`) |
+| BUG-36 | `buildRetirementDrawdown` still used 9× in `what-if.js`, 2× in `optimization.js` |
+| BUG-37 | zero `conversionTaxSource` references in the engine |
+| BUG-38 | `inflowTax = (tInflow - tFloor)` unchanged |
+| BUG-39 | `totalGrowth = totalAtRet - startPortfolio - totalContrib` unchanged |
+| BUG-136/142/149 | verified when filed days earlier; unchanged since |
+
+**One staleness caught and fixed: BUG-84's line references had ALL drifted** (`:463-465` → `:505-507`,
+`:961` → `:1215`, `:1033,1039` → `:853-854`/`:1118`, `:4215-4217` → `:4876-4878`+`:5085`). The entry
+now records the re-verification date, because a "Where" line is only trustworthy as of its last check.
+
+Counts reconciled: test count 1408 in BOTH CLAUDE.md places and matching `npm test`;
+feature-tracker 127 = 79 + 48 and deliberately untouched (this arc shipped 14 bug fixes and no
+features). Local `main` ref was stale at `d49f854` and has been fast-forwarded to `origin/main`
+(`b992692`) — worth knowing, because `git log main..HEAD` was silently misleading before that.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an
