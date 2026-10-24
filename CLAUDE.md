@@ -69,6 +69,9 @@ The failure mode to avoid: logging new work while leaving stale "Open" entries u
 - Horizon depth-ladder roadmap (Classic → Horizon parity plan): `docs/ROADMAP.md`
 - External services & integration: `docs/INTEGRATIONS.md`
 - Feature backlog: `feature-tracker.html` (127 items, 79 done, 48 planned)
+- **Next session's brief (start here): `docs/CONSOLIDATION-REDO-PLAN.md`** — PR #58's five
+  consolidation items, re-derived against current `main` and sequenced (PR #58 closed unmerged
+  2026-10-24; rebasing it across 29 commits of drift would have silently reverted fixes)
 - Session history archive (everything before BUG-82, 2026-07-25): `docs/HISTORY.md`
 
 ## Status

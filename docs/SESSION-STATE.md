@@ -196,6 +196,34 @@ Reconciled (docs only — no `src/` change, 1408 tests unchanged):
 ROADMAP.md was not touched, which is exactly why it went stale — a doc that *should* have been
 touched is invisible to that test. Read the docs CLAUDE.md's rules point at, touched or not.
 
+### 2026-10-24 — PR #58 closed unmerged; redo plan written
+
+The last dangling item from before this whole arc. **PR #58** ("Consolidate percent/rate,
+verdict→tone, inputs, clamp, ids", opened 2026-07-24 against `b1f07e3`) was 29 commits behind
+`main`, and across its 32 files `main` had moved **+7,139 / −2,046** against its own +415 / −169.
+Owner decision: **close and redo, do not rebase** — three of the intervening PRs were bug-fix
+arcs (spouse engine, dollar-basis, Horizon design review) whose fixes live in the same
+functions that PR touches, so a rebase reverts fixes silently rather than failing loudly.
+
+**Closed with a full explanation comment** (every claim re-verified against `main` that day,
+not read off the PR): 2 of its items had landed independently (`MAX_MONEY_EVENTS`, now correctly
+sited in `config/irs-2026.js`; `kbActivate`, from PR #66's BUG-49 pass); **5 are still live, and
+two are WORSE than when it was written** — `fmtPercent` is now duplicated in two files, and
+event-id minting is now 4 sites (3 numeric, 1 string with no entropy) rather than 2. Also
+recorded there, for the record: its `CLAUDE.md` diff predates the HISTORY.md split and rules
+10/11; its `docs/BUGS.md` diff files the id fix as **"BUG-77"**, a number since taken by the
+spouse re-seed fix (PR #59), so merging would have put two bugs under one id.
+
+**New doc: `docs/CONSOLIDATION-REDO-PLAN.md`** — same start-here pattern as the retired
+`SPOUSAL-ENGINE-STABILIZATION-PLAN.md` / `SESSION-B-...-PLAN.md`. Four mechanical sweeps
+sequenced smallest-blast-radius first (ids → inputs → clamp → percent), each its own commit
+with its own test; percent **last**, because it is the only one that changes rendered output
+and `golden-master-app-wiring.test.js` mounts the real App and so can legitimately move on it.
+Item 5 (verdict→tone) is routed to design, not implementation: PR #66's 12-palette contrast
+work rebuilt the system underneath PR #58's "unaffordable → accent" conclusion. The doc carries
+the working agreement, the explicitly-out-of-scope list, and a paste-able kickoff prompt.
+Next free bug id: **BUG-151**.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an
