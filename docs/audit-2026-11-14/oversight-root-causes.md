@@ -145,3 +145,88 @@ user's REAL income is falling, so in reality they would never be phased out. Thi
 same simplification as BUG-100 (tax brackets not inflated) in a site BUG-100 doesn't list
 (`simulation.js:206`). It was invisible because a sweep of "Roth end age" shows no effect,
 and nobody asked why.
+
+### Lens 3 — paths switched off at the default, and inputs no test drives through the real App
+
+The App glue layer (`App.jsx`: 5,225 lines, ~275 top-level hooks) sits between the model
+(tested with hand-built inputs) and the screens (tested with fake bundles). Only 17 of the
+65 test files mount the real App. **Of the 63 user inputs, 23 are never set through the
+real App by any test**, including the work state itself (`profile.selectedState`): it is
+covered only by `tax-basis.test.js` (model, hand-built, TX only) and
+`my-details-screen.test.js` (a fake bundle). That is exactly where Finding C lived. The others:
+spouse income growth, other pre-tax deductions, living expenses, living-expense growth,
+portfolio target, all four HSA fields, extra pre-tax balance, all eight match fields
+(both people), spouse taxable account, spouse-sole-beneficiary, conversion bracket target,
+conversion tax source, marketplace premium, person on Medicare, deploy-surplus %.
+
+None of the four locked fixtures has a money event or a working-year conversion event; only
+T-X.3 has a pension or a non-TX state; none has a non-TX **work** state.
+
+### Lens 4 + mutation testing — tests that pass no matter what the code does
+
+Exported model code with no production caller (tests only): **`calcStateTax`** (see Part 1,
+cause 4), `findOptimalConversion` (superseded by `findOptimalConversionPlan`),
+`buildCommitPlanPreview` (orphaned since #121/#122), `totalConversionRequested`
+("test sanity only"), `FICA_RATE`. Tests on dead code count toward 1,408 but protect nothing.
+
+**Mutation testing.** I broke one line at a time, ran the full suite, and restored the file.
+That is the decisive check, and it is the one that would have caught Finding C directly:
+
+| Deliberately broken | Tests failing (of 1,408) |
+|---|---|
+| **Work-state income tax lookup → 0% for every state** (`tax-basis.js:42`) | **0** |
+| Other pre-tax deductions ignored (`tax-basis.js:35`) | **0** |
+| Spouse income growth replaced by a constant in the primary's sim | **0** |
+| Extra pre-tax balance (`addlPreTaxBal`) dropped from the retirement balance | **0** |
+| RMD joint-life table (spouse sole beneficiary) disabled | **0** |
+| Work state not passed to working-year conversion events | **0** |
+| Retirement-state rate → 0 (`App.jsx:232`) | 1 (T-X.3 only) |
+| Primary HSA family limit disabled | 1 |
+
+Six real, user-visible calculations can be deleted outright without a single test noticing.
+"1,408 tests green" says the code still does what it did, *where tests look*. It says nothing
+about these paths.
+
+### Lens 5 — test comments that claim coverage
+
+T-X.3's "exercises calcStateTax's real table" is verifiably false (Part 1, cause 3).
+45 test comments make "exercises / locks / covers" claims. The mutation table above is the
+mechanical way to check such a claim, and the repo already does exactly that for bug fixes
+("revert-and-confirm"). It has never been applied to fixture claims or to existing coverage.
+
+### Lens 7 — the two UIs and the onboarding path
+
+- Married vs filing status is the same shape as Finding C (two inputs, one fact), and it IS
+  handled: a mismatch notice (`spouseFilingMismatch`, BUG-81). Work state vs retirement
+  state has no such notice. The precedent for guarding this class existed and wasn't
+  generalised.
+- Onboarding: see Lens 6 (savings answer discarded) and Lens 2 (un-coupled age setter).
+  Onboarding also never asks for a state, so a Horizon user who never opens My details is
+  modelled as a Texan (0% state tax) through work AND retirement.
+
+### Lens 8 — "done" verdicts that stopped anyone looking again
+
+Two checked, **both wrong**: #51 "retirementState already fully wired" (Finding C), and
+BUG-91's "nothing currently silently ignores a user's input" about `livingExpenseGrowth`
+(Lens 6). Each closed a question by explaining it away, and nothing re-checked it.
+
+---
+
+## Part 3 — Structural fixes (what would have caught all of this)
+
+1. **An input-propagation test** (the sweep above, made permanent): every user input, set
+   through the REAL App in a household where it applies, must move at least one output.
+   Otherwise it sits on an explicit allow-list with a written reason. This catches dead
+   controls and broken wiring the day they appear.
+2. **A bounds-invariant test**: after scripted user moves (ages up and down, coverage
+   switches, onboarding commit), every stored value must sit inside its own declared
+   min/max. This catches coupling gaps like Finding E and the onboarding age bug.
+3. **App-level wiring tests for every input in the mutation table**, each verified by
+   re-running that mutation and watching it fail.
+4. **One implementation per calculation**: delete test-only copies like `calcStateTax`, or
+   route production through them, so tests can't certify code nobody runs.
+5. **"Auto" defaults as an explicit sentinel** (`null` = follow X, resolved in one place),
+   the pattern `spouseRetirementAge` / `incomeGrowthEndAge` / `stateRateOverride` already
+   use, never `useState(otherValue)`.
+6. **Any audit that declares something "wired" or "not a bug" must name the test that
+   proves it.**
