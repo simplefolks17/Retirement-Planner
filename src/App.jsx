@@ -1381,7 +1381,7 @@ export default function App() {
   const setRetirementAgeCoupled = useCallback(v => {
     setRetirementAge(v);
     const next = coupleContribEndAges(
-      { contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA }, retirementAge, v);
+      { contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA }, retirementAge, v, currentAge);
     if (next.contribEnd401k    !== contribEnd401k)    setContribEnd401k(next.contribEnd401k);
     if (next.contribEndRoth    !== contribEndRoth)    setContribEndRoth(next.contribEndRoth);
     if (next.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(next.contribEndTaxable);
@@ -1409,11 +1409,24 @@ export default function App() {
     if (ca !== undefined || ra !== undefined) {
       let st = { lifeExpect, ssClaimingAge, retirementAge, incomeGrowthEndAge,
                  contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA };
-      if (ca !== undefined) st = coupleCurrentAge(st, ca);
       if (ra !== undefined) {
-        st = { ...st, ...coupleContribEndAges(st, st.retirementAge, ra), retirementAge: ra };
-        st.incomeGrowthEndAge = clampIncomePlateauAge(st.incomeGrowthEndAge, ca ?? currentAge, ra);
+        // BUG-169 (review R-3): bound the retirement age against the COUPLED current age and
+        // plan-to age exactly as the controls' own [min, max] do — [currentAge, lifeExpect - 1]
+        // (lifeExpect is lifted to currentAge + 1 by the age coupling below). The wizard clamps
+        // each answer on its own (age 18-80, retire 40-90), so "70 and retired at 60" or
+        // "34, retire at 90" reached the model out of range.
+        const newCur = ca ?? currentAge;
+        const lifeAfter = Math.max(st.lifeExpect, newCur + 1);
+        ra = Math.min(Math.max(ra, newCur), lifeAfter - 1);
+        // BUG-168 (review R-10): couple the RETIREMENT age first, against the ORIGINAL tracking
+        // state, THEN the current age. The reverse order lifted every contribEnd* to
+        // newAge + 1 before the retirement move saw it, so a 72-year-old retiring at 75 stopped
+        // contributing at 73. This order matches "retire, then age" and (with the
+        // currentAge-aware rule in coupleContribEndAges) "age, then retire": all agree.
+        st = { ...st, ...coupleContribEndAges(st, st.retirementAge, ra, currentAge), retirementAge: ra };
       }
+      if (ca !== undefined) st = coupleCurrentAge(st, ca);
+      st.incomeGrowthEndAge = clampIncomePlateauAge(st.incomeGrowthEndAge, ca ?? currentAge, st.retirementAge);
       if (ca !== undefined) setCurrentAge(ca);
       if (st.lifeExpect        !== lifeExpect)        setLifeExpect(st.lifeExpect);
       if (st.ssClaimingAge     !== ssClaimingAge)     setSsClaimingAge(st.ssClaimingAge);

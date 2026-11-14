@@ -107,27 +107,84 @@ describe("BUG-153: commitPlan uses the coupled age rules", () => {
     app.unmount();
   });
 
-  it("matches the same values entered through the normal coupled setters", () => {
+  // BUG-168 (Opus review R-10): the ORIGINAL BUG-153 version of this test asserted onboarding
+  // equals "set age, then set retirement" and so locked in [73,73,73,73]: contributions stopped
+  // the year after currentAge for a 72-year-old retiring at 75. That order-dependent result was a
+  // regression from `main` (which gave 75). The right assertion is ORDER INDEPENDENCE: onboarding,
+  // "age then retire" and "retire then age" must all agree, with contributions running through
+  // the retirement year (contribEnd === retirementAge === 75) and the SS claim age clamped to 70.
+  it("onboarding, age-then-retire and retire-then-age all agree (order independent)", () => {
     // `captured` is shared across mounts, so snapshot each run's values before the next.
     const snap = (p) => ({
       ss: p.ss.ssClaimingAge.value,
       ends: ["trad401k", "roth", "taxable", "hsa"].map(k => p.accounts[k].contribEnd.value),
       retAge: p.assumptions.retirementAge.value,
+      totalAtRet: p.totalAtRet,
       yearsSustained: p.yearsSustained,
     });
-    const viaPlan = mount();
-    viaPlan.fire(() => viaPlan.latest().commitPlan(plan));
-    const a = snap(viaPlan.latest());
-    viaPlan.unmount();
-    const viaSetters = mount();
-    viaSetters.fire(() => viaSetters.latest().assumptions.currentAge.set(72));
-    viaSetters.fire(() => viaSetters.latest().assumptions.retirementAge.set(75));
-    viaSetters.fire(() => viaSetters.latest().profile.currentIncome.set(100_000));
-    viaSetters.fire(() => viaSetters.latest().spending.annualExpenses.set(60_000));
-    const b = snap(viaSetters.latest());
-    viaSetters.unmount();
-    expect(a).toEqual(b);
-    expect(a.ss).toBe(70);
+    const run = (drive) => {
+      const app = mount();
+      drive(app);
+      const out = snap(app.latest());
+      app.unmount();
+      return out;
+    };
+    const viaPlan = run(app => app.fire(() => app.latest().commitPlan(plan)));
+    const ageThenRetire = run(app => {
+      app.fire(() => app.latest().assumptions.currentAge.set(72));
+      app.fire(() => app.latest().assumptions.retirementAge.set(75));
+      app.fire(() => app.latest().profile.currentIncome.set(100_000));
+      app.fire(() => app.latest().spending.annualExpenses.set(60_000));
+    });
+    const retireThenAge = run(app => {
+      app.fire(() => app.latest().assumptions.retirementAge.set(75));
+      app.fire(() => app.latest().assumptions.currentAge.set(72));
+      app.fire(() => app.latest().profile.currentIncome.set(100_000));
+      app.fire(() => app.latest().spending.annualExpenses.set(60_000));
+    });
+    expect(viaPlan.ends).toEqual([75, 75, 75, 75]);
+    expect(ageThenRetire.ends).toEqual([75, 75, 75, 75]);
+    expect(retireThenAge.ends).toEqual([75, 75, 75, 75]);
+    expect(viaPlan.ss).toBe(70);
+    expect(ageThenRetire.ss).toBe(70);
+    expect(retireThenAge.ss).toBe(70);
+    expect(viaPlan).toEqual(ageThenRetire);
+    expect(viaPlan).toEqual(retireThenAge);
+  });
+});
+
+describe("BUG-169: commitPlan bounds the retirement age against the coupled ages", () => {
+  const snap = (p) => ({ ret: p.assumptions.retirementAge.value, life: p.assumptions.lifeExpect.value,
+    cur: p.assumptions.currentAge.value, depletionAge: p.planView.depletionAge });
+  it("70 years old retiring 'at 60' retires at 70 (the controls' own minimum)", () => {
+    const app = mount();
+    app.fire(() => app.latest().commitPlan({ currentAge: 70, retirementAge: 60, currentIncome: 100_000, monthlySpend: 5_000 }));
+    const s = snap(app.latest());
+    expect(s.ret).toBe(70);
+    expect(outOfRange(app.latest())).toEqual([]);
+    app.unmount();
+  });
+  it("34 years old retiring at 90 retires at lifeExpect - 1 and the horizon stays 90", () => {
+    const app = mount();
+    app.fire(() => app.latest().commitPlan({ currentAge: 34, retirementAge: 90, currentIncome: 100_000, monthlySpend: 5_000 }));
+    const s = snap(app.latest());
+    expect(s.ret).toBe(89);
+    expect(s.life).toBe(90);
+    expect(outOfRange(app.latest())).toEqual([]);
+    app.unmount();
+  });
+});
+
+describe("BUG-169 (lower bound, retirement age alone)", () => {
+  it("a retirement age below the current age is lifted to it when no age is committed", () => {
+    // With a currentAge in the same commit, coupleCurrentAge lifts it anyway; this is the path
+    // where ONLY the retirement-age bound can do the job.
+    const app = mount();
+    const cur = app.latest().assumptions.currentAge.value;
+    app.fire(() => app.latest().commitPlan({ retirementAge: cur - 10 }));
+    expect(app.latest().assumptions.retirementAge.value).toBe(cur);
+    expect(outOfRange(app.latest())).toEqual([]);
+    app.unmount();
   });
 });
 

@@ -84,6 +84,9 @@ const SEQS = {
   "onboarding commitPlan(currentAge 72, retire 75, totalSaved 900k)": (a) => a.fire(() => a.L().commitPlan({ currentAge: 72, currentIncome: 100_000, retirementAge: 75, monthlySpend: 5_000, totalSaved: 900_000 })),
   "onboarding commitPlan(currentAge 45, retire 55, totalSaved 0)": (a) => a.fire(() => a.L().commitPlan({ currentAge: 45, currentIncome: 80_000, retirementAge: 55, monthlySpend: 4_000, totalSaved: 0 })),
   "onboarding commitPlan(age 50, retire 52, totalSaved 2.5M)": (a) => a.fire(() => a.L().commitPlan({ currentAge: 50, currentIncome: 250_000, retirementAge: 52, monthlySpend: 9_000, totalSaved: 2_500_000 })),
+  // BUG-169 (review R-3): the wizard clamps each answer independently, so these reach commitPlan.
+  "onboarding commitPlan(currentAge 70, retire 60)": (a) => a.fire(() => a.L().commitPlan({ currentAge: 70, currentIncome: 100_000, retirementAge: 60, monthlySpend: 5_000 })),
+  "onboarding commitPlan(currentAge 34, retire 90)": (a) => a.fire(() => a.L().commitPlan({ currentAge: 34, currentIncome: 100_000, retirementAge: 90, monthlySpend: 5_000 })),
   "married; spouse retire 70 explicit; primary retire 45": (a) => { MARRY(a); set(a, "spouseAccounts.spouseRetirementAge", 70); set(a, "assumptions.retirementAge", 45); },
   "married; spouse 60; spouse retire 66; spouse age -> 75": (a) => { MARRY(a); set(a, "ss.spouseCurrentAge", 60); set(a, "spouseAccounts.spouseRetirementAge", 66); set(a, "ss.spouseCurrentAge", 75); },
   "married; spouse retire 66; spouse age -> 30 -> 80": (a) => { MARRY(a, 50); set(a, "spouseAccounts.spouseRetirementAge", 66); set(a, "ss.spouseCurrentAge", 30); set(a, "ss.spouseCurrentAge", 80); },

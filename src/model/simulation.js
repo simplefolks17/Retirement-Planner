@@ -32,10 +32,21 @@ import { eventSimAdjustmentForYear, eventsIncomeAdjustment } from "./money-event
 // (BUG-31's class). A `contribEnd*` the user has deliberately set AWAY from the
 // retirement age is left alone — that is the same rule the coupled setter uses, and it
 // is what makes "stop contributing at 55 but retire at 65" survive a scenario.
-export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge) {
+//
+// BUG-168 (review R-10): `currentAge` (optional) makes the rule ORDER-INDEPENDENT. Raising the
+// current age to/past the retirement age lifts retirement to the new age and each `contribEnd*`
+// to newAge + 1 (it must stay > current age), which is NOT the retirement age, so a retirement
+// move made AFTER an age move used to leave contributions behind at currentAge + 1 (72 then
+// retire 75 => contributions stop at 73; retire 75 then 72 => 75). When the base retirement age
+// equals the current age, a `contribEnd* === baseRetAge + 1` is that lifted-tracking state, so it
+// tracks too, and the new end is never at/before the current age. Callers that know the current
+// age pass it; omitted => the original rule, unchanged.
+export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge, currentAge = null) {
   if (!Number.isFinite(baseRetAge) || !Number.isFinite(scenarioRetAge)
       || scenarioRetAge === baseRetAge) return ends;
-  const track = (v) => (v === baseRetAge ? scenarioRetAge : v);
+  const liftedTracking = Number.isFinite(currentAge) && baseRetAge === currentAge;
+  const target = Number.isFinite(currentAge) ? Math.max(scenarioRetAge, currentAge + 1) : scenarioRetAge;
+  const track = (v) => (v === baseRetAge || (liftedTracking && v === baseRetAge + 1) ? target : v);
   return {
     ...ends,
     contribEnd401k:    track(ends.contribEnd401k),

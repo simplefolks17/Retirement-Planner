@@ -35,7 +35,7 @@ import { toRetirementYearDollars, inflationRebaseFactor } from "./finance-math.j
 // BUG-138 contribEnd coupling and the cutoff) plus the spouse bundle for the seed/chart.
 // With no spouse (spouseSeedInputs null) or an unchanged retirement age this is inert.
 function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge) {
-  const primaryInputs = coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge);
+  const primaryInputs = coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge, simInputs.currentAge);
   if (!spouseSeedInputs || scenarioRetAge === safeRetAge) {
     return { primaryInputs, seedInputs: spouseSeedInputs, chartInputs: spouseChartInputs };
   }

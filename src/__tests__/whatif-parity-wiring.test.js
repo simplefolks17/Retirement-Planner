@@ -88,6 +88,21 @@ describe("coupleContribEndAges (the shared rule, BUG-138)", () => {
     expect(coupleContribEndAges(ends, 65, NaN)).toBe(ends);
     expect(coupleContribEndAges(ends, undefined, 70)).toBe(ends);
   });
+
+  // BUG-168 (review R-10): raising the current age to the retirement age lifts each end to
+  // currentAge + 1 (not the retirement age). With the current age supplied, that lifted state
+  // tracks the retirement age too, so the result no longer depends on the order of the moves.
+  it("with currentAge: an end lifted to currentAge + 1 (retirement == currentAge) tracks", () => {
+    const lifted = { contribEnd401k: 73, contribEndRoth: 73, contribEndTaxable: 73, contribEndHSA: 73 };
+    const next = coupleContribEndAges(lifted, 72, 75, 72);
+    expect([next.contribEnd401k, next.contribEndRoth, next.contribEndTaxable, next.contribEndHSA]).toEqual([75, 75, 75, 75]);
+    // without the current age the original rule applies (no lifted-state tracking)
+    expect(coupleContribEndAges(lifted, 72, 75).contribEnd401k).toBe(73);
+    // not tracking when retirement is NOT at the current age: 66 is the user's own value
+    expect(coupleContribEndAges({ ...lifted, contribEnd401k: 66 }, 65, 70, 40).contribEnd401k).toBe(66);
+    // the new end is never at/before the current age
+    expect(coupleContribEndAges(lifted, 73, 72, 72).contribEnd401k).toBe(73);
+  });
 });
 
 describe("BUG-138 — a work-longer preview models the same contributions as committing it", () => {
