@@ -197,6 +197,31 @@ describe("BUG-155 (App): the stored plateau follows current/retirement age", () 
   });
 });
 
+describe("BUG-155 (App): the income plateau reaches Social Security (R-11)", () => {
+  // Mutating App's calcRetirementIncome({... incomeGrowthEndAge ...}) to null failed 0 tests:
+  // the sibling test above only asserts SS is "never discounted backward", which a plateau-blind
+  // SS also satisfies. A plateau at 40 means earnings stop growing at 40, so the 35-year earnings
+  // record (and PIA) is LOWER than the no-plateau record (review probe J2: 44,076 < 48,120).
+  const ssFor = (plateau) => {
+    const a = mount();
+    a.fire(() => a.latest().assumptions.currentAge.set(34));
+    a.fire(() => a.latest().assumptions.retirementAge.set(65));
+    a.fire(() => a.latest().profile.currentIncome.set(100_000));
+    a.fire(() => a.latest().profile.incomeGrowthEndAge.set(plateau));
+    const out = { annual: a.latest().ssView.ssEstimateAnnual, aime: a.latest().ssView.ssAIME, plateau: a.latest().profile.incomeGrowthEndAge.value };
+    a.unmount();
+    return out;
+  };
+  it("the SS estimate at plateau 40 is below the no-plateau estimate", () => {
+    const none = ssFor(null);
+    const at40 = ssFor(40);
+    expect(at40.plateau).toBe(40);
+    expect(none.plateau).toBeNull();
+    expect(at40.annual).toBeLessThan(none.annual);
+    expect(at40.aime).toBeLessThan(none.aime);
+  });
+});
+
 describe("BUG-156 (App): the primary's plateau does not touch the spouse's own savings", () => {
   // Spouse-only savings household: primary has no balances/contributions/match, so the
   // household total at retirement is the spouse's sim alone. The primary's plateau (age 50,

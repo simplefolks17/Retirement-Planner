@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
+import { calcWhatIfScenario, calcWhatIfDelta } from "../model/what-if.js";
 
 // ── App-level wiring tests for inputs the audit's MUTATION table showed unprotected ─────
 // (docs/audit-2026-11-14/oversight-root-causes.md, Lens 4). The audit deleted each of these
@@ -14,6 +15,7 @@ import { act, create } from "react-test-renderer";
 //   3. extra pre-tax balance               App.jsx `tradGrossAtRet` (+ addlPreTaxBal)
 //   4. RMD joint-life table                App.jsx `useTable2`
 //   5. work state -> working-year events   App.jsx primary runSimulation `stateRate`
+//   5b. work state -> scenario re-sim      App.jsx `whatIfSimInputs.stateRate` (R-11)
 //   6. primary HSA family limit            App.jsx `primaryHsaLimit`
 
 const captured = [];
@@ -132,6 +134,42 @@ describe("5. the work state reaches working-year Roth-conversion events", () => 
     expect(ca.tax).toBeGreaterThan(tx.tax);
     expect(ca.total).toBeLessThan(tx.total);
   });
+});
+
+describe("5b. the work state reaches the SCENARIO re-sim's conversion events too (R-11, sibling site of #5)", () => {
+  // App.jsx builds the working-year conversion tax rate at TWO sites: the committed plan's
+  // primary sim (pinned by #5) and `whatIfSimInputs.simInputs.stateRate`, which every scenario
+  // re-sim reads. Mutating the second to 0 failed 0 tests; a CA household's preview read
+  // +$20,508 more than committing the same retirement age (review probe J1: 7,400,213 vs
+  // 7,379,705). Preview must equal commit for a CA household with a working-year event.
+  const setupCA = (a) => {
+    set(a, "profile.selectedState", "CA");
+    set(a, "accounts.trad401k.bal", 500_000);
+    a.fire(() => a.L().conversionView.events.inServiceField.set(true));
+    a.fire(() => a.L().conversionView.events.add());
+    a.fire(() => a.L().conversionView.events.rows[0].amountField.set(100_000));
+  };
+  it("whatIfSimInputs carries the work state's rate (not 0) for a CA household", () => {
+    const a = mount(); setupCA(a);
+    const stateRate = a.L().whatIfSimInputs.simInputs.stateRate;
+    a.unmount();
+    expect(stateRate).toBeGreaterThan(0);
+  });
+  for (const target of [67]) {
+    it(`preview of retiring at ${target} equals committing it (calcWhatIfScenario and calcWhatIfDelta)`, () => {
+      const a1 = mount(); setupCA(a1);
+      const bundle = a1.L().whatIfSimInputs;
+      const scenario = calcWhatIfScenario(bundle, { retirementAge: target });
+      const delta = calcWhatIfDelta({ ...bundle, retirementAgeOverride: target });
+      a1.unmount();
+      const a2 = mount(); setupCA(a2);
+      a2.fire(() => a2.L().assumptions.retirementAge.set(target));
+      const committed = a2.L().totalAtRet;
+      a2.unmount();
+      expect(scenario.scenarioTotalAtRet).toBe(committed);
+      expect(delta.scenarioTotalAtRet).toBe(committed);
+    });
+  }
 });
 
 describe("6. the primary's HSA family limit reaches the simulation", () => {
