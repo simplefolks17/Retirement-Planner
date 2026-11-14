@@ -8,7 +8,7 @@
 import { useState, useMemo } from "react";
 import { C } from "../theme.js";
 import { fmt, fmtPct } from "../formatters.js";
-import { calcWhatIfDelta, calcAffordabilityMax } from "../model/what-if.js";
+import { calcWhatIfDeltaAnchored, calcAffordabilityMax } from "../model/what-if.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 import { clamp } from "../model/finance-math.js";
 
@@ -33,9 +33,12 @@ function DeltaChip({ delta }) {
   );
 }
 
-function YearsSustainedLabel({ years, safeRetAge }) {
+// `retAge` is the retirement age the `years` were measured FROM — the scenario's own for a
+// scenario figure (BUG-176: it used to be the base plan's age for both, so "work 2 more years"
+// printed an age 2 years early).
+function YearsSustainedLabel({ years, retAge }) {
   if (years === Infinity) return <span style={{ color: C.green }}>Sustainable indefinitely</span>;
-  const depletionAge = Math.round(safeRetAge + years);
+  const depletionAge = Math.round(retAge + years);
   return <span>Portfolio lasts to age <strong>{depletionAge}</strong></span>;
 }
 
@@ -126,7 +129,7 @@ export function WhatIfPanel({
 
     if (events.length === 0 && retirementAgeOverride === null && annualExpensesOverride === null) return null;
 
-    return calcWhatIfDelta({ ...sharedArgs, moneyEvents: events, retirementAgeOverride, annualExpensesOverride });
+    return calcWhatIfDeltaAnchored({ ...sharedArgs, moneyEvents: events, retirementAgeOverride, annualExpensesOverride });
   }, [mode, amount, eventAge, isInflow, label, retAgeOff, preset, expenseDelta, sharedArgs,
       safeRetAge, retDrawShared.effectiveExpenses]);
 
@@ -247,11 +250,11 @@ export function WhatIfPanel({
                 <div style={{ background: C.card, borderRadius: 8, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
                     <span style={{ fontSize: 13, color: C.text }}>
-                      <YearsSustainedLabel years={deltaResult.scenarioYears} safeRetAge={safeRetAge} />
+                      <YearsSustainedLabel years={deltaResult.scenarioYears} retAge={deltaResult.scenarioRetAge} />
                     </span>
                     <span style={{ fontSize: 12, color: C.muted }}>
                       vs&nbsp;
-                      <YearsSustainedLabel years={deltaResult.baseYears} safeRetAge={safeRetAge} />
+                      <YearsSustainedLabel years={deltaResult.baseYears} retAge={safeRetAge} />
                       &nbsp;→&nbsp;<DeltaChip delta={deltaResult.deltaYears} />
                     </span>
                   </div>

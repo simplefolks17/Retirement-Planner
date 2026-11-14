@@ -557,6 +557,64 @@ export function calcWhatIfDelta({
   };
 }
 
+// ── BUG-176 (Opus review R-9): headline-anchored previews of calcWhatIfDelta ─────────────────
+// calcWhatIfDelta still walks the BLENDED buildRetirementDrawdown (no spouse gap-year income,
+// no per-account path-dependent tax — BUG-36), so its ABSOLUTE scenario figures are on a
+// different engine than the plan headline and can contradict it by years in spouse-gap
+// households (measured: headline lasts to 70; the same function with NO change at all says
+// 5.41 years vs the headline's 12.97). Porting it onto buildRetirementPhase is the real fix
+// (BUG-36, still open). Until then every preview that prints a before/after pair uses this:
+//   - "before" IS the headline (never the blended walk's own figure);
+//   - "after" is headline + (scenario - noChange), where both terms of the difference come from
+//     the SAME blended engine, so the engine bias cancels and only the lever's own effect remains.
+// `noChange` is calcWhatIfDelta run with no override at all; `scenario` the run being previewed.
+// Edge states: a lever's delta is +/-Infinity when one side never depletes; "+Infinity" anchors to
+// Infinity (the lever made the blended plan sustainable); "-Infinity" (the blended no-change walk
+// was sustainable but the scenario is not) cannot be expressed as headline + delta, so it falls
+// back to the scenario's own figure rather than inventing one.
+// Basis: years/ages are basis-free; totalAtRet is in the scenario's retirement-year dollars, as
+// calcWhatIfDelta's own scenarioTotalAtRet is (the difference is added to the headline's).
+export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioRetAge }) {
+  const deltaYears = deltaYearsFrom(scenario.scenarioYears, noChange.scenarioYears);
+  let years;
+  if (deltaYears === Infinity) years = Infinity;
+  else if (deltaYears === -Infinity) years = scenario.scenarioYears;
+  else if (headline.years === Infinity) years = deltaYears < 0 ? scenario.scenarioYears : Infinity;
+  else years = headline.years + deltaYears;
+  let depletionAge;
+  if (years === Infinity) depletionAge = null;
+  else if (years === scenario.scenarioYears) depletionAge = scenario.scenarioDepletionAge ?? null;
+  else if (deltaYears === 0) depletionAge = headline.depletionAge ?? null;
+  else depletionAge = Math.round(scenarioRetAge + years);
+  return {
+    baseYears: headline.years,
+    scenarioYears: years,
+    deltaYears: deltaYears === -Infinity ? deltaYearsFrom(years, headline.years) : deltaYears,
+    scenarioDepletionAge: depletionAge,
+    baseTotalAtRet: headline.totalAtRet,
+    scenarioTotalAtRet: headline.totalAtRet + (scenario.scenarioTotalAtRet - noChange.scenarioTotalAtRet),
+  };
+}
+
+// Convenience for single-scenario callers (Classic WhatIfPanel): runs the no-change baseline and
+// the scenario through the SAME args, then anchors. `args` is calcWhatIfDelta's argument object
+// (`baseYearsSustained`/`baseTotalAtRet` in it ARE the headline).
+export function calcWhatIfDeltaAnchored(args) {
+  const noChange = calcWhatIfDelta({
+    ...args, moneyEvents: [], retirementAgeOverride: null, annualExpensesOverride: null, contribOverrides: null,
+  });
+  const scenario = calcWhatIfDelta(args);
+  const scenarioRetAge = args.retirementAgeOverride ?? args.safeRetAge;
+  return {
+    ...scenario,
+    scenarioRetAge,   // the age scenarioYears is measured FROM (a label needs it; the base's is safeRetAge)
+    ...anchorWhatIfToHeadline({
+      scenario, noChange, scenarioRetAge,
+      headline: { years: args.baseYearsSustained, depletionAge: null, totalAtRet: args.baseTotalAtRet },
+    }),
+  };
+}
+
 // ── calcWhatIfScenario ───────────────────────────────────────────────────────
 // ONE model run returning BOTH the arc chart series and the real stat scalars
 // for a scenario override, so a screen showing them side by side can never show

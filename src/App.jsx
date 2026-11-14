@@ -54,7 +54,7 @@ import { FlowConn }          from "./components/FlowConn.jsx";
 import { WhatIfPanel }       from "./components/WhatIfPanel.jsx";
 import { MoneyEventsPanel }  from "./components/MoneyEventsPanel.jsx";
 import { ConversionEventsPanel } from "./components/ConversionEventsPanel.jsx";
-import { calcWhatIfDelta, buildVerdictLegend, calcWorkLongerBreakEven }   from "./model/what-if.js";
+import { calcWhatIfDelta, anchorWhatIfToHeadline, buildVerdictLegend, calcWorkLongerBreakEven }   from "./model/what-if.js";
 import { PhaseCard }       from "./components/PhaseCard.jsx";
 import { HorizonThemeProvider, safeGet } from "./horizon/ThemeContext.jsx";
 import HorizonShell       from "./components/HorizonShell.jsx";
@@ -2329,20 +2329,26 @@ export default function App() {
         contribTaxable: optimizedAllocation.optTaxable,
       },
     });
+    const surplusAnchored = anchorWhatIfToHeadline({
+      scenario: after, noChange: before, scenarioRetAge: safeRetAge,
+      headline: { years: yearsSustained, depletionAge, totalAtRet },
+    });
     return {
       available: true,
       preview: buildSurplusPreview({
         current: {
           contribTotal: currentContribTotal, savingsRatePct: budgetView.currentSavingsRatePct,
-          totalAtRet: before.scenarioTotalAtRet, yearsSustained: before.scenarioYears,
-          depletionAge: before.scenarioDepletionAge,
+          // BUG-176: "current" IS the plan headline (not calcWhatIfDelta's blended-walk
+          // re-derivation of it); "candidate" is headline + the lever's own delta.
+          totalAtRet: surplusAnchored.baseTotalAtRet, yearsSustained: surplusAnchored.baseYears,
+          depletionAge: depletionAge,
         },
         candidate: {
           contribTotal: optimizedAllocation.opt401k + optimizedAllocation.optRoth
             + optimizedAllocation.optHSA + optimizedAllocation.optTaxable,
           savingsRatePct: budgetView.optimizedSavingsRatePct,
-          totalAtRet: after.scenarioTotalAtRet, yearsSustained: after.scenarioYears,
-          depletionAge: after.scenarioDepletionAge,
+          totalAtRet: surplusAnchored.scenarioTotalAtRet, yearsSustained: surplusAnchored.scenarioYears,
+          depletionAge: surplusAnchored.scenarioDepletionAge,
         },
         deployment: {
           totalExtra: optimizedAllocation.totalExtra, pct: savingsSurplusPct, availableSurplus,
@@ -2353,7 +2359,8 @@ export default function App() {
       applied: false, // preApplySnapshot is null here (we're in the `available` branch)
     };
   }, [optimizedAllocation, preApplySnapshot, applyAllocation, revertAllocation, whatIfBundle,
-      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus, readOnly]);
+      currentContribTotal, budgetView, savingsSurplusPct, availableSurplus, readOnly,
+      yearsSustained, depletionAge, totalAtRet, safeRetAge]);
 
   // WI-3.7 (#104): Surplus-deployment flow bundle. Sibling of strategiesView keyed
   // by the "surplus" strategy id — the card face reads props.budget.* directly

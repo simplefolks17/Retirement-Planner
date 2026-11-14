@@ -18,6 +18,9 @@ vi.mock("../components/HorizonShell.jsx", () => ({
   default: (props) => { captured.push(props); return null; },
 }));
 import App from "../App.jsx";
+import { fmt } from "../formatters.js";
+import { anchorWhatIfToHeadline } from "../model/what-if.js";
+import { WhatIfPanel } from "../components/WhatIfPanel.jsx";
 
 beforeAll(() => {
   if (typeof globalThis.window === "undefined") {
@@ -163,5 +166,97 @@ describe("BUG-175 (R-13): a working-year conversion event the model drops is fla
     expect(nm).toBe(true);
     expect(txt).toContain(CONVERSION_EVENT_NOT_MODELLED_LABEL);
     expect(txt).not.toContain("401k → Roth, taxed as income");
+  });
+});
+
+// ── BUG-176 (R-9) ────────────────────────────────────────────────────────────────────────────
+// Review repro (Finding B's household): primary 48 retiring 57, spouse 37 earning $120k with a
+// $20k 401k, $120k spend, conversions zeroed, "auto" spouse retirement. Headline: money lasts to 70.
+function buildYoungerSpouse() {
+  const r = mount();
+  const f = (fn) => act(() => fn());
+  f(() => L().assumptions.currentAge.set(48));
+  f(() => L().assumptions.retirementAge.set(57));
+  f(() => L().profile.filingStatus.set("mfj"));
+  f(() => L().ss.isMarried.set(true));
+  f(() => L().ss.spouseCurrentAge.set(37));
+  f(() => L().profile.spouseIncome.set(120_000));
+  f(() => L().spouseAccounts.trad401k.contrib.set(20_000));
+  f(() => L().spending.annualExpenses.set(120_000));
+  f(() => L().conversion.conversionMode.set("custom"));
+  f(() => L().conversion.annualConversionAmt.set(0));
+  f(() => L().spending.livingExpenses.set(60_000));
+  return r;
+}
+const metric = (preview, id) => preview.metrics.find(m => m.id === id);
+
+describe("BUG-176 (R-9): calcWhatIfDelta previews never print a 'before' that contradicts the headline", () => {
+  it("Horizon surplus Apply preview: 'Portfolio lasts' before == the headline depletion age, after never reads worse", () => {
+    const r = buildYoungerSpouse();
+    const p = L();
+    const headlineAge = p.retirementWalk.depletionAge;
+    const headlineYears = p.yearsSustained;
+    const site = p.surplusView.applyAllocation;
+    const lon = site.available ? metric(site.preview, "longevity") : null;
+    const tot = site.available ? metric(site.preview, "totalAtRet") : null;
+    const headlineTotal = p.totalAtRet;
+    act(() => r.unmount());
+    expect(site.available).toBe(true);
+    expect(headlineAge).not.toBeNull();
+    expect(lon.before).toBe(`to age ${headlineAge}`);
+    // after is headline + the lever's own delta: never an earlier age than the plan it improves
+    const afterAge = Number(lon.after.replace(/\D+/g, ""));
+    expect(afterAge).toBeGreaterThanOrEqual(headlineAge);
+    expect(headlineYears).toBeGreaterThan(0);
+    expect(tot.before).toBe(fmt(headlineTotal));        // "before" nest egg is the headline's too
+  });
+
+  it("Classic WhatIfPanel 'Work 2 more years': before == headline age; after is the lever's own delta from it", () => {
+    const r = buildYoungerSpouse();
+    const headlineAge = L().retirementWalk.depletionAge;
+    const headlineYears = L().yearsSustained;
+    fire(() => L().onShowClassic());
+    const panel = r.root.findAllByType(WhatIfPanel)[0];
+    const header = panel.findAll(n => n.type === "div" && typeof n.props.onClick === "function"
+      && textOf(n).includes("What-If Calculator"))[0];
+    fire(() => header.props.onClick());
+    const preset = panel.findAll(n => n.type === "button" && textOf(n) === "Work 2 more years")[0];
+    fire(() => preset.props.onClick());
+    const txt = textOf(panel);
+    act(() => r.unmount());
+    expect(headlineAge).toBe(70);
+    expect(headlineYears).toBeGreaterThan(12);
+    // "vs Portfolio lasts to age <before>": the before is the headline's.
+    const m = txt.match(/to age (\d+)vs[\s\u00a0]*Portfolio lasts to age (\d+)/);
+    expect(m, txt).toBeTruthy();
+    const [after, before] = [Number(m[1]), Number(m[2])];
+    expect(before).toBe(headlineAge);
+    expect(after).toBeGreaterThanOrEqual(before);
+  });
+});
+
+describe("anchorWhatIfToHeadline (BUG-176) — edge states", () => {
+  const head = { years: 13, depletionAge: 70, totalAtRet: 1_000_000 };
+  const mk = (sy, ny, st = 1_100_000, nt = 1_000_000) => anchorWhatIfToHeadline({
+    scenario: { scenarioYears: sy, scenarioTotalAtRet: st, scenarioDepletionAge: null },
+    noChange: { scenarioYears: ny, scenarioTotalAtRet: nt }, headline: head, scenarioRetAge: 57,
+  });
+  it("no change at all -> exactly the headline, delta 0", () => {
+    const a = mk(5.4, 5.4, 1_000_000);
+    expect(a.scenarioYears).toBe(13); expect(a.deltaYears).toBe(0);
+    expect(a.scenarioDepletionAge).toBe(70); expect(a.scenarioTotalAtRet).toBe(1_000_000);
+  });
+  it("finite delta rides on the headline (engine bias cancels); nest egg likewise", () => {
+    const a = mk(7.4, 5.4);
+    expect(a.scenarioYears).toBe(15); expect(a.deltaYears).toBeCloseTo(2, 9);
+    expect(a.scenarioDepletionAge).toBe(72); expect(a.scenarioTotalAtRet).toBe(1_100_000);
+  });
+  it("scenario never depletes while the no-change walk did -> Infinity, no depletion age", () => {
+    const a = mk(Infinity, 5.4);
+    expect(a.scenarioYears).toBe(Infinity); expect(a.scenarioDepletionAge).toBeNull();
+  });
+  it("both sustainable -> delta 0 and years stay Infinity only when the headline is", () => {
+    expect(mk(Infinity, Infinity).deltaYears).toBe(0);
+    expect(mk(Infinity, Infinity).scenarioYears).toBe(13);
   });
 });
