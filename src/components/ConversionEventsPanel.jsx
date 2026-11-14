@@ -6,7 +6,9 @@
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
 import { DeferredInput } from "./DeferredInput.jsx";
-import { MAX_CONVERSION_EVENTS } from "../model/conversion-events.js";
+import {
+  MAX_CONVERSION_EVENTS, conversionEventNotModelled, CONVERSION_EVENT_NOT_MODELLED_LABEL,
+} from "../model/conversion-events.js";
 import { mintEventId } from "../model/money-events.js";
 import { clamp } from "../model/finance-math.js";
 
@@ -59,6 +61,7 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
 
       {events.map(ev => {
         const estTax = estTaxByAge[ev.age];
+        const notModelled = conversionEventNotModelled(ev, currentAge, safeRetAge); // BUG-175
         return (
           <div key={ev.id} style={{
             display: "grid", gridTemplateColumns: "70px 120px 1fr auto",
@@ -80,8 +83,8 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
               value={ev.amount || ""}
               onChange={e => { const n = Number(e.target.value); update(ev.id, "amount", Number.isFinite(n) ? Math.max(0, n) : 0); }}
             />
-            <span style={{ fontSize: 10, color: C.muted }}>
-              {ev.amount > 0 && estTax != null
+            <span style={{ fontSize: 10, color: notModelled ? C.orange : C.muted }}>
+              {notModelled ? CONVERSION_EVENT_NOT_MODELLED_LABEL : ev.amount > 0 && estTax != null
                 ? <>est. tax <span style={{ color: C.gold, fontFamily: "'JetBrains Mono', monospace" }}>{fmt(estTax)}</span> this year</>
                 : "401k → Roth, taxed as income"}
             </span>

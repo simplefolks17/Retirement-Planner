@@ -301,7 +301,7 @@ export default function ConversionPlannerFlow({ t, props, isMobile = false }) {
                   </div>
                   {F({ label: "Age", field: row.ageField, format: v => `age ${v}` })}
                   {F({ label: "Amount", field: row.amountField, format: money })}
-                  <div style={{ font: `400 10.5px ${HF}`, color: t.faint }}>{row.estTaxLabel}</div>
+                  <div style={{ font: `400 10.5px ${HF}`, color: row.notModelled ? t.warm : t.faint }}>{row.estTaxLabel}</div>
                 </div>
               ))}
               {!cv.events.atMax && (

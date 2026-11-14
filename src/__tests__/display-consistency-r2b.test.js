@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
 import { TaxTimeline } from "../components/TaxTimeline.jsx";
+import { ConversionEventsPanel } from "../components/ConversionEventsPanel.jsx";
+import { CONVERSION_EVENT_NOT_MODELLED_LABEL } from "../model/conversion-events.js";
 
 // R2-B (Opus review R-2, R-8, R-9, R-13): display/consistency fixes, driven through the real App.
 // Classic is rendered for real; Horizon is a capture stub (same idiom as classic-horizon-parity).
@@ -100,5 +102,66 @@ describe("BUG-173 (R-2): work-longer 'Social Security / yr' is the household fig
     expect(wl.baseSSAnnual).toBe(hh);
     // Each row is household SS (primary PIA-derived + spouse 20,000), never primary-only.
     for (const row of rows) { expect(row.ss).toBeGreaterThan(20_000 + 20_000); expect(row.pin).toBe(false); }
+  });
+});
+
+// ── BUG-175 (R-13 defect half) ───────────────────────────────────────────────────────────────
+// Review repro: $500k pre-tax, in-service conversions on, event $100,000 at the default age 48;
+// then retirement moves 65 -> 40. The model drops the event (simData.convEvent sum 100,000 -> 0);
+// the row used to keep reading "401k → Roth, taxed as income". It must now say it isn't modelled.
+
+describe("BUG-175 (R-13): a working-year conversion event the model drops is flagged, not shown as live", () => {
+  function build() {
+    const r = mount();
+    set("accounts.trad401k.bal", 500_000);
+    set("conversionView.events.inServiceField", true);
+    return r;
+  }
+  it("Horizon row + Classic panel flag the event after retirement moves before its age; model really drops it", () => {
+    const r = build();
+    set("conversionView.events.inServiceField", true);
+    fire(() => L().conversionView.events.add());
+    const id = L().conversionView.events.rows[0].id;
+    fire(() => L().conversionView.events.rows[0].amountField.set(100_000));
+    const before = L().conversionView.events.rows[0];
+    const beforeSum = L().simData.reduce((s, d) => s + (d.convEvent ?? 0), 0);
+    set("assumptions.retirementAge", 40);
+    const row = L().conversionView.events.rows[0];
+    const afterSum = L().simData.reduce((s, d) => s + (d.convEvent ?? 0), 0);
+    const snap = { ageVal: row.ageField.value, ageMax: row.ageField.max, nm: row.notModelled, label: row.estTaxLabel, id: row.id };
+    fire(() => L().onShowClassic());
+    const panel = r.root.findAllByType(ConversionEventsPanel)[0];
+    const classicTxt = panel ? textOf(panel) : null;
+    act(() => r.unmount());
+
+    expect(before.notModelled).toBe(false);
+    expect(beforeSum).toBe(100_000);
+    expect(afterSum).toBe(0);                       // the model really drops it
+    expect(snap.id).toBe(id);
+    expect(snap.nm).toBe(true);
+    expect(snap.label).toBe(CONVERSION_EVENT_NOT_MODELLED_LABEL);
+    expect(snap.ageVal).toBeGreaterThan(snap.ageMax); // the stale value is out of its own range
+    // Whatever Classic renders at this state (it may show "no working years"), it must never
+    // present the dropped event as live:
+    expect(classicTxt === null || !classicTxt.includes("401k → Roth, taxed as income")).toBe(true);
+  });
+
+  it("Classic row (working years still exist, event beyond them) shows the not-modelled label", () => {
+    const r = build();
+    fire(() => L().conversionView.events.add());
+    fire(() => L().conversionView.events.rows[0].amountField.set(100_000));
+    // Move the event late, then pull retirement in front of it but keep working years > 0.
+    const a = L().assumptions.currentAge.value;
+    set("assumptions.retirementAge", a + 4);
+    fire(() => L().conversionView.events.rows[0].ageField.set(a + 3));
+    set("assumptions.retirementAge", a + 2); // event at a+3 is now past retirement-1
+    const nm = L().conversionView.events.rows[0].notModelled;
+    fire(() => L().onShowClassic());
+    const panel = r.root.findAllByType(ConversionEventsPanel)[0];
+    const txt = textOf(panel);
+    act(() => r.unmount());
+    expect(nm).toBe(true);
+    expect(txt).toContain(CONVERSION_EVENT_NOT_MODELLED_LABEL);
+    expect(txt).not.toContain("401k → Roth, taxed as income");
   });
 });

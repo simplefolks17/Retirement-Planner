@@ -31,7 +31,10 @@ import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulation
 import { clamp, fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
-import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
+import {
+  MAX_CONVERSION_EVENTS, conversionEventOutsideWorkingYears, conversionEventNotModelled,
+  CONVERSION_EVENT_NOT_MODELLED_LABEL,
+} from "./model/conversion-events.js";
 import { eventLastAge, mintEventId } from "./model/money-events.js";
 import {
   TAX_DATA_2026,
@@ -298,8 +301,7 @@ export default function App() {
   // retirement window where it would double-convert (review #11) — no effect/loop.
   const activeConversionEvents = useMemo(() => {
     if (!conversionInService) return [];
-    const minAge = currentAge + 1, maxAge = safeRetAge - 1;
-    return conversionEvents.filter(e => e.amount > 0 && e.age >= minAge && e.age <= maxAge);
+    return conversionEvents.filter(e => e.amount > 0 && !conversionEventOutsideWorkingYears(e, currentAge, safeRetAge));
   }, [conversionInService, conversionEvents, currentAge, safeRetAge]);
 
   // Spouse accounts are modeled only when there's a spouse to model. Default (all
@@ -2717,9 +2719,13 @@ export default function App() {
           }, readOnly),
           min: 0, step: 5_000,
         },
-        estTaxLabel: convEventTaxByAge[ev.age] != null && ev.amount > 0
-          ? `est. tax ${fmt(convEventTaxByAge[ev.age])} this year`
-          : "401k → Roth, taxed as income",
+        // BUG-175: model-provided "outside your working years — not modelled" state (rule 10).
+        notModelled: conversionEventNotModelled(ev, currentAge, safeRetAge),
+        estTaxLabel: conversionEventNotModelled(ev, currentAge, safeRetAge)
+          ? CONVERSION_EVENT_NOT_MODELLED_LABEL
+          : convEventTaxByAge[ev.age] != null && ev.amount > 0
+            ? `est. tax ${fmt(convEventTaxByAge[ev.age])} this year`
+            : "401k → Roth, taxed as income",
         remove: guardWrite(() => setConversionEvents(evs => evs.filter(e => e.id !== ev.id)), readOnly),
       })),
       add: guardWrite(() => {
