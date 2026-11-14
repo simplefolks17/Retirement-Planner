@@ -1,9 +1,10 @@
+import { clamp } from "./finance-math.js";
 import { ACA_FPL_2026, ACA_CLIFF_PCT, IRMAA_BRACKETS_2026, MEDICARE_AGE } from "../config/irs-2026.js";
 
 // Returns the 400% FPL cliff MAGI threshold for a household.
 // householdSize: 1–6 (capped at 6).
 export function acaCliffThreshold(householdSize) {
-  const fpl = ACA_FPL_2026[Math.min(Math.max(1, householdSize), 6)];
+  const fpl = ACA_FPL_2026[clamp(householdSize, 1, 6)];
   return Math.round(fpl * ACA_CLIFF_PCT / 100);
 }
 

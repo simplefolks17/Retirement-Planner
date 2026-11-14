@@ -1,3 +1,4 @@
+import { clamp } from "./finance-math.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 // Money events: windfalls, large purchases, inheritances, travel years, sabbaticals.
@@ -142,7 +143,7 @@ export function isIncomeReplacingEvent(ev) {
 export function monthsActiveInYear(ev, age) {
   const k = age - ev.age;
   if (k < 0) return 0;
-  return Math.max(0, Math.min(12, spanMonths(ev) - 12 * k));
+  return clamp(spanMonths(ev) - 12 * k, 0, 12);
 }
 
 // The event's OWN signed cash for the year, EXCLUDING the incomeAnnual term.

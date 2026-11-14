@@ -1,3 +1,4 @@
+import { clamp } from "./finance-math.js";
 import { buildRetirementWalkByAccount } from "./retirement-engine.js";
 
 // Convert between the primary's age and the spouse's age in the same calendar year.
@@ -33,7 +34,7 @@ export function resolveSpouseRetAge({ spouseRetirementAge, primaryRetAge, spouse
   if (!Number.isFinite(raw)) return raw;
   const min = Number.isFinite(spouseCurrentAge) ? spouseCurrentAge + 1 : -Infinity;
   const max = Number.isFinite(lifeExp) ? Math.max(min, lifeExp - 1) : Infinity;
-  return Math.min(max, Math.max(min, raw));
+  return clamp(raw, min, max);
 }
 
 // Does a spouse seed carry REAL gap-year money? (#30 / BUG-93 / BUG-137)
@@ -323,7 +324,7 @@ export function buildSpouseRetirementSeed({
     : spouseCurrentSnapshot;
 
   // Clamp defensively: a non-finite or out-of-range rate must never scale a draw offset.
-  const netRate = Math.max(0, Math.min(1, Number.isFinite(spouseNetRate) ? spouseNetRate : 0));
+  const netRate = clamp(Number.isFinite(spouseNetRate) ? spouseNetRate : 0, 0, 1);
 
   // ── Unit correction (#30 / BUG-82 follow-up) ──────────────────────────────
   // runSimulation compounds NOMINALLY (returnRate, incomeGrowth), but the retirement

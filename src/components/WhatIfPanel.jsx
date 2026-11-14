@@ -10,6 +10,7 @@ import { C } from "../theme.js";
 import { fmt, fmtPct } from "../formatters.js";
 import { calcWhatIfDelta, calcAffordabilityMax } from "../model/what-if.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
+import { clamp } from "../model/finance-math.js";
 
 const PRESETS = [
   { label: "Work 2 more years",  retirementAgeOffset: +2 },
@@ -79,16 +80,15 @@ export function WhatIfPanel({
   // Affordability mode inputs
   const [affAgeIn,   setAffAgeIn]   = useState(null);
   const [targetAgeIn, setTargetAgeIn] = useState(null);
-  const clampAge = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-  const MAX_AGE = 120;
+    const MAX_AGE = 120;
   // What the inputs DISPLAY (raw, so typing "6" on the way to "65" isn't fought) ...
   const eventAgeShown  = eventAgeIn  ?? currentAge + 5;
   const affAgeShown    = affAgeIn    ?? currentAge + 5;
   const targetAgeShown = targetAgeIn ?? safeLifeExp;
   // ... and what the model USES / the result text quotes (clamped to the live bounds).
-  const eventAge  = clampAge(Number(eventAgeShown)  || 0, currentAge, MAX_AGE);
-  const affAge    = clampAge(Number(affAgeShown)    || 0, currentAge, MAX_AGE);
-  const targetAge = clampAge(Number(targetAgeShown) || 0, safeRetAge, MAX_AGE);
+  const eventAge  = clamp(Number(eventAgeShown)  || 0, currentAge, MAX_AGE);
+  const affAge    = clamp(Number(affAgeShown)    || 0, currentAge, MAX_AGE);
+  const targetAge = clamp(Number(targetAgeShown) || 0, safeRetAge, MAX_AGE);
 
   // Memoized so deltaResult/affordResult can list it honestly in their deps
   // (a fresh object each render would re-run them every render — principle 13).

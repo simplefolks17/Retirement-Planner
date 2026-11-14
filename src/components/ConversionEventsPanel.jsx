@@ -8,13 +8,14 @@ import { fmt } from "../formatters.js";
 import { DeferredInput } from "./DeferredInput.jsx";
 import { MAX_CONVERSION_EVENTS } from "../model/conversion-events.js";
 import { mintEventId } from "../model/money-events.js";
+import { clamp } from "../model/finance-math.js";
 
 function emptyEvent(currentAge, safeRetAge) {
   // Default to a year mid-career, clamped inside the working window.
   const mid = Math.round((currentAge + safeRetAge) / 2);
   return {
     id: mintEventId(),
-    age: Math.min(Math.max(currentAge + 1, mid), Math.max(currentAge + 1, safeRetAge - 1)),
+    age: clamp(mid, currentAge + 1, Math.max(currentAge + 1, safeRetAge - 1)),
     amount: 0,
   };
 }

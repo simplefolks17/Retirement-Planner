@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { clamp } from "../model/finance-math.js";
 
 // Draft locally, clamp to [min, max] and commit on blur/Enter only — an intermediate keystroke
 // value (typing "6" on the way to "65") never reaches committed state. Optional `placeholder`
@@ -17,7 +18,7 @@ export function DeferredInput({ value, min = -Infinity, max = Infinity, onChange
   const commit = () => {
     const n = parseInt(local.replace(/,/g, ""), 10);
     if (!isNaN(n)) {
-      const clamped = Math.min(max, Math.max(min, n));
+      const clamped = clamp(n, min, max);
       onChange(clamped);
       setLocal(String(clamped));
     } else {

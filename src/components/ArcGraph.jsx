@@ -34,6 +34,7 @@ import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useId } f
 import { HF, HM } from "../horizon/ThemeContext.jsx";
 import { Btn } from "../horizon/shared.jsx";
 import { fmt as fmtMoney } from "../formatters.js";
+import { clamp } from "../model/finance-math.js";
 
 const VW = 1200;
 const AGE_SPAN_FIXED_START = 30; // coordinate system always starts at 30 for consistent scale
@@ -208,7 +209,7 @@ export function clampOverlayY(y, top, bot, halfPx, u) {
   const m = halfPx * u;
   const lo = top + m, hi = bot - m;
   if (hi <= lo) return (top + bot) / 2;
-  return Math.min(Math.max(y, lo), hi);
+  return clamp(y, lo, hi);
 }
 
 // Half-height of the end-of-plan badge (~44-48px tall with its caption line).
@@ -582,7 +583,7 @@ function BandSvg({ t, chartData, currentAge, retirementAge, s, vmax, rangeBands 
   const real = useMemo(() => {
     const series = rangeBands?.series;
     if (!series || series.length < 2) return null;
-    const clampV = (v) => Math.max(0, Math.min(v, vmax * 1.02));
+    const clampV = (v) => clamp(v, 0, vmax * 1.02);
     const toPts = (key) => series.map(pt => [s.xOf(pt.age), +s.yOf(clampV(pt[key])).toFixed(1)]);
     const firstSeriesAge = series[0].age;
     // Accumulation portion: the SOLID chart line for ages up to where the band
@@ -935,7 +936,7 @@ export default function ArcGraph({
           {activeView === "arc" && scenarioData?.length >= 2 && (() => {
             const sPts = trimScenarioOverlay(scenarioData, chartData)
               .filter(d => d.age >= ageMin && d.age <= ageMax)
-              .map(d => [s.xOf(d.age), +s.yOf(Math.max(0, Math.min(d.total, vmax * 1.02))).toFixed(1)]);
+              .map(d => [s.xOf(d.age), +s.yOf(clamp(d.total, 0, vmax * 1.02)).toFixed(1)]);
             return sPts.length >= 2 ? (
               <path d={smoothPath(sPts)} fill="none" stroke={t.accent} strokeWidth="2.4"
                 strokeDasharray="8 5" opacity="0.85" vectorEffect="non-scaling-stroke" />
@@ -1006,7 +1007,7 @@ export default function ArcGraph({
         {scrub && (
           <div style={{
             position: "absolute",
-            left: px(Math.min(Math.max(s.xOf(scrub.age), s.pad.l + 60), VW - s.pad.r - 60)),
+            left: px(clamp(s.xOf(scrub.age), s.pad.l + 60, VW - s.pad.r - 60)),
             top: py(s.yOf(scrub.total), vbH),
             transform: "translate(-50%,-130%)", pointerEvents: "none", zIndex: 3,
             background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 10,

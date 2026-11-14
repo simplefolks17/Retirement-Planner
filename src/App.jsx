@@ -28,7 +28,7 @@ import { calcOptimizedScenario } from "./model/optimization.js";
 import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
 import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification, sumAccountRow, allocateSavedTotal } from "./model/accumulation.js";
-import { fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./model/finance-math.js";
+import { clamp, fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
 import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
@@ -281,7 +281,7 @@ export default function App() {
   // that nets out the PRIMARY's pre-tax deductions (double-counting the spouse's own
   // deferral) and can go negative for a non-MFJ filer whose spouse out-earns them.
   // Clamped either way.
-  const spouseNetRate = Math.max(0, Math.min(1, 1 - combinedEffRate));
+  const spouseNetRate = clamp(1 - combinedEffRate, 0, 1);
 
   // The conversion events the MODEL actually sees: only when the in-service toggle is
   // on, and only valid working-year events (amount > 0, strictly before retirement).
@@ -688,10 +688,10 @@ export default function App() {
   // the clamp would collapse to a phantom 1-year window at age 72.
   const hasConvWindow = convWindowFloor <= convWindowCeil;
   const resolvedStartAge = hasConvWindow
-    ? Math.min(convWindowCeil, Math.max(convWindowFloor, conversionStartAge ?? convWindowFloor))
+    ? clamp(conversionStartAge ?? convWindowFloor, convWindowFloor, convWindowCeil)
     : convWindowFloor;
   const resolvedEndAge = hasConvWindow
-    ? Math.max(resolvedStartAge, Math.min(convWindowCeil, conversionEndAge ?? convWindowCeil))
+    ? clamp(conversionEndAge ?? convWindowCeil, resolvedStartAge, convWindowCeil)
     : convWindowFloor - 1; // empty: endAge < startAge → buildConversionByAge yields {}
   const conversionWindowYrs = Math.max(0, resolvedEndAge - resolvedStartAge + 1);
   const retTaxData = TAX_DATA_2026[filingStatus] ?? TAX_DATA_2026.single;
@@ -1968,7 +1968,7 @@ export default function App() {
     rothMax:    Math.max(200_000, annualConversionAmt),
     // BUG-17: mirrors ssBundle.ssClaimingAge's floor exactly (review fix — QuickTunePanel's
     // SS slider had drifted to a flat 62-70, letting a user dial a claim age in the past).
-    ssMin: Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge)),
+    ssMin: clamp(currentAge, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE),
     ssMax: SS_MAX_CLAIM_AGE,
     canTuneRothConversion: conversionWindowYrs > 0,
     // RESERVED (future #123): savingsMin/savingsMax for an annualSavings lever —
@@ -2114,7 +2114,7 @@ export default function App() {
     // floor at SS_MAX_CLAIM_AGE so min never exceeds max when currentAge > 70
     // (currentAge ranges to 80). Mirrors the Classic slider's clamp exactly.
     ssClaimingAge:    { value: ssClaimingAge, set: guardWrite(setSsClaimingAge, readOnly),
-      min: Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge)), max: SS_MAX_CLAIM_AGE, step: 1 },
+      min: clamp(currentAge, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE), max: SS_MAX_CLAIM_AGE, step: 1 },
     ssOverride:       { value: ssOverride, estimated: ssAnnualBenefit,
       // max expands to fit a current override above the default cap (mirrors the
       // sliderBounds dynamic-max pattern) so the slider never visually clamps.
@@ -2704,7 +2704,7 @@ export default function App() {
         // Mirrors ConversionEventsPanel's emptyEvent: default to a year mid-career,
         // clamped inside the working window.
         const mid = Math.round((currentAge + safeRetAge) / 2);
-        const age = Math.min(Math.max(currentAge + 1, mid), Math.max(currentAge + 1, safeRetAge - 1));
+        const age = clamp(mid, currentAge + 1, Math.max(currentAge + 1, safeRetAge - 1));
         setConversionEvents(evs => [...evs, { id: mintEventId(), age, amount: 0 }]);
       }, readOnly),
       atMax: conversionEvents.length >= MAX_CONVERSION_EVENTS,
@@ -4074,7 +4074,7 @@ export default function App() {
             )}
             <div className="det-2col" style={{ gap: 24 }}>
               <div>
-                <Slider label="Claiming Age" value={ssClaimingAge} min={Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, currentAge))} max={SS_MAX_CLAIM_AGE}
+                <Slider label="Claiming Age" value={ssClaimingAge} min={clamp(currentAge, SS_MIN_CLAIM_AGE, SS_MAX_CLAIM_AGE)} max={SS_MAX_CLAIM_AGE}
                   format={v => v === SS_FRA ? `${v} (FRA)` : v < SS_FRA ? `${v} (early)` : `${v} (delayed)`}
                   onChange={setSsClaimingAge} valueColor={ssClaimingAge < SS_FRA ? C.orange : ssClaimingAge > SS_FRA ? C.green : C.gold} />
                 <div style={{ fontSize: 10, color: C.muted, lineHeight: 1.7, marginTop: 4 }}>

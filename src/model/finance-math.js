@@ -1,6 +1,21 @@
 // Generic financial-math primitives. Pure, no config, no domain assumptions —
 // safe for any module (CLIENT) to import.
 
+// Two-sided clamp: `v` limited to [min, max].
+//
+// min > max (an inverted/degenerate range) returns `min`. The inline spellings this
+// replaces DISAGREE there — `Math.max(min, Math.min(max, v))` yields `min` but
+// `Math.min(max, Math.max(min, v))` yields `max` — which is exactly the ssClaimingAge /
+// BUG-63 corner (slider floor above its ceiling). One definition, one answer: `min`
+// (this is the first spelling, so existing callers of that form are byte-identical).
+//
+// NaN: `v` NaN returns NaN (propagates, like Math.min/max) — callers that can see NaN must
+// guard before calling, exactly as they had to with the inline form. A NaN `min`/`max` is
+// likewise not rescued. +/-Infinity bounds and values clamp normally.
+export function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
 // Future value of an ordinary annuity: contribute `annual` at the end of each year
 // for `years` years, compounding at `rate` (a DECIMAL, e.g. 0.05 for 5%). Returns
 // the raw float; callers round as they need. ONE definition so the what-if optimizer

@@ -5,6 +5,7 @@ import { useDialogBehaviour } from "./useDialogBehaviour.js";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
 import { mintEventId } from "../model/money-events.js";
 import { VerdictTickRail } from "./fields.jsx";
+import { clamp } from "../model/finance-math.js";
 
 // LifeEventSheet — the sheet-first life-event placement flow (video-inspired):
 // configure a one-time or duration ("$X/mo for N months") event, watch a live
@@ -92,7 +93,7 @@ export default function LifeEventSheet({
   // horizon — the slider min is age+1, so clamp the stored value the same way
   // (age can move after untilAge was set). Used for both the slider and the
   // saved candidate so they can't disagree.
-  const effUntilAge = Math.max(age + 1, Math.min(bounds.maxAge, untilAge));
+  const effUntilAge = clamp(untilAge, age + 1, bounds.maxAge);
 
   // "Your income during this time" seeding (owner decision: incomeAnnual means
   // "my total income during this period," not a bolt-on offset — money-events.js).
