@@ -47,3 +47,16 @@ they are verified. CONFIRMED = reproduced by execution with printed numbers; PLA
   - spouse HSA 4,900: Apply raises primary HSA to 4,400, which squeezes the spouse's effective HSA 4,900 -> **4,350**; the preview's "Nest egg" after reads **$9.4M**, the committed plan **$9,302,229** ($9.3M).
 - **Why it matters:** a family-coverage household is steered away from the one triple-tax-free account the model itself would let it fill; and a field added for one UI (coverage) still doesn't reach every consumer. Low because family coverage is Horizon-only and the dollar errors are small.
 - **Smallest fix:** pass the primary's coverage ceiling (`primaryHsaLimit`, minus the spouse's stored share if the household view is wanted) into `calcOptimizedAllocation` / `calcActionCards` and use it for Classic's `contribMax`. `[judgement]`
+
+### S-5 — HIGH — CONFIRMED — REGRESSION from BUG-167: the wizard shows and confirms a spending answer the saved plan does not use whenever the user changed their income answer
+- **Where:** `src/components/HorizonShell.jsx:270-276` (`vals.monthlySpend` seeded ONCE from `initialValues`, i.e. from the PRE-wizard income) and `:293` (`handleSave` sends `monthlySpend` only when it differs from that seed). The untouched answer leaves `annualExpenses` on auto (`null`), and auto spending follows the NEW income. Q5 asks "How much to spend each month in retirement?", and the summary confirms "Monthly income $4,781/mo" (also mislabelled: it is spending, not income).
+- **Repro** (probe `zz-r2-f`, driving the REAL wizard like `onboarding-wizard-save.test.js`): change only the income answer, click through Q5 untouched, save and confirm.
+
+  | wizard income | Q5 + summary show | plan's `statementView.monthlyTodaysExp` after save | `yearsSustained` | same plan at the shown $4,781/mo |
+  |---|---|---|---|---|
+  | $100k (untouched) | $4,781 | 4,781 | 22.64 | 22.64 |
+  | **$200k** | **$4,781** | **10,617** (2.2x) | **7.72** | 22.39 (depletes at 88) |
+  | **$60k** | **$4,781** | **2,267** (0.47x) | **77.16** | 20.84 (depletes at 86) |
+
+- **Why it matters:** onboarding is every new Horizon user's first screen, and nearly every user changes the income default. The plan then silently disagrees with the spending answer it displayed and the user confirmed, by 15 years in the pessimistic direction for a higher earner and by 56 years in the optimistic direction for a lower earner. Before BUG-167, `handleSave` always sent the answer, so the plan used the shown figure (on the wrong basis, which BUG-167 fixed). The new "untouched keeps auto" half traded R-4's freeze for this. BUG-167's tests only complete the wizard at the DEFAULT income, where seed == auto.
+- **Smallest fix:** either always send `monthlySpend` now that the seed is on the right basis (accepting the freeze, which the summary makes explicit), or re-seed Q5 from the wizard's own income answer via a model-provided "auto spend at income X" function, keeping auto only when the user accepts that live seed. Rename the summary label to "Monthly spending". Add a wizard test that changes the income answer, leaves Q5 untouched, and asserts the plan's monthly spend equals what the summary showed. `[judgement]`
