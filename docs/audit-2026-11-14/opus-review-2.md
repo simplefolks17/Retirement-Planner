@@ -3,6 +3,13 @@
 Branch `claude/oversight-root-cause-audit`. Independent second auditor. Findings appended the moment
 they are verified. CONFIRMED = reproduced by execution with printed numbers; PLAUSIBLE = not executed.
 
+
+**Summary: 10 findings. HIGH 1 (S-5). MEDIUM 5 (S-1, S-2, S-3, S-6, S-8). LOW 4 (S-4, S-7, S-9, S-10).**
+**By fix complexity: `[mechanical]` 5 (S-3, S-7, S-8, S-9, S-10); `[judgement]` 5 (S-1, S-2, S-4, S-5, S-6).**
+- Regressions introduced by Round 2 itself: **S-5** (BUG-167), **S-1** (BUG-170, confirmed against a pre-BUG-170 snapshot), **S-3** (BUG-177).
+- Gaps in Round-2 fixes: S-2 (BUG-176 edge), S-7 (BUG-170 missed sibling), S-8 (rendered halves untested), S-9 (BUG-175 flag scope), S-10 (docs).
+- Pre-existing, same classes: S-4 (family HSA coverage), S-6 (what-if parity, made a designed state by BUG-175).
+
 ## Findings
 
 
@@ -118,7 +125,7 @@ Each item was executed (real App via the `input-propagation` mount pattern, prob
 - **Forced re-sim with no change == headline** (the bias the anchor relies on cancelling): `calcWhatIfDelta` with `contribOverrides` equal to the current contributions returns `scenarioTotalAtRet` exactly equal to `totalAtRet` for the default, the younger-spouse household, `addlPreTaxBal` 200k, and a household with a working-year conversion event (diff 0 in all four).
 - **BUG-177 core:** entered at 70 then 67/65/62 rescales by factor ratios; the age-70 leg stays 38,000; the Plan "guaranteed for life" card follows the rescaled figure (pct 17 at claim 70 with 38,000 -> 9 at claim 62 with 21,452); clearing the override clears the anchor. `ssBreakEven` depends only on the claim-factor ratio, so it is basis-invariant under the override (read). Spouse SS never reads the override (it is `spouseSsEstimate`-based; the spousal floor is PIA-based, pre-existing). Work-longer rows carry `ssOverrideAnchorAge` through the `...ssSrc` spread.
 - **BUG-177 mutations that DO fail:** age-70 leg ignoring the anchor (2), plus the impl log's list (re-run independently by the orchestrator).
-- **BUG-168:** `coupleContribEndAges` target floor mutated to the bare scenario age -> 2 failures. `commitPlan` order and bounds re-read: `ca 70 / ra 60` -> retirement 70, ends 71, and a later move to 75 tracks (lifted-tracking rule); `ca 72 / ra 75` -> ends 75.
+- **BUG-168:** `coupleContribEndAges` target floor mutated to the bare scenario age -> 2 failures. `commitPlan` order and bounds (read, not executed): `ca 70 / ra 60` -> retirement 70, ends 71, and a later move to 75 tracks (lifted-tracking rule); `ca 72 / ra 75` -> ends 75.
 - **BUG-171:** `parseAmountInput` (read + spot cases): negatives, `1e6`, `.`, `lots`, `€250k` -> `null` (previous answer kept); `1,000k` -> 1,000,000; whitespace and NBSP stripped; `5.` -> 5. `allocateSavedTotal`: never negative, sums exactly; reversing the largest-remainder sort is undetected by tests but changes at most $1 per account (equivalent mutant, not filed).
 - **BUG-172 spouse HSA on-read clamp:** every model consumer reads the effective value (spouse sim input, household contribution total `App.jsx:1071`, `whatIfBundle` spouse inputs `:1646`, the bundle); only `hasSpouseData` (`:320`) and `setHsaCoverageCoupled` (`:1568`) read STORED, both correctly. Flow-Down / Journey ledger read the spouse sim rows, so they inherit the cap. Removing the coverage-switch clamp fails 1 test.
 - **BUG-170:** plateau effective-on-read: removing the read clamp fails 7 tests. Classic plateau slider (`App.jsx:3133-3142`) reads the effective value.
