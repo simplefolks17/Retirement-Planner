@@ -1608,10 +1608,12 @@ export default function App() {
   // the source so neither the bundle nor a slider ever holds an out-of-range age. Shared
   // by both the ss bundle's spouseCurrentAge.set and the Classic "Spouse's current age"
   // slider — one implementation, not duplicated clamp logic in two places.
+  // BUG-184 (review S-7): like setLifeExpectCoupled (BUG-170), the STORED spouse retirement age is
+  // deliberately left alone. resolveSpouseRetAge clamps it to [spouseCurrentAge + 1, lifeExpect - 1]
+  // on every read, so moving the spouse's age up and back restores the user's explicit age.
   const setSpouseCurrentAgeCoupled = useCallback(v => {
     setSpouseCurrentAge(v);
-    if (spouseRetirementAge != null && spouseRetirementAge <= v) setSpouseRetirementAge(v + 1);
-  }, [setSpouseCurrentAge, setSpouseRetirementAge, spouseRetirementAge]);
+  }, [setSpouseCurrentAge]);
 
   // Extended what-if bundle: includes everything calcWhatIfChart/calcWhatIfScenario
   // need so the screens can call them directly. Memoized (V9 / principle 13) with the

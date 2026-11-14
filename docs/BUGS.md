@@ -739,6 +739,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 **Fix.** `setSsOverride` sets the anchor only on a NEW pin (previous anchor null). Editing a live pin keeps its anchor; clearing still nulls it. **Files:** `src/App.jsx`.
 **Tests/revert-and-confirm.** `src/__tests__/ss-override-wiring.test.js` "editing an existing pin keeps its anchor age (BUG-183)" (real App). Reverting the anchor line: `expected 38500 to be 21734`, 1 failing; restored, 7/7 pass. See `impl-log-R3-B.md`.
 
+### BUG-184 — the spouse current-age setter overwrote an explicit spouse retirement age (Opus review 2 S-7; BUG-170's missed sibling; FIXED 2026-11-14)
+
+**Severity: LOW.** Explicit spouse retirement 60; moving the spouse's age to 61 set the stored retirement age to 62, and moving it back to 30 left it at 62. Same inputs, different plan (+$97,553 `totalAtRet`). BUG-170 had removed the same overwrite from `setLifeExpectCoupled`.
+**Fix.** `setSpouseCurrentAgeCoupled` no longer writes `spouseRetirementAge`; reads already clamp through `resolveSpouseRetAge`. **Files:** `src/App.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/ss-override-wiring.test.js` "BUG-184" (real App, explicit 60 survives age 61 and back to 30). Restoring the old overwrite: `expected 62 to be 60`, 1 failing; restored, pass. See `impl-log-R3-B.md`.
+
 ### BUG-182 — family HSA coverage did not reach the surplus optimizer, HSA card, Classic slider, or the surplus preview (Opus review 2 S-4; FIXED 2026-11-14)
 
 **Severity: LOW.** Family coverage raised the sim cap and the Horizon field to 8,750 but `calcOptimizedAllocation`, the HSA action card and Classic's HSA slider stayed on the self-only 4,400, so a family household with 4,900 of room got +550 and the rest overflowed to Taxable. Separately every what-if resim lacked `hsaLimit`, so the surplus Apply preview capped the primary at 4,400 (preview $8.4M vs applied $8.77M, spouse HSA 0), and a primary HSA override never re-capped the spouse's squeezed share.

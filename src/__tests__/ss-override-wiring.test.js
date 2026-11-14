@@ -132,3 +132,18 @@ describe("ssOverride anchor age (BUG-177)", () => {
     app.unmount();
   });
 });
+
+// BUG-184 (review S-7): an explicit spouse retirement age must survive the spouse's own current
+// age moving up and back. Pre-fix the age setter overwrote the stored value to age+1 (62).
+describe("spouse current age does not overwrite an explicit spouse retirement age (BUG-184)", () => {
+  it("explicit 60 -> spouse age 61 -> spouse age 30: stored and displayed age is still 60", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(30));
+    app.fire(() => app.latest().spouseAccounts.spouseRetirementAge.set(60));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(60);
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(61));
+    app.fire(() => app.latest().ss.spouseCurrentAge.set(30));
+    expect(app.latest().spouseAccounts.spouseRetirementAge.value).toBe(60);
+    app.unmount();
+  });
+});
