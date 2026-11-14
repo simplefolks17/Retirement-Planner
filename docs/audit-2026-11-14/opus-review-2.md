@@ -109,3 +109,41 @@ Method as the first review: one-line mutation, full `npm test`, file restored fr
 7. Pre-existing nit: `whatif-parity-wiring.test.js:21` header still lists BUG-135 as a "known remaining gap" (fixed 2026-09-06; line 135 of the same file says so).
 
 Fix for all: text edits, plus deleting the dead `coupleCurrentAge` branch with its two unit assertions (or re-pointing them at `clampIncomePlateauAge`). `[mechanical]`
+
+## Checked and CLEAN
+Each item was executed (real App via the `input-propagation` mount pattern, probes `src/__tests__/zz-r2-*.test.js`, deleted afterwards) unless marked "read".
+
+- **Gates:** `npm test` **1688/1688** on HEAD before and after every mutation (`git status` clean after each restore). Matches CLAUDE.md (rule 7 and Commands both say 1688). Feature-tracker header (127 / 79 done / 48 planned) matches the entries.
+- **BUG-176 anchor, finite cases:** the younger-spouse household at spend 40k / 50k / 60k / 80k / 100k, Classic offsets +/-2: the anchored "after" age matches committing the same retirement age to within one year in all 10 cases (e.g. 80k/+2: 84 vs 84; 100k/-2: 71 vs 71). Only the `headline = Infinity` edge fails (S-2).
+- **Forced re-sim with no change == headline** (the bias the anchor relies on cancelling): `calcWhatIfDelta` with `contribOverrides` equal to the current contributions returns `scenarioTotalAtRet` exactly equal to `totalAtRet` for the default, the younger-spouse household, `addlPreTaxBal` 200k, and a household with a working-year conversion event (diff 0 in all four).
+- **BUG-177 core:** entered at 70 then 67/65/62 rescales by factor ratios; the age-70 leg stays 38,000; the Plan "guaranteed for life" card follows the rescaled figure (pct 17 at claim 70 with 38,000 -> 9 at claim 62 with 21,452); clearing the override clears the anchor. `ssBreakEven` depends only on the claim-factor ratio, so it is basis-invariant under the override (read). Spouse SS never reads the override (it is `spouseSsEstimate`-based; the spousal floor is PIA-based, pre-existing). Work-longer rows carry `ssOverrideAnchorAge` through the `...ssSrc` spread.
+- **BUG-177 mutations that DO fail:** age-70 leg ignoring the anchor (2), plus the impl log's list (re-run independently by the orchestrator).
+- **BUG-168:** `coupleContribEndAges` target floor mutated to the bare scenario age -> 2 failures. `commitPlan` order and bounds re-read: `ca 70 / ra 60` -> retirement 70, ends 71, and a later move to 75 tracks (lifted-tracking rule); `ca 72 / ra 75` -> ends 75.
+- **BUG-171:** `parseAmountInput` (read + spot cases): negatives, `1e6`, `.`, `lots`, `€250k` -> `null` (previous answer kept); `1,000k` -> 1,000,000; whitespace and NBSP stripped; `5.` -> 5. `allocateSavedTotal`: never negative, sums exactly; reversing the largest-remainder sort is undetected by tests but changes at most $1 per account (equivalent mutant, not filed).
+- **BUG-172 spouse HSA on-read clamp:** every model consumer reads the effective value (spouse sim input, household contribution total `App.jsx:1071`, `whatIfBundle` spouse inputs `:1646`, the bundle); only `hasSpouseData` (`:320`) and `setHsaCoverageCoupled` (`:1568`) read STORED, both correctly. Flow-Down / Journey ledger read the spouse sim rows, so they inherit the cap. Removing the coverage-switch clamp fails 1 test.
+- **BUG-170:** plateau effective-on-read: removing the read clamp fails 7 tests. Classic plateau slider (`App.jsx:3133-3142`) reads the effective value.
+- **BUG-175:** the flag is model-provided (rule 10); the same predicate filters `activeConversionEvents`.
+- **BUG-173:** pinned override + spousal basis still moves household SS per row (`ssPinnedFlat` false then), by design.
+- **Rule 10 on the diff:** the only arithmetic lines added under `src/horizon/` are `clamp(...)` migrations of pre-existing expressions (`LifeEventSheet`, `presets.js`); new screen code reads model flags (`notModelled`, `isAuto`, `ssPinnedFlat`, `overrideRescaleNote`). Rule 1: no new IRS literals (`HSA_LIMIT_2026` uses in S-4 are pre-existing). Rule 11: `overrideRescaleNote` and the anchor are SS figures, which are measured inflation-independent (BUG-135); the anchor's `totalAtRet` delta is added to a headline of the same (nominal-at-retirement) basis.
+- **Shared-`captured` trap:** every new Round-2/BUG-177 App test I read (`ss-override-wiring`, `display-consistency-r2b`, `classic-horizon-parity`, the new `onboarding-*` cases) snapshots then unmounts, or remounts per scenario; none compares two live mounts.
+- **Open-issues index:** 16 rows == 16 `###` entries under "Open Issues"; no resolved bug left in the index.
+
+## Open-bug re-verification (CLAUDE.md Close-Out rule 2)
+"Untouched" = no file named in the entry was changed in `git diff main...HEAD` except mechanical `clamp` migrations; spot-checked lines are listed.
+
+| Bug | Still reproduces? | Evidence |
+|---|---|---|
+| BUG-149 | Open (untouched) | `conversion-evaluation.js` not in the diff; `healthcare.js` change is a `clamp` swap only. |
+| BUG-142 | Open (untouched) | `contribSeries` (`App.jsx:1066`) still static scalars vs `flowData.totalContrib` (`:1702`). |
+| BUG-136 | **Open, confirmed** | `calcWhatIfScenario` still passes the base `conversionByAge` (`what-if.js:932`). S-6 is a sibling (working-year events). |
+| BUG-125 | **Open, confirmed** | `pendingGuaranteedStarts` (`App.jsx:1847-1851`) gates on the primary's `ssClaimingAge` only. |
+| BUG-124 | Open | `PlanScreen.jsx:897-899` "Tax in retirement" still fixed to retirement-year dollars, not the toggle. |
+| BUG-113 | Open | `JourneyScreen.jsx:85` still `opacity: 0.72` under 9px labels. |
+| BUG-103 | Open (untouched) | `monte-carlo.js` not in the diff; success test has no spillover distinction. |
+| BUG-101 / BUG-100 / BUG-99 | Open (untouched) | contribution scalars, bracket tables and money-event amounts unchanged; `taxes.js` diff only deletes the unused `calcStateTax`. |
+| BUG-85 / BUG-84 | Open (owner-deferred) | `retTrad = tradGrossAtRet` (`App.jsx:532`) primary-only; spouse sim still v1 scope. |
+| BUG-39 | Open (accepted) | `flow-down.js:48` "Accumulation growth = the gross residual". |
+| BUG-38 / BUG-37 | Open (accepted) | `retirement-engine.js` untouched; no `conversionTaxSource` reference in it. |
+| BUG-36 | Open (Medium) | `calcWhatIfDelta` still on `buildRetirementDrawdown`; S-2 is a live edge of it. Heading text stale (S-10.4). |
+
+No open bug was mooted by this branch.
