@@ -3,6 +3,7 @@ import { HF, HM } from "./ThemeContext.jsx";
 import { fmt, Btn, Pill } from "./shared.jsx";
 import { useDialogBehaviour } from "./useDialogBehaviour.js";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
+import { mintEventId } from "../model/money-events.js";
 import { VerdictTickRail } from "./fields.jsx";
 
 // LifeEventSheet — the sheet-first life-event placement flow (video-inspired):
@@ -192,7 +193,7 @@ export default function LifeEventSheet({
   const handleSave = () => {
     onSave({
       ...candidate,
-      id: initial?.id ?? String(Date.now()),
+      id: initial?.id ?? mintEventId(),
     });
   };
 

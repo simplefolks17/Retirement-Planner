@@ -9,11 +9,11 @@
 
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
-import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS } from "../model/money-events.js";
+import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS, mintEventId } from "../model/money-events.js";
 
 function emptyEvent(currentAge) {
   return {
-    id: Date.now() + Math.random(),
+    id: mintEventId(),
     label: "",
     amount: 0,
     age: currentAge + 10,

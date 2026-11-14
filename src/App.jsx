@@ -30,7 +30,7 @@ import { fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./mod
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
 import { MAX_CONVERSION_EVENTS } from "./model/conversion-events.js";
-import { eventLastAge } from "./model/money-events.js";
+import { eventLastAge, mintEventId } from "./model/money-events.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026, HSA_FAMILY_LIMIT_2026,
@@ -2687,7 +2687,7 @@ export default function App() {
         // clamped inside the working window.
         const mid = Math.round((currentAge + safeRetAge) / 2);
         const age = Math.min(Math.max(currentAge + 1, mid), Math.max(currentAge + 1, safeRetAge - 1));
-        setConversionEvents(evs => [...evs, { id: Date.now() + Math.random(), age, amount: 0 }]);
+        setConversionEvents(evs => [...evs, { id: mintEventId(), age, amount: 0 }]);
       }, readOnly),
       atMax: conversionEvents.length >= MAX_CONVERSION_EVENTS,
       inServiceField: { value: conversionInService, set: guardWrite(setConversionInService, readOnly) },
