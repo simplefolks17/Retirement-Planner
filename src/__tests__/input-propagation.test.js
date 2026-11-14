@@ -3,6 +3,7 @@ import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { act, create } from "react-test-renderer";
+import { allFields } from "./helpers/horizon-fields.js";
 
 // ── Input-propagation guard (oversight audit 2026-11-14, Part 3 fix 1) ─────────────────
 //
@@ -16,14 +17,16 @@ import { act, create } from "react-test-renderer";
 // phase-out that silently cut contributions at 53 (BUG-159) and more. This file is that probe,
 // made permanent and strict:
 //
-//   * The field list is read DYNAMICALLY from the mounted App's setter bundles, so a field
-//     added tomorrow is picked up with no edit here.
+//   * The field list is read DYNAMICALLY by walking EVERY `{ value, set }` object reachable in the
+//     mounted App's horizonProps (helpers/horizon-fields.js, R-13), not a list of bundles, so a
+//     field added tomorrow ANYWHERE (incl. conversionView.window / .events.rows) is picked up.
 //   * Every field must move at least one number in a headline signature when set through the
 //     REAL App, in at least one household where it applies (single default, married MFJ, or a
 //     targeted setup in TARGETED below).
 //   * A field that legitimately moves no headline number goes on ALLOW with a written reason,
 //     and for every "it only feeds X" reason the test asserts that X itself moves — so the
-//     allow-list can never hide a dead control.
+//     allow-list can never hide a dead control. (One entry, conversionTaxSource, is a KNOWN dead
+//     control, BUG-37: its proof asserts that nothing RENDERED moves, so it cannot claim a visible consumer.)
 //   * A field on NEITHER list fails with a message saying what to do. A field on ALLOW that
 //     DOES move something fails too (stale entry), so the list cannot rot.
 //
@@ -55,20 +58,14 @@ function mount() {
   };
 }
 
+// The bundles whose fields get a dedicated deep-snapshot exclusion below (the proofs read the
+// NON-input props). Enumeration itself no longer uses this list: it walks EVERY `{ value, set }`
+// field reachable in horizonProps (R-13), so `conversionView.window.*Field` and
+// `conversionView.events.*` are covered like any bundle field.
 const BUNDLES = ["profile", "spending", "accounts", "spouseAccounts", "ss", "pension", "conversion", "health", "assumptions"];
 
-// Every field object in the setter bundles: { path, field }.
-function fieldsOf(p) {
-  const out = [];
-  const walk = (obj, path) => {
-    for (const [k, v] of Object.entries(obj || {})) {
-      if (v && typeof v === "object" && typeof v.set === "function" && "value" in v) out.push({ path: `${path}.${k}`, field: v });
-      else if (v && typeof v === "object" && !Array.isArray(v)) walk(v, `${path}.${k}`);
-    }
-  };
-  for (const b of BUNDLES) walk(p[b], b);
-  return out;
-}
+// Every field object reachable in the props: { path, field }.
+const fieldsOf = (p) => allFields(p);
 const get = (p, path) => path.split(".").reduce((o, k) => o?.[k], p);
 
 // Headline signature: every top-level finite number, plus the numeric members of the view
@@ -132,6 +129,15 @@ const GENERIC = [
   { name: "single default", setup: null },
   { name: "married MFJ (spouse 32 @ $80k)", setup: MARRY },
 ];
+// A household with one working-year conversion event: only then do the per-event row fields
+// (conversionView.events.rows.N.*) exist, so enumeration must also look here.
+const WITH_EVENT = (a) => {
+  set(a, "accounts.trad401k.bal", 500_000);
+  a.fire(() => a.L().conversionView.events.inServiceField.set(true));
+  a.fire(() => a.L().conversionView.events.add());
+  a.fire(() => a.L().conversionView.events.rows[0].amountField.set(100_000));
+};
+const ENUMERATION_CONTEXTS = [...GENERIC, { name: "one working-year conversion event", setup: WITH_EVENT }];
 
 // Baseline signature per generic household (the model is deterministic — the probe found no
 // noisy keys — so one baseline per household is enough).
@@ -188,6 +194,14 @@ const TARGETED = {
   // Joint-life RMD table: spouse sole beneficiary AND more than 10 years younger.
   "ss.spouseIsSoleBenef": [["spouse sole beneficiary, spouse 18 (12-year gap), $1.5M pre-tax",
     (a) => { MARRY(a, 18); set(a, "accounts.trad401k.bal", 1_500_000); }, (a) => set(a, "ss.spouseIsSoleBenef", true)]],
+  // Working-year conversion events (R-13: these live under conversionView, not a setter bundle).
+  // Each needs an event to exist first (WITH_EVENT: in-service on, one $100k event at the default age).
+  "conversionView.events.inServiceField": [["in-service conversions on -> off with a $100k event present (the event stops being modelled)",
+    WITH_EVENT, (a) => a.fire(() => a.L().conversionView.events.inServiceField.set(false))]],
+  "conversionView.events.rows.0.ageField": [["event age 48 -> 55",
+    WITH_EVENT, (a) => a.fire(() => a.L().conversionView.events.rows[0].ageField.set(55))]],
+  "conversionView.events.rows.0.amountField": [["event amount $100k -> $200k",
+    WITH_EVENT, (a) => a.fire(() => a.L().conversionView.events.rows[0].amountField.set(200_000))]],
   "pension.pensionStartAge": [["pension start 65 -> 69 ($2k/mo pension)",
     (a) => set(a, "pension.pensionMonthly", 2000), (a) => set(a, "pension.pensionStartAge", 69)]],
   // annualConversionAmt only applies in "custom" mode (bracket mode derives its own amount).
@@ -303,7 +317,7 @@ const ALLOW = {
 // ── The guard ──
 const FIELD_PATHS = (() => {
   const seen = new Set();
-  for (const ctx of GENERIC) {
+  for (const ctx of ENUMERATION_CONTEXTS) {
     const a = mount(); ctx.setup?.(a);
     for (const { path } of fieldsOf(a.L())) seen.add(path);
     a.unmount();
@@ -319,6 +333,14 @@ describe("input propagation: every bundle field reaches the model", () => {
     for (const must of ["profile.selectedState", "assumptions.retirementState", "accounts.addlPreTaxBal", "ss.spouseIsSoleBenef", "pension.pensionStartAge"]) {
       expect(FIELD_PATHS).toContain(must);
     }
+  });
+
+  it("R-13: the walk reaches fields OUTSIDE the nine named bundles (conversionView.window / .events)", () => {
+    for (const must of [
+      "conversionView.window.startAgeField", "conversionView.window.endAgeField",
+      "conversionView.events.inServiceField",
+      "conversionView.events.rows.0.ageField", "conversionView.events.rows.0.amountField",
+    ]) expect(FIELD_PATHS, `walker missed ${must}`).toContain(must);
   });
 
   it("the harness really detects a dead field (a no-op change moves nothing)", () => {

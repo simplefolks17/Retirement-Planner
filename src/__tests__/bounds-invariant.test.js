@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
+import { allFields } from "./helpers/horizon-fields.js";
 
 // ── Bounds-invariant guard (oversight audit 2026-11-14, Part 3 fix 2) ───────────────────
 //
@@ -34,25 +35,31 @@ function mount() {
   };
 }
 
-const BUNDLES = ["profile", "spending", "accounts", "spouseAccounts", "ss", "pension", "conversion", "health", "assumptions"];
-function fieldsOf(p) {
-  const out = [];
-  const walk = (obj, path) => {
-    for (const [k, v] of Object.entries(obj || {})) {
-      if (v && typeof v === "object" && typeof v.set === "function" && "value" in v) out.push({ path: `${path}.${k}`, field: v });
-      else if (v && typeof v === "object" && !Array.isArray(v)) walk(v, `${path}.${k}`);
-    }
-  };
-  for (const b of BUNDLES) walk(p[b], b);
-  return out;
-}
+// Every `{ value, set }` field anywhere in the props (not a hard-coded bundle list, R-13).
+const fieldsOf = (p) => allFields(p);
+const getAt = (p, path) => path.split(".").reduce((o, k) => o?.[k], p);
 
 // Returns a list of violations (empty = all fields in range).
 function violations(app) {
   const bad = [];
-  for (const { path, field } of fieldsOf(app.L())) {
+  const props = app.L();
+  for (const { path, field } of fieldsOf(props)) {
     const v = field.value;
     if (typeof v !== "number") continue;
+    // BUG-175: a working-year conversion event whose age fell outside the user's working years is
+    // NOT a silent coupling gap any more: the model drops it and the row says so
+    // (`notModelled: true`, "outside your working years, not modelled"). Its ageField is
+    // legitimately out of range then. Exempt ONLY when the row itself carries the flag; the
+    // dedicated test below asserts the flag, so an unflagged out-of-range row still fails here.
+    const row = /^conversionView\.events\.rows\.\d+\.ageField$/.test(path)
+      ? getAt(props, path.replace(/\.ageField$/, "")) : null;
+    if (row?.notModelled === true) continue;
+    // The conversion WINDOW has a designed empty state: with retirement at/after RMD_START_AGE-1
+    // there is no gap year to convert in, so the model reports `hasConvWindow: false`, hands the
+    // fields an empty range (min > max, value outside it) and the Strategies screen HIDES the
+    // window controls (strategies-screen.test.js "no-window edge state"). Exempt only while that
+    // flag is false; the dedicated test below pins that the flag really is what raises it.
+    if (/^conversionView\.window\.(start|end)AgeField$/.test(path) && props.conversionView?.window?.hasConvWindow === false) continue;
     if (Number.isFinite(field.min) && v < field.min - 1e-9) bad.push({ path, msg: `${path}=${v} < min ${field.min}` });
     if (Number.isFinite(field.max) && v > field.max + 1e-9) bad.push({ path, msg: `${path}=${v} > max ${field.max}` });
     if (Number.isFinite(field.min) && Number.isFinite(field.max) && field.min > field.max) bad.push({ path, msg: `${path}: min ${field.min} > max ${field.max}` });
@@ -65,6 +72,13 @@ const MARRY = (a, spouseAge = 32) => {
   a.fire(() => a.L().profile.filingStatus.set("mfj"));
   a.fire(() => a.L().ss.spouseCurrentAge.set(spouseAge));
   a.fire(() => a.L().profile.spouseIncome.set(80_000));
+};
+// A $100k working-year conversion event (in-service conversions on), the review's L2 household.
+const EVENT = (a) => {
+  a.fire(() => a.L().accounts.trad401k.bal.set(500_000));
+  a.fire(() => a.L().conversionView.events.inServiceField.set(true));
+  a.fire(() => a.L().conversionView.events.add());
+  a.fire(() => a.L().conversionView.events.rows[0].amountField.set(100_000));
 };
 const set = (a, path, v) => a.fire(() => path.split(".").reduce((o, k) => o[k], a.L()).set(v));
 
@@ -104,6 +118,11 @@ const SEQS = {
   "HSA family: spouse 8000 then primary 6000 (spouse share shrinks)": (a) => { MARRY(a); set(a, "spouseAccounts.hsaCoverageType", "family"); set(a, "spouseAccounts.hsa.contrib", 8_000); set(a, "accounts.hsa.contrib", 6_000); },
   "work state -> CA then retirement state -> NY then work state -> TX": (a) => { set(a, "profile.selectedState", "CA"); set(a, "assumptions.retirementState", "NY"); set(a, "profile.selectedState", "TX"); },
   "retirement state -> CA": (a) => set(a, "assumptions.retirementState", "CA"),
+  // R-13 / BUG-175: the working-year conversion events + window fields (conversionView.*) are
+  // enumerated now. An event past the (moved) retirement age is flagged, not silently stale.
+  "in-service conversion event $100k, retirementAge 65 -> 40": (a) => { EVENT(a); set(a, "assumptions.retirementAge", 40); },
+  "in-service conversion event $100k, currentAge -> 60, retirementAge -> 62": (a) => { EVENT(a); set(a, "assumptions.currentAge", 60); set(a, "assumptions.retirementAge", 62); },
+  "conversion window start 70 then retirementAge 50": (a) => { set(a, "conversion.conversionMode", "custom"); a.fire(() => a.L().conversionView.window.startAgeField.set(70)); set(a, "assumptions.retirementAge", 50); },
   "income 400k, livingExpenses 300k, then income 40k": (a) => { set(a, "profile.currentIncome", 400_000); set(a, "spending.livingExpenses", 300_000); set(a, "profile.currentIncome", 40_000); },
 };
 
@@ -123,6 +142,40 @@ describe("bounds invariant: after user moves every numeric field is within [min,
     const numeric = fieldsOf(a.L()).filter(x => typeof x.field.value === "number");
     a.unmount();
     expect(numeric.length).toBeGreaterThan(30);
+  });
+
+  it("the walk reaches fields OUTSIDE the nine named bundles (R-13)", () => {
+    const a = mount(); EVENT(a);
+    const paths = fieldsOf(a.L()).map(x => x.path);
+    a.unmount();
+    for (const must of [
+      "conversionView.window.startAgeField", "conversionView.window.endAgeField",
+      "conversionView.events.inServiceField",
+      "conversionView.events.rows.0.ageField", "conversionView.events.rows.0.amountField",
+    ]) expect(paths, `walker missed ${must}`).toContain(must);
+  });
+
+  it("BUG-175: an event the model drops after retirement moves is FLAGGED, which is what exempts its out-of-range age field", () => {
+    const a = mount(); EVENT(a);
+    const before = a.L().conversionView.events.rows[0];
+    expect(before.notModelled).toBeFalsy();
+    set(a, "assumptions.retirementAge", 40);
+    const row = a.L().conversionView.events.rows[0];
+    const ageField = row.ageField;
+    a.unmount();
+    expect(ageField.value, "fixture precondition: the stale age is out of its own range").toBeGreaterThan(ageField.max);
+    expect(row.notModelled).toBe(true);
+    expect(row.estTaxLabel).toBeTruthy();
+  });
+
+  it("the conversion-window fields are only exempt while the model says there is NO window (hasConvWindow false)", () => {
+    const a = mount();
+    expect(a.L().conversionView.window.hasConvWindow).toBe(true);     // default: window exists, fields in range
+    set(a, "assumptions.retirementAge", 75);                          // past RMD_START_AGE-1: designed empty state
+    const w = a.L().conversionView.window;
+    a.unmount();
+    expect(w.hasConvWindow).toBe(false);
+    expect(w.startAgeField.min).toBeGreaterThan(w.startAgeField.max);  // the out-of-range state the exemption covers
   });
 
   it("min <= max holds for every field at the default, single and married", () => {
