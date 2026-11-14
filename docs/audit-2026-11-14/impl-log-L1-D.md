@@ -31,3 +31,13 @@
   BUG-138 (`const primaryInputs = simInputs;` instead of coupleContribEndAges, line 38): T-X.4 scenario lock FAILS (1 failed).
   restored -> spouse-household 39 passed.
 - [commit] done; full gate: npm test 1464 green, lint clean, build OK
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1464, lint clean, build OK.
+- Independently re-measured T-X.4 preview vs commit through the real App at 58/60/62:
+  - **Conversions on:** totalAtRet is identical at every age. Spillover preview 743,001 /
+    474,936 / 192,945 vs commit 742,667 / 474,771 / 187,641, matching the agent's table exactly.
+  - **Conversions zeroed:** preview == commit to the dollar (722,499 / 459,025 / 171,939). The
+    claim that the residual is BUG-136 only is CONFIRMED.
+- Revert at the BUG-157 site (`primaryInputs: { ...primaryInputs, spouseIncomeEndAge }` ->
+  `primaryInputs`, both occurrences): 3 tests fail. Restored: green.
