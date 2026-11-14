@@ -28,3 +28,11 @@
 - Review's exact numbers did not reproduce with my fixture (surplus mix differs), the mechanism did: optimizer extraHSA 550 -> 4,900; spouse 4,900 -> optimizer adds 0 (no squeeze) and preview "$9.4M" == applied 9,370,032.
 - Tests: `src/__tests__/family-hsa-surplus.test.js` (5): optimizer+apply+preview==applied (spouse 0), Classic slider max, spouse-4,900 no squeeze + preview==applied, delta override == committed (spouse squeezed 4,900->2,750), card unit.
 - Revert-and-confirm (single sites): optimizer hsaLimit arg removed -> 2 fail; Classic contribMax self-only -> 1 fail; whatIfSimInputs.hsaLimit removed -> 2 fail; hsaSqueeze disabled -> 1 fail; card `hsaLimit` -> self-only constant -> 1 fail. NOT covered: App's `hsaLimit: surplusHsaCeiling` argument at the Classic generatePhaseActions call (the card isn't rendered on Classic's default tab; removing the arg fails nothing).
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1707, lint clean, build OK, no golden-master file touched.
+- BUG-179 mutation at the bug's real entry point: App passing the base-clamped plateau into
+  `whatIfSimInputs` (instead of the stored value) fails 4+ BUG-179 parity tests; restored, green.
+  Removing the per-scenario clamp inside `scenarioResolvedInputs` survives, legitimately: an
+  unclamped stored plateau is behaviourally identical, because `incomeGrowthSteps` ignores a
+  plateau at or past retirement. The clamp is normalisation, not the fix.
