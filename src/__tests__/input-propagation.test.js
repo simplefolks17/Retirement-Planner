@@ -3,7 +3,6 @@ import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { act, create } from "react-test-renderer";
-import { calcMilestones } from "../model/accumulation.js";
 
 // ── Input-propagation guard (oversight audit 2026-11-14, Part 3 fix 1) ─────────────────
 //
@@ -32,6 +31,12 @@ import { calcMilestones } from "../model/accumulation.js";
 // without a consumer, this file fails it.
 
 const captured = [];
+// Classic is mounted by the retirementTarget proof below; its charts need real DOM measurement.
+vi.mock("@vercel/analytics/react", () => ({ Analytics: () => null }));
+vi.mock("recharts", async (importOriginal) => {
+  const mod = await importOriginal();
+  return { ...mod, ResponsiveContainer: () => null };
+});
 vi.mock("../components/HorizonShell.jsx", () => ({
   default: (props) => { captured.push(props); return null; },
 }));
@@ -206,21 +211,59 @@ const ALLOW = {
   "spending.retirementTarget": {
     classicOnly: true,
     reason: "Classic-only; not rendered in Horizon. Portfolio target feeds the milestone cards only (calcMilestones, App.jsx ~667, rendered by Classic). Horizon's milestones (calcChartMilestones) take no target (BUG-165).",
+    // R-6: this proof used to call calcMilestones itself, which proves the MODEL reads the
+    // argument, not that App passes the user's input (mutating App's call site to a constant
+    // failed 0 tests). It now mounts the real App, sets the target through the real bundle, flips
+    // to Classic and reads the milestone cards App actually renders.
     proof: () => {
-      const a = mount();
-      const { simData, currentAge, retirementAge } = a.L();
-      a.unmount();
-      const low = calcMilestones({ simData, currentAge, safeRetAge: retirementAge, retirementTarget: 100_000 });
-      const high = calcMilestones({ simData, currentAge, safeRetAge: retirementAge, retirementTarget: 20_000_000 });
-      expect(JSON.stringify(low)).not.toBe(JSON.stringify(high));
+      const classicMilestoneAges = (target) => {
+        const hadWindow = typeof globalThis.window !== "undefined";
+        const hadRO = typeof globalThis.ResizeObserver !== "undefined";
+        if (!hadWindow) globalThis.window = { innerWidth: 1200, addEventListener: () => {}, removeEventListener: () => {} };
+        if (!hadRO) globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+        captured.length = 0;
+        let r;
+        act(() => { r = create(React.createElement(App)); });
+        try {
+          const L = () => captured[captured.length - 1];
+          act(() => L().spending.retirementTarget.set(target));
+          act(() => L().onShowClassic());
+          const text = (n) => (typeof n === "string" ? n : (n.children ?? []).map(text).join(""));
+          return r.root.findAll(n => n.type === "p" && /^Age \d+( ★)?$/.test(text(n)))
+            .map(n => text(n));
+        } finally {
+          act(() => r.unmount());
+          if (!hadWindow) delete globalThis.window;
+          if (!hadRO) delete globalThis.ResizeObserver;
+        }
+      };
+      const low = classicMilestoneAges(100_000);
+      const high = classicMilestoneAges(20_000_000);
+      expect(low.length, "Classic milestone cards not found").toBeGreaterThan(0);
+      // A tiny target is crossed at the first card (list truncated there); a huge one is never
+      // crossed, so every 5-year card plus the retirement card is rendered.
+      expect(low.length).toBeLessThan(high.length);
     },
   },
   "conversion.conversionTaxSource": {
-    reason: "BUG-37 (accepted, owner-deferred): who pays the conversion tax never reaches the headline walk. It does change the conversion table's Roth balances.",
-    proof: () => expectDeepMoves(
-      (a) => { set(a, "conversion.conversionMode", "custom"); set(a, "conversion.annualConversionAmt", 50_000); },
-      (a) => set(a, "conversion.conversionTaxSource", "taxable"),
-      ["conversionView.tables.simYears"], "conversionTaxSource"),
+    // R-6 (zz-rev-k): the old proof certified `simYears[].rothBal`, a column NO screen renders
+    // (Horizon's table is {age, conversion, tradBal, tax}; Classic's the same; the comparison
+    // tiles show both options regardless). So this control changes no number a user can see.
+    // That is a KNOWN dead control, accepted and owner-deferred as BUG-37, not a verified
+    // consumer. The proof below states exactly that: the ONLY thing that moves is the
+    // non-rendered rothBal column. Wiring BUG-37 (a rendered consumer) makes this fail, which
+    // is the cue to delete the entry.
+    knownDead: "BUG-37",
+    reason: "BUG-37 (accepted, owner-deferred): who pays the conversion tax changes NO rendered number on either screen. It only alters conversionView.tables.simYears[].rothBal, which no UI renders. Known dead control, not a verified consumer.",
+    proof: () => {
+      const setup = (a) => { set(a, "conversion.conversionMode", "custom"); set(a, "conversion.annualConversionAmt", 50_000); };
+      const a = mount(); setup(a); const A = deepSnapshot(a.L()); a.unmount();
+      const b = mount(); setup(b); set(b, "conversion.conversionTaxSource", "taxable"); const B = deepSnapshot(b.L()); b.unmount();
+      const moved = deepMoved(A, B);
+      expect(moved.length, "conversionTaxSource should still alter the internal simYears rothBal").toBeGreaterThan(0);
+      const rendered = moved.filter(k => !/^conversionView\.tables\.simYears\[\d+\]\.rothBal$/.test(k));
+      expect(rendered, "conversionTaxSource now moves something besides the unrendered rothBal column: BUG-37 may be wired, remove the knownDead ALLOW entry (" + rendered.slice(0, 5).join(", ") + ")").toEqual([]);
+    },
   },
   "assumptions.savingsSurplusPct": {
     reason: "Share of leftover income to invest feeds only the suggested 'optimized' allocation scenario (budget.optimizedAllocation / surplusView), never the committed plan.",
