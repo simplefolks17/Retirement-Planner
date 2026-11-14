@@ -126,6 +126,14 @@ A short mutation sweep over App.jsx glue lines no batch touched (full suite each
 5. **Rule 6:** `mintEventId` (`src/model/money-events.js:275-279`) puts module-level mutable state plus `Date.now()` / `Math.random()` in `src/model/`, the "pure functions" layer. It is UI plumbing (no model function calls it). It belongs in a UI util (e.g. `src/components/` or `src/utils/`).
 6. **Dead code left by Sweep 4:** `actualMarginalPct` (`App.jsx:1256`) has no reader since its one use moved to `fmtRate(fedMarginal, 0)`. `TaxPhaseCard.jsx` is imported nowhere in `src/`, yet BUG-166 migrated it and lists it under Files. `docs/ARCHITECTURE.md:111` still lists Tax Phases state (`rate1, rate2, rate3, showPhase2, phase2Start`) that doesn't exist in App.jsx (pre-existing).
 
+### R-13 — MEDIUM — CONFIRMED — Both new structural guards skip five user-editable fields; one of them is a live coupling gap of exactly the kind `bounds-invariant` exists to catch
+- **Where:** `input-propagation.test.js` and `bounds-invariant.test.js` both enumerate only the nine named bundles (`BUNDLES = ["profile", …, "assumptions"]`). Probe `zz-rev-l` (walking all of `horizonProps`) finds five `{value, set}` fields outside them: `conversionView.window.startAgeField`, `conversionView.window.endAgeField`, `conversionView.events.inServiceField`, `conversionView.events.rows[i].ageField`, `conversionView.events.rows[i].amountField`. The guards' "every user input" claim and their "a field added tomorrow is picked up" design don't cover them.
+- **Live defect hidden there (probe L2, real App):** $500k pre-tax, in-service conversions on, add an event, set it to $100,000 (default age 48). Then move retirement 65 → 40.
+  - The Horizon row still reads **age 48, $100,000, "401k → Roth, taxed as income"**, with `ageField` max 39, so its value is out of its own range.
+  - The model silently drops the event: the sum of `simData.convEvent` goes 100,000 → **0**.
+  - Nothing on screen says the conversion is ignored. Same class as BUG-161 (a field showing an input the model isn't using) and BUG-160 (an input that doesn't reach the model).
+- **Smallest fix:** make both guards walk every `{value, set}` object in `horizonProps`, not a hard-coded bundle list (the probe's walker is ten lines). For the row: either clamp/flag stale events when retirement moves (a coupled setter, as for `contribEnd`), or have the row expose an "outside your working years, not modelled" state from the model.
+
 ## Checked and CLEAN
 
 _(in progress)_
