@@ -109,7 +109,12 @@ export default function App() {
 
   const [currentIncome,      setCurrentIncome]      = useState(100_000);
   const [incomeGrowth,       setIncomeGrowth]       = useState(3);
-  const [incomeGrowthEndAge, setIncomeGrowthEndAge] = useState(null); // null = grows until retirement
+  // BUG-170 (review R-1): the STORED plateau is the user's own value and is never destroyed by a
+  // retirement/age move; every model consumer reads the EFFECTIVE value below, so the bundle
+  // and the sims always agree and a temporarily-out-of-range plateau (retirement dragged below
+  // it) comes back when retirement does. null = grows until retirement.
+  const [incomeGrowthEndAgeStored, setIncomeGrowthEndAge] = useState(null);
+  const incomeGrowthEndAge = clampIncomePlateauAge(incomeGrowthEndAgeStored, currentAge, retirementAge);
   const [selectedState, setSelectedState] = useState("TX");
   const [stateRateOverride, setStateRateOverride] = useState(null);
   const [filingStatus,  setFilingStatus]  = useState("single");
@@ -1386,10 +1391,10 @@ export default function App() {
     if (next.contribEndRoth    !== contribEndRoth)    setContribEndRoth(next.contribEndRoth);
     if (next.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(next.contribEndTaxable);
     if (next.contribEndHSA     !== contribEndHSA)     setContribEndHSA(next.contribEndHSA);
-    // BUG-155: a plateau at/after the new retirement age is "no plateau".
-    const plateau = clampIncomePlateauAge(incomeGrowthEndAge, currentAge, v);
-    if (plateau !== incomeGrowthEndAge) setIncomeGrowthEndAge(plateau);
-  }, [setRetirementAge, incomeGrowthEndAge, currentAge, setIncomeGrowthEndAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+    // BUG-155/170: a plateau at/after the new retirement age is "no plateau" — enforced on READ
+    // (incomeGrowthEndAge above), not by overwriting the stored value, so dragging retirement
+    // down through the plateau and back no longer deletes it.
+  }, [setRetirementAge, currentAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
 
   // Single entry point for Horizon-initiated mutations to App state.
@@ -1407,7 +1412,7 @@ export default function App() {
     // closure, so the second would re-couple from stale values. Compute the final
     // coupled state ONCE, then write each changed field.
     if (ca !== undefined || ra !== undefined) {
-      let st = { lifeExpect, ssClaimingAge, retirementAge, incomeGrowthEndAge,
+      let st = { lifeExpect, ssClaimingAge, retirementAge,
                  contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA };
       if (ra !== undefined) {
         // BUG-169 (review R-3): bound the retirement age against the COUPLED current age and
@@ -1426,12 +1431,10 @@ export default function App() {
         st = { ...st, ...coupleContribEndAges(st, st.retirementAge, ra, currentAge), retirementAge: ra };
       }
       if (ca !== undefined) st = coupleCurrentAge(st, ca);
-      st.incomeGrowthEndAge = clampIncomePlateauAge(st.incomeGrowthEndAge, ca ?? currentAge, st.retirementAge);
       if (ca !== undefined) setCurrentAge(ca);
       if (st.lifeExpect        !== lifeExpect)        setLifeExpect(st.lifeExpect);
       if (st.ssClaimingAge     !== ssClaimingAge)     setSsClaimingAge(st.ssClaimingAge);
       if (st.retirementAge     !== retirementAge)     setRetirementAge(st.retirementAge);
-      if (st.incomeGrowthEndAge !== incomeGrowthEndAge) setIncomeGrowthEndAge(st.incomeGrowthEndAge);
       if (st.contribEnd401k    !== contribEnd401k)    setContribEnd401k(st.contribEnd401k);
       if (st.contribEndRoth    !== contribEndRoth)    setContribEndRoth(st.contribEndRoth);
       if (st.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(st.contribEndTaxable);
@@ -1469,7 +1472,7 @@ export default function App() {
       bal401k, balRoth, balTaxable, balHSA,
       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
       retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
-      incomeGrowthEndAge, currentAge, setIncomeGrowthEndAge,
+      currentAge,
       incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
 
   // Monthly spend write-back: converts monthly slider units to annual so screens
@@ -1522,10 +1525,9 @@ export default function App() {
     setCurrentAge(v);
     // Rules live in coupleCurrentAge (simulation.js) so commitPlan applies the SAME
     // ones (BUG-153). Only values that actually change are written.
-    const cur = { lifeExpect, ssClaimingAge, retirementAge, incomeGrowthEndAge,
+    const cur = { lifeExpect, ssClaimingAge, retirementAge,
                   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA };
     const next = coupleCurrentAge(cur, v);
-    if (next.incomeGrowthEndAge !== incomeGrowthEndAge) setIncomeGrowthEndAge(next.incomeGrowthEndAge);
     if (next.lifeExpect        !== lifeExpect)        setLifeExpect(next.lifeExpect);
     if (next.ssClaimingAge     !== ssClaimingAge)     setSsClaimingAge(next.ssClaimingAge);
     if (next.retirementAge     !== retirementAge)     setRetirementAge(next.retirementAge);
@@ -1536,7 +1538,7 @@ export default function App() {
     // BUG-95: no longer forces the spouse younger than the primary — a
     // same-age or older spouse is a real, representable household.
   }, [setCurrentAge, setRetirementAge, setLifeExpect, setSsClaimingAge,
-      retirementAge, lifeExpect, ssClaimingAge, incomeGrowthEndAge, setIncomeGrowthEndAge,
+      retirementAge, lifeExpect, ssClaimingAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
@@ -1562,14 +1564,15 @@ export default function App() {
     if (contribEndRoth    > v) setContribEndRoth(v);
     if (contribEndTaxable > v) setContribEndTaxable(v);
     if (contribEndHSA     > v) setContribEndHSA(v);
-    // Lowering the horizon can push spouseRetAgeMax (lifeExpect - 1) below a stored
-    // spouseRetirementAge — clamp the STORED value at the source so neither the
-    // bundle nor a future slider ever holds an out-of-range spouse retirement age.
-    if (spouseRetirementAge != null && spouseRetirementAge > v - 1) setSpouseRetirementAge(v - 1);
+    // BUG-170 (review R-1): lowering the horizon can push spouseRetAgeMax (lifeExpect - 1) below a
+    // stored spouseRetirementAge. The STORED value is deliberately left alone: every consumer
+    // (the bundle's `value`, the spouse sims, the engine seed) reads it through
+    // resolveSpouseRetAge, which clamps to [spouseCurrentAge + 1, lifeExpect - 1], so nothing
+    // ever sees an out-of-range age — and raising the horizon again restores the user's own
+    // explicit age instead of the clamped one the old overwrite left behind.
   }, [setLifeExpect, setRetirementAge, retirementAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA,
-      spouseRetirementAge, setSpouseRetirementAge]);
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
   // Spouse-current-age coupled update: mirrors setCurrentAgeCoupled/setLifeExpectCoupled
   // above. The spouse must retire after their own current age; clamp the STORED value at
@@ -3514,26 +3517,12 @@ export default function App() {
               both UIs) — keeps the SS-claim clamp + contribEnd coupling in sync. */}
           <Slider label="Current Age" value={currentAge} min={18} max={80}
             onChange={setCurrentAgeCoupled} />
+          {/* BUG-170: both sliders share the Horizon coupled setters (one handler, both UIs) —
+              they were inline copies that dropped the plateau/spouse couplings. */}
           <Slider label="Retirement Age" value={retirementAge} min={currentAge} max={lifeExpect - 1}
-            valueColor={C.green} onChange={v => {
-              setRetirementAge(v);
-              if (contribEnd401k    === retirementAge) setContribEnd401k(v);
-              if (contribEndRoth    === retirementAge) setContribEndRoth(v);
-              if (contribEndTaxable === retirementAge) setContribEndTaxable(v);
-              if (contribEndHSA     === retirementAge) setContribEndHSA(v);
-            }} />
+            valueColor={C.green} onChange={setRetirementAgeCoupled} />
           <Slider label="Life Expectancy" value={lifeExpect} min={retirementAge + 1} max={115}
-            onChange={v => {
-              setLifeExpect(v);
-              if (retirementAge >= v) {
-                const newRet = v - 1;
-                setRetirementAge(newRet);
-                }
-              if (contribEnd401k    > v) setContribEnd401k(v);
-              if (contribEndRoth    > v) setContribEndRoth(v);
-              if (contribEndTaxable > v) setContribEndTaxable(v);
-              if (contribEndHSA     > v) setContribEndHSA(v);
-            }} />
+            onChange={setLifeExpectCoupled} />
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <Slider label="Annual Return" value={returnRate} min={1} max={15}
               format={v => `${v}%`} onChange={setReturnRate} />

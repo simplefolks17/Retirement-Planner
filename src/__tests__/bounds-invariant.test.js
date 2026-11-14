@@ -78,6 +78,10 @@ const SEQS = {
   "retirementAge -> 75 -> 45 (up then down)": (a) => { set(a, "assumptions.retirementAge", 75); set(a, "assumptions.retirementAge", 45); },
   "plateau 45, then currentAge 50": (a) => { set(a, "profile.incomeGrowthEndAge", 45); set(a, "assumptions.currentAge", 50); },
   "plateau 60, then retirementAge 50": (a) => { set(a, "profile.incomeGrowthEndAge", 60); set(a, "assumptions.retirementAge", 50); },
+  // BUG-170: the stored plateau/spouse age is kept (not overwritten) and clamped on READ, so the
+  // bundle values stay in range mid-state and the user's own value comes back afterwards.
+  "plateau 55, retirementAge 65 -> 50 -> 65": (a) => { set(a, "profile.incomeGrowthEndAge", 55); set(a, "assumptions.retirementAge", 50); set(a, "assumptions.retirementAge", 65); },
+  "married; spouse retire 85; lifeExpect 90 -> 80 -> 95": (a) => { MARRY(a); set(a, "spouseAccounts.spouseRetirementAge", 85); set(a, "assumptions.lifeExpect", 80); set(a, "assumptions.lifeExpect", 95); },
   "plateau 50, then currentAge 40 then retirementAge 48": (a) => { set(a, "profile.incomeGrowthEndAge", 50); set(a, "assumptions.currentAge", 40); set(a, "assumptions.retirementAge", 48); },
   "onboarding commitPlan(currentAge 72, retire 75)": (a) => a.fire(() => a.L().commitPlan({ currentAge: 72, currentIncome: 100_000, retirementAge: 75, monthlySpend: 5_000 })),
   "onboarding commitPlan(currentAge 60, retire 62)": (a) => a.fire(() => a.L().commitPlan({ currentAge: 60, currentIncome: 100_000, retirementAge: 62, monthlySpend: 5_000 })),
