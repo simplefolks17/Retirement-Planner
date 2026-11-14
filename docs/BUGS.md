@@ -719,6 +719,74 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 
+### BUG-162 — Classic What-If panel seeded its ages once and never re-synced (found 2026-11-14 by the oversight audit; FIXED 2026-11-14)
+
+**Severity: LOW.** `WhatIfPanel.jsx` seeded `eventAge`/`affAge` (`currentAge + 5`) and `targetAge`
+(`safeLifeExp`) with `useState(<initial>)`, which runs once. Raising the current age or the
+plan-to age left a stale, impossible default (a purchase "at 39" for a 60-year-old).
+**Fix:** the three inputs hold the user's typed value or `null` (untouched). Untouched follows the
+live default; a typed value is kept but clamped to the CURRENT bounds (`[currentAge,120]`,
+`[safeRetAge,120]`) at use, while the input shows the raw text so typing isn't fought.
+**Files:** `src/components/WhatIfPanel.jsx`. **Test:** `src/__tests__/whatif-panel-ages.test.js` (4).
+**Revert-and-confirm:** original panel restored from `HEAD` -> 4 of 4 fail; fix restored -> 4 pass.
+
+### BUG-161 — HSA contribution left above the limit after switching coverage family -> self (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: LOW (display/state consistency).** After family -> contribution 8,000 -> self-only,
+`accounts.hsa.contrib` still showed 8,000 against `max` 4,400. The sim caps it (rule 4), so totals
+were right but the field showed a number the model wasn't using.
+**Fix:** `hsaCoverageType.set` is now `setHsaCoverageCoupled`, which clamps the stored primary AND
+spouse HSA contributions to the new ceiling (`HSA_LIMIT_2026` for self, `HSA_FAMILY_LIMIT_2026` for
+family; never raises). The spouse HSA field's `max` now follows the coverage ceiling too (it was
+always the family ceiling, so under self the spouse could hold a value the sim would cap).
+**Files:** `src/App.jsx`. **Test:** `src/__tests__/onboarding-coupling-wiring.test.js` (2).
+**Revert-and-confirm:** bare `setHsaCoverageType` restored -> both BUG-161 tests fail; fix restored -> pass.
+
+### BUG-160 — "Living expense growth" control shown in both UIs, consumed by nothing (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: LOW.** A visible slider (Classic) and field (Horizon My details) that did nothing:
+3% -> 8% moved no output. BUG-91's note called it "not a live bug"; a visible control that
+silently ignores the user's input is one. **Fix:** removed the control, its state, and its
+`spending` bundle field, plus the screen-test fake bundle entry and the docs lists. Wiring it into
+the model (expenses growing faster/slower than general inflation) would be a FEATURE, not a fix,
+and needs its own design (basis, interaction with `inflationRate`, `toRetirementYearDollars`).
+**Files:** `src/App.jsx`, `src/horizon/screens/MyDetailsScreen.jsx`,
+`src/horizon/__tests__/my-details-screen.test.js`, docs. **Test:**
+`onboarding-coupling-wiring.test.js` (spending bundle has no such field). **Revert-and-confirm:**
+re-adding the field -> test fails; removal restored -> passes.
+
+### BUG-153 — `commitPlan` used the un-coupled `setCurrentAge` (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** Onboarding's `commitPlan({currentAge: 72, retirementAge: 75, ...})` left
+`ssClaimingAge` at 67 (below its min of 70) and `contribEnd*` un-moved; `yearsSustained` was 4.73
+vs 3.82 for the same values entered through the normal controls. The class twin of the PR #52
+retirement-age fix, which only patched that one instance.
+**Fix:** the current-age coupling rules now live in ONE pure function, `coupleCurrentAge`
+(`src/model/simulation.js`), used by `setCurrentAgeCoupled` AND `commitPlan`. `commitPlan` computes
+the final coupled state ONCE (`coupleCurrentAge`, then `coupleContribEndAges` for the retirement
+age) and writes each changed field - avoiding the stale-closure trap of calling the two coupled
+setters back to back (the second would re-couple from this render's old values).
+**Files:** `src/App.jsx`, `src/model/simulation.js`. **Test:** `onboarding-coupling-wiring.test.js`
+(every bundle `value` within its own min/max; result equals the coupled-setter path, SS claim = 70).
+**Revert-and-confirm:** removing the `coupleCurrentAge` step in `commitPlan` -> both tests fail
+(the first draft of the equality test passed vacuously because `captured` is shared across mounts -
+fixed by snapshotting each run before the next mount); fix restored -> pass.
+
+### BUG-152 — onboarding discarded the "How much have you saved so far?" answer (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: HIGH (every new Horizon user).** `OnboardingScreen` asked it and echoed it back as
+"Savings today", but `handleSave` never sent it and `commitPlan` had no parameter: answering
+$900,000 left `currentTotalSaved` at the default 165,000.
+**Fix:** `handleSave` passes `totalSaved`; `commitPlan` accepts it and applies the pure
+`allocateSavedTotal` (`src/model/accumulation.js`): the answer is the HOUSEHOLD total (same basis
+as `currentTotalSaved`); the spouse's balances are untouched; the primary's four balances scale
+proportionally to `max(0, answer - spouseTotal)` (whole dollars, residual to the largest); all-zero
+primary -> everything to taxable; an unchanged answer touches nothing (no rounding drift).
+**Files:** `src/components/HorizonShell.jsx`, `src/App.jsx`, `src/model/accumulation.js`.
+**Test:** `onboarding-coupling-wiring.test.js` (5: scale, no-op, spouse kept, clamp at 0,
+all-zero -> taxable). **Revert-and-confirm:** `totalSaved` branch disabled -> 4 of the 5 fail
+(the no-op test legitimately passes); fix restored -> pass.
+
 ### BUG-151 — retirement state never followed the work state; the state-tax path was untested (found 2026-11-14 by the oversight audit; FIXED 2026-11-14)
 
 **Severity: MEDIUM.** `retirementState` was `useState(selectedState)` (App.jsx), so it captured the

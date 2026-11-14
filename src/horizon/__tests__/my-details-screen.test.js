@@ -44,7 +44,6 @@ function makeProps() {
     },
     spending: {
       livingExpenses: { value: null, set: vi.fn(), min: 10_000, max: 200_000, step: 1_000 },
-      livingExpenseGrowth: num(3, 0, 10, 0.5),
       annualExpenses: { value: null, set: vi.fn(), min: 10_000, max: 300_000, step: 1_000 },
       retirementTarget: num(3_000_000, 100_000, 20_000_000, undefined),
     },

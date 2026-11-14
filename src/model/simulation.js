@@ -10,6 +10,8 @@ import {
   ROTH_PHASEOUT_2026,
   EARLY_WITHDRAWAL_AGE,
   EARLY_WITHDRAWAL_PENALTY,
+  SS_MIN_CLAIM_AGE,
+  SS_MAX_CLAIM_AGE,
 } from "../config/irs-2026.js";
 import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
@@ -40,6 +42,30 @@ export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge) {
     contribEndTaxable: track(ends.contribEndTaxable),
     contribEndHSA:     track(ends.contribEndHSA),
   };
+}
+
+// Current-age coupling (BUG-153): the ONE place the "raising current age drags its
+// dependants forward" rules live. Pure; shared by App.jsx's `setCurrentAgeCoupled`
+// (the Classic/Horizon age control) and `commitPlan` (onboarding), which previously
+// called the bare, un-coupled setter and so left e.g. an SS claiming age of 67 under
+// the min of 70 for a 72-year-old (yearsSustained 4.73 vs 3.82 for the same household
+// entered through the normal controls).
+//  - lifeExpect stays above the (raised) current age;
+//  - the stored SS claiming age is lifted to the claim-age floor (min(70, max(62, age)));
+//  - retirementAge and every contribEnd* never sit at/before the new current age
+//    (retirement may equal it; contribEnd must be > it).
+// `state` = { lifeExpect, ssClaimingAge, retirementAge, contribEnd401k, contribEndRoth,
+// contribEndTaxable, contribEndHSA }; returns a NEW object with the same keys.
+export function coupleCurrentAge(state, newAge) {
+  const next = { ...state };
+  if (state.lifeExpect <= newAge) next.lifeExpect = newAge + 1;
+  const minSsClaimAge = Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, newAge));
+  if (state.ssClaimingAge < minSsClaimAge) next.ssClaimingAge = minSsClaimAge;
+  if (state.retirementAge < newAge) next.retirementAge = newAge;
+  for (const k of ["contribEnd401k", "contribEndRoth", "contribEndTaxable", "contribEndHSA"]) {
+    if (state[k] <= newAge) next[k] = newAge + 1;
+  }
+  return next;
 }
 
 // The NO-EVENT baseline salary in the year the person turns `age`

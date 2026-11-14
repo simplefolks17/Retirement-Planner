@@ -14,6 +14,37 @@ export function sumAccountRow(row) {
        + (row["Taxable"]   ?? 0) + (row["HSA"]       ?? 0);
 }
 
+// BUG-152: allocate an onboarding "How much have you saved so far?" household total
+// across the PRIMARY's four accounts. Pure; today's dollars (a balance, not a flow).
+//   - answer === the current household total  -> return `bals` UNCHANGED (same object):
+//     no rounding drift when the user did not move the number;
+//   - the spouse's balances are untouched, so the primary's share is
+//     max(0, target - spouseTotal);
+//   - the primary's four balances scale PROPORTIONALLY to hit that share (their mix is
+//     the user's own; only the level is being corrected);
+//   - if the primary holds nothing, the whole share goes to the taxable account (the
+//     one account with no rules attached);
+//   - whole dollars, with the rounding residual given to the largest balance so the
+//     four still sum to the share exactly.
+// `bals` = { bal401k, balRoth, balTaxable, balHSA }.
+export function allocateSavedTotal(bals, spouseTotal, targetTotal) {
+  const keys = ["bal401k", "balRoth", "balTaxable", "balHSA"];
+  const spouse = Number.isFinite(spouseTotal) ? Math.max(0, spouseTotal) : 0;
+  const primaryNow = keys.reduce((a, k) => a + (Number.isFinite(bals[k]) ? bals[k] : 0), 0);
+  if (!Number.isFinite(targetTotal) || targetTotal < 0 || primaryNow + spouse === targetTotal) return bals;
+  const share = Math.max(0, Math.round(targetTotal - spouse));
+  if (primaryNow <= 0) return { bal401k: 0, balRoth: 0, balTaxable: share, balHSA: 0 };
+  const out = {};
+  let sum = 0, biggest = keys[0];
+  for (const k of keys) {
+    out[k] = Math.round((bals[k] || 0) * share / primaryNow);
+    sum += out[k];
+    if (out[k] > out[biggest]) biggest = k;
+  }
+  out[biggest] += share - sum;
+  return out;
+}
+
 // Milestone cards from the accumulation simulation: every 5th age from the next
 // multiple of 5 up to retirement, plus retirement itself. Stops at the first card
 // that reaches the savings target; if the target is hit between milestone ages,

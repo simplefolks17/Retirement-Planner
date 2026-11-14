@@ -8,7 +8,7 @@ import {
 import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
-import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge, coupleContribEndAges } from "./model/simulation.js";
+import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge, coupleContribEndAges, coupleCurrentAge } from "./model/simulation.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -25,7 +25,7 @@ import { acaCliffThreshold } from "./model/healthcare.js";
 import { calcOptimizedScenario } from "./model/optimization.js";
 import { runMonteCarlo } from "./model/monte-carlo.js";
 import { generatePhaseActions, generatePhaseSteps } from "./model/action-cards.js";
-import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification, sumAccountRow } from "./model/accumulation.js";
+import { calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification, sumAccountRow, allocateSavedTotal } from "./model/accumulation.js";
 import { fvAnnuity, toRetirementYearDollars, inflationRebaseFactor } from "./model/finance-math.js";
 import { evaluateConversionPlan } from "./model/conversion-evaluation.js";
 import { buildConversionPreview, isSuggestionApplicable, buildSurplusPreview } from "./model/apply-preview.js";
@@ -157,7 +157,6 @@ export default function App() {
   const [annualExpenses,   setAnnualExpenses]   = useState(null);
 
   const [livingExpenses,       setLivingExpenses]       = useState(null);
-  const [livingExpenseGrowth,  setLivingExpenseGrowth]  = useState(3);
   const [savingsSurplusPct,    setSavingsSurplusPct]    = useState(50);
   const [preApplySnapshot,     setPreApplySnapshot]     = useState(null);
 
@@ -1398,10 +1397,41 @@ export default function App() {
   // setRetirementAge) so contribEnd ages stay in sync even for callers — like
   // onboarding's handleSave — that commit a retirement age directly without
   // pre-coupling it themselves.
-  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, monthlySpend: ms, currentAge: ca, currentIncome: ci } = {}) => {
-    if (ca !== undefined) setCurrentAge(ca);
+  const commitPlan = useCallback(({ retirementAge: ra, annualExpenses: ae, monthlySpend: ms, currentAge: ca, currentIncome: ci, totalSaved: ts } = {}) => {
+    // BUG-153: an age commit goes through the SAME coupling rules as the age control
+    // (coupleCurrentAge, then coupleContribEndAges for the retirement age). The two
+    // coupled setters can't simply be called back to back: each reads this render's
+    // closure, so the second would re-couple from stale values. Compute the final
+    // coupled state ONCE, then write each changed field.
+    if (ca !== undefined || ra !== undefined) {
+      let st = { lifeExpect, ssClaimingAge, retirementAge,
+                 contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA };
+      if (ca !== undefined) st = coupleCurrentAge(st, ca);
+      if (ra !== undefined) {
+        st = { ...st, ...coupleContribEndAges(st, st.retirementAge, ra), retirementAge: ra };
+      }
+      if (ca !== undefined) setCurrentAge(ca);
+      if (st.lifeExpect        !== lifeExpect)        setLifeExpect(st.lifeExpect);
+      if (st.ssClaimingAge     !== ssClaimingAge)     setSsClaimingAge(st.ssClaimingAge);
+      if (st.retirementAge     !== retirementAge)     setRetirementAge(st.retirementAge);
+      if (st.contribEnd401k    !== contribEnd401k)    setContribEnd401k(st.contribEnd401k);
+      if (st.contribEndRoth    !== contribEndRoth)    setContribEndRoth(st.contribEndRoth);
+      if (st.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(st.contribEndTaxable);
+      if (st.contribEndHSA     !== contribEndHSA)     setContribEndHSA(st.contribEndHSA);
+    }
     if (ci !== undefined) setCurrentIncome(ci);
-    if (ra !== undefined) setRetirementAgeCoupled(ra);
+    // BUG-152: onboarding's "How much have you saved so far?" answer is the HOUSEHOLD
+    // total (all accounts, spouse included — same basis as currentTotalSaved). See
+    // allocateSavedTotal for the rule; an unchanged answer touches nothing.
+    if (ts !== undefined) {
+      const cur = { bal401k, balRoth, balTaxable, balHSA };
+      const spouseTotal = spouseBal401k + spouseBalRoth + spouseBalTaxable + spouseBalHSA;
+      const nb = allocateSavedTotal(cur, spouseTotal, ts);
+      if (nb !== cur) {
+        setBal401k(nb.bal401k); setBalRoth(nb.balRoth);
+        setBalTaxable(nb.balTaxable); setBalHSA(nb.balHSA);
+      }
+    }
     if (ae !== undefined) setAnnualExpenses(ae);
     else if (ms !== undefined) setAnnualExpenses(ms * ASSUMPTIONS.MONTHS_PER_YEAR);
     // Snapshot of all Quick Tune slider values at commit time — enables Reset-style
@@ -1414,7 +1444,12 @@ export default function App() {
       lifeExpect, returnRate, inflationRate, incomeGrowth, contrib401k,
       ssClaimingAge, spouseClaimingAge, annualConversionAmt,
     });
-  }, [setCurrentAge, setCurrentIncome, setRetirementAgeCoupled, setAnnualExpenses,
+  }, [setCurrentAge, setCurrentIncome, setAnnualExpenses,
+      setLifeExpect, setSsClaimingAge, setRetirementAge,
+      setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA,
+      contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+      bal401k, balRoth, balTaxable, balHSA,
+      spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
       retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
       incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
 
@@ -1466,26 +1501,37 @@ export default function App() {
   // coupling — a same-age-or-older spouse is a real, representable household).
   const setCurrentAgeCoupled = useCallback(v => {
     setCurrentAge(v);
-    // Keep the horizon ahead of the (raised) current/retirement age so lifeExpect
-    // and retirementAge never fall outside their own min/max contracts.
-    if (lifeExpect <= v) setLifeExpect(v + 1);
-    // Past age 70 the SS claim floor would otherwise sit above a now-too-low
-    // stored claim age (min > value). Clamp the stored value at the source so
-    // neither the bundle nor the Classic slider ever holds an out-of-range age.
-    const minSsClaimAge = Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, v));
-    if (ssClaimingAge < minSsClaimAge) setSsClaimingAge(minSsClaimAge);
-    if (retirementAge < v) setRetirementAge(v);
+    // Rules live in coupleCurrentAge (simulation.js) so commitPlan applies the SAME
+    // ones (BUG-153). Only values that actually change are written.
+    const cur = { lifeExpect, ssClaimingAge, retirementAge,
+                  contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA };
+    const next = coupleCurrentAge(cur, v);
+    if (next.lifeExpect        !== lifeExpect)        setLifeExpect(next.lifeExpect);
+    if (next.ssClaimingAge     !== ssClaimingAge)     setSsClaimingAge(next.ssClaimingAge);
+    if (next.retirementAge     !== retirementAge)     setRetirementAge(next.retirementAge);
+    if (next.contribEnd401k    !== contribEnd401k)    setContribEnd401k(next.contribEnd401k);
+    if (next.contribEndRoth    !== contribEndRoth)    setContribEndRoth(next.contribEndRoth);
+    if (next.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(next.contribEndTaxable);
+    if (next.contribEndHSA     !== contribEndHSA)     setContribEndHSA(next.contribEndHSA);
     // BUG-95: no longer forces the spouse younger than the primary — a
-    // same-age or older spouse is a real, representable household (the old
-    // coupling made that state literally impossible to enter).
-    if (contribEnd401k    <= v) setContribEnd401k(v + 1);
-    if (contribEndRoth    <= v) setContribEndRoth(v + 1);
-    if (contribEndTaxable <= v) setContribEndTaxable(v + 1);
-    if (contribEndHSA     <= v) setContribEndHSA(v + 1);
+    // same-age or older spouse is a real, representable household.
   }, [setCurrentAge, setRetirementAge, setLifeExpect, setSsClaimingAge,
       retirementAge, lifeExpect, ssClaimingAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
+
+  // BUG-161: HSA-coverage coupled update. Switching family -> self lowers each
+  // person's HSA contribution ceiling (primaryHsaLimit above / the spouse's own
+  // bound below), but a stored contribution above the new ceiling stayed put: the
+  // sim caps it (rule 4) so totals were right, while the field showed a number the
+  // model wasn't using. Clamp the STORED values at the source, like the other
+  // coupled setters. Self-only: each person's ceiling is HSA_LIMIT_2026.
+  const setHsaCoverageCoupled = useCallback(v => {
+    setHsaCoverageType(v);
+    const ceiling = v === "family" ? HSA_FAMILY_LIMIT_2026 : HSA_LIMIT_2026;
+    if (contribHSA > ceiling) setContribHSA(ceiling);
+    if (spouseContribHSA > ceiling) setSpouseContribHSA(ceiling);
+  }, [setHsaCoverageType, setContribHSA, setSpouseContribHSA, contribHSA, spouseContribHSA]);
 
   // Life-expectancy coupled update: mirrors the Classic onChange that clamps the
   // retirement age below the new horizon and caps any contribEnd ages above it.
@@ -1956,11 +2002,10 @@ export default function App() {
     livingExpenses:      { value: livingExpenses,
       set: guardWrite(v => { setLivingExpenses(v); setPreApplySnapshot(null); }, readOnly),
       min: 10_000, max: Math.max(grossAfterTax, 30_000), step: 1_000 },
-    livingExpenseGrowth: { value: livingExpenseGrowth, set: guardWrite(setLivingExpenseGrowth, readOnly), min: 0, max: 10, step: 0.5 },
     annualExpenses:      { value: annualExpenses, set: guardWrite(setAnnualExpenses, readOnly), min: 10_000, max: 300_000, step: 1_000 },
     retirementTarget:    { value: retirementTarget, set: guardWrite(setRetirementTarget, readOnly), min: 100_000, max: 20_000_000 },
-  }), [livingExpenses, livingExpenseGrowth, annualExpenses, retirementTarget, grossAfterTax,
-       setLivingExpenses, setPreApplySnapshot, setLivingExpenseGrowth, setAnnualExpenses, setRetirementTarget,
+  }), [livingExpenses, annualExpenses, retirementTarget, grossAfterTax,
+       setLivingExpenses, setPreApplySnapshot, setAnnualExpenses, setRetirementTarget,
        readOnly]);
 
   const accountsBundle = useMemo(() => {
@@ -2016,7 +2061,7 @@ export default function App() {
       trad401k: acct(spouseBal401k, setSpouseBal401k, spouseContrib401k, setSpouseContrib401k, TRAD_401K_LIMIT_2026),
       roth:     acct(spouseBalRoth, setSpouseBalRoth, spouseContribRoth, setSpouseContribRoth, ROTH_IRA_LIMIT_2026),
       taxable:  acct(spouseBalTaxable, setSpouseBalTaxable, spouseContribTaxable, setSpouseContribTaxable, 100_000),
-      hsa:      acct(spouseBalHSA, setSpouseBalHSA, spouseContribHSA, setSpouseContribHSA, HSA_FAMILY_LIMIT_2026),
+      hsa:      acct(spouseBalHSA, setSpouseBalHSA, spouseContribHSA, setSpouseContribHSA, primaryHsaLimit),
       spouseRetirementAge: {
         value: effectiveSpouseRetAge,
         // Snap to null when the user picks the primary's own retirement age — a clean
@@ -2031,18 +2076,18 @@ export default function App() {
       employerMatchPct: { value: spouseEmployerMatchPct, set: guardWrite(setSpouseEmployerMatchPct, readOnly), min: 0, max: 10, step: 0.5 },
       matchFormulaRate: { value: spouseMatchFormulaRate, set: guardWrite(setSpouseMatchFormulaRate, readOnly), min: 0, max: 200, step: 5 },
       matchFormulaCap:  { value: spouseMatchFormulaCap, set: guardWrite(setSpouseMatchFormulaCap, readOnly), min: 1, max: 15, step: 0.5 },
-      hsaCoverageType:  { value: hsaCoverageType, set: guardWrite(setHsaCoverageType, readOnly),
+      hsaCoverageType:  { value: hsaCoverageType, set: guardWrite(setHsaCoverageCoupled, readOnly),
         options: [{ value: "self", label: "Self-only" }, { value: "family", label: "Family" }] },
     };
   }, [spouseBal401k, spouseContrib401k, spouseBalRoth, spouseContribRoth,
       spouseBalTaxable, spouseContribTaxable, spouseBalHSA, spouseContribHSA,
       spouseMatchMode, spouseEmployerMatchPct, spouseMatchFormulaRate, spouseMatchFormulaCap,
-      hsaCoverageType,
+      hsaCoverageType, primaryHsaLimit,
       effectiveSpouseRetAge, spouseRetAgeMin, spouseRetAgeMax, retirementAge,
       setSpouseBal401k, setSpouseContrib401k, setSpouseBalRoth, setSpouseContribRoth,
       setSpouseBalTaxable, setSpouseContribTaxable, setSpouseBalHSA, setSpouseContribHSA,
       setSpouseMatchMode, setSpouseEmployerMatchPct, setSpouseMatchFormulaRate, setSpouseMatchFormulaCap,
-      setHsaCoverageType, setSpouseRetirementAge,
+      setHsaCoverageCoupled, setSpouseRetirementAge,
       readOnly]);
 
   const ssBundle = useMemo(() => ({
@@ -3272,8 +3317,6 @@ export default function App() {
                 }}>reset to auto</button>
               )}
             </p>
-            <Slider label="Living Expense Growth / yr" value={livingExpenseGrowth} min={0} max={10} step={0.5}
-              format={v => `${v}%`} onChange={setLivingExpenseGrowth} valueColor={C.orange} />
             <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
               <Slider label="Deploy This % of Surplus" value={savingsSurplusPct} min={0} max={100} step={5}
                 format={v => `${v}%`}

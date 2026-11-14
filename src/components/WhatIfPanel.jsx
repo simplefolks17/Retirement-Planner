@@ -66,14 +66,29 @@ export function WhatIfPanel({
   // Delta mode inputs
   const [label,    setLabel]    = useState("");
   const [amount,   setAmount]   = useState("");
-  const [eventAge, setEventAge] = useState(currentAge + 5);
+  // BUG-162: the three age inputs hold what the USER typed, or null while untouched.
+  // They used to be seeded once from currentAge / safeLifeExp (useState's initial
+  // value runs once), so raising the plan's age left a stale, now-impossible default
+  // (e.g. a purchase "at 39" for a 60-year-old). Untouched -> follow the live default;
+  // edited -> keep the user's number but clamp it to the CURRENT bounds at use.
+  const [eventAgeIn, setEventAgeIn] = useState(null);
   const [isInflow, setIsInflow] = useState(false);
   const [retAgeOff,setRetAgeOff]= useState(0);
   const [expenseDelta, setExpenseDelta] = useState("");
 
   // Affordability mode inputs
-  const [affAge,   setAffAge]   = useState(currentAge + 5);
-  const [targetAge,setTargetAge]= useState(safeLifeExp);
+  const [affAgeIn,   setAffAgeIn]   = useState(null);
+  const [targetAgeIn, setTargetAgeIn] = useState(null);
+  const clampAge = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const MAX_AGE = 120;
+  // What the inputs DISPLAY (raw, so typing "6" on the way to "65" isn't fought) ...
+  const eventAgeShown  = eventAgeIn  ?? currentAge + 5;
+  const affAgeShown    = affAgeIn    ?? currentAge + 5;
+  const targetAgeShown = targetAgeIn ?? safeLifeExp;
+  // ... and what the model USES / the result text quotes (clamped to the live bounds).
+  const eventAge  = clampAge(Number(eventAgeShown)  || 0, currentAge, MAX_AGE);
+  const affAge    = clampAge(Number(affAgeShown)    || 0, currentAge, MAX_AGE);
+  const targetAge = clampAge(Number(targetAgeShown) || 0, safeRetAge, MAX_AGE);
 
   // Memoized so deltaResult/affordResult can list it honestly in their deps
   // (a fresh object each render would re-run them every render — principle 13).
@@ -202,7 +217,7 @@ export function WhatIfPanel({
                     value={amount} onChange={e => setAmount(e.target.value)} />
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min={currentAge} max={120}
                     placeholder="At age"
-                    value={eventAge} onChange={e => setEventAge(Number(e.target.value))} />
+                    value={eventAgeShown} onChange={e => setEventAgeIn(Number(e.target.value))} />
                   <select style={{ ...inputStyle, width: "auto" }} value={isInflow ? "in" : "out"}
                     onChange={e => setIsInflow(e.target.value === "in")}>
                     <option value="out">Expense</option>
@@ -269,10 +284,10 @@ export function WhatIfPanel({
                 <div style={{ display: "grid", gridTemplateColumns: "auto 100px auto 100px", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 12, color: C.muted }}>One-time purchase at age</span>
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min={currentAge} max={120}
-                    value={affAge} onChange={e => setAffAge(Number(e.target.value))} />
+                    value={affAgeShown} onChange={e => setAffAgeIn(Number(e.target.value))} />
                   <span style={{ fontSize: 12, color: C.muted }}>sustaining to age</span>
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min={safeRetAge} max={120}
-                    value={targetAge} onChange={e => setTargetAge(Number(e.target.value))} />
+                    value={targetAgeShown} onChange={e => setTargetAgeIn(Number(e.target.value))} />
                 </div>
               </div>
 

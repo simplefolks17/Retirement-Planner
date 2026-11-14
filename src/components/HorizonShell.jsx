@@ -290,6 +290,7 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
     commitPlan({
       currentAge:    vals.currentAge,
       currentIncome: vals.currentIncome,
+      totalSaved:    vals.totalSaved,
       retirementAge: vals.retirementAge,
       monthlySpend:  vals.monthlySpend,
     });

@@ -110,7 +110,7 @@ INPUTS (state variables)
 | Income/Tax | 6 | currentIncome, incomeGrowth, selectedState, stateRateOverride, filingStatus, otherPreTaxDeduc |
 | Tax Phases | 5 | rate1, rate2, rate3, showPhase2, phase2Start, retirementState |
 | Accounts (×4) | 12 | bal*, contrib*, contribEnd* for 401k/Roth/Taxable/HSA |
-| Budget | 4 | livingExpenses, livingExpenseGrowth, savingsSurplusPct, preApplySnapshot |
+| Budget | 4 | livingExpenses, savingsSurplusPct, preApplySnapshot |
 | SS | 4 | ssClaimingAge, ssOverride, includeSS, spouseSsEstimate |
 | Spouse | 5 | spouseIncome, spouseIncomeGrowth, isMarried, spouseIsSoleBenef, spouseCurrentAge |
 | Pension | 2 | pensionMonthly, pensionStartAge |
@@ -190,7 +190,7 @@ invariants Classic enforces.
 | Bundle | Fields |
 |---|---|
 | `profile` | currentIncome, incomeGrowth, incomeGrowthEndAge, spouseIncome, spouseIncomeGrowth, filingStatus, selectedState, stateRateOverride, otherPreTaxDeduc |
-| `spending` | livingExpenses, livingExpenseGrowth, annualExpenses, retirementTarget |
+| `spending` | livingExpenses, annualExpenses, retirementTarget |
 | `accounts` | `trad401k`/`roth`/`taxable`/`hsa` (each `{ bal, contrib, contribEnd }`), addlPreTaxBal, matchMode, employerMatchPct, matchFormulaRate, matchFormulaCap |
 | `ss` | includeSS, ssClaimingAge, ssOverride, isMarried, spouseSsEstimate, spouseClaimingAge, spouseBenefitBasis, spouseCurrentAge, spouseIsSoleBenef |
 | `pension` | pensionMonthly, pensionStartAge |
@@ -615,7 +615,7 @@ props bundle:
 |---|---|---|
 | `saveEvent(ev)` | upsert into `moneyEvents` by `ev.id` (replace if present, else append) | `LifeEventSheet`'s `onSave`, via Plan's arc-badge edit-in-place and Ideas' preset placement / edit / scenario-apply merge |
 | `removeEvent(id)` | filters `moneyEvents` to drop the matching id | `LifeEventSheet`'s `onRemove`, via Plan's + Ideas' edit-in-place "Remove from plan" |
-| `commitPlan({...})` | `retirementAge`, `annualExpenses` (or `monthlySpend`), optionally `currentAge`/`currentIncome`, and snapshots `committedPlan` | onboarding's done screen ("Save as my plan"); internally by `applyPlanLevers` after it writes the coupled setters, so every lever apply also refreshes the `committedPlan` snapshot |
+| `commitPlan({...})` | `retirementAge`, `annualExpenses` (or `monthlySpend`), optionally `currentAge`/`currentIncome`/`totalSaved`, and snapshots `committedPlan` | onboarding's done screen ("Save as my plan"); internally by `applyPlanLevers` after it writes the coupled setters, so every lever apply also refreshes the `committedPlan` snapshot. Ages go through the SAME coupling rules as the age controls (`coupleCurrentAge` + `coupleContribEndAges`, computed once - BUG-153). `totalSaved` is the HOUSEHOLD total: the primary's four balances scale proportionally to `max(0, totalSaved - spouse balances)`; all-zero primary -> taxable; unchanged -> no write (`allocateSavedTotal`, BUG-152) |
 
 **Gating composition point (SHIPPED WI-5.2 / #113):** all gating composes in the App
 memo that computes `available` — the entitlements `readOnly` flag is AND-ed into
