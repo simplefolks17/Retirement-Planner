@@ -496,12 +496,12 @@ describe("NumbersScreen — Taxes tab (WI-2.4 / #94)", () => {
   it("wiring section 1: 3-stat card — fedEffective, fedMarginal, combinedEffRate", () => {
     const renderer = mountTab("taxes");
     const allText = textOf(renderer.root);
-    // fedEffective = 0.18 → "18%"
-    expect(allText).toContain("18%");
+    // fedEffective = 0.18 → "18.0%" (computed rate, 1dp; was "18%" pre-Sweep-4)
+    expect(allText).toContain("18.0%");
     // fedMarginal = 0.22 → "22%"
     expect(allText).toContain("22%");
-    // combinedEffRate = 0.29 → "29%"
-    expect(allText).toContain("29%");
+    // combinedEffRate = 0.29 → "29.0%" (computed rate, 1dp; was "29%" pre-Sweep-4)
+    expect(allText).toContain("29.0%");
     act(() => renderer.unmount());
   });
 

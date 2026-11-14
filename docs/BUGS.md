@@ -719,6 +719,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-166 — percent formatting hand-rolled at ~39 sites with unit confusion (CONSOLIDATION-REDO-PLAN sweep 4; FIXED 2026-11-14)
+
+**Root cause:** no shared fraction-aware percent formatter. Scalars are fractions (0.237) or whole percents (23.7), and every call site did its own `.toFixed(n)` / `Math.round(x*100)`, with differing precision for the same value (e.g. `effectiveRMDTaxRate` `24%` on Numbers→Taxes vs `24.0%` in the RMD flow; `yr1TradRate` 0 dp vs 1 dp). A private `fmtPercent` duplicated `fmtPct`.
+**Files:** `src/formatters.js` (new `fmtRate`), `src/model/action-cards.js`, `src/model/apply-preview.js` (private `fmtPercent` deleted), `src/App.jsx`, `src/components/TaxPhaseCard.jsx`, `src/components/TaxTimeline.jsx`, `src/horizon/screens/NumbersScreen.jsx`, `src/horizon/screens/strategies/SSTimingFlow.jsx`; per-scalar precision recorded in `docs/DESIGN.md` → "Percent formatting".
+**Fix:** `fmtRate(fraction, dp=1)` beside `fmtPct(whole, dp)`; all sites migrated; guard test in `src/__tests__/formatters.test.js` fails on any hand-rolled percent outside `formatters.js` (revert-and-confirm done). Rendered text intentionally changed (computed rates now 1 dp); no model value or golden master moved. Log: `docs/audit-2026-11-14/impl-log-L1-H.md`.
+
 ### BUG-165 — Horizon "Portfolio target" field is a dead control: rendered, consumed only by Classic (found 2026-11-14 in L1-F; FIXED 2026-11-14)
 
 **Severity: LOW.** Horizon's My Details rendered "Portfolio target — milestone goal at retirement" (`spending.retirementTarget`), but nothing in Horizon reads it: Horizon's milestones come from `calcChartMilestones`, which takes no target. Only Classic's `calcMilestones` (milestone cards) uses it.

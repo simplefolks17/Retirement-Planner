@@ -96,6 +96,8 @@ deliberately for golden-master risk, and that judgement still holds.
 
 ### Sweep 4 — percent/rate formatting (largest; do it last)
 
+**STATUS: DONE 2026-11-14 (batch L1-H, BUG-166).** `fmtRate` added, all sites migrated, `fmtPercent` deleted, canonical precision in `docs/DESIGN.md`, guard test in `formatters.test.js`.
+
 **Live, and worse than PR #58 found it.** `fmtRate` still does not exist;
 `src/formatters.js` exports `fmt`, `fmtFull`, `fmtSigned`, `fmtMonthly`, `fmtMo`, `fmtPct`
 only. **39 hand-rolled percent sites** remain, across `src/model/action-cards.js`,

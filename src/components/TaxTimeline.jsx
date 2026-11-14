@@ -1,4 +1,5 @@
 import { C } from "../theme.js";
+import { fmtRate } from "../formatters.js";
 
 export function TaxTimeline({ phase2End, totalYears, fedMarginal, effectiveRMDTaxRate }) {
   // Guard a zero/negative horizon so the CSS widths never become NaN/Infinity.
@@ -17,7 +18,7 @@ export function TaxTimeline({ phase2End, totalYears, fedMarginal, effectiveRMDTa
       }}>
         {pct > 8 && (
           <span style={{ fontSize: 10, color: "#0d1117", fontWeight: 700, whiteSpace: "nowrap" }}>
-            {label}: {Math.round(rate * 100)}%
+            {label}: {fmtRate(rate, 0)}
           </span>
         )}
       </div>

@@ -89,3 +89,15 @@ export function fmtMo(annual) {
 export function fmtPct(n, dp = 1) {
   return Number.isFinite(n) ? `${n.toFixed(dp)}%` : "—";
 }
+
+// fmtRate(fraction, dp = 1) — "23.7%" from a FRACTION (0.237). The unit-twin of
+// fmtPct, which takes an already-whole percent (23.7). Use fmtRate for rates the
+// model keeps as fractions (effectiveRMDTaxRate, fedMarginal, stateRate, real return...);
+// use fmtPct for scalars already in whole percent (withdrawalRate, wr70). "—" for
+// null/undefined/NaN/Infinity — same contract as fmtPct. Canonical per-scalar precision:
+// docs/DESIGN.md → "Percent formatting".
+export function fmtRate(fraction, dp = 1) {
+  return typeof fraction === "number" && Number.isFinite(fraction)
+    ? `${(fraction * 100).toFixed(dp)}%`
+    : "—";
+}

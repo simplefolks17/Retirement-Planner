@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fmt, fmtFull, fmtSigned, fmtMonthly, fmtMo, fmtPct } from "../formatters.js";
+import { fmt, fmtFull, fmtSigned, fmtMonthly, fmtMo, fmtPct, fmtRate } from "../formatters.js";
 
 describe("fmt — calm currency abbreviation", () => {
   it("formats values below $1,000 as plain integers", () => {
@@ -208,6 +208,92 @@ describe("one-formatter guard — no `$${` template literal outside formatters.j
       if (contents.includes("$${")) offenders.push(rel);
     }
 
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("fmtRate — fraction-to-percent formatting (unit twin of fmtPct)", () => {
+  it("takes a FRACTION: 0.237 -> 23.7%, one decimal by default", () => {
+    expect(fmtRate(0.237)).toBe("23.7%");
+    expect(fmtRate(0.24)).toBe("24.0%");
+    expect(fmtRate(1)).toBe("100.0%");
+  });
+
+  it("is the unit-twin of fmtPct: fmtRate(x) === fmtPct(x * 100)", () => {
+    for (const x of [0, 0.037, 0.1234, 0.5, 0.9999]) {
+      expect(fmtRate(x)).toBe(fmtPct(x * 100));
+    }
+  });
+
+  it("honors dp, rounding half away at the requested place", () => {
+    expect(fmtRate(0.2371, 0)).toBe("24%");
+    expect(fmtRate(0.2349, 0)).toBe("23%");
+    expect(fmtRate(0.23749, 2)).toBe("23.75%");
+    expect(fmtRate(0.237, 3)).toBe("23.700%");
+  });
+
+  it("handles zero and negatives", () => {
+    expect(fmtRate(0)).toBe("0.0%");
+    expect(fmtRate(0, 0)).toBe("0%");
+    expect(fmtRate(-0.05)).toBe("-5.0%");
+  });
+
+  it("renders an em dash for null/undefined/NaN/Infinity (same contract as fmtPct)", () => {
+    expect(fmtRate(null)).toBe("—");
+    expect(fmtRate(undefined)).toBe("—");
+    expect(fmtRate(NaN)).toBe("—");
+    expect(fmtRate(Infinity)).toBe("—");
+    expect(fmtRate(-Infinity)).toBe("—");
+    expect(fmtRate("0.2")).toBe("—");
+  });
+});
+
+// ── One-percent-formatter guard (Sweep 4, BUG-166) ──────────────────────────
+// No hand-rolled percent string outside src/formatters.js. Fractions go through
+// fmtRate, whole percents through fmtPct. The unit (fraction vs whole) is what
+// call sites kept disagreeing about; a single formatter pair makes it explicit.
+const HAND_ROLLED_PERCENT_PATTERNS = [
+  /toFixed\(\s*\d*\s*\)\s*\}?\s*%/,              // x.toFixed(1)}%  /  x.toFixed(1)%
+  /toFixed\([^)]*\)\s*\+\s*["'`]%/,                // x.toFixed(1) + "%"
+  /\*\s*100\s*\)\s*\}?\s*%/,                      // Math.round(x * 100)}%  /  (x*100)%
+];
+describe("one-percent-formatter guard — no hand-rolled percent strings outside formatters.js", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(here, "..", "..");
+  const hit = (line) => HAND_ROLLED_PERCENT_PATTERNS.some((re) => re.test(line));
+
+  it("the patterns flag known violations and pass the allowed forms", () => {
+    expect(hit("{(rate * 100).toFixed(1)}%")).toBe(true);
+    expect(hit("`${x.toFixed(0)}%`")).toBe(true);
+    expect(hit("x.toFixed(1) + \"%\"")).toBe(true);
+    expect(hit("`${Math.round(rate * 100)}%`")).toBe(true);
+    expect(hit("{fmtRate(rate)}")).toBe(false);
+    expect(hit("{fmtPct(wr)}")).toBe(false);
+    expect(hit("width: `${(x / VW) * 100}%`")).toBe(false); // CSS geometry, not a rate
+    expect(hit("`${pct}%`")).toBe(false);                    // already-rounded integer field
+  });
+
+  function walk(dir, out) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === "__tests__") continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full, out);
+      else if (/\.(js|jsx)$/.test(entry.name)) out.push(full);
+    }
+  }
+
+  it("no source file outside formatters.js hand-rolls a percent string", () => {
+    const files = [];
+    walk(path.join(repoRoot, "src"), files);
+    const offenders = [];
+    for (const file of files) {
+      const rel = path.relative(repoRoot, file).split(path.sep).join("/");
+      if (rel === "src/formatters.js") continue;
+      fs.readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+        if (/^\s*(\/\/|\*)/.test(line)) return; // comments
+        if (hit(line)) offenders.push(`${rel}:${i + 1}: ${line.trim()}`);
+      });
+    }
     expect(offenders).toEqual([]);
   });
 });
