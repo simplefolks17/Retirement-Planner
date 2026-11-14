@@ -13,3 +13,10 @@
 - Test: `src/__tests__/ss-override-wiring.test.js` describe "BUG-184": explicit 60, spouse age 30 -> 61 -> 30, expect value 60.
 - Revert (old two-line body restored): `expected 62 to be 60` -> 1 failed | 7 passed (8). FAIL.
 - Restored: 8 passed (8).
+
+## Step 3 — BUG-185 (S-9): $0 conversion event past retirement is flagged "not modelled"
+- Fix: `src/model/conversion-events.js` `conversionEventNotModelled` is now age-only (`conversionEventOutsideWorkingYears`), no `amount > 0` gate. App's model filter (`activeConversionEvents`) and what-if's filter still drop $0 events (harmless).
+- Tests: `src/__tests__/bounds-invariant.test.js`: new SEQS entry "in-service conversion event $0 (amount never set), retirementAge 65 -> 40" (the invariant walker), plus a dedicated `it` "BUG-185: a $0 event past retirement is flagged too".
+- Revert (amount gate restored in predicate), `npx vitest run src/__tests__/bounds-invariant.test.js`:
+  `Tests 2 failed | 40 passed (42)`; FAIL "pre-fix: false (the amount > 0 gate): expected false to be true"; FAIL "leaves no field out of range" (`expected [ Array(1) ] to deeply equal []`).
+- Restored: `Tests 42 passed (42)`.

@@ -745,6 +745,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 **Fix.** `setSpouseCurrentAgeCoupled` no longer writes `spouseRetirementAge`; reads already clamp through `resolveSpouseRetAge`. **Files:** `src/App.jsx`.
 **Tests/revert-and-confirm.** `src/__tests__/ss-override-wiring.test.js` "BUG-184" (real App, explicit 60 survives age 61 and back to 30). Restoring the old overwrite: `expected 62 to be 60`, 1 failing; restored, pass. See `impl-log-R3-B.md`.
 
+### BUG-185 — a $0 conversion event stranded past retirement was not flagged "not modelled" (Opus review 2 S-9; FIXED 2026-11-14)
+
+**Severity: LOW.** BUG-175's flag required `amount > 0`. A just-added $0 event with retirement moved 65 -> 40 read age 48, range [31, 39], flag false, and the label "401k → Roth, taxed as income", so it sat outside its own range unflagged and the bounds invariant's exemption did not cover it.
+**Fix.** `conversionEventNotModelled` is age-only (the predicate that defines "outside the working years"); a $0 event carries the same flag and label. The model's own filter still drops $0 events, so nothing converts. **Files:** `src/model/conversion-events.js`.
+**Tests/revert-and-confirm.** `src/__tests__/bounds-invariant.test.js`: new "$0 event" SEQS entry and a dedicated "BUG-185" test. Restoring the amount gate: 2 fail (`expected false to be true`; the invariant `expected [ Array(1) ] to deeply equal []`); restored 42/42. See `impl-log-R3-B.md`.
+
 ### BUG-182 — family HSA coverage did not reach the surplus optimizer, HSA card, Classic slider, or the surplus preview (Opus review 2 S-4; FIXED 2026-11-14)
 
 **Severity: LOW.** Family coverage raised the sim cap and the Horizon field to 8,750 but `calcOptimizedAllocation`, the HSA action card and Classic's HSA slider stayed on the self-only 4,400, so a family household with 4,900 of room got +550 and the rest overflowed to Taxable. Separately every what-if resim lacked `hsaLimit`, so the surplus Apply preview capped the primary at 4,400 (preview $8.4M vs applied $8.77M, spouse HSA 0), and a primary HSA override never re-capped the spouse's squeezed share.

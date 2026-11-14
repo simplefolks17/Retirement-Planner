@@ -122,6 +122,8 @@ const SEQS = {
   // enumerated now. An event past the (moved) retirement age is flagged, not silently stale.
   "in-service conversion event $100k, retirementAge 65 -> 40": (a) => { EVENT(a); set(a, "assumptions.retirementAge", 40); },
   "in-service conversion event $100k, currentAge -> 60, retirementAge -> 62": (a) => { EVENT(a); set(a, "assumptions.currentAge", 60); set(a, "assumptions.retirementAge", 62); },
+  // BUG-185 (review 2 S-9): a $0 event added and then stranded past retirement must also be flagged.
+  "in-service conversion event $0 (amount never set), retirementAge 65 -> 40": (a) => { a.fire(() => a.L().conversionView.events.inServiceField.set(true)); a.fire(() => a.L().conversionView.events.add()); set(a, "assumptions.retirementAge", 40); },
   "conversion window start 70 then retirementAge 50": (a) => { set(a, "conversion.conversionMode", "custom"); a.fire(() => a.L().conversionView.window.startAgeField.set(70)); set(a, "assumptions.retirementAge", 50); },
   "income 400k, livingExpenses 300k, then income 40k": (a) => { set(a, "profile.currentIncome", 400_000); set(a, "spending.livingExpenses", 300_000); set(a, "profile.currentIncome", 40_000); },
 };
@@ -165,6 +167,19 @@ describe("bounds invariant: after user moves every numeric field is within [min,
     a.unmount();
     expect(ageField.value, "fixture precondition: the stale age is out of its own range").toBeGreaterThan(ageField.max);
     expect(row.notModelled).toBe(true);
+    expect(row.estTaxLabel).toBeTruthy();
+  });
+
+  it("BUG-185: a $0 event past retirement is flagged too (the flag is age-only, not amount-gated)", () => {
+    const a = mount();
+    a.fire(() => a.L().conversionView.events.inServiceField.set(true));
+    a.fire(() => a.L().conversionView.events.add());
+    expect(a.L().conversionView.events.rows[0].amountField.value).toBe(0);
+    set(a, "assumptions.retirementAge", 40);
+    const row = a.L().conversionView.events.rows[0];
+    a.unmount();
+    expect(row.ageField.value).toBeGreaterThan(row.ageField.max);
+    expect(row.notModelled, "pre-fix: false (the amount > 0 gate)").toBe(true);
     expect(row.estTaxLabel).toBeTruthy();
   });
 
