@@ -153,7 +153,11 @@ export default function App() {
   const [spouseContrib401k,    setSpouseContrib401k]    = useState(0);
   const [spouseContribRoth,    setSpouseContribRoth]    = useState(0);
   const [spouseContribTaxable, setSpouseContribTaxable] = useState(0);
-  const [spouseContribHSA,     setSpouseContribHSA]     = useState(0);
+  // BUG-172 (review R-7): the STORED spouse HSA contribution is the user's own entry; every
+  // consumer reads the EFFECTIVE value (`spouseContribHSA`, defined next to spouseHsaLimit), so the
+  // field shows exactly what the spouse sim contributes whatever moved the shared ceiling
+  // (coverage switch, the primary's HSA slider, the optimizer's Apply) — no per-writer hook.
+  const [spouseContribHSAStored, setSpouseContribHSA] = useState(0);
   const [spouseMatchMode,          setSpouseMatchMode]          = useState("flat");
   const [spouseEmployerMatchPct,   setSpouseEmployerMatchPct]   = useState(3);
   const [spouseMatchFormulaRate,   setSpouseMatchFormulaRate]   = useState(50);
@@ -303,7 +307,7 @@ export default function App() {
   // and every household total equals the primary total → golden master untouched.
   const hasSpouse = isMarried || spouseIncome > 0 || spouseBal401k > 0 || spouseBalRoth > 0
     || spouseBalTaxable > 0 || spouseBalHSA > 0 || spouseContrib401k > 0 || spouseContribRoth > 0
-    || spouseContribTaxable > 0 || spouseContribHSA > 0;
+    || spouseContribTaxable > 0 || spouseContribHSAStored > 0;
   // The spouse's own retirement age (BUG-82 foundation step). null = auto: the same
   // numeric age the primary retires at. Defensively double-clamped so a stale stored
   // value can never escape its own bounds (the same pattern used for ssClaimingAge-
@@ -323,6 +327,7 @@ export default function App() {
   // HSA_FAMILY_LIMIT_2026: primary draws first, spouse gets the rest.
   const primaryHsaLimit = hsaCoverageType === "family" ? HSA_FAMILY_LIMIT_2026 : HSA_LIMIT_2026;
   const spouseHsaLimit  = spouseHsaLimitFor(hsaCoverageType, contribHSA);
+  const spouseContribHSA = Math.min(spouseContribHSAStored, spouseHsaLimit);
 
   const simData = useMemo(() => {
     const raw = runSimulation({
@@ -1552,8 +1557,8 @@ export default function App() {
     setHsaCoverageType(v);
     const ceiling = v === "family" ? HSA_FAMILY_LIMIT_2026 : HSA_LIMIT_2026;
     if (contribHSA > ceiling) setContribHSA(ceiling);
-    if (spouseContribHSA > ceiling) setSpouseContribHSA(ceiling);
-  }, [setHsaCoverageType, setContribHSA, setSpouseContribHSA, contribHSA, spouseContribHSA]);
+    if (spouseContribHSAStored > ceiling) setSpouseContribHSA(ceiling);
+  }, [setHsaCoverageType, setContribHSA, setSpouseContribHSA, contribHSA, spouseContribHSAStored]);
 
   // Life-expectancy coupled update: mirrors the Classic onChange that clamps the
   // retirement age below the new horizon and caps any contribEnd ages above it.
@@ -2095,7 +2100,9 @@ export default function App() {
       trad401k: acct(spouseBal401k, setSpouseBal401k, spouseContrib401k, setSpouseContrib401k, TRAD_401K_LIMIT_2026),
       roth:     acct(spouseBalRoth, setSpouseBalRoth, spouseContribRoth, setSpouseContribRoth, ROTH_IRA_LIMIT_2026),
       taxable:  acct(spouseBalTaxable, setSpouseBalTaxable, spouseContribTaxable, setSpouseContribTaxable, 100_000),
-      hsa:      acct(spouseBalHSA, setSpouseBalHSA, spouseContribHSA, setSpouseContribHSA, primaryHsaLimit),
+      // BUG-172: max = the spouse's REAL share of the (family) ceiling — what the sim can
+      // actually contribute — not the whole household ceiling.
+      hsa:      acct(spouseBalHSA, setSpouseBalHSA, spouseContribHSA, setSpouseContribHSA, spouseHsaLimit),
       spouseRetirementAge: {
         value: effectiveSpouseRetAge,
         // Snap to null when the user picks the primary's own retirement age — a clean
@@ -2116,7 +2123,7 @@ export default function App() {
   }, [spouseBal401k, spouseContrib401k, spouseBalRoth, spouseContribRoth,
       spouseBalTaxable, spouseContribTaxable, spouseBalHSA, spouseContribHSA,
       spouseMatchMode, spouseEmployerMatchPct, spouseMatchFormulaRate, spouseMatchFormulaCap,
-      hsaCoverageType, primaryHsaLimit,
+      hsaCoverageType, spouseHsaLimit,
       effectiveSpouseRetAge, spouseRetAgeMin, spouseRetAgeMax, retirementAge,
       setSpouseBal401k, setSpouseContrib401k, setSpouseBalRoth, setSpouseContribRoth,
       setSpouseBalTaxable, setSpouseContribTaxable, setSpouseBalHSA, setSpouseContribHSA,

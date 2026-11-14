@@ -101,6 +101,7 @@ const SEQS = {
   "ssClaimingAge 62 then currentAge 66": (a) => { set(a, "ss.ssClaimingAge", 62); set(a, "assumptions.currentAge", 66); },
   "HSA family 8000, then self-only (single)": (a) => { set(a, "spouseAccounts.hsaCoverageType", "family"); set(a, "accounts.hsa.contrib", 8_000); set(a, "spouseAccounts.hsaCoverageType", "self"); },
   "HSA family 8000, then self-only (married)": (a) => { MARRY(a); set(a, "spouseAccounts.hsaCoverageType", "family"); set(a, "accounts.hsa.contrib", 8_000); set(a, "spouseAccounts.hsaCoverageType", "self"); },
+  "HSA family: spouse 8000 then primary 6000 (spouse share shrinks)": (a) => { MARRY(a); set(a, "spouseAccounts.hsaCoverageType", "family"); set(a, "spouseAccounts.hsa.contrib", 8_000); set(a, "accounts.hsa.contrib", 6_000); },
   "work state -> CA then retirement state -> NY then work state -> TX": (a) => { set(a, "profile.selectedState", "CA"); set(a, "assumptions.retirementState", "NY"); set(a, "profile.selectedState", "TX"); },
   "retirement state -> CA": (a) => set(a, "assumptions.retirementState", "CA"),
   "income 400k, livingExpenses 300k, then income 40k": (a) => { set(a, "profile.currentIncome", 400_000); set(a, "spending.livingExpenses", 300_000); set(a, "profile.currentIncome", 40_000); },

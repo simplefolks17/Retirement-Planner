@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
 import { HSA_LIMIT_2026, HSA_FAMILY_LIMIT_2026 } from "../config/irs-2026.js";
+import { spouseHsaLimitFor } from "../model/spouse-sim.js";
 
 // L1-B (BUG-152, 153, 160, 161): onboarding's commitPlan and the coupled setters,
 // driven through the REAL App (App.jsx glue is what model-only tests cannot see).
@@ -217,6 +218,43 @@ describe("BUG-161: switching HSA coverage to self-only clamps stored contributio
     expect(app.latest().spouseAccounts.hsa.contrib.value).toBe(HSA_LIMIT_2026);
     app.fire(() => app.latest().spouseAccounts.hsaCoverageType.set("family"));
     expect(app.latest().spouseAccounts.hsa.contrib.value).toBe(HSA_LIMIT_2026);
+    app.unmount();
+  });
+});
+
+// BUG-172 (Opus review R-7): BUG-161's invariant "the field equals the modelled value" was only
+// written for family -> self. Under FAMILY coverage the spouse's real ceiling is the household
+// 8,750 minus the PRIMARY's contribution, but the field's max was the whole 8,750.
+describe("BUG-172: the spouse HSA field equals the modelled value under family coverage", () => {
+  const setup = (app) => {
+    app.fire(() => app.latest().spouseAccounts.hsaCoverageType.set("family"));
+    app.fire(() => app.latest().spouseAccounts.hsa.contrib.set(8_000));
+  };
+  it("primary at the 3,850 default: field max AND value are the spouse's 4,900 share, not 8,000/8,750", () => {
+    const app = mount(); setup(app);
+    const f = app.latest().spouseAccounts.hsa.contrib;
+    expect(spouseHsaLimitFor("family", app.latest().accounts.hsa.contrib.value)).toBe(4_900);
+    expect(f.max).toBe(4_900);
+    expect(f.value).toBe(4_900);
+    expect(outOfRange(app.latest())).toEqual([]);
+    app.unmount();
+  });
+  it("follows the primary's HSA contribution both ways (the user's own 8,000 comes back)", () => {
+    const app = mount(); setup(app);
+    app.fire(() => app.latest().accounts.hsa.contrib.set(6_000));
+    expect(app.latest().spouseAccounts.hsa.contrib.max).toBe(2_750);
+    expect(app.latest().spouseAccounts.hsa.contrib.value).toBe(2_750);
+    app.fire(() => app.latest().accounts.hsa.contrib.set(500));
+    expect(app.latest().spouseAccounts.hsa.contrib.value).toBe(8_000);
+    expect(app.latest().spouseAccounts.hsa.contrib.max).toBe(8_250);
+    expect(outOfRange(app.latest())).toEqual([]);
+    app.unmount();
+  });
+  it("self-only coverage is unchanged (each person keeps the self-only cap)", () => {
+    const app = mount();
+    app.fire(() => app.latest().spouseAccounts.hsa.contrib.set(3_000));
+    expect(app.latest().spouseAccounts.hsa.contrib.max).toBe(HSA_LIMIT_2026);
+    expect(app.latest().spouseAccounts.hsa.contrib.value).toBe(3_000);
     app.unmount();
   });
 });
