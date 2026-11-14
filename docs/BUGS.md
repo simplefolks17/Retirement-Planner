@@ -30,7 +30,7 @@ place this gets checked).
 | **BUG-39** | Low (accepted) | Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (the one documented exception to the no-residual-plug rule) | `src/model/flow-down.js` |
 | **BUG-38** | Low (accepted) | Engine charges only *incremental* tax above the SS/pension floor — SS/pension effectively tax-free | `src/model/retirement-engine.js` |
 | **BUG-37** | Low (accepted, owner-deferred) | Engine ignores `conversionTaxSource` — always funds conversion tax from the pool | `src/model/retirement-engine.js` |
-| **BUG-36** | Low (accepted) | What-if/optimized-scenario deltas still use the blended (not taxed-once) engine for *deltas* only | `src/model/what-if.js`, `src/model/optimization.js` |
+| **BUG-36** | Medium (raised 2026-11-14, R-9) | `calcWhatIfDelta` (blended walk) contradicts the headline in spouse-gap households; the ABSOLUTE before/after previews were fixed by BUG-176 (headline-anchored), the underlying walk is still blended | `src/model/what-if.js`, `src/model/optimization.js` |
 
 ---
 
@@ -473,6 +473,20 @@ The remaining BUG-36 gap is (a) the retirement-phase **delta** still using the b
 `moneyEvents` taxable-inflow income tax still uncharged in accumulation / the blended walk.
 **Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
 work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
+**Amendment (2026-11-14, Opus review R-9; severity raised Low -> MEDIUM).** "Deltas only, accepted" badly
+understated this in SPOUSE-GAP households: the blended walk has no spouse gap-year income, so its
+ABSOLUTE figures contradict the headline by years, and the preview surfaces printed them beside it.
+Repro (real App; primary 48 retiring 57, spouse 37 earning $120k with a $20k 401k, $120k spend,
+conversions zeroed, spouse retirement "auto"): the headline says money lasts to **70**
+(`yearsSustained` 12.97); the Horizon surplus Apply preview said Longevity **"to age 63" -> "to age 67"**
+(before contradicts the plan by 7 years, and "more saving" read as WORSE than the plan's own 70);
+`calcWhatIfDelta` with NO change at all gave `scenarioYears` 5.41 vs 12.97; Classic "Work 2 more
+years" gave 6.80 vs the 14.71 the same change gives when committed. At the no-spouse default the gap
+runs the other way (25.51 vs 22.64). Also: BUG-157/158's spouse re-seed inside `calcWhatIfDelta` is
+mostly inert, because the seed never reaches the blended walk's years.
+**Display half FIXED by BUG-176** (both preview surfaces now print headline-anchored figures). The real
+fix (port `calcWhatIfDelta` and `calcOptimizedScenario` onto `buildRetirementPhase`) is **still open**
+and remains the only way the lever's own delta stops carrying the blended walk's bias.
 **Re-verified 2026-07-08 (L3c close-out):** `what-if.js` and `optimization.js` still import and
 call `buildRetirementDrawdown` exclusively — still reproduces. Note: this session's WI-3.9 Apply
 preview for the conversion optimizer suggestion deliberately does **not** use `calcWhatIfDelta` —
@@ -718,6 +732,30 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+### BUG-173 — work-longer "Social Security / yr" ignored a pinned override and was primary-only (Opus review R-2; FIXED 2026-11-14)
+
+**Severity: MEDIUM (pre-existing; BUG-154 sibling).** `calcWorkLongerBreakEven` recomputed SS from the PIA (`calcBenefit(calcPIA(calcAIME(...)))`) with no `ssOverride` and no spouse. T-X.3 repro (override 38,000 at claim 67; plan `householdSS` 38,000): rows showed SS **23,232 / 25,956 / 28,848** with deltas +1,308 / +4,032 / +6,924 per year, i.e. about $15k BELOW the figure the user typed, and told them working longer raises it, while the scenario each row describes (`scenarioSocialSecurity`) keeps the pinned 38,000. BUG-154 fixed one instance of "a second SS derivation that doesn't honour the override", not the class.
+**Fix.** Each row's SS (and `baseSSAnnual`) comes from the same `calcRetirementIncome(...).householdSS` the scenario uses, fed `{ ...bundle.ssInputs, ...ssInputs }` (the scenario engine's own inputs: override, spouse estimate/claiming age/basis). App no longer passes a separate, narrower `ssInputs`. New per-row `ssPinnedFlat` (model-provided, rule 10) makes the screen say "your entered figure" instead of an unexplained "+$0/yr". **Files:** `src/model/what-if.js`, `src/App.jsx`, `src/horizon/screens/strategies/WorkLongerFlow.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/display-consistency-r2b.test.js` (real App): override pinned -> `baseSSAnnual` and every row 38,000, delta 0, pinned flag; spouse estimate 20,000 without override -> `baseSSAnnual` == plan `householdSS` (41,924) and rows are household. Reverted at the exact sites: dropping `bundle.ssInputs` from the merge -> 2 fail; `ssOverride: null` -> pinned test fails (21,924 vs 38,000); zeroing the spouse -> household test fails (21,924 vs 41,924). Golden masters unmoved (`impl-log-R2-B.md`).
+
+### BUG-174 — TaxTimeline rendered `effectiveRMDTaxRate` at 0 dp (Opus review R-8; FIXED 2026-11-14)
+
+**Severity: LOW.** BUG-166's "one value renders one way" rule (`docs/DESIGN.md` "Percent formatting": `effectiveRMDTaxRate` is a 1-dp computed rate) was broken by `TaxTimeline`'s two segments sharing `fmtRate(rate, 0)`: at the default the Classic bar read "Ret.: 13%" while the same panel ~35 lines below, `rmdView.effectiveRMDTaxRateLabel`, the action cards and Horizon read "12.8%". Its Working segment (`fedMarginal`, a bracket rate) is correctly 0 dp.
+**Fix.** `Seg` takes a `dp`: Working 0, Ret. 1. **Files:** `src/components/TaxTimeline.jsx`. **Test/revert-and-confirm:** `display-consistency-r2b.test.js` renders Classic and asserts "Ret.: 12.8%" equals `rmdView.effectiveRMDTaxRateLabel`; Ret. `dp={1}` -> `dp={0}` fails with "expected 'Working: 22%Ret.: 13%' to contain 'Ret.: 12.8%'".
+
+### BUG-175 — a working-year conversion event the model drops kept rendering as live (Opus review R-13, defect half; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** $500k pre-tax, in-service conversions on, an event of $100,000 at the default age 48; then retirement moves 65 -> 40. The Horizon row still read age 48 / $100,000 / "401k -> Roth, taxed as income" (its own `ageField.max` was 39), while the model silently dropped the event (`simData.convEvent` sum 100,000 -> 0). BUG-161's class (a field showing an input the model isn't using).
+**Fix (flag, not clamp, so the user's event survives retirement moving back).** One predicate in `conversion-events.js` (`conversionEventOutsideWorkingYears` / `conversionEventNotModelled`, plus the label constant) now defines "outside the working years"; App's `activeConversionEvents` filter and both UIs read it. `conversionView.events.rows[i].notModelled` + `estTaxLabel` ("outside your working years - not modelled") are model-provided (rule 10 - no age comparison in JSX); the Horizon row shows it in the warm tone; Classic `ConversionEventsPanel` shows the same label for the same rows. Only events with a real amount flag. **Files:** `src/model/conversion-events.js`, `src/App.jsx`, `src/horizon/screens/strategies/ConversionPlannerFlow.jsx`, `src/components/ConversionEventsPanel.jsx`.
+**Not done here (R2-C):** the structural-guard half of R-13 (the two guards walking every `{value, set}` in `horizonProps`).
+**Tests/revert-and-confirm.** `display-consistency-r2b.test.js` (real App; the review's repro and a Classic row with working years remaining): App row `notModelled`/label off -> 2 fail; Classic panel `notModelled = false` -> 2 fail (the panel still shows "401k -> Roth, taxed as income").
+
+### BUG-176 — `calcWhatIfDelta` previews printed ABSOLUTE before/after ages that contradict the headline (Opus review R-9; display half FIXED 2026-11-14; BUG-36 stays Open)
+
+**Severity: MEDIUM.** See BUG-36's 2026-11-14 amendment for the full repro (headline "to age 70"; surplus Apply preview "to age 63" -> "to age 67"; Classic "Work 2 more years" 6.80 vs 14.71 committed). Two defects on the Classic panel: its AFTER and delta came from the blended walk against a headline "before" (a mixed-engine difference, -6.7 yrs in the repro), and its "lasts to age" label measured BOTH ages from the base retirement age (the scenario's own is 2 years later).
+**Fix (near-term, per the review).** `anchorWhatIfToHeadline`: "before" IS the headline; "after" = headline + (scenario - no-change), both terms from the SAME blended engine so its bias cancels (Infinity edges documented). The Horizon surplus preview (`surplusApplySite`) and Classic `WhatIfPanel` (`calcWhatIfDeltaAnchored`) use it; the panel's label measures from `scenarioRetAge`. Repro after: preview before "to age 70", after >= 70; Classic "to age 73 vs to age 70 -> +0.9 yrs". **Not done (out of scope):** porting `calcWhatIfDelta` onto `buildRetirementPhase` - that is BUG-36. **Files:** `src/model/what-if.js`, `src/App.jsx`, `src/components/WhatIfPanel.jsx`.
+**Tests/revert-and-confirm.** `display-consistency-r2b.test.js`: Horizon preview (before == `to age ${retirementWalk.depletionAge}`, nest egg before == `fmt(totalAtRet)`), Classic panel driven through its preset, and 4 unit tests of the anchor. Surplus preview back to `before.scenarioYears` -> fails ("to age 63" vs "to age 70"); panel back to raw `calcWhatIfDelta` -> fails (label "NaN", "-6.7 yrs").
 
 ### BUG-167 — onboarding seeds "monthly spend (today's dollars)" with a retirement-year figure, 3.95x too high (Opus review R-4, HIGH; FIXED 2026-11-14)
 

@@ -25,3 +25,6 @@
 - Tests: display-consistency-r2b.test.js — Horizon surplus preview (before == `to age ${retirementWalk.depletionAge}`, nest egg before == fmt(totalAtRet), after >= before); Classic WhatIfPanel driven through the rendered preset (before == headline 70, after >= before); 4 unit tests of the anchor incl. no-change == headline and Infinity edges.
 - Revert-and-confirm: (A) surplus preview back to `before.scenarioYears` -> FAIL "expected 'to age 63' to be 'to age 70'"; (B) Panel back to raw calcWhatIfDelta -> FAIL (Classic printed "Portfolio lasts to age NaN ... → -6.7 yrs"). Restored 11/11.
 - Gate: npm test 1657, lint, build clean; golden masters unmoved.
+
+## BUGS.md
+- BUG-173..176 Resolved entries at top of Resolved; BUG-36 Open entry + index row amended (Medium, R-9 repro, display half fixed by BUG-176). Final npm test: 1657, lint+build clean, golden masters unmoved.
