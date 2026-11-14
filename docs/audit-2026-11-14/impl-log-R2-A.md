@@ -23,3 +23,9 @@
 - Tests: new src/__tests__/classic-horizon-parity.test.js (real App; Classic driven via the rendered Slider onChange, then back to Horizon): plateau 55 + retire 65->50->65 identical and plateau stays 55; mid-state in range; spouse 85 + life 90->80->95 identical and 85 restored; age-72-then-Classic-retire-75 keeps ends 75; Classic sliders' onChange === Horizon bundle setters (identity). bounds-invariant SEQS +2.
 - Revert-and-confirm: (A) Classic Retirement slider back to inline contribEnd copy -> 2 fail (age-then-retire, identity). (B) Classic Life Expectancy back to inline copy -> identity test fails (behaviour coincides after the non-destructive change, so the sharing is pinned structurally; this is why). (C) destructive plateau write re-added in setRetirementAgeCoupled -> plateau test fails. (D) spouse overwrite re-added in setLifeExpectCoupled -> spouse test fails. All restored.
 - Note: the effective-plateau read means the model sees the plateau only when it is inside [currentAge+1, retirementAge); with BUG-155's coupling gone from the setters the clamp is the single place that rule lives.
+
+## BUG-171 (R-5) done
+- accumulation.js allocateSavedTotal: largest-remainder rounding (floors + leftover units to biggest fractional parts); primaryNow sums max(0,bal). Never negative, exact sum.
+- formatters.js new `parseAmountInput` (k/M suffix, decimals, $ and separators; null on junk); HorizonShell ObInput uses it, unparseable keeps the previous answer.
+- Tests: accumulation.test.js (review repro 4x$1000 -> $2, many shapes, mix within $1), formatters.test.js (parse table), onboarding-wizard-save.test.js (typed "250k", "1.5M", "$900,000.75", "lots" through the real input).
+- Revert-and-confirm: parse line back to `parseInt(draft.replace(/[^0-9]/g,""))` -> 3 wizard tests fail; allocate back to round-each+residual -> 2 unit tests fail (review repro and shapes). Restored.

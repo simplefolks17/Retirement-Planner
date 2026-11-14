@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fmt, fmtFull, fmtSigned, fmtMonthly, fmtMo, fmtPct, fmtRate } from "../formatters.js";
+import { fmt, fmtFull, fmtSigned, fmtMonthly, fmtMo, fmtPct, fmtRate, parseAmountInput } from "../formatters.js";
 
 describe("fmt — calm currency abbreviation", () => {
   it("formats values below $1,000 as plain integers", () => {
@@ -295,5 +295,31 @@ describe("one-percent-formatter guard — no hand-rolled percent strings outside
       });
     }
     expect(offenders).toEqual([]);
+  });
+});
+
+// BUG-171 (Opus review R-5): the wizard stripped every non-digit, so "250k" became 250,
+// "1.5M" became 15 and "900000.75" became 90,000,075.
+describe("parseAmountInput", () => {
+  it("reads plain numbers, separators and currency symbols", () => {
+    expect(parseAmountInput("250000")).toBe(250_000);
+    expect(parseAmountInput("$250,000")).toBe(250_000);
+    expect(parseAmountInput(" 1 250 000 ")).toBe(1_250_000);
+  });
+  it("reads k / M shorthand, case-insensitively, with decimals", () => {
+    expect(parseAmountInput("250k")).toBe(250_000);
+    expect(parseAmountInput("250K")).toBe(250_000);
+    expect(parseAmountInput("1.5M")).toBe(1_500_000);
+    expect(parseAmountInput("$1.5m")).toBe(1_500_000);
+    expect(parseAmountInput(".5m")).toBe(500_000);
+  });
+  it("rounds decimals instead of gluing the cents on as digits", () => {
+    expect(parseAmountInput("900000.75")).toBe(900_001);
+    expect(parseAmountInput("34.4")).toBe(34);
+  });
+  it("rejects anything that is not a plain amount (null: caller keeps the old answer)", () => {
+    for (const bad of ["", "abc", "12abc", "1.2.3", "-5", "5kk", "k", null, undefined, 7]) {
+      expect(parseAmountInput(bad), String(bad)).toBeNull();
+    }
   });
 });

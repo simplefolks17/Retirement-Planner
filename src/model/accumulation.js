@@ -30,18 +30,23 @@ export function sumAccountRow(row) {
 export function allocateSavedTotal(bals, spouseTotal, targetTotal) {
   const keys = ["bal401k", "balRoth", "balTaxable", "balHSA"];
   const spouse = Number.isFinite(spouseTotal) ? Math.max(0, spouseTotal) : 0;
-  const primaryNow = keys.reduce((a, k) => a + (Number.isFinite(bals[k]) ? bals[k] : 0), 0);
+  const primaryNow = keys.reduce((a, k) => a + (Number.isFinite(bals[k]) ? Math.max(0, bals[k]) : 0), 0);
   if (!Number.isFinite(targetTotal) || targetTotal < 0 || primaryNow + spouse === targetTotal) return bals;
   const share = Math.max(0, Math.round(targetTotal - spouse));
   if (primaryNow <= 0) return { bal401k: 0, balRoth: 0, balTaxable: share, balHSA: 0 };
+  // BUG-171 (review R-5): LARGEST-REMAINDER rounding. The old "round each, dump the residual on
+  // the biggest balance" could drive a $1 balance to -1 (four $1,000 balances, target $2:
+  // each share rounds 0.5 -> 1, the sum overshoots by 2, and the residual was charged to the
+  // first/"biggest" $1 entry). Floors can never overshoot the share, and the units left over
+  // go one apiece to the largest fractional parts, so every balance stays >= 0 and the four
+  // still sum to the share exactly.
+  const exact = keys.map(k => Math.max(0, bals[k] || 0) * share / primaryNow);
   const out = {};
-  let sum = 0, biggest = keys[0];
-  for (const k of keys) {
-    out[k] = Math.round((bals[k] || 0) * share / primaryNow);
-    sum += out[k];
-    if (out[k] > out[biggest]) biggest = k;
-  }
-  out[biggest] += share - sum;
+  keys.forEach((k, i) => { out[k] = Math.floor(exact[i]); });
+  let left = share - keys.reduce((a, k) => a + out[k], 0);
+  const order = keys.map((k, i) => ({ k, frac: exact[i] - out[k], i }))
+    .sort((x, y) => y.frac - x.frac || x.i - y.i);
+  for (let j = 0; left > 0 && order.length; j++, left--) out[order[j % order.length].k] += 1;
   return out;
 }
 

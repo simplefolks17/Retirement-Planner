@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
-import { fmt, fmtFull } from "../formatters.js";
+import { fmt, fmtFull, parseAmountInput } from "../formatters.js";
 import { Btn } from "../horizon/shared.jsx";
 import { useDialogBehaviour } from "../horizon/useDialogBehaviour.js";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
@@ -241,8 +241,10 @@ function ObInput({ t, field, vals, setVals }) {
       onFocus={() => { setFocused(true); setDraft(String(vals[field])); }}
       onChange={e => setDraft(e.target.value)}
       onBlur={() => {
-        const n = parseInt(draft.replace(/[^0-9]/g, ""), 10);
-        if (!isNaN(n)) setVals(v => ({ ...v, [field]: clamp(n, lo, hi) }));
+        // BUG-171: "250k" / "1.5M" / decimals parse properly; anything unparseable keeps the
+        // previous answer (the field snaps back to it) instead of storing a mangled number.
+        const n = parseAmountInput(draft);
+        if (n !== null) setVals(v => ({ ...v, [field]: clamp(n, lo, hi) }));
         setFocused(false);
       }}
       onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}

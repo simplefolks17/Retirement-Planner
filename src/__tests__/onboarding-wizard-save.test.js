@@ -139,3 +139,42 @@ describe("onboarding wizard → plan (BUG-167: the spend question's basis)", () 
     act(() => r.unmount());
   });
 });
+
+// ── BUG-171 (Opus review R-5): the wizard's typed-answer parse ────────────────────────────
+// It stripped every non-digit, so typing "250k" stored $250. Drives the real input's
+// focus/change/blur like a person typing.
+function typeInto(renderer, text) {
+  const input = renderer.root.findAll(n => n.type === "input")[0];
+  act(() => input.props.onFocus());
+  act(() => renderer.root.findAll(n => n.type === "input")[0].props.onChange({ target: { value: text } }));
+  act(() => renderer.root.findAll(n => n.type === "input")[0].props.onBlur());
+}
+describe("onboarding wizard → typed savings answer (BUG-171)", () => {
+  const run = (text) => {
+    const r = mountWizard();
+    for (let i = 0; i < 2; i++) click(r.root, byText("Next →"), "Next");   // to Q3, savings
+    typeInto(r, text);
+    for (let i = 0; i < 2; i++) click(r.root, byText("Next →"), "Next");   // Q4, Q5
+    click(r.root, byText("Build my plan →"), "Build my plan");
+    click(r.root, byText("Save as my plan →"), "Save as my plan");
+    click(r.root, byText("Yes, save my plan"), "confirm");
+    const saved = lastProps().currentTotalSaved;
+    act(() => r.unmount());
+    return saved;
+  };
+  it('"250k" is $250,000', () => { expect(run("250k")).toBe(250_000); });
+  it('"1.5M" is $1,500,000', () => { expect(run("1.5M")).toBe(1_500_000); });
+  it('"$900,000.75" is $900,001, not $90,000,075', () => { expect(run("$900,000.75")).toBe(900_001); });
+  it("unparseable text keeps the previous answer", () => {
+    const r = mountWizard();
+    const before = lastProps().currentTotalSaved;
+    for (let i = 0; i < 2; i++) click(r.root, byText("Next →"), "Next");
+    typeInto(r, "lots");
+    for (let i = 0; i < 2; i++) click(r.root, byText("Next →"), "Next");
+    click(r.root, byText("Build my plan →"), "Build my plan");
+    click(r.root, byText("Save as my plan →"), "Save as my plan");
+    click(r.root, byText("Yes, save my plan"), "confirm");
+    expect(lastProps().currentTotalSaved).toBe(before);
+    act(() => r.unmount());
+  });
+});
