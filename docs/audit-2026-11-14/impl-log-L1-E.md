@@ -16,3 +16,13 @@ New: model/__tests__/roth-phaseout-indexing.test.js (7), __tests__/roth-phaseout
 - Revert App primary sim `inflationRate`: 3 failed. Revert `whatIfSimInputs.inflationRate`: 2 failed. Revert spouse builder: 1 failed. Revert what-if spouse re-sim: 1 failed. All restored; 6/6 + 7/7 pass.
 - Full: npm test 1477 passed; lint clean; build OK.
 BUGS.md BUG-159 Resolved entry + BUG-100 addendum + FINANCIAL-MODEL.md Known Simplifications row written.
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1477, lint clean, build OK.
+- Independently re-measured at the shipped default through the real App:
+  - `cRoth` = 7,000 every year from 31 to 65 (was 0 from 53).
+  - totalAtRet 4,178,538 / spendableAtRet 3,906,471 / withdrawalRate 5.418515955123506 /
+    yearsSustained 22.64243816663232 / depletion 88 / Roth 801,755. All match the agent's table.
+  - Trad + Taxable + HSA = 3,376,783 both before and after: ONLY the Roth bucket moved.
+- Golden-master diffs reviewed: only the moved values, their old → new comments, and the
+  hand-built test's `inflationRate` input (needed so it mirrors App).
