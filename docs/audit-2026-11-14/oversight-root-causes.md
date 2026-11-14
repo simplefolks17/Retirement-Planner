@@ -67,4 +67,81 @@ correctly; does this control reach the engine) and none checked *what should mov
 happens to be the one input value where this bug cannot show.
 
 ## Part 2 — Lenses applied to the rest of the code
-_(in progress)_
+
+Method: two throwaway probes (`src/__tests__/zz-oversight-sweep.test.js`,
+`zz-oversight-retest.test.js`, gitignored) mount the REAL App and drive it only through the
+same setter bundles the Horizon screens use. One records which of ~69 headline numbers move
+when each of the 63 inputs changes (single and married households). The other pushes the age
+controls around and checks every input against its own declared min/max. Every "nothing
+moved" result was then re-tested under conditions where that input SHOULD matter, so
+by-design no-ops (spouse fields for a single filer, formula-match fields in flat mode) are
+separated from real ones.
+
+### Lens 1 — values seeded once from another input (Finding C's mechanism)
+
+`grep useState(` for non-literal initializers, 30 hits, each read.
+- **App.jsx:116 `retirementState`**: Finding C. **VERIFIED** by mount: work TX→CA leaves
+  retirement TX; `yearsSustained` 21.65 → **27.34** (phantom). Setting retirement CA as well
+  gives 25.38.
+- **`WhatIfPanel.jsx:69,75,76`** (Classic only): `eventAge`/`affAge` = `currentAge + 5` and
+  `targetAge` = `safeLifeExp`, all seeded at mount. The panel is always mounted, so after a
+  user changes their age or plan-to age, the affordability check still targets the OLD
+  plan-to age ("doesn't sustain to age 95" for a plan to 90). The HTML `min` on the inputs
+  does not clamp stored state. **VERIFIED by code** (no re-sync anywhere); low impact
+  (Classic, secondary panel).
+- Clean: `DeferredInput` (re-syncs via a ref), `LifeEventSheet` (remounts per open),
+  onboarding `vals` (one-shot by design), theme/window/tab state.
+
+### Lens 2 — coupling gaps: a dependent value left outside its own bounds
+
+Bounds check after user moves; **6 of 13 sequences left a stored value out of range**:
+
+| Sequence | Result | Status |
+|---|---|---|
+| Plateau 45, then current age 50 | `incomeGrowthEndAge` 45 < min 51 | Known: audit Finding E |
+| Plateau 60, then retirement age 50 | `incomeGrowthEndAge` 60 > max 50 | New direction of E; harmless (growth stops at retirement anyway) |
+| **Onboarding `commitPlan(currentAge 72, retire 75)`** | `ssClaimingAge` 67 < min 70 | **NEW, VERIFIED** — see below |
+| Income 400k → living 300k → income 40k | `livingExpenses` 300,000 > max 35,935; flows into `effectiveExpenses` = 300,000 | New, low — it is the user's own number, but nothing re-checks it after income drops |
+| HSA family → contrib 8,000 → self-only | `hsa.contrib` shows 8,000 > max 4,400 | New, low — the sim caps it (rule 4), so totals are right but the field shows a number the model isn't using |
+| The other 8 (age trio, spouse ages, pension, SS) | ok | — |
+
+**NEW — onboarding uses the un-coupled age setter.** `commitPlan` (`App.jsx:1392`) calls bare
+`setCurrentAge(ca)`, not `setCurrentAgeCoupled`. It's the exact twin of a bug already fixed
+in the same function for retirement age (`docs/BUGS.md` → the PR #52 CodeRabbit entry: "No new
+test"). Only the instance was fixed, not the class. Measured: the same household
+(age 72, retire 75, $5k/mo) gives `yearsSustained` **4.73** via onboarding vs **3.82** via
+the normal controls, because onboarding leaves SS claiming at 67 when the user is 72.
+
+### Lens 6 — inputs that don't reach what they should (empirical propagation sweep)
+
+**NEW, HIGH — the first-run wizard asks "How much have you saved so far?" and discards the
+answer.** `OnboardingScreen` (`HorizonShell.jsx:197`) asks it, shows it back on the confirm
+screen as "Savings today" (`:302`), then `handleSave` (`:289-296`) sends only
+age/income/retire-age/monthly-spend, and `commitPlan` has no parameter for it. **VERIFIED**:
+committing with an answer of $900,000 leaves `currentTotalSaved` at the default **165,000**.
+Every new Horizon user (shown whenever `hz-onboarded` is unset, `HorizonShell.jsx:581`) gets
+a plan built on $165k of savings regardless of what they told it. It was missed because
+onboarding was audited for keyboard access (BUG-49) and retirement-age coupling (PR #52), and
+never for "does every answer land".
+
+Inputs that moved nothing, each re-tested under conditions where it should matter:
+
+| Input | Re-test result | Verdict |
+|---|---|---|
+| **Living expense growth** (shown in BOTH UIs) | 3% → 8%: nothing moves | **Real dead control.** BUG-91 (Resolved) noted it and called it "not a live bug … nothing currently silently ignores a user's input". That is backwards: a visible control that ignores the user IS silently ignoring input. No Open entry tracks it. |
+| **Conversion tax source** | converted → taxable: nothing moves | Known (BUG-37, accepted). The control is still offered in the UI though. |
+| **Roth contribution end age** at default | 65 → 55: nothing moves | **NEW, MEDIUM, VERIFIED** — explained below |
+| Savings-surplus % | nothing moves in the plan | By design: feeds the suggested "optimized" scenario only. Horizon labels it under *Assumptions* as "share of leftover income to invest", which reads as a plan input — wording, not a bug. |
+| Health (marketplace, Medicare, premium, household size) | nothing moves in headline numbers | By design: they drive the conversion screen's ACA-cliff / IRMAA warnings and the optimizer, not retirement spending (BUG-149 already tracks their basis). |
+| Portfolio target | nothing moves | By design: milestone marker only. |
+| Spouse fields (single), match-formula fields (flat mode), contribution end ≥ retirement | nothing moves | By design: gated. All move when un-gated (re-tested). |
+
+**NEW, MEDIUM — the Roth IRA income phase-out is frozen at 2026 limits while salary grows,
+so the DEFAULT user stops contributing at age 53.** Measured from `simData` at the shipped
+default: `cRoth` = 7,000 every year to 50, then 5,270 (51), 2,507 (52), **0 from 53 to 65**.
+The salary grows 3%/yr nominal while `ROTH_PHASEOUT_2026` (`irs-2026.js:70`) is never
+indexed, but the IRS indexes it to inflation every year. With the default 4% inflation the
+user's REAL income is falling, so in reality they would never be phased out. This is the
+same simplification as BUG-100 (tax brackets not inflated) in a site BUG-100 doesn't list
+(`simulation.js:206`). It was invisible because a sweep of "Roth end age" shows no effect,
+and nobody asked why.
