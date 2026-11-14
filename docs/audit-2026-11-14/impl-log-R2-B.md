@@ -28,3 +28,7 @@
 
 ## BUGS.md
 - BUG-173..176 Resolved entries at top of Resolved; BUG-36 Open entry + index row amended (Medium, R-9 repro, display half fixed by BUG-176). Final npm test: 1657, lint+build clean, golden masters unmoved.
+
+## Orchestrator re-verification (2026-11-14)
+- npm test 1657, lint clean, build OK, no golden-master file touched.
+- Independent revert: TaxTimeline Ret. dp={1} -> dp={0} -> 1 failing; restored -> green.
