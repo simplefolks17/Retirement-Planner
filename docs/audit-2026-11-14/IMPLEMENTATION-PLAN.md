@@ -264,3 +264,23 @@ for EVERY implementing agent" section above). Pre-assigned ids continue from BUG
 ### R2-A — onboarding + coupling (BUG-167, 168, 169, 170, 171, 172)
 ### R2-B — display/consistency (BUG-173, 174, 175, 176)
 ### R2-C — tests that can't fail + guards + docs (R-6, R-11, R-13's guard walker, R-12)
+
+---
+
+## Round 3 — fixing the second Opus review (`opus-review-2.md`, S-1..S-10)
+
+Owner asked for token efficiency: `[judgement]` items go to Sonnet (R3-A) and `[mechanical]` items to
+Haiku (R3-B). They run sequentially, because both touch App.jsx and BUGS.md. The same agent rules apply.
+
+| id | review | tag | batch |
+|---|---|---|---|
+| BUG-178 | S-5 (HIGH, regression from BUG-167): the wizard's untouched spend answer is stale against a changed income answer, and the summary labels spending "Monthly income" | judgement | R3-A |
+| BUG-179 | S-1 (regression from BUG-170): scenarios clamp the stored plateau to the BASE retirement age, so preview != commit | judgement | R3-A |
+| BUG-180 | S-2: the BUG-176 anchor falls back to the blended walk's own figure for a sustainable plan made worse ("lasts to 81" next to "sustainable") | judgement | R3-A |
+| BUG-181 | S-6: "not modelled" conversion events are excluded from what-if previews that would bring them back into range, so preview != commit | judgement | R3-A |
+| BUG-182 | S-4: family HSA coverage doesn't reach the surplus optimizer, the HSA action card or the Classic slider; the surplus preview ignores the spouse HSA squeeze | judgement | R3-A |
+| BUG-183 | S-3 (from BUG-177): editing a pinned SS figure re-anchors it to the current claim age | mechanical | R3-B |
+| BUG-184 | S-7: `setSpouseCurrentAgeCoupled` overwrites an explicit spouse retirement age | mechanical | R3-B |
+| BUG-185 | S-9: a $0 conversion event past retirement isn't flagged "not modelled" | mechanical | R3-B |
+| (tests) | S-8: five on-screen halves deletable with 0 failures | mechanical | R3-B |
+| (docs) | S-10: doc and comment corrections | mechanical | R3-B |
