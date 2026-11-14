@@ -29,3 +29,13 @@ they are verified. CONFIRMED = reproduced by execution with printed numbers; PLA
   - Control: every finite-headline case agrees to within a year (spend 40k-100k, offsets +/-2: e.g. 50k/-2 preview 97 vs commit 97; 80k/+2 84 vs 84).
 - **Why it matters:** BUG-176 was filed to stop exactly this (a preview "before/after" that contradicts the headline by years in a spouse-gap household). The edge-state unit tests (`display-consistency-r2b.test.js:238+`) never exercise `headline.years === Infinity` with a negative finite delta. Any lever that hurts a sustainable plan (retire early, custom negative shift, a spend increase in the same panel) hits it.
 - **Smallest fix:** in that branch, don't print the blended absolute. Either return a documented "no anchored figure" state (`scenarioYears: null`, the panel shows the delta only), or route retirement-age presets through `calcWhatIfScenario` (per-account engine, already parity-tested). Add the edge to the unit tests. `[judgement]`
+
+### S-3 — MEDIUM — CONFIRMED — BUG-177: editing the override after moving the claim age re-anchors it silently; a $500 nudge becomes a +79% Social Security raise, and moving back to 70 recreates the fake delay gain BUG-177 was filed to stop
+- **Where:** `src/App.jsx:199-202` (`setSsOverride` sets the anchor to the CURRENT `ssClaimingAge` on every write) vs the field's displayed value, which is the RAW at-anchor figure (`App.jsx:2149` Horizon `ss.ssOverride.value`; Classic input `App.jsx:4125`). The field shows one basis and writes another.
+- **Repro** (probe `zz-r2-d`, real App, default household, Horizon setters):
+  - A. claim 70, pin 38,000: field 38,000, `householdSS` 38,000, `yearsSustained` 20.70.
+  - B. claim -> 62: field still shows **38,000**; effective 21,452; note "You entered $38k/yr at age 70; at age 62 that is $21k/yr".
+  - C. user nudges the field 38,000 -> 38,500 (one 500 step): anchor silently becomes 62; `householdSS` **38,500** (+79%); note disappears; years 21.66.
+  - D. claim back -> 70: `householdSS` **68,200**, years **24.20**. The user's SSA figure at 70 was 38,000; the plan now counts $30k/yr more.
+- **Why it matters:** the owner decision was that benefits are "never overstated by a fake delay gain". One ordinary edit re-introduces an overstatement larger than the one fixed (+79% vs BUG-154's +77%). The BUG-177 tests always clear the override (`set(null)`) before re-pinning at a new age, so they never edit a live override at a moved claim age.
+- **Smallest fix:** keep an existing anchor when the override is edited (`setSsOverrideAnchorAge(prev => v === null ? null : (prev ?? ssClaimingAge))`), so the field always edits the figure it displays; re-anchor only from null. Add the A-D sequence as a test. `[mechanical]`
