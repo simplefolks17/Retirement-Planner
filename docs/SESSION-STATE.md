@@ -287,6 +287,11 @@ agents, followed by a deep Opus review.
   that: open the PR, then a fresh independent Opus audit of the whole branch. Fixes go to
   Sonnet/Haiku agents (owner asked for token efficiency), and Opus is used for the review only.
 
+- **Round 3 DONE (2026-11-15 ~00:00 UTC):** BUG-178..185 + S-8/S-10 fixed and orchestrator-verified,
+  suite 1,716. Next: a CodeRabbit review on the settled head, then owner review/merge of PR #70.
+  Leftover: `src/__tests__/zz-probe-s8.test.js` (gitignored probe). The Haiku agent's `rm` was blocked
+  by a safety check; it was surfaced to the owner, not deleted by the orchestrator.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an

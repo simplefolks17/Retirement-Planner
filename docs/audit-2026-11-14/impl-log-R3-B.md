@@ -47,3 +47,7 @@ Note on M1: under the fix the preview reads 74 and the committed plan at 59 read
 5. `src/model/simulation.js` `coupleCurrentAge` dead plateau branch: comment only, no code removed.
 6. `src/__tests__/whatif-parity-wiring.test.js` header: BUG-135 removed from the "known remaining gaps" list (fixed 2026-09-06).
 Verification: `ss-override-wiring`, `whatif-parity-wiring`, and `render-halves-s8` 56/56 green. Full suite and lint as in the commit.
+
+## Orchestrator re-verification
+- npm test 1716, lint clean, build OK, no golden-master file touched.
+- BUG-183 mutation (anchor reset on every write) -> 1 failing; restored -> green.
