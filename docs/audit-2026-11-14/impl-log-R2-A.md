@@ -37,3 +37,7 @@
 
 ## BUGS.md
 - Resolved entries BUG-167..172 added at top of Resolved; correction notes appended to BUG-153/155/161. Golden masters untouched all batch (no golden file edited, suite green). Final npm test: 1646.
+
+## Orchestrator re-verification (2026-11-14)
+- npm test 1646, lint clean, build OK. No golden-master file touched.
+- Independent revert of the BUG-167 seed (monthlyTodaysExp -> monthlyTotal in HorizonShell) -> 2 failing; restored -> green.
