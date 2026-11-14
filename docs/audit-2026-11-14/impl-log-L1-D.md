@@ -30,3 +30,4 @@
   BUG-134 (engine gate -> `? retPhaseBase.spouseRetirementAge`, line 894): T-X.4 scenario lock FAILS (4 failed).
   BUG-138 (`const primaryInputs = simInputs;` instead of coupleContribEndAges, line 38): T-X.4 scenario lock FAILS (1 failed).
   restored -> spouse-household 39 passed.
+- [commit] done; full gate: npm test 1464 green, lint clean, build OK
