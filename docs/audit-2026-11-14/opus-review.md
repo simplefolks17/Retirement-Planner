@@ -1,8 +1,14 @@
 # Opus deep review — branch `claude/oversight-root-cause-audit` (2026-11-14)
 
 Independent adversarial review of BUG-151..BUG-166 (BUG-154 held on `ce5c4c0`).
-Findings are appended the moment they are verified. CONFIRMED = executed repro with printed
-numbers; PLAUSIBLE = code-read only.
+Findings were appended the moment they were verified. CONFIRMED = executed repro with printed
+numbers; PLAUSIBLE = code-read only (none below is PLAUSIBLE).
+
+**Summary: 13 findings. HIGH 1 (R-4). MEDIUM 8 (R-1, R-2, R-3, R-6, R-9, R-10, R-11, R-13). LOW 4 (R-5, R-7, R-8, R-12).**
+- R-10 is a regression introduced by this branch (BUG-153's fix).
+- R-1, R-3, R-6, R-7, R-8, R-11 and R-13 are gaps or partial fixes in this branch's own work.
+- R-2, R-4 and R-9 are pre-existing defects that the batches' lenses should have caught.
+- BUG-154: fix correct, re-lock value correct; approve, with one follow-up (see the end).
 
 ## Findings
 
@@ -136,8 +142,45 @@ A short mutation sweep over App.jsx glue lines no batch touched (full suite each
 - **Smallest fix:** make both guards walk every `{value, set}` object in `horizonProps`, not a hard-coded bundle list (the probe's walker is ten lines). For the row: either clamp/flag stale events when retirement moves (a coupled setter, as for `contribEnd`), or have the row expose an "outside your working years, not modelled" state from the model.
 
 ## Checked and CLEAN
+Each item was executed, not read. Probes were `src/__tests__/zz-rev-*.test.js` (deleted afterwards) plus `main` / HEAD / HEAD+`ce5c4c0` snapshots built with `git archive` in the scratchpad.
 
-_(in progress)_
+- **Gates, re-run myself:** `npm test` **1609/1609**, `npm run lint` clean, `npm run build` OK.
+- **The audit's mutation table:** every row now fails at least one test.
+  - Work-state lookup: 3. Other pre-tax: 2. Spouse growth: 1. `addlPreTaxBal`: 2. `useTable2`: 2. Primary HSA family limit: 2. Work state → conversion events (primary sim): 1. `retStateRate = 0`: 4.
+  - Exception: the what-if-bundle twin of the last row (R-11).
+- **BUG-151:**
+  - Repro re-run. Work CA alone = work CA + retirement CA (`yearsSustained` 26.633, `isAuto` true). CA work + TX retirement = 28.614 (the old phantom).
+  - The Classic retirement `<select>` renders the effective value (`"CA"`).
+  - `STATE_TAX` and `RETIREMENT_STATE_TAX` have identical key sets (51/51), so "auto" can never resolve to a missing retirement entry.
+  - Behaviour after an explicit pick is well defined and tested: it stays explicit, and snaps back to auto only when the user picks the work state again.
+- **BUG-157/158:**
+  - Preview == commit (totalAtRet, years) for both audit fixtures at every age I tried (probe F).
+  - T-X.4: committed spillover is identical on `main` and HEAD (742,667 / 474,771 / 187,641). The preview moved toward it (60: 444,590 → 474,936; 62: 134,194 → 192,945), matching the locks and logs exactly.
+  - T-X.4 still fails on the BUG-127 / BUG-134 / BUG-138 reverts (3 / 4 / 1 failing).
+  - T-X.3 (explicit spouse age): preview totalAtRet == commit at 63/65/68.
+- **BUG-159 golden-master movement, re-derived independently:**
+  - Default: Roth Δ = totalAtRet Δ = 142,683. Trad / Taxable / HSA are unchanged.
+  - Hand FV of the restored contributions (1,730 @51, 4,493 @52, 7,000 × 13 at ages 53-65, 5% with in-year growth) ≈ 142,682.
+  - Every other moved default value traces to the larger seed: wr 5.610 → 5.419, years 21.65 → 22.64, depletion 87 → 88, MC 24 → 29, and the unlocked `wr70` 4.13 → 3.99, `progressPct` 87 → 91.
+  - The `y - 1` index convention is pinned (mutating it to `y` fails 1 test). No `runSimulation` caller is unwired (App primary, the spouse builder, both what-if re-sims, the scenario spouse re-sim).
+- **Main-vs-HEAD deep signature diff** of every non-function `horizonProps` leaf, for the default and T-X.2/3/4:
+  - Default: BUG-159 only.
+  - T-X.2: only the spouse HSA bundle `max` (BUG-161).
+  - T-X.3: only the `workLongerView.sub` string (BUG-159, see R-12).
+  - T-X.4 base: only "taxed at ~12%" → "~12.0%" (BUG-166 text).
+  - Nothing moved that isn't explained by a batch.
+- **Shared-`captured` trap:** read every new App-mounting test (`retirement-state-wiring`, `onboarding-coupling-wiring`, `input-wiring`, `roth-phaseout-wiring`, `income-plateau`, `whatif-parity` BUG-157/158 block, `bounds-invariant`, `input-propagation`). All snapshot then unmount; none compares two live mounts.
+- **Fix-specific mutations that DO fail tests:** `coupleCurrentAge` plateau clamp (4), `clampIncomePlateauAge` keeping a plateau ≥ retirement (5), `commitPlan` skipping `coupleCurrentAge` (5), the BUG-151 snap (1), `fmtRate` ignoring `dp` (4), scenario spouse sim frozen at the base age (7), scenario chart keeping frozen rows (3), the `scenarioSpouseAwareInputs` early-return forced (7), the spouse HSA clamp in `setHsaCoverageCoupled` (1), the `commitPlan` plateau clamp on `ra` (1).
+- **`clamp` migration:** checked every converted site. Max-outer vs min-outer differ only on inverted bounds. The one site that gained dynamic bounds, `DeferredInput` in `ConversionEventsPanel` (via BUG-164), is unreachable with `minAge > maxAge` because the panel returns early on `!hasWorkingYears`. The ArcGraph `clampV` and overlay forms are algebraically identical.
+- **`DeferredInput`:** it re-syncs the draft only when `value` changes AND differs from the draft's parse. The event panels change `value` only through this input, so a focused draft isn't clobbered. `parseInt` is fine for ages.
+- **`commitPlan` called from `applyPlanLevers` in the same closure:** both compute identical coupled writes, so there's no fight. (Its `committedPlan` snapshot stores the pre-coupling `ssClaimingAge` / `lifeExpect`, but `committedPlan` has no consumer in any screen. That makes it a dead prop, so this is inert.)
+- **`allocateSavedTotal`:** NaN, negative, `1e13`, non-integer, spouse-above-answer and all-zero inputs behave as documented (the only defect is R-5's tiny-share case). It is household-scoped consistently with `currentTotalSaved` and the wizard's "Savings today".
+- **Rules on the diff:**
+  - Rule 10: no arithmetic added under `src/horizon/`; the "following your home state" hint reads the model's `isAuto`.
+  - Rule 1: no new IRS literals.
+  - Rule 11: new figures are consistently based (balances in today's dollars; Roth thresholds nominal against a nominal sim).
+- **`useState(<non-literal>)` sweep:** the only "seeded once from other state" cases were `retirementState` and `WhatIfPanel`, both fixed. The others are remount-per-open sheets, UI chrome, or one-shot wizard state. The onboarding *seed basis* problem (R-4) lives in a prop, not a `useState`.
+- **Allow-list proofs that ARE honest:** `savingsSurplusPct` (Horizon renders `surplusView`) and the four health fields (Horizon renders `conversionView.healthcare`). The two that aren't are in R-6.
 
 ## BUG-154 verdict — fix CORRECT, proposed re-lock CORRECT; approve, with one follow-up
 
