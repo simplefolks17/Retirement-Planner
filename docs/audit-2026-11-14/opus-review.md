@@ -57,7 +57,7 @@ numbers; PLAUSIBLE = code-read only (none below is PLAUSIBLE).
 - **Why it matters:** both need unusual input (an answer of a few dollars; shorthand or cents). But a negative account balance breaks the bounds contract, and "250k" → $250 rewrites the whole plan. The confirm screen does echo "$250", which limits the damage.
 - **Smallest fix:** in `allocateSavedTotal`, add the residual only if it keeps that entry ≥ 0 (or use largest-remainder rounding). In `ObInput`, reject or parse `k`/`M`/decimals instead of stripping them (e.g. `parseFloat` on the digits-and-dot part, with a suffix multiplier).
 
-### R-6 — MEDIUM — CONFIRMED (mutation) — Central parts of three fixes, plus one allow-list "proof", can be deleted with 0 of 1,609 tests failing
+### R-6 — MEDIUM — CONFIRMED (mutation) — Central parts of four fixes (BUG-151/156/157/161) can be deleted with 0 of 1,609 tests failing, and two allow-list "proofs" certify consumers that don't exist
 Method: I broke one line, ran the full suite (`npx vitest run`, zz-* excluded), and restored the file from a copy. `git status` was clean after every run.
 
 | Mutation (one line) | Fix it undoes | Tests failing | Measured effect |
@@ -67,7 +67,7 @@ Method: I broke one line, ran the full suite (`npx vitest run`, zz-* excluded), 
 | `what-if.js:467` `...spDelta.primaryInputs` → `...coupleContribEndAges(...)` | **BUG-157** at the `calcWhatIfDelta` site (the entry claims both sites) | **0** | Probe `zz-rev-f`, Finding A's own older-spouse fixture: `calcWhatIfDelta` totalAtRet at retire 63 is **1,343,614** mutated vs **1,334,822** fixed (= commit); at 65, 1,568,498 vs 1,554,539. |
 | `App.jsx:2082` spouse HSA bundle `max: primaryHsaLimit` → `HSA_FAMILY_LIMIT_2026` | BUG-161 (the spouse half of the bound) | **0** | Under self-only coverage the spouse field again accepts 8,750 while the sim caps at 4,400. |
 | `App.jsx:3590` Classic `<select value={effectiveRetirementState}>` → `{retirementState}`; or its `onChange` → `setRetirementStateRaw` | BUG-151 ("the Classic `<select>` must behave the same way", plan L1-A) | **0** / **0** | The first shows `null` (no selection) at the default; the second stores an explicit TX that stops following the work state. |
-| `MyDetailsScreen.jsx:228` `isAuto` hint removed | BUG-151's "Same as home state" label | **0** | — |
+| `MyDetailsScreen.jsx:228` `isAuto` hint removed | BUG-151's "following your home state" label | **0** | — |
 | `App.jsx:667` `calcMilestones({... retirementTarget })` → `retirementTarget: 3_000_000` | the input-propagation ALLOW proof for `spending.retirementTarget` | **0** | The "proof" calls `calcMilestones` directly with two targets, so it proves the MODEL reads the argument, not that the App passes the user's input. The file's header promise ("for every 'it only feeds X' reason the test asserts that X itself moves") is false for this entry, and the Classic Portfolio-target control could go dead silently. |
 | *(no mutation needed)* `input-propagation.test.js` ALLOW `conversion.conversionTaxSource`, whose proof asserts `conversionView.tables.simYears[].rothBal` moves | the allow-list's "it only feeds X" guarantee | n/a | Probe `zz-rev-k`: toggling the source moves ONLY `simYears[].rothBal`, and neither UI renders that column. Horizon's table shows `{age, conversion, tradBal, tax}` (`ConversionPlannerFlow.jsx:239`); Classic's shows the same (`App.jsx:4804`). The comparison tiles show both options regardless of the choice. So "Pay conversion tax from" changes no number on any screen: BUG-165's class, explained away by the same allow-list mechanism BUG-165 was filed against. (BUG-37 is owner-deferred; the point is that the proof certifies a consumer that doesn't exist on screen.) |
 | `spouse-sim.js:78` spouse sim `spouseIncomeEndAge` → `null`; `spouse-sim.js:74` `hsaLimit` → `HSA_LIMIT_2026` | the new "one shared builder"'s MAGI cutoff (BUG-87) and family-HSA split | **0** / **0** | Pre-existing gaps, but in the module now documented as THE derivation for both App and scenarios. |
@@ -94,7 +94,7 @@ Method: I broke one line, ran the full suite (`npx vitest run`, zz-* excluded), 
   - `calcWhatIfDelta` with no change at all gives `scenarioYears` **5.41** vs headline **12.97**.
   - Classic "work 2 more years" (retire 60) gives **6.80** years vs **14.71** when the same change is committed.
   - At the no-spouse default the gap is the documented one in the other direction (25.51 vs 22.64).
-- **Why it matters:** the index row says "Low (accepted) — deltas only", but the preview prints ABSOLUTE before/after values next to a headline they contradict. This is the audit's Lens 8 ("an 'accepted' verdict stops anyone looking"). It also means BUG-157/158's `calcWhatIfDelta` plumbing is mostly inert: the spouse seed it rebuilds never reaches the blended walk's years (mutation M37 changes no output, R-6).
+- **Why it matters:** the index row says "Low (accepted) — deltas only", but the preview prints ABSOLUTE before/after values next to a headline they contradict. This is the audit's Lens 8 ("an 'accepted' verdict stops anyone looking"). It also means BUG-157/158's `calcWhatIfDelta` plumbing is mostly inert: the spouse seed it rebuilds never reaches the blended walk's years. Reverting that rebuild (`...spDelta.seedInputs` → `...spouseSeedInputs`) changed no output in probe F, and 0 tests.
 - **Smallest fix:** in the near term, show deltas only (not absolute before/after ages) on the two `calcWhatIfDelta` previews, or derive "before" from the headline. The real fix is BUG-36's planned port of `calcWhatIfDelta` onto `buildRetirementPhase`; raise BUG-36's index severity and add this repro.
 
 ### R-10 — MEDIUM — CONFIRMED — REGRESSION from BUG-153: onboarding users aged 65+ now stop contributing the year after their current age, whatever retirement age they enter; the new equality test locks the defect in
@@ -147,7 +147,7 @@ Each item was executed, not read. Probes were `src/__tests__/zz-rev-*.test.js` (
 - **Gates, re-run myself:** `npm test` **1609/1609**, `npm run lint` clean, `npm run build` OK.
 - **The audit's mutation table:** every row now fails at least one test.
   - Work-state lookup: 3. Other pre-tax: 2. Spouse growth: 1. `addlPreTaxBal`: 2. `useTable2`: 2. Primary HSA family limit: 2. Work state → conversion events (primary sim): 1. `retStateRate = 0`: 4.
-  - Exception: the what-if-bundle twin of the last row (R-11).
+  - Exception: the what-if-bundle twin of the "work state → conversion events" row (R-11).
 - **BUG-151:**
   - Repro re-run. Work CA alone = work CA + retirement CA (`yearsSustained` 26.633, `isAuto` true). CA work + TX retirement = 28.614 (the old phantom).
   - The Classic retirement `<select>` renders the effective value (`"CA"`).
