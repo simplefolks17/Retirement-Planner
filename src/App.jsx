@@ -35,7 +35,8 @@ import {
   MAX_CONVERSION_EVENTS, conversionEventOutsideWorkingYears, conversionEventNotModelled,
   CONVERSION_EVENT_NOT_MODELLED_LABEL,
 } from "./model/conversion-events.js";
-import { eventLastAge, mintEventId } from "./model/money-events.js";
+import { eventLastAge } from "./model/money-events.js";
+import { mintEventId } from "./utils/event-id.js";
 import {
   TAX_DATA_2026,
   TRAD_401K_LIMIT_2026, ROTH_IRA_LIMIT_2026, HSA_LIMIT_2026, HSA_FAMILY_LIMIT_2026,
@@ -1264,8 +1265,6 @@ export default function App() {
   }), [netPortfolioNeed, yr1FromTaxable, yr1FromTrad, yr1FromRoth, yr1TradRate,
        yr1TaxOptimal, yr1TaxWorstCase, yr1TaxSavings, withdrawalScopeIsPrimaryOnly,
        spouseIncomeAtRet]);
-
-  const actualMarginalPct  = Math.round(fedMarginal * 100);
 
   const contrib401kRoom    = Math.max(0, TRAD_401K_LIMIT_2026 - contrib401k);
   const contrib401kTaxSave = Math.round(contrib401kRoom * fedMarginal);

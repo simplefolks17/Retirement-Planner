@@ -3,7 +3,7 @@ import { HF, HM } from "./ThemeContext.jsx";
 import { fmt, Btn, Pill } from "./shared.jsx";
 import { useDialogBehaviour } from "./useDialogBehaviour.js";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
-import { mintEventId } from "../model/money-events.js";
+import { mintEventId } from "../utils/event-id.js";
 import { VerdictTickRail } from "./fields.jsx";
 import { clamp } from "../model/finance-math.js";
 

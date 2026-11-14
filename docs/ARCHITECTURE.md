@@ -33,8 +33,8 @@ src/
     __tests__/            Vitest suites — one per model file + golden-master.test.js
   components/             React UI — all client-side
     ActionCard.jsx        ChartTooltip.jsx   DeferredInput.jsx   FlowConn.jsx
-    MoneyEventsPanel.jsx  PhaseCard.jsx      Slider.jsx          TaxPhaseCard.jsx
-    TaxTimeline.jsx       WaterfallStep.jsx  WhatIfPanel.jsx
+    MoneyEventsPanel.jsx  PhaseCard.jsx      Slider.jsx          TaxTimeline.jsx
+    WaterfallStep.jsx     WhatIfPanel.jsx
   __tests__/
     formatters.test.js    Boundary tests for fmt() / fmtPct()
   App.jsx                 State management, tab routing, layout shell, AND the three
@@ -108,7 +108,7 @@ INPUTS (state variables)
 |---|---|---|
 | Timeline | 5 | currentAge, retirementAge, lifeExpect, returnRate, inflationRate |
 | Income/Tax | 6 | currentIncome, incomeGrowth, selectedState, stateRateOverride, filingStatus, otherPreTaxDeduc |
-| Tax Phases | 5 | rate1, rate2, rate3, showPhase2, phase2Start, retirementState |
+| Retirement state | 1 | retirementState (null = follow the work state; read via `effectiveRetirementState`, BUG-151) |
 | Accounts (×4) | 12 | bal*, contrib*, contribEnd* for 401k/Roth/Taxable/HSA |
 | Budget | 4 | livingExpenses, savingsSurplusPct, preApplySnapshot |
 | SS | 4 | ssClaimingAge, ssOverride, includeSS, spouseSsEstimate |

@@ -10,7 +10,8 @@
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
 import { DeferredInput } from "./DeferredInput.jsx";
-import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS, mintEventId } from "../model/money-events.js";
+import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS } from "../model/money-events.js";
+import { mintEventId } from "../utils/event-id.js";
 
 function emptyEvent(currentAge) {
   return {

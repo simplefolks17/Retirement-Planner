@@ -98,6 +98,7 @@ Files: `src/App.jsx:358` (`spouseContribEnd`), `:1479` (`spouseSeedInputs.spouse
 
 ---
 ## VERIFIED FINDING C (HIGH) — `retirementState` is seeded ONCE from `selectedState` and never re-derives
+**Status (2026-11-14): FIXED by BUG-151 — see `docs/BUGS.md`.** `retirementState` is now `null` = "follow the work state" and resolves on read (`effectiveRetirementState`); an explicit pick sticks, and re-picking the work state returns to auto. Covered by `retirement-state-wiring.test.js` and, for the Classic `<select>`, `classic-horizon-parity.test.js` (R2-C).
 `src/App.jsx:116`: `const [retirementState, setRetirementState] = useState(selectedState);`
 A `useState` initializer runs only on the first render, so "same state as where you work" is
 resolved exactly once, at mount, against the hardcoded default `selectedState = "TX"` (0% tax).
@@ -123,6 +124,7 @@ No test anywhere sets `selectedState` and then reads `retirementState`.
 
 ---
 ## VERIFIED FINDING D (MEDIUM-HIGH) — `ssOverride` is honoured on the claim-age leg but NOT on the delay-to-70 leg, so pinning your own SS estimate silently kills the "delay SS" strategy
+**Status (2026-11-14): FIXED by BUG-154 — see `docs/BUGS.md`** (commit `0fecfb1`, owner-approved T-X.3 `wr70` re-lock): the age-70 leg now honours a pinned `ssOverride`. Known follow-up, an owner/product call and NOT part of that fix: a pinned override does not rescale when the claim-age slider moves, so the delay gain reads larger after exploring an earlier claim age (see the Opus review's BUG-154 verdict).
 `ssOverride !== null` is resolved in `retirement-income.js:33` (`effectiveSS`), which flows into
 `householdSS`/`ssAtRet`/`ssTaxableRet`. But the age-70 companion `ss70Annual`
 (`retirement-income.js:53`) is re-derived from `ssPIA` and never consults `ssOverride`, so

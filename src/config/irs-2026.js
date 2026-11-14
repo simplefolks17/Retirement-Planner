@@ -55,7 +55,8 @@ export const TAX_DATA_2026 = {
   },
 };
 
-// The valid federal bracket percentages — used by TaxPhaseCard bracket pickers
+// The valid federal bracket percentages (the published set; locked by irs-2026.test.js). The
+// TaxPhaseCard picker that used it was deleted unused (R2-C); no UI currently reads it.
 export const FED_BRACKETS_2026 = [10, 12, 22, 24, 32, 35, 37];
 
 // ── Long-term capital gains brackets (2026 taxable income thresholds) ─────────

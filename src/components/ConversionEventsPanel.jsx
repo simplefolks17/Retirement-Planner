@@ -9,7 +9,7 @@ import { DeferredInput } from "./DeferredInput.jsx";
 import {
   MAX_CONVERSION_EVENTS, conversionEventNotModelled, CONVERSION_EVENT_NOT_MODELLED_LABEL,
 } from "../model/conversion-events.js";
-import { mintEventId } from "../model/money-events.js";
+import { mintEventId } from "../utils/event-id.js";
 import { clamp } from "../model/finance-math.js";
 
 function emptyEvent(currentAge, safeRetAge) {

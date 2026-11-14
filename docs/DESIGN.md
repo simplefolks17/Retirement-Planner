@@ -70,7 +70,6 @@ selectStyle // styled dropdown (custom arrow, dark theme)
 ### Domain-Specific (financial planner context)
 | Component | Purpose | Key Props |
 |---|---|---|
-| `TaxPhaseCard` | Bracket picker for a tax phase | phaseNum, label, color, rate, setRate, combinedRate |
 | `TaxTimeline` | Proportional colored bar across phases | phase1End, phase2End, totalYears, rates |
 | `ChartTooltip` | Dark recharts tooltip | active, payload, label, valueFormatter |
 | `ActionCard` | Prescriptive/comparative/educational card | mode, title, body, impact, vsA, vsB |
