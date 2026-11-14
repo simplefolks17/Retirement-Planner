@@ -20,3 +20,20 @@
 - Revert (amount gate restored in predicate), `npx vitest run src/__tests__/bounds-invariant.test.js`:
   `Tests 2 failed | 40 passed (42)`; FAIL "pre-fix: false (the amount > 0 gate): expected false to be true"; FAIL "leaves no field out of range" (`expected [ Array(1) ] to deeply equal []`).
 - Restored: `Tests 42 passed (42)`.
+
+## Step 4 — S-8: rendered halves of BUG-173 / 176 / 177 get render tests
+New file `src/__tests__/render-halves-s8.test.js` (5 tests, real App for the Classic halves, the Horizon flows rendered directly with the captured props and the proxy theme used by conversion-view-wiring):
+1. BUG-176 Classic "Work 2 more years": preview "after" vs committed plan at the scenario age (57+2 = 59). Fixed: preview 74 vs committed 74... see note below.
+2. BUG-177 Classic "Monthly Benefit" tile reads "$1,788 at age 62" (not raw 38,000/12 = 3,167).
+3. BUG-177 Classic note "entered at age 70, rescaled to".
+4. BUG-177 Horizon SSTimingFlow renders `ssView.overrideRescaleNote`.
+5. BUG-173 Horizon WorkLongerFlow rows read "your entered figure".
+
+Revert (one line at a time, file restored from backup after each, `git status` clean after each). Each run: `npx vitest run src/__tests__/render-halves-s8.test.js`:
+- M1 `WhatIfPanel.jsx` `retAge={deltaResult.scenarioRetAge}` -> `retAge={safeRetAge}`: `1 failed | 4 passed (5)`; `preview 71 vs committed-at-59 74: expected 3 to be less than or equal to 1`.
+- M2 `App.jsx` Classic tile -> `Math.round(ssOverride / MONTHS_PER_YEAR)`: `1 failed | 4 passed (5)` (the "Monthly Benefit" test).
+- M3 `App.jsx` Classic note condition -> `false`: `1 failed | 4 passed (5)` ("entered at age 70, rescaled to").
+- M4 `SSTimingFlow.jsx` `{includeSS && sv.overrideRescaleNote && <NoteBox` -> `{false && <NoteBox`: `1 failed | 4 passed (5)`.
+- M5 `WorkLongerFlow.jsx` `row.ssPinnedFlat ? "your entered figure"` -> `false ? ...`: `1 failed | 4 passed (5)` (BUG-173 test).
+Restored: `5 passed (5)`.
+Note on M1: under the fix the preview reads 74 and the committed plan at 59 reads 74 (diff 0 at the printed resolution in the run above is not the case; the assertion allowed |diff| <= 1). The mutation gives 71, diff 3. The tolerance is the parity suite's "within a year".
