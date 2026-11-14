@@ -19,3 +19,9 @@ Golden masters: unmoved.
 - NumbersScreen.jsx: 1144 per-card dp (fedEffective 1, fedMarginal 0, combined 1); 1160/1202 fedMarginal 0dp; 1213/1223 projectedRetBracket 0dp;
   1224 effectiveRMDTaxRate 0dp -> 1dp ("24%" -> "24.0%", the plan's example).
 - Left alone (not rate formatting): integer *Pct model fields rendered as `${pct}%`, App numeric *Pct computations (951,1256,1328,1781-84,2414,2528,2539), slider whole-number inputs, CSS widths.
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1609, lint clean, build OK. No golden-master file touched.
+- A grep for `toFixed(d)}%` / `toFixed(d) + "%"` outside formatters.js and tests finds none.
+- Guard re-confirmed independently: planting `` `${r.toFixed(1)}%` `` in SSTimingFlow.jsx fails the
+  guard, naming the file:line. Removed -> green.
