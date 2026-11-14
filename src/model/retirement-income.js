@@ -50,8 +50,15 @@ export function calcRetirementIncome({
   const ssTaxableRet    = householdSS * ASSUMPTIONS.SS_TAXABLE_PCT;
 
   // Delay-to-70 comparison: benefit if SS is instead claimed at the max age.
-  const ss70Annual        = Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * MPY;
-  const household70SS     = ss70Annual + spouseSsBenefit;
+  // BUG-154: a pinned ssOverride is the user's own annual benefit AT their chosen claim age,
+  // so the age-70 companion is that same figure re-scaled by the 70-vs-claim-age factor ratio
+  // — keeping effectiveSS (claim leg) and ss70Annual (delay leg) on ONE SS basis. Without an
+  // override it is the PIA-derived figure, unchanged. includeSS=false zeroes both legs.
+  const ss70Annual        = !includeSS ? 0
+    : ssOverride !== null
+      ? Math.round(ssOverride * SS_FACTORS[SS_MAX_CLAIM_AGE] / claimFactor(ssClaimingAge))
+      : Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * MPY;
+  const household70SS     = includeSS ? ss70Annual + spouseSsBenefit : 0;
   const ss70DrawReduction = Math.max(0, household70SS - householdSS);
 
   // Pension counts only once it has started by retirement (rule 5b gate).

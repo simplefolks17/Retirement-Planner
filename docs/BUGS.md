@@ -719,6 +719,29 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-154 — "delay SS to 70" ignored a pinned Social Security amount (audit-auto-resolution Finding D; FIXED 2026-11-14)
+
+**Severity: MEDIUM-HIGH.** `calcRetirementIncome` derived the age-70 benefit (`ss70Annual`) from
+`ssPIA` and never consulted `ssOverride`. So for anyone who typed in their own SS figure,
+`ss70DrawReduction` clamped to 0 and the "delay to 70" card disappeared (`delayApplicable` false).
+It also left `wr70` and `withdrawalRate` on different SS bases, so delaying could read as strictly
+worse. Repro (default household, claim 62, override 90,000): pre-fix `ss70DrawReduction` 0,
+`delayApplicable` false.
+**Fix:** the override is treated as the annual benefit at the chosen claim age, so
+age-70 = override × F(70) / F(claim). `includeSS = false` now zeroes both legs (pre-fix, the age-70
+leg stayed nonzero). **Files:** `src/model/retirement-income.js`.
+**Tests:** 4 model tests in `retirement-income.test.js`, 1 App-level test in
+`src/__tests__/ss-override-wiring.test.js`. **Revert-and-confirm** (lane-2 agent, observed): the
+old PIA-only line fails 4 of 5; restored -> pass.
+**Golden master (owner-approved re-lock, 2026-11-14):** T-X.3 `ssView.wr70` 1.4225852835455082
+-> 0.9726563582272075 (DOWN). T-X.3 pins 38,000 at claim 67, and the age-70 leg now honours it
+(×1.24 = 47,120). It was the only value to move; the lane-2 agent's own re-lock attempt was
+blocked by the permission system and surfaced to the owner. The Opus deep review independently
+judged both the fix and the re-lock CORRECT (`docs/audit-2026-11-14/opus-review.md`).
+**Follow-up (owner/product call, from that review):** a pinned override is "the benefit at
+whatever claim age is currently selected" and does not rescale when the claim slider moves, so
+exploring an earlier claim age inflates the displayed delay gain. See the review's BUG-154 verdict.
+
 ### BUG-166 — percent formatting hand-rolled at ~39 sites with unit confusion (CONSOLIDATION-REDO-PLAN sweep 4; FIXED 2026-11-14)
 
 **Root cause:** no shared fraction-aware percent formatter. Scalars are fractions (0.237) or whole percents (23.7), and every call site did its own `.toFixed(n)` / `Math.round(x*100)`, with differing precision for the same value (e.g. `effectiveRMDTaxRate` `24%` on Numbers→Taxes vs `24.0%` in the RMD flow; `yr1TradRate` 0 dp vs 1 dp). A private `fmtPercent` duplicated `fmtPct`.

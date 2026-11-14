@@ -779,7 +779,11 @@ describe("spouse-household golden master (T-X.3, exact-locked — MFJ + pension 
     totalRMDs:             133_413,
     rmdTaxBite:            28_417,
     projectedRetBracket:  0.12,     // taxView.projectedRetBracket — exercises retPensionAtRMDAge (nonzero pension, MFJ brackets)
-    wr70:                 1.4225852835455082,  // ssView.wr70 — exercises retPensionAt70
+    // ssView.wr70 — exercises retPensionAt70. RE-LOCKED 2026-11-14 (BUG-154, owner-approved):
+    // was 1.4225852835455082. DOWN: this fixture pins ssOverride 38,000 at claim age 67, and the
+    // age-70 leg used to ignore the override (PIA-derived). It now honours it (38,000 x 1.24 =
+    // 47,120), so the age-70 draw — and wr70 — is lower. withdrawalRate is unchanged.
+    wr70:                 0.9726563582272075,
     // Session B (Monte Carlo engine port, 2026-07-28): re-locked 61 -> 60.
     // Direction: essentially FLAT (-1), not the "up" every other spouse
     // fixture shows — and that's the expected, explained outcome, not a
