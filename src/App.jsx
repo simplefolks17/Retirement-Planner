@@ -334,6 +334,7 @@ export default function App() {
       // counts THROUGH the retirement year), matching contribEnd*'s `age <= end`
       // convention. null when there's no spouse — inert (byte-identical).
       spouseIncomeEndAge: spouseIncomeEndAgeBase,
+      inflationRate, // BUG-159: Roth phase-out thresholds index with inflation
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards
@@ -354,6 +355,7 @@ export default function App() {
     activeConversionEvents, stateRate,
     primaryHsaLimit,
     spouseIncomeEndAgeBase,
+    inflationRate,
   ]);
 
   // Spouse's own accumulation sim (#30) — mirrors the primary's runSimulation call
@@ -373,7 +375,7 @@ export default function App() {
     // calls the same function with the scenario's retirement age, so the two can't drift.
     return runSpouseSim(buildSpouseSimInput({
       totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
-      returnRate, primaryContribHSA: contribHSA, hsaCoverageType,
+      returnRate, primaryContribHSA: contribHSA, hsaCoverageType, inflationRate,
       primaryRetAge: safeRetAge, spouseRetirementAge, lifeExp: lifeExpect,
       spouseCurrentAge, spouseIncome, spouseIncomeGrowth,
       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
@@ -384,7 +386,7 @@ export default function App() {
       filingStatus, currentIncome, incomeGrowth, returnRate, spouseBal401k, spouseBalRoth,
       spouseBalTaxable, spouseBalHSA, spouseContrib401k, spouseContribRoth, spouseContribTaxable,
       spouseContribHSA, spouseEmployerMatch, contribHSA, hsaCoverageType, safeRetAge,
-      spouseRetirementAge, lifeExpect, currentAge]);
+      spouseRetirementAge, lifeExpect, currentAge, inflationRate]);
 
   const spouseCurrentSnapshot = useMemo(() => ({
     age: currentAge, tradGross: spouseBal401k, "Roth IRA": spouseBalRoth,
@@ -1360,13 +1362,14 @@ export default function App() {
     // spouse-retires-first MAGI cutoff the main plan uses, or a forced resim's
     // baseline would silently diverge from the committed plan.
     spouseIncomeEndAge: spouseIncomeEndAgeBase,
+    inflationRate, // BUG-159: scenario re-sims must index the Roth phase-out too
   }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
        contrib401k, contribRoth, contribTaxable, contribHSA,
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
        employerMatch, moneyEvents, activeConversionEvents, stateRate,
-       spouseIncomeEndAgeBase]);
+       spouseIncomeEndAgeBase, inflationRate]);
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.

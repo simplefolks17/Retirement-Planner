@@ -57,6 +57,7 @@ function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInput
     currentIncome: simInputs.currentIncome, incomeGrowth: simInputs.incomeGrowth,
     incomeGrowthEndAge: simInputs.incomeGrowthEndAge, filingStatus: simInputs.filingStatus,
     returnRate: simInputs.returnRate, primaryContribHSA: simInputs.contribHSA,
+    inflationRate: simInputs.inflationRate ?? 0,
     hsaCoverageType: raw.hsaCoverageType,
     primaryRetAge: scenarioRetAge,
     spouseRetirementAge: spouseSeedInputs.spouseRetirementAge, lifeExp: spouseSeedInputs.lifeExp,

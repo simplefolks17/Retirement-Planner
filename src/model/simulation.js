@@ -105,6 +105,16 @@ export function buildProjectedIncomeByAge({ currentIncome, incomeGrowth, incomeG
   return out;
 }
 
+// Pure helper (BUG-159): Roth IRA phase-out thresholds for a year `yearsAfterBase` years
+// after the base (2026) year, indexed by the user's inflation assumption (percent/yr).
+// yearsAfterBase 0 or inflationRate 0/invalid ⇒ the unindexed config figures, unchanged.
+export function indexedRothPhaseout(po, inflationRate, yearsAfterBase) {
+  const i = Number.isFinite(inflationRate) ? inflationRate / 100 : 0;
+  if (!(yearsAfterBase > 0) || i === 0 || i <= -1) return po;
+  const f = Math.pow(1 + i, yearsAfterBase);
+  return { start: po.start * f, end: po.end * f };
+}
+
 // Runs the accumulation simulation.
 // Returns an array of yearly rows from year 1 through totalYears.
 // Outputs tradGross (the pre-tax 401k balance) — displayed as-is now (BUG-35: the
@@ -140,6 +150,13 @@ export function runSimulation({
   // incomeGrowthEndAge: null (the spouse's own salary has no plateau input) plus the primary's
   // plateau converted to the spouse's frame here (plateauAgeInFrame).
   otherEarnerGrowthEndAge = undefined,
+  // User's inflation assumption (%/yr, e.g. 4). BUG-159: the IRS indexes the Roth IRA
+  // income phase-out thresholds to inflation every year, so the unindexed 2026 figures
+  // are applied ONLY to the first sim year (y = 1, the "2026" year by convention) and
+  // grown by this rate for each later year. Default 0 = unindexed (hand-built callers,
+  // byte-identical to the old behaviour). Scope: Roth phase-out ONLY — federal/LTCG
+  // brackets and contribution limits stay unindexed (BUG-100/101).
+  inflationRate = 0,
 }) {
   if (otherEarnerGrowthEndAge === undefined) otherEarnerGrowthEndAge = incomeGrowthEndAge;
   let trad    = bal401k;
@@ -238,7 +255,8 @@ export function runSimulation({
       // AGI-net MAGI (see netOrdinaryIncome): MFJ uses combined, every other status uses
       // primary-only (spouse income/contributions tracked separately). CLAUDE.md rules 3 & 9, BUG-12.
       const yearMAGI    = netOrdinaryIncome;
-      const po = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
+      const po = indexedRothPhaseout(
+        ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single, inflationRate, y - 1);
       if (yearMAGI >= po.end) return 0;
       if (yearMAGI <= po.start) return baseContrib;
       // Phase-out reduces the contribution LIMIT, then you contribute min(desired, reduced

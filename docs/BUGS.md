@@ -320,6 +320,7 @@ today's brackets, correctly).
 `calcTax`/`stackedIncomeTax` call site), `docs/FINANCIAL-MODEL.md` → Known Simplifications (existing note,
 needs a magnitude update).
 **Not fixed here.** No code change; filed for a future session.
+**Addendum (2026-11-14, BUG-159):** the Roth IRA income phase-out thresholds are the ONE exception that is now indexed to inflation inside `runSimulation` (accumulation phase). Federal/LTCG brackets, standard deductions and contribution limits stay unindexed — that remains this bug's scope.
 
 ### BUG-101 — Accumulation-phase `contrib401k` (and other flat-dollar contribution inputs) stay nominal, understating real savings by retirement (found 2026-07-26, BUG-91's original filing; re-filed as its own scoped bug at BUG-91's close-out)
 
@@ -717,6 +718,28 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ---
 
 ## Resolved Issues
+
+### BUG-159 — Roth IRA income phase-out frozen at 2026 limits while salary grows: the default user stops Roth contributions at 53 (oversight audit Lens 6; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** `ROTH_PHASEOUT_2026` was applied unindexed in `runSimulation`'s `cRoth` block while salary grows nominally (`incomeGrowth`, default 3%). At the shipped default (age 30, $100k, 3% raises, 4% inflation, single) `cRoth` was 7,000 to age 50, then 5,270 (51), 2,507 (52) and 0 from 53 to 65 — though with 4% inflation the user's REAL income is falling and the IRS indexes these thresholds yearly, so in reality they would never be phased out. Invisible because sweeping "Roth end age" showed nothing moving at the default.
+**Fix.** New pure `indexedRothPhaseout(po, inflationRate, yearsAfterBase)` (`simulation.js`); `runSimulation` takes `inflationRate` (default 0 = unindexed, so hand-built callers are byte-identical). Convention: sim year y=1 (age currentAge+1, the first contribution year) is the "2026" year and uses the config figures; year y uses `(1+inflation)^(y-1)`. No new constant (rule 1 — figures stay in `irs-2026.js`). Wiring: App.jsx primary sim; `buildSpouseSimInput` (`spouse-sim.js`, the shared builder, new `inflationRate` param, App passes it); `whatIfSimInputs.inflationRate` (both scenario primary re-sims spread it) and the scenario's spouse re-sim in `what-if.js`.
+**Scope boundary.** Roth phase-out ONLY. Federal and LTCG brackets, standard deductions and contribution limits stay unindexed (BUG-100/101, out of scope; addendum added to BUG-100). `budget.js`/`tax-basis.js` read the same constant for the CURRENT year, where unindexed is correct.
+**Files.** `src/model/simulation.js`, `src/model/spouse-sim.js`, `src/model/what-if.js`, `src/App.jsx`, `docs/FINANCIAL-MODEL.md`.
+**Tests.** `src/model/__tests__/roth-phaseout-indexing.test.js` (helper; inflation 0 reproduces the old 7000/5270/2507/0 schedule exactly; default keeps 7,000 through 65; exact in-band partial amounts derived independently; higher inflation phases out later; MFJ) and `src/__tests__/roth-phaseout-wiring.test.js` (real App: default Roth continues past 53; changing `inflationRate` changes `simData` Roth; `whatIfSimInputs.simInputs.inflationRate` live; preview == commit at 6% inflation, with and without a spouse).
+**Revert-and-confirm** (`docs/audit-2026-11-14/impl-log-L1-E.md`): unindexing the `cRoth` block fails 12 tests (new + both golden masters); dropping `inflationRate` from App's primary sim fails 3; from `whatIfSimInputs` fails 2; from the spouse builder fails 1; from what-if's spouse re-sim fails 1.
+**Golden-master movement** (every value re-measured directly; direction = more Roth contributions kept past 52 -> larger seed). Only the no-spouse default moves; the T-X.2/3/4 spouse fixtures and every other value are unmoved (MFJ income never reaches the indexed-or-not 242k phase-out in those fixtures).
+
+| Fixture | Field | Old | New | Direction |
+|---|---|---|---|---|
+| default (`golden-master.test.js`, now passes `inflationRate` like App) | retRoth | 659,072 | 801,755 | UP |
+| default | totalAtRet | 4,035,855 | 4,178,538 | UP (+142,683 = the Roth delta only) |
+| default | spendableAtRet | 3,763,788 | 3,906,471 | UP (+142,683) |
+| default | withdrawalRate | 5.6100813% | 5.4185160% | DOWN (same draw / larger portfolio) |
+| default | yearsSustained | 21.6485 | 22.6424 | UP |
+| default (`golden-master-app-wiring.test.js`) | same as above + rangeSuccessPct | 24 | 29 | UP |
+| default (app wiring, planView) | depletionAge / yearsShortOfPlan | 87 / 3 | 88 / 2 | UP / DOWN |
+
+Unmoved: retTrad/Taxable/HSA, firstRMD, totalRMDs, rmdTaxBite, conversionWindowYrs, netConversionBenefit (the engine spends Roth last; the Traditional balance is exhausted/converted before the extra Roth is touched), T-X.2/T-X.3/T-X.4.
 
 ### BUG-157 — `spouseIncomeEndAge` frozen at the base plan inside what-if scenarios under "auto" (audit Finding A; FIXED 2026-11-14)
 

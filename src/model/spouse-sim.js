@@ -46,7 +46,7 @@ export function resolveSpouseIncomeEndAge({
 //   spouseRetirementAge  — RAW (null = auto)
 export function buildSpouseSimInput({
   totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
-  returnRate, primaryContribHSA, hsaCoverageType,
+  returnRate, primaryContribHSA, hsaCoverageType, inflationRate = 0,
   primaryRetAge, spouseRetirementAge, lifeExp,
   spouseCurrentAge, spouseIncome, spouseIncomeGrowth,
   spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
@@ -64,6 +64,7 @@ export function buildSpouseSimInput({
     currentIncome: spouseIncome, incomeGrowth: spouseIncomeGrowth, incomeGrowthEndAge: null, filingStatus,
     otherEarnerGrowthEndAge: plateauAgeInFrame(incomeGrowthEndAge, currentAge, spouseCurrentAge),
     spouseIncome: currentIncome, spouseIncomeGrowth: incomeGrowth, returnRate,
+    inflationRate, // BUG-159: indexes the spouse's own Roth phase-out thresholds
     bal401k: spouseBal401k, balRoth: spouseBalRoth, balTaxable: spouseBalTaxable, balHSA: spouseBalHSA,
     contrib401k: spouseContrib401k, contribRoth: spouseContribRoth,
     contribTaxable: spouseContribTaxable, contribHSA: spouseContribHSA,
