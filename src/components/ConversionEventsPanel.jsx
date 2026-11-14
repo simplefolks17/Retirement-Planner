@@ -5,6 +5,7 @@
 
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
+import { DeferredInput } from "./DeferredInput.jsx";
 import { MAX_CONVERSION_EVENTS } from "../model/conversion-events.js";
 import { mintEventId } from "../model/money-events.js";
 
@@ -40,7 +41,6 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
   const remove = (id) => onChange(events.filter(e => e.id !== id));
   const update = (id, field, value) =>
     onChange(events.map(e => e.id === id ? { ...e, [field]: value } : e));
-  const clampAge = (v) => Math.min(maxAge, Math.max(minAge, Number(v) || minAge));
 
   const inputStyle = {
     background: "#0d1117", border: `1px solid ${C.border}`, borderRadius: 6,
@@ -65,14 +65,12 @@ export function ConversionEventsPanel({ events, onChange, currentAge, safeRetAge
             padding: "8px 10px", background: C.card, borderRadius: 8,
             border: `1px solid ${C.border}`,
           }}>
-            <input
-              style={inputStyle} type="number" min={minAge} max={maxAge}
-              aria-label="Conversion age"
-              placeholder="Age"
+            {/* Draft-then-commit (BUG-164): clamped to [minAge, maxAge] on blur/Enter only. */}
+            <DeferredInput
+              style={inputStyle} min={minAge} max={maxAge}
+              ariaLabel="Conversion age" placeholder="Age"
               value={ev.age}
-              // Free typing on change (finite-guarded); clamp on blur so a transient low value doesn't snap.
-              onChange={e => { const n = Number(e.target.value); if (Number.isFinite(n)) update(ev.id, "age", n); }}
-              onBlur={e => update(ev.id, "age", clampAge(e.target.value))}
+              onChange={n => update(ev.id, "age", n)}
             />
             <input
               style={inputStyle} type="number" min="0" step="5000"

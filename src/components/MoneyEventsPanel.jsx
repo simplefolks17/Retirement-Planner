@@ -9,6 +9,7 @@
 
 import { C } from "../theme.js";
 import { fmt } from "../formatters.js";
+import { DeferredInput } from "./DeferredInput.jsx";
 import { isDurationEvent, totalEventImpact, MAX_MONEY_EVENTS, mintEventId } from "../model/money-events.js";
 
 function emptyEvent(currentAge) {
@@ -81,14 +82,13 @@ export function MoneyEventsPanel({ events, onChange, currentAge }) {
               onChange={e => update(ev.id, "amount", Math.max(0, Number(e.target.value)))}
             />
           )}
-          <input
-            style={inputStyle} type="number" min={currentAge} max={120}
-            placeholder="Age"
+          {/* Draft-then-commit (BUG-164): an intermediate keystroke never reaches committed
+              state; the committed age is clamped to [currentAge, 120] on blur/Enter. */}
+          <DeferredInput
+            style={inputStyle} min={currentAge} max={120}
+            placeholder="Age" ariaLabel="Event age"
             value={ev.age}
-            // Free typing on change; clamp to [currentAge, …] on blur so passing through a
-            // transient low value (e.g. typing "6" before "65") doesn't snap the field.
-            onChange={e => update(ev.id, "age", Number(e.target.value))}
-            onBlur={e => update(ev.id, "age", Math.max(currentAge, Number(e.target.value) || currentAge))}
+            onChange={n => update(ev.id, "age", n)}
           />
           {duration ? (
             <span style={{ fontSize: 11, color: C.muted }}>{ev.isInflow ? "Income" : "Expense"}</span>
