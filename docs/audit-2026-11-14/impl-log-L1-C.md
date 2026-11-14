@@ -64,3 +64,13 @@ AssertionError: expected 2704 to be +0 // Object.is equality
 AssertionError: expected [ 78353, 78353, 78353 ] to deeply equal [ 100000, 100000, 100000 ]
       Tests  1 failed | 16 passed (17)
 - [done] docs added (FINANCIAL-MODEL, BUGS BUG-155/156, audit status lines). Gate next.
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1453, lint clean, build OK, no golden master moved.
+- Finding E repro re-run independently through the real App (age 40, $150k, plateau 45, then
+  age 50): the stored plateau clamps to 51 (= its min). The SS estimate is 30,096, between
+  zero-growth (29,520) and no-plateau (32,952). Pre-fix it was 26,700, below even a flat salary.
+- BUG-156 wiring reverted at its own site (App.jsx spouse sim: `otherEarnerGrowthEndAge` removed,
+  `incomeGrowthEndAge` passed through) -> the "household total identical" test fails; restored ->
+  passes. The test's spouse-only-savings fixture is sound: in a household where the primary also
+  saves, the primary's plateau legitimately lowers the total (measured 106,207 at plateau 50).
