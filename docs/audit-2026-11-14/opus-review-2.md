@@ -77,3 +77,18 @@ they are verified. CONFIRMED = reproduced by execution with printed numbers; PLA
   - C: spouse age back -> 30: spouse retirement stays **62**, `totalAtRet` **6,512,487** (+$97,553), years 12.251. Same inputs as A, different plan.
 - **Why it matters:** this is R-1's "lossy coupling" class, which BUG-170 fixed for the plateau and plan-to age but not here; the Horizon slider calls `set` on every tick, so a drag through the value is enough. `classic-horizon-parity.test.js` covers only the two fixed setters.
 - **Smallest fix:** delete the write (reads are already clamped by `resolveSpouseRetAge`), and add the A-C sequence beside the BUG-170 spouse test. `[mechanical]`
+
+### S-8 — MEDIUM — CONFIRMED (mutation) — The RENDERED halves of BUG-176 and BUG-177 can be deleted with 0 of 1,688 tests failing; only their model fields are pinned
+Method as the first review: one-line mutation, full `npm test`, file restored from a copy (`git status` clean after each).
+
+| Mutation (one line) | Claim it undoes | Tests failing |
+|---|---|---|
+| `WhatIfPanel.jsx:253` `retAge={deltaResult.scenarioRetAge}` -> `retAge={safeRetAge}` | BUG-176's second fix: "its 'lasts to age' label now measures from the SCENARIO's retirement age (it used the base age for both: 'work 2 more years' printed an age 2 early)" | **0** |
+| `App.jsx:4156` Classic "Monthly Benefit" tile back to `ssOverride / 12` (raw, unrescaled) | BUG-177 consumer list: "Classic monthly tile" | **0** |
+| `App.jsx:4146` Classic "entered at age X, rescaled to $Y" note -> `false` | BUG-177: the user is told the pinned figure was rescaled | **0** |
+| `SSTimingFlow.jsx:47` Horizon `overrideRescaleNote` NoteBox -> `false` | BUG-177 (same, Horizon) | **0** |
+| `WorkLongerFlow.jsx` `row.ssPinnedFlat ? "your entered figure"` -> `false ? …` | BUG-173: no unexplained "+$0/yr" for a pinned override | **0** |
+
+- **Why the BUG-176 test can't see the first row:** `display-consistency-r2b.test.js:234` asserts only `after >= before`. With the mutation, "work 2 more years" prints `round(57 + 13.9)` = 71 (it should be 73), still >= 70, so the test is green with exactly the defect the fix names.
+- **Why it matters:** the first review's R-6/R-11 lesson (revert per sub-fix, at the bug's own site) was applied to the model halves of Round 2 / BUG-177 but not to their screens. BUG-177's tests read `ssView.overrideRescaleNote` and `ssView.ssMonthly`, which are the model's output, not what either UI renders, and the Classic tile recomputes its own figure from `ssOverride` instead of reading `ssView.ssMonthly`.
+- **Smallest fix:** (1) assert the scenario's age exactly in the BUG-176 Classic test (`after === round(scenarioRetAge + scenarioYears)`, i.e. 73 for the fixture); (2) one Classic-render and one SSTimingFlow-render test that pins the rescaled monthly figure and the note text; (3) point the Classic tile at `ssView.ssMonthly`-equivalent single source (removes the duplicated `ssOverrideAtAge(...)/12`); (4) a WorkLongerFlow render test for "your entered figure". `[mechanical]`
