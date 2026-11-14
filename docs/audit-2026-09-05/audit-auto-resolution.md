@@ -146,6 +146,7 @@ Files: `src/model/retirement-income.js:33` vs `:53-55`; consumers `src/App.jsx` 
 
 ---
 ## VERIFIED FINDING E (MEDIUM-HIGH) — `incomeGrowthEndAge` has FOUR independent resolution sites; two lack the `Math.max(0, …)` guard the other two have, so a stale value discounts income BACKWARD
+**Status (2026-11-14): FIXED by BUG-155 — see `docs/BUGS.md`.**
 The sentinel is `null` = "grows until retirement". Every consumer re-implements the resolution:
 
 | # | site | formula | negative guard |
@@ -179,6 +180,7 @@ disagreeing inside one render. Cost: **-$521/month of Social Security for life**
 
 ---
 ## VERIFIED FINDING F (MEDIUM) — `incomeGrowthEndAge` is a PRIMARY-frame age but is passed unchanged into the SPOUSE's `runSimulation`, whose age frame is the spouse's
+**Status (2026-11-14): FIXED by BUG-156 — see `docs/BUGS.md`.**
 `src/App.jsx:364` passes the primary's `incomeGrowthEndAge` into the spouse's sim, where
 `currentAge` is `spouseCurrentAge`. Both site 3 and site 4 above then evaluate
 `incomeGrowthEndAge - spouseCurrentAge`, which is a different number of calendar years — and goes

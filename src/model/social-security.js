@@ -9,6 +9,7 @@ import {
   SS_AIME_YEARS,
   ASSUMPTIONS,
 } from "../config/irs-2026.js";
+import { incomeGrowthSteps } from "./income-growth.js";
 
 // Returns the AIME (Average Indexed Monthly Earnings) from working-year earnings.
 // Sum income for each working year (capped at FICA wage base), divide by max(workYears, 35).
@@ -17,9 +18,8 @@ export function calcAIME(currentIncome, incomeGrowth, workYears, incomeGrowthEnd
   const g = incomeGrowth / 100;
   let total = 0;
   for (let y = 0; y < workYears; y++) {
-    const growthYears = incomeGrowthEndAge != null
-      ? Math.min(y, incomeGrowthEndAge - currentAge)
-      : y;
+    // y = raise steps before this working year (shared plateau rule — income-growth.js).
+    const growthYears = incomeGrowthSteps(y, incomeGrowthEndAge, currentAge);
     const yearEarnings = currentIncome * Math.pow(1 + g, growthYears);
     total += Math.min(yearEarnings, FICA_WAGE_BASE);
   }

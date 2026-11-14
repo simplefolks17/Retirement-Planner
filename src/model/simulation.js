@@ -15,6 +15,7 @@ import {
 } from "../config/irs-2026.js";
 import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
+import { incomeGrowthSteps, clampIncomePlateauAge } from "./income-growth.js";
 import { eventSimAdjustmentForYear, eventsIncomeAdjustment } from "./money-events.js";
 
 // Contribution-end ages that TRACK the retirement age (BUG-138).
@@ -65,6 +66,11 @@ export function coupleCurrentAge(state, newAge) {
   for (const k of ["contribEnd401k", "contribEndRoth", "contribEndTaxable", "contribEndHSA"]) {
     if (state[k] <= newAge) next[k] = newAge + 1;
   }
+  // BUG-155: the stored income-plateau age stays in [newAge + 1, retirementAge) or snaps to
+  // null (opt-in: only when the caller's state carries the key).
+  if ("incomeGrowthEndAge" in state) {
+    next.incomeGrowthEndAge = clampIncomePlateauAge(state.incomeGrowthEndAge, newAge, next.retirementAge);
+  }
   return next;
 }
 
@@ -76,16 +82,14 @@ export function coupleCurrentAge(state, newAge) {
 // sabbatical freezes the clock, so post-pause salaries resume where they left
 // off instead of rejoining a clock that kept ticking (owner spec, PR #54).
 export function projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge = null, currentAge }, age) {
-  const growthYears = incomeGrowthEndAge != null
-    ? Math.min(age - currentAge - 1, incomeGrowthEndAge - currentAge)
-    : age - currentAge - 1;
+  const growthYears = incomeGrowthSteps(age - currentAge - 1, incomeGrowthEndAge, currentAge);
   // Clamped at 0: never discount income BACKWARD. Negative growthYears can
   // reach here via eventIncomeImpact when a committed event's age sits at or
   // below currentAge (the user raised their age after committing it), or via
   // an incomeGrowthEndAge in the past — in both cases "no growth yet" (the
   // current salary) is the honest projection, not a shrunken one. Inert for
   // the sim loop, which only asks about ages ≥ currentAge + 1. (Gemini PR #53.)
-  return currentIncome * Math.pow(1 + incomeGrowth / 100, Math.max(0, growthYears));
+  return currentIncome * Math.pow(1 + incomeGrowth / 100, growthYears);
 }
 
 // Projected salary by age over a range, 0 past retirementAge (no salary in
@@ -130,7 +134,14 @@ export function runSimulation({
   // doesn't pass it. Expressed in the subject's own frame because runSimulation is called for
   // BOTH people and each run's `age` variable is its own subject's age.
   spouseIncomeEndAge = null,
+  // Plateau of the OTHER earner's income, in THIS run's (subject's) age frame (BUG-156).
+  // `undefined` (every existing caller) = same as incomeGrowthEndAge, i.e. the primary's run
+  // where both earners share the one plateau input — byte-identical. The spouse's run passes
+  // incomeGrowthEndAge: null (the spouse's own salary has no plateau input) plus the primary's
+  // plateau converted to the spouse's frame here (plateauAgeInFrame).
+  otherEarnerGrowthEndAge = undefined,
 }) {
+  if (otherEarnerGrowthEndAge === undefined) otherEarnerGrowthEndAge = incomeGrowthEndAge;
   let trad    = bal401k;
   let roth    = balRoth;
   let taxable = balTaxable;
@@ -158,19 +169,17 @@ export function runSimulation({
     const age        = currentAge + y;
     // Unpaused, age-based clock — used by SPOUSE income only (income
     // replacement is primary-only, #30 scope) and kept for reference.
-    const growthYears = incomeGrowthEndAge != null
-      ? Math.min(y - 1, incomeGrowthEndAge - currentAge)
-      : y - 1;
+    // The OTHER earner's raise steps: capped by THEIR plateau, expressed in THIS run's
+    // age frame (BUG-156: the spouse's run gets the primary's plateau converted).
+    const growthYears = incomeGrowthSteps(y - 1, otherEarnerGrowthEndAge, currentAge);
 
     // Income-replacement channel (owner decision: incomeAnnual on a duration
     // outflow event means "my TOTAL income during this period", not a bolt-on).
     const { workedFrac, eventIncome } = eventsIncomeAdjustment(moneyEvents, age);
     // Primary salary from the pause-aware clock (plateau stays an absolute
     // AGE cap — "income stops growing at this age" — applied on top).
-    const clockYears = incomeGrowthEndAge != null
-      ? Math.min(growthClock, incomeGrowthEndAge - currentAge)
-      : growthClock;
-    const growFactor = Math.pow(1 + g, Math.max(0, clockYears));
+    const clockYears = incomeGrowthSteps(growthClock, incomeGrowthEndAge, currentAge);
+    const growFactor = Math.pow(1 + g, clockYears);
     const baseSalary = currentIncome * growFactor;
     const primaryIncomeYr = baseSalary * workedFrac + eventIncome;
     // Savings scale with INCOME, not worked months: incomeAnnual === salary ⇒

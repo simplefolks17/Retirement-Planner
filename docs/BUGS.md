@@ -718,6 +718,18 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-155 — `incomeGrowthEndAge` resolved at four sites (two unguarded) and never re-clamped (audit Finding E; FIXED 2026-11-14)
+
+**Severity: MEDIUM-HIGH.** The "income plateau" sentinel was re-implemented in `calcAIME`, `projectedIncomeAtAge`, and `runSimulation`'s `growthYears` + `clockYears`; sites 1 and 3 lacked the `Math.max(0, ...)` guard, and `setCurrentAgeCoupled`/`setRetirementAgeCoupled`/`commitPlan` never re-clamped the stored value. Repro: age 40, $150k, plateau 45, then currentAge -> 50: stored 45 (out of range), `calcAIME` priced income at `1.03^-5` (AIME 4,621 vs honest 5,357, -$521/month SS for life).
+**Fix.** New `src/model/income-growth.js`: `incomeGrowthSteps` (the one resolver, floored at 0), `plateauAgeInFrame`, `clampIncomePlateauAge`. All four sites call it. Convention documented in `docs/FINANCIAL-MODEL.md`. The audit's "sites 1 and 2 differ by one year" is a mapping artefact: `calcAIME`'s index `y` is already the raise-step count (= sim year - 1), so at the same step count they were always equal; a test now pins `calcAIME` year y == `projectedIncomeAtAge(currentAge+y+1)`. `coupleCurrentAge` (opt-in via the state key), `setRetirementAgeCoupled` and `commitPlan` keep the stored plateau within `[currentAge+1, retirementAge)` or snap it to null. Lowering retirement to/below the plateau drops it (raising retirement again does not restore it).
+**Files.** `src/model/income-growth.js` (new), `social-security.js`, `simulation.js`, `src/App.jsx`. **Tests.** `src/__tests__/income-plateau.test.js` (model + App). **Revert-and-confirm** (each at its own line; see `docs/audit-2026-11-14/impl-log-L1-C.md`): unguarded `calcAIME` formula -> stale-plateau AIME test fails; removing the plateau write in `setCurrentAgeCoupled` / `setRetirementAgeCoupled` / `commitPlan` -> the matching App test fails; unguarded other-earner `growthYears` (`expected 2704 to be +0`) and unguarded `clockYears` (`[78353,...] vs [100000,...]`) -> model tests fail. No golden master moved.
+
+### BUG-156 — primary's plateau passed in the primary's age frame into the spouse's sim (audit Finding F; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** `App.jsx` handed the primary's `incomeGrowthEndAge` unchanged to the spouse's `runSimulation`, whose frame is the spouse's. Repro: primary 40 (plateau 50), spouse 55, both $100k, spouse 401k $10k/yr: the spouse's own salary froze (cap 50-55 = -5) and spouse savings were understated (household total at retirement 274,560 vs honest 311,036 in the App fixture).
+**Fix.** `runSimulation` gained `otherEarnerGrowthEndAge` (the OTHER earner's plateau in the subject's frame; `undefined` = same as `incomeGrowthEndAge`, so every existing caller is byte-identical). The spouse's run passes `incomeGrowthEndAge: null` (no spouse plateau input) and `otherEarnerGrowthEndAge: plateauAgeInFrame(primaryPlateau, currentAge, spouseCurrentAge)`.
+**Files.** `simulation.js`, `src/App.jsx`. **Tests.** `income-plateau.test.js` (model: own salary unplateaued; App: household total with plateau 50 == without). **Revert-and-confirm:** restoring `incomeGrowthEndAge` as the spouse run's own plateau -> `expected 274560 to be 311036`. No golden master moved.
+
 
 ### BUG-164 — event-panel age inputs committed unclamped values on every keystroke (CONSOLIDATION-REDO-PLAN sweep 2; FIXED 2026-11-14)
 

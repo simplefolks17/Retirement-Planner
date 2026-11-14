@@ -9,6 +9,7 @@ import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge, coupleContribEndAges, coupleCurrentAge } from "./model/simulation.js";
+import { clampIncomePlateauAge, plateauAgeInFrame } from "./model/income-growth.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -369,7 +370,11 @@ export default function App() {
     if (!hasSpouse) return [];
     const raw = runSimulation({
       totalYears, currentAge: spouseCurrentAge,
-      currentIncome: spouseIncome, incomeGrowth: spouseIncomeGrowth, incomeGrowthEndAge, filingStatus,
+      // BUG-156: the spouse's OWN salary has no plateau input (null); the PRIMARY's plateau
+      // applies only to the primary's income (the "other earner" here), re-expressed in the
+      // spouse's age frame (same calendar year).
+      currentIncome: spouseIncome, incomeGrowth: spouseIncomeGrowth, incomeGrowthEndAge: null, filingStatus,
+      otherEarnerGrowthEndAge: plateauAgeInFrame(incomeGrowthEndAge, currentAge, spouseCurrentAge),
       spouseIncome: currentIncome, spouseIncomeGrowth: incomeGrowth, returnRate,
       bal401k: spouseBal401k, balRoth: spouseBalRoth, balTaxable: spouseBalTaxable, balHSA: spouseBalHSA,
       contrib401k: spouseContrib401k, contribRoth: spouseContribRoth,
@@ -1386,7 +1391,10 @@ export default function App() {
     if (next.contribEndRoth    !== contribEndRoth)    setContribEndRoth(next.contribEndRoth);
     if (next.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(next.contribEndTaxable);
     if (next.contribEndHSA     !== contribEndHSA)     setContribEndHSA(next.contribEndHSA);
-  }, [setRetirementAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
+    // BUG-155: a plateau at/after the new retirement age is "no plateau".
+    const plateau = clampIncomePlateauAge(incomeGrowthEndAge, currentAge, v);
+    if (plateau !== incomeGrowthEndAge) setIncomeGrowthEndAge(plateau);
+  }, [setRetirementAge, incomeGrowthEndAge, currentAge, setIncomeGrowthEndAge, contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA, retirementAge]);
 
   // Single entry point for Horizon-initiated mutations to App state.
@@ -1404,16 +1412,18 @@ export default function App() {
     // closure, so the second would re-couple from stale values. Compute the final
     // coupled state ONCE, then write each changed field.
     if (ca !== undefined || ra !== undefined) {
-      let st = { lifeExpect, ssClaimingAge, retirementAge,
+      let st = { lifeExpect, ssClaimingAge, retirementAge, incomeGrowthEndAge,
                  contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA };
       if (ca !== undefined) st = coupleCurrentAge(st, ca);
       if (ra !== undefined) {
         st = { ...st, ...coupleContribEndAges(st, st.retirementAge, ra), retirementAge: ra };
+        st.incomeGrowthEndAge = clampIncomePlateauAge(st.incomeGrowthEndAge, ca ?? currentAge, ra);
       }
       if (ca !== undefined) setCurrentAge(ca);
       if (st.lifeExpect        !== lifeExpect)        setLifeExpect(st.lifeExpect);
       if (st.ssClaimingAge     !== ssClaimingAge)     setSsClaimingAge(st.ssClaimingAge);
       if (st.retirementAge     !== retirementAge)     setRetirementAge(st.retirementAge);
+      if (st.incomeGrowthEndAge !== incomeGrowthEndAge) setIncomeGrowthEndAge(st.incomeGrowthEndAge);
       if (st.contribEnd401k    !== contribEnd401k)    setContribEnd401k(st.contribEnd401k);
       if (st.contribEndRoth    !== contribEndRoth)    setContribEndRoth(st.contribEndRoth);
       if (st.contribEndTaxable !== contribEndTaxable) setContribEndTaxable(st.contribEndTaxable);
@@ -1451,6 +1461,7 @@ export default function App() {
       bal401k, balRoth, balTaxable, balHSA,
       spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
       retirementAge, annualExpenses, lifeExpect, returnRate, inflationRate,
+      incomeGrowthEndAge, currentAge, setIncomeGrowthEndAge,
       incomeGrowth, contrib401k, ssClaimingAge, spouseClaimingAge, annualConversionAmt]);
 
   // Monthly spend write-back: converts monthly slider units to annual so screens
@@ -1503,9 +1514,10 @@ export default function App() {
     setCurrentAge(v);
     // Rules live in coupleCurrentAge (simulation.js) so commitPlan applies the SAME
     // ones (BUG-153). Only values that actually change are written.
-    const cur = { lifeExpect, ssClaimingAge, retirementAge,
+    const cur = { lifeExpect, ssClaimingAge, retirementAge, incomeGrowthEndAge,
                   contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA };
     const next = coupleCurrentAge(cur, v);
+    if (next.incomeGrowthEndAge !== incomeGrowthEndAge) setIncomeGrowthEndAge(next.incomeGrowthEndAge);
     if (next.lifeExpect        !== lifeExpect)        setLifeExpect(next.lifeExpect);
     if (next.ssClaimingAge     !== ssClaimingAge)     setSsClaimingAge(next.ssClaimingAge);
     if (next.retirementAge     !== retirementAge)     setRetirementAge(next.retirementAge);
@@ -1516,7 +1528,7 @@ export default function App() {
     // BUG-95: no longer forces the spouse younger than the primary — a
     // same-age or older spouse is a real, representable household.
   }, [setCurrentAge, setRetirementAge, setLifeExpect, setSsClaimingAge,
-      retirementAge, lifeExpect, ssClaimingAge,
+      retirementAge, lifeExpect, ssClaimingAge, incomeGrowthEndAge, setIncomeGrowthEndAge,
       contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
       setContribEnd401k, setContribEndRoth, setContribEndTaxable, setContribEndHSA]);
 
