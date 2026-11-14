@@ -1,0 +1,158 @@
+// THROWAWAY PROBE (zz-*: gitignored, excluded from `npm test`). Oversight audit 2026-11-14.
+import { it, vi } from "vitest";
+import React from "react";
+import { act, create } from "react-test-renderer";
+import fs from "fs";
+
+const captured = [];
+vi.mock("../components/HorizonShell.jsx", () => ({
+  default: (props) => { captured.push(props); return null; },
+}));
+import App from "../App.jsx";
+
+const OUT = process.env.SWEEP_OUT || "/tmp/sweep.txt";
+const log = (s) => fs.appendFileSync(OUT, s + "\n");
+
+function mount() {
+  captured.length = 0;
+  let r;
+  act(() => { r = create(React.createElement(App)); });
+  return { latest: () => captured[captured.length - 1], fire: (fn) => act(() => fn()), unmount: () => act(() => r.unmount()) };
+}
+
+const BUNDLES = ["profile", "spending", "accounts", "spouseAccounts", "ss", "pension", "conversion", "health", "assumptions"];
+
+// Every field object in the setter bundles: { path, field }
+function fields(p) {
+  const out = [];
+  const walk = (obj, path) => {
+    for (const [k, v] of Object.entries(obj || {})) {
+      if (v && typeof v === "object" && typeof v.set === "function" && "value" in v) out.push({ path: `${path}.${k}`, field: v });
+      else if (v && typeof v === "object" && !Array.isArray(v)) walk(v, `${path}.${k}`);
+    }
+  };
+  for (const b of BUNDLES) walk(p[b], b);
+  return out;
+}
+const get = (p, path) => path.split(".").reduce((o, k) => o?.[k], p);
+
+// Top-level numeric props = the "headline" signature.
+function sig(p) {
+  const s = {};
+  for (const [k, v] of Object.entries(p)) if (typeof v === "number" && Number.isFinite(v)) s[k] = v;
+  for (const k of ["ssView", "rmdView", "conversionView", "taxView", "planHighlights", "rangeView"]) {
+    const o = p[k];
+    if (o && typeof o === "object") for (const [kk, vv] of Object.entries(o)) if (typeof vv === "number" && Number.isFinite(vv)) s[`${k}.${kk}`] = vv;
+  }
+  return s;
+}
+function diff(a, b, noise) {
+  return Object.keys(a).filter(k => !noise.has(k) && b[k] !== undefined && Math.abs(a[k] - b[k]) > 1e-9);
+}
+
+function altValue(f, path) {
+  const v = f.value;
+  if (f.options) {
+    const opts = f.options.map(o => (typeof o === "object" ? o.value : o));
+    if (path.endsWith("selectedState") || path.endsWith("retirementState")) return "CA";
+    return opts.find(o => o !== v);
+  }
+  if (typeof v === "boolean") return !v;
+  const min = Number.isFinite(f.min) ? f.min : 0;
+  const max = Number.isFinite(f.max) ? f.max : (v ?? min) * 2 + 100_000;
+  const step = f.step || 1;
+  if (v === null || v === undefined) return Math.round((min + max) / 2 / step) * step;
+  let n = v + 4 * step;
+  if (n > max) n = v - 4 * step;
+  if (n < min) n = (min + max) / 2;
+  return n;
+}
+
+const MARRY = (app) => {
+  app.fire(() => app.latest().ss.isMarried.set(true));
+  app.fire(() => app.latest().profile.filingStatus.set("mfj"));
+  app.fire(() => app.latest().ss.spouseCurrentAge.set(32));
+  app.fire(() => app.latest().profile.spouseIncome.set(80_000));
+};
+
+function sweep(label, setup) {
+  log(`\n===== INPUT SWEEP: ${label} =====`);
+  const a0 = mount(); setup?.(a0);
+  const base = sig(a0.latest());
+  const list = fields(a0.latest()).map(x => x.path);
+  a0.unmount();
+  // Noise: remount and compare (Monte Carlo etc.)
+  const a1 = mount(); setup?.(a1);
+  const again = sig(a1.latest()); a1.unmount();
+  const noise = new Set(Object.keys(base).filter(k => Math.abs(base[k] - (again[k] ?? base[k])) > 1e-9));
+  log(`noise keys: ${[...noise].join(",") || "(none)"}; signature keys: ${Object.keys(base).length}`);
+  for (const path of list) {
+    const app = mount(); setup?.(app);
+    const f = get(app.latest(), path);
+    const alt = altValue(f, path);
+    let err = null;
+    try { app.fire(() => get(app.latest(), path).set(alt)); } catch (e) { err = e.message; }
+    const after = sig(app.latest());
+    const now = get(app.latest(), path)?.value;
+    const changed = diff(base, after, noise);
+    const head = ["totalAtRet", "yearsSustained", "withdrawalRate", "effectiveExpenses", "rmdTaxBite", "netConversionBenefit"]
+      .filter(k => changed.includes(k)).join(",");
+    log(`${changed.length === 0 ? "DEAD?" : "     "} ${path}: ${JSON.stringify(f.value)} -> ${JSON.stringify(alt)} (stored ${JSON.stringify(now)})  moved ${changed.length}  [${head}]${err ? " ERR " + err : ""}`);
+    app.unmount();
+  }
+}
+
+function boundsCheck(label, app) {
+  const bad = [];
+  for (const { path, field } of fields(app.latest())) {
+    const v = field.value;
+    if (typeof v !== "number") continue;
+    if (Number.isFinite(field.min) && v < field.min - 1e-9) bad.push(`${path}=${v} < min ${field.min}`);
+    if (Number.isFinite(field.max) && v > field.max + 1e-9) bad.push(`${path}=${v} > max ${field.max}`);
+    if (Number.isFinite(field.min) && Number.isFinite(field.max) && field.min > field.max) bad.push(`${path}: min ${field.min} > max ${field.max}`);
+  }
+  log(`[bounds] ${label}: ${bad.length ? "OUT OF RANGE -> " + bad.join(" | ") : "ok"}`);
+}
+
+it("oversight sweep", () => {
+  fs.writeFileSync(OUT, `oversight sweep ${new Date().toISOString()}\n`);
+
+  // ---- Finding C re-confirm ----
+  {
+    const app = mount();
+    const b = { y: app.latest().yearsSustained, ws: app.latest().profile.selectedState.value, rs: app.latest().assumptions.retirementState.value };
+    app.fire(() => app.latest().profile.selectedState.set("CA"));
+    const l = app.latest();
+    log(`[C] work ${b.ws}->${l.profile.selectedState.value}; retirementState ${b.rs}->${l.assumptions.retirementState.value}; yearsSustained ${b.y}->${l.yearsSustained}`);
+    app.fire(() => app.latest().assumptions.retirementState.set("CA"));
+    log(`[C]   ...after ALSO setting retirementState=CA: yearsSustained ${app.latest().yearsSustained}, rmdTaxBite ${app.latest().rmdTaxBite}`);
+    app.unmount();
+  }
+
+  // ---- Lens 2: bounds after parent-age moves through USER setters ----
+  const seqs = {
+    "currentAge 34->72 (coupled)": (a) => a.fire(() => a.latest().assumptions.currentAge.set(72)),
+    "lifeExpect -> 70 (coupled)": (a) => a.fire(() => a.latest().assumptions.lifeExpect.set(70)),
+    "retirementAge -> 40 (coupled)": (a) => a.fire(() => a.latest().assumptions.retirementAge.set(40)),
+    "plateau 45, then currentAge 50": (a) => { a.fire(() => a.latest().profile.incomeGrowthEndAge.set(45)); a.fire(() => a.latest().assumptions.currentAge.set(50)); },
+    "plateau 60, then retirementAge 50": (a) => { a.fire(() => a.latest().profile.incomeGrowthEndAge.set(60)); a.fire(() => a.latest().assumptions.retirementAge.set(50)); },
+    "onboarding commitPlan(currentAge 72, retire 75)": (a) => a.fire(() => a.latest().commitPlan({ currentAge: 72, currentIncome: 100_000, retirementAge: 75, monthlySpend: 5_000 })),
+    "onboarding commitPlan(currentAge 60, retire 62)": (a) => a.fire(() => a.latest().commitPlan({ currentAge: 60, currentIncome: 100_000, retirementAge: 62, monthlySpend: 5_000 })),
+    "married; spouse retire 70 explicit; primary retire 45": (a) => { MARRY(a); a.fire(() => a.latest().spouseAccounts.spouseRetirementAge.set(70)); a.fire(() => a.latest().assumptions.retirementAge.set(45)); },
+    "married; spouse 60; spouse retire 66; spouse age -> 75": (a) => { MARRY(a); a.fire(() => a.latest().ss.spouseCurrentAge.set(60)); a.fire(() => a.latest().spouseAccounts.spouseRetirementAge.set(66)); a.fire(() => a.latest().ss.spouseCurrentAge.set(75)); },
+    "pension start 55, then currentAge 70": (a) => { a.fire(() => a.latest().pension.pensionMonthly.set(2000)); a.fire(() => a.latest().pension.pensionStartAge.set(55)); a.fire(() => a.latest().assumptions.currentAge.set(70)); },
+    "ssOverride high, then ssClaimingAge 70": (a) => { a.fire(() => a.latest().ss.ssOverride.set(50_000)); a.fire(() => a.latest().ss.ssClaimingAge.set(70)); },
+    "income 400k, livingExpenses 300k, then income 40k": (a) => { a.fire(() => a.latest().profile.currentIncome.set(400_000)); a.fire(() => a.latest().spending.livingExpenses.set(300_000)); a.fire(() => a.latest().profile.currentIncome.set(40_000)); },
+    "HSA family 8000, then self-only": (a) => { MARRY(a); a.fire(() => a.latest().spouseAccounts.hsaCoverageType.set("family")); a.fire(() => a.latest().accounts.hsa.contrib.set(8_000)); a.fire(() => a.latest().spouseAccounts.hsaCoverageType.set("self")); },
+  };
+  log("\n===== LENS 2: bounds after user moves =====");
+  for (const [label, fn] of Object.entries(seqs)) {
+    const app = mount();
+    try { fn(app); boundsCheck(label, app); } catch (e) { log(`[bounds] ${label}: THREW ${e.message}`); }
+    app.unmount();
+  }
+
+  // ---- Lens 6: input propagation ----
+  sweep("single default", null);
+  sweep("married MFJ, spouse 32 @ $80k", MARRY);
+}, 600_000);

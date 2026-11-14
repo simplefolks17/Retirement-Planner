@@ -1,0 +1,105 @@
+// THROWAWAY PROBE (zz-*: gitignored). Oversight audit 2026-11-14 — re-tests of "DEAD?" inputs
+// under conditions where each SHOULD matter.
+import { it, vi } from "vitest";
+import React from "react";
+import { act, create } from "react-test-renderer";
+import fs from "fs";
+
+const captured = [];
+vi.mock("../components/HorizonShell.jsx", () => ({
+  default: (props) => { captured.push(props); return null; },
+}));
+import App from "../App.jsx";
+
+const OUT = process.env.SWEEP_OUT || "/tmp/retest.txt";
+const log = (s) => fs.appendFileSync(OUT, s + "\n");
+function mount() {
+  captured.length = 0;
+  let r;
+  act(() => { r = create(React.createElement(App)); });
+  return { L: () => captured[captured.length - 1], fire: (fn) => act(() => fn()), unmount: () => act(() => r.unmount()) };
+}
+const H = (l) => ({ totalAtRet: Math.round(l.totalAtRet), yrs: +l.yearsSustained?.toFixed?.(3), wr: +l.withdrawalRate?.toFixed?.(3),
+  netConv: Math.round(l.netConversionBenefit ?? NaN), rmdTax: Math.round(l.rmdTaxBite ?? NaN) });
+
+// Run setup, then measure A vs B for a single field change.
+function ab(label, setup, change) {
+  const a = mount(); setup?.(a); const before = H(a.L()); a.unmount();
+  const b = mount(); setup?.(b); change(b); const after = H(b.L()); b.unmount();
+  const moved = Object.keys(before).filter(k => before[k] !== after[k]);
+  log(`${moved.length ? "     " : "STILL DEAD"} ${label}\n    before ${JSON.stringify(before)}\n    after  ${JSON.stringify(after)}`);
+}
+const MARRY = (a, spouseAge = 32) => {
+  a.fire(() => a.L().ss.isMarried.set(true));
+  a.fire(() => a.L().profile.filingStatus.set("mfj"));
+  a.fire(() => a.L().ss.spouseCurrentAge.set(spouseAge));
+  a.fire(() => a.L().profile.spouseIncome.set(80_000));
+};
+
+it("retests", () => {
+  fs.writeFileSync(OUT, `retest ${new Date().toISOString()}\n`);
+  for (const acct of ["trad401k", "roth", "taxable", "hsa"])
+    ab(`contribEnd ${acct} 65 -> 55`, null, (a) => a.fire(() => a.L().accounts[acct].contribEnd.set(55)));
+  ab("pensionStartAge 65 -> 69 (pension $2k/mo)", (a) => a.fire(() => a.L().pension.pensionMonthly.set(2000)),
+     (a) => a.fire(() => a.L().pension.pensionStartAge.set(69)));
+  ab("spouseClaimingAge 67 -> 70 (spouse SS $24k)", (a) => { MARRY(a); a.fire(() => a.L().ss.spouseSsEstimate.set(24_000)); },
+     (a) => a.fire(() => a.L().ss.spouseClaimingAge.set(70)));
+  ab("spouseClaimingAge 67 -> 62 (spouse SS $24k)", (a) => { MARRY(a); a.fire(() => a.L().ss.spouseSsEstimate.set(24_000)); },
+     (a) => a.fire(() => a.L().ss.spouseClaimingAge.set(62)));
+  ab("spouseIsSoleBenef (spouse 15y younger, trad $1.5M)", (a) => { MARRY(a, 18); a.fire(() => a.L().accounts.trad401k.bal.set(1_500_000)); },
+     (a) => a.fire(() => a.L().ss.spouseIsSoleBenef.set(true)));
+  ab("savingsSurplusPct 50 -> 90 (livingExpenses $50k)", (a) => a.fire(() => a.L().spending.livingExpenses.set(50_000)),
+     (a) => a.fire(() => a.L().assumptions.savingsSurplusPct.set(90)));
+  ab("marketplace premium null -> $2,000/mo (retire 55, ACA on)", (a) => {
+       a.fire(() => a.L().assumptions.retirementAge.set(55)); a.fire(() => a.L().health.hasMarketplaceInsurance.set(true)); },
+     (a) => a.fire(() => a.L().health.marketplaceMonthlyPremium.set(2000)));
+  ab("hasMarketplaceInsurance off -> on (retire 55)", (a) => a.fire(() => a.L().assumptions.retirementAge.set(55)),
+     (a) => a.fire(() => a.L().health.hasMarketplaceInsurance.set(true)));
+  ab("hasMedicare off -> on (trad $2M, 32% bracket fill)", (a) => {
+       a.fire(() => a.L().accounts.trad401k.bal.set(2_000_000)); a.fire(() => a.L().conversion.conversionBracketTarget.set(32)); },
+     (a) => a.fire(() => a.L().health.hasMedicare.set(true)));
+  ab("conversionTaxSource converted -> taxable (custom $50k)", (a) => {
+       a.fire(() => a.L().conversion.conversionMode.set("custom")); a.fire(() => a.L().conversion.annualConversionAmt.set(50_000)); },
+     (a) => a.fire(() => a.L().conversion.conversionTaxSource.set("taxable")));
+  ab("livingExpenseGrowth 3 -> 8", null, (a) => a.fire(() => a.L().spending.livingExpenseGrowth.set(8)));
+
+  // HSA over-limit after coverage switch: does the SIM cap it (display-only mismatch) or not?
+  {
+    const a = mount(); MARRY(a);
+    a.fire(() => a.L().spouseAccounts.hsaCoverageType.set("family"));
+    a.fire(() => a.L().accounts.hsa.contrib.set(8_000));
+    a.fire(() => a.L().spouseAccounts.hsaCoverageType.set("self"));
+    const shown = a.L().accounts.hsa.contrib.value, max = a.L().accounts.hsa.contrib.max, t1 = Math.round(a.L().totalAtRet);
+    a.fire(() => a.L().accounts.hsa.contrib.set(max));
+    const t2 = Math.round(a.L().totalAtRet);
+    log(`[HSA] field shows ${shown} (max ${max}); totalAtRet with stored 8000 = ${t1}, with ${max} = ${t2} -> ${t1 === t2 ? "sim caps it (display-only mismatch)" : "SIM USES THE OVER-LIMIT VALUE"}`);
+    a.unmount();
+  }
+  // livingExpenses above take-home after an income drop
+  {
+    const a = mount();
+    a.fire(() => a.L().profile.currentIncome.set(400_000));
+    a.fire(() => a.L().spending.livingExpenses.set(300_000));
+    a.fire(() => a.L().profile.currentIncome.set(40_000));
+    const l = a.L();
+    log(`[living] income 40k, living stored ${l.spending.livingExpenses.value} (max ${l.spending.livingExpenses.max}); grossAfterTax ${Math.round(l.grossAfterTax ?? NaN)}; budget.effectiveLiving ${l.budget?.effectiveLiving}; surplus ${JSON.stringify(l.budget?.surplus ?? l.budget?.savingsCapacity)}; effectiveExpenses ${l.effectiveExpenses}; totalAtRet ${Math.round(l.totalAtRet)}`);
+    a.unmount();
+  }
+  // Onboarding: what the wizard sends vs what lands
+  {
+    const a = mount();
+    const before = { saved: a.L().currentTotalSaved, ss: a.L().ss.ssClaimingAge.value };
+    a.fire(() => a.L().commitPlan({ currentAge: 72, currentIncome: 100_000, retirementAge: 75, monthlySpend: 5_000, totalSaved: 900_000 }));
+    const l = a.L();
+    log(`[onboarding] currentTotalSaved ${before.saved} -> ${l.currentTotalSaved} (wizard answer 900,000 has no path in: commitPlan ignores totalSaved)`);
+    log(`[onboarding] after commitPlan(currentAge 72): ssClaimingAge ${l.ss.ssClaimingAge.value} (min ${l.ss.ssClaimingAge.min}); yearsSustained ${l.yearsSustained}`);
+    a.unmount();
+    // Same household entered through the COUPLED user setters
+    const c = mount();
+    c.fire(() => c.L().assumptions.currentAge.set(72));
+    c.fire(() => c.L().assumptions.retirementAge.set(75));
+    c.fire(() => c.L().spending.annualExpenses.set(60_000));
+    log(`[onboarding] same values via coupled setters: ssClaimingAge ${c.L().ss.ssClaimingAge.value}; yearsSustained ${c.L().yearsSustained}`);
+    c.unmount();
+  }
+}, 600_000);

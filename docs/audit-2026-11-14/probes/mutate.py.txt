@@ -1,0 +1,21 @@
+import subprocess, sys, re
+M = [
+ ("work-state tax table lookup", "src/model/tax-basis.js", "const stateRateDefault = STATE_TAX[selectedState]?.rate ?? 0;", "const stateRateDefault = 0;"),
+ ("other pre-tax deductions", "src/model/tax-basis.js", "const totalPreTaxDeduc = contrib401k + contribHSA + otherPreTaxDeduc;", "const totalPreTaxDeduc = contrib401k + contribHSA;"),
+ ("spouse income growth -> primary sim", "src/App.jsx", "      spouseIncome, spouseIncomeGrowth, returnRate,\n      bal401k, balRoth, balTaxable, balHSA,\n      contrib401k, contribRoth, contribTaxable, contribHSA,\n      contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,\n      calcEmployerMatchFn: employerMatch,", "      spouseIncome, spouseIncomeGrowth: 3, returnRate,\n      bal401k, balRoth, balTaxable, balHSA,\n      contrib401k, contribRoth, contribTaxable, contribHSA,\n      contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,\n      calcEmployerMatchFn: employerMatch,"),
+ ("extra pre-tax balance (addlPreTaxBal)", "src/App.jsx", "const tradGrossAtRet = (atRetirement.tradGross ?? 0) + addlPreTaxBal;", "const tradGrossAtRet = (atRetirement.tradGross ?? 0);"),
+ ("RMD joint-life table (spouse sole beneficiary)", "src/App.jsx", "const useTable2 = isMarried && spouseIsSoleBenef && (currentAge - spouseCurrentAge > 10);", "const useTable2 = false;"),
+ ("primary HSA family limit", "src/App.jsx", 'const primaryHsaLimit = hsaCoverageType === "family" ? HSA_FAMILY_LIMIT_2026 : HSA_LIMIT_2026;', "const primaryHsaLimit = HSA_LIMIT_2026;"),
+ ("work state passed to working-year conversion events", "src/App.jsx", "      conversionEvents: activeConversionEvents, stateRate,\n      hsaLimit: primaryHsaLimit,", "      conversionEvents: activeConversionEvents, stateRate: 0,\n      hsaLimit: primaryHsaLimit,"),
+]
+for name, path, old, new in M:
+    src = open(path).read()
+    n = src.count(old)
+    if n != 1:
+        print(f"SKIP {name}: pattern count {n}"); continue
+    open(path, "w").write(src.replace(old, new))
+    try:
+        out = subprocess.run("npx vitest run --exclude '**/node_modules/**' --exclude '**/zz-*.test.js' --exclude '**/zzprobe-*.test.js' 2>&1 | grep -E 'Tests  '", shell=True, capture_output=True, text=True, timeout=600).stdout.strip()
+    finally:
+        open(path, "w").write(src)
+    print(f"{name:52s} -> {out}")

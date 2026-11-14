@@ -224,6 +224,29 @@ work rebuilt the system underneath PR #58's "unaffordable → accent" conclusion
 the working agreement, the explicitly-out-of-scope list, and a paste-able kickoff prompt.
 Next free bug id: **BUG-151**.
 
+## Session: 2026-11-14 — oversight root-cause audit + implementation
+**Branch:** `claude/oversight-root-cause-audit`
+
+Owner asked how Finding C (retirement state never follows the work state) survived, and for
+the same causes to be hunted across the codebase. Then: implement everything via Sonnet
+agents, followed by a deep Opus review.
+- **Audit:** `docs/audit-2026-11-14/oversight-root-causes.md` (8 causes, 8 lenses, mutation
+  table). Probes and their raw output are preserved in `docs/audit-2026-11-14/probes/`.
+- **Headline new findings:**
+  - onboarding discards the savings answer (BUG-152);
+  - onboarding's age commit is un-coupled (BUG-153);
+  - "Living expense growth" is a dead control (BUG-160);
+  - the frozen Roth phase-out stops the default user's Roth contributions at 53 (BUG-159);
+  - **six calculations can be deleted with 0 of 1,408 tests failing**, including the work
+    state's whole income-tax lookup.
+- **Owner decision:** the retirement state follows the work state unless set separately.
+- **Plan:** `docs/audit-2026-11-14/IMPLEMENTATION-PLAN.md`. Lane 1 runs L1-A → L1-H
+  sequentially on the branch; lane 2 (BUG-154 + sweeps 1/2) runs in a worktree. Then the
+  Opus review. Pre-assigned ids BUG-151..164.
+- **Progress:** each batch's `impl-log-<BATCH>.md` in `docs/audit-2026-11-14/` is the
+  durable record. Re-verify each batch (test, lint, build, revert-and-confirm) before
+  starting the next.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an
