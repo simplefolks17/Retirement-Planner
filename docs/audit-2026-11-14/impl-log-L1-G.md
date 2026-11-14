@@ -33,3 +33,15 @@ Sites LEFT ALONE, with reason:
 No ternary-style clamps found by grep.
 
 Verification: `npm test` 79 files / 1602 tests (1595 + 7 new), no golden master touched or re-locked; lint clean; build OK.
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1602, lint clean, build OK. No golden-master file touched.
+- BUG-165 guard re-confirmed independently: re-adding the Portfolio target row to MyDetailsScreen
+  -> 1 failing (the classicOnly guard); restored -> green.
+- Clamp semantics audit: `clamp` is max-outer, so it returns `min` when min > max. Every removed
+  min-outer site (which returns `max` in that case) was checked for crossable bounds:
+  - conversion-event default age: hi = max(currentAge+1, ...) ≥ lo by construction;
+  - `clampOverlayY`: guards `hi <= lo` before calling;
+  - scrub-label x: VW = 1200 is fixed;
+  - ACA FPL index: [1, 6] constant.
+  None can cross, so the refactor is output-preserving, consistent with zero golden-master movement.
