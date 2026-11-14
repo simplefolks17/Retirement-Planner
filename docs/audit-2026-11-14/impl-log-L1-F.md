@@ -44,3 +44,14 @@
   - work state -> working-year conversion events (App.jsx:331): 0 -> 1 failing (input-wiring)
   - primary HSA family limit (App.jsx:319): 1 (setter-bundles, as the audit found) -> 2 (adds input-wiring)
 - [gate] npm test 1594 green (1477 + 117: 81 propagation, 29 bounds, 7 wiring), lint clean, build OK; no golden master moved (tests only). Real production defects exposed: none. Observation: Horizon shows 'Portfolio target' control (MyDetailsScreen) whose only consumer is Classic's calcMilestones; no Horizon prop reads it (allow-listed, proof via calcMilestones).
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1594 (78 files, about 25s total), lint clean, build OK. Diff is tests and the log only
+  (4 files, +673).
+- Independent mutation: `otherPreTaxDeduc` dropped from `totalPreTaxDeduc` -> 2 failing
+  (input-propagation, input-wiring). Before this batch it failed 0.
+- **Disagreement with the allow-list:** `spending.retirementTarget` is allow-listed as "Classic
+  calcMilestones only", but Horizon RENDERS it (MyDetailsScreen "Portfolio target — milestone goal at
+  retirement"). Horizon's own milestones (`calcChartMilestones`) never read it, so in Horizon it is
+  a dead control, the same class as BUG-160. The allow-list explained it away, which is the audit's
+  Lens 8 pattern. Filed as **BUG-165** and folded into L1-G.

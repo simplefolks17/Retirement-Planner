@@ -83,6 +83,7 @@ Pre-assigned bug ids (next free was BUG-151):
 | BUG-162 | Classic What-If panel seeds ages once and never re-syncs |
 | BUG-163 | Event ids minted 4 different ways; one has no entropy (sweep 1) |
 | BUG-164 | Event-panel age inputs commit unclamped values on every keystroke (sweep 2) |
+| BUG-165 | Horizon "Portfolio target" control has no Horizon consumer (found verifying L1-F) |
 
 ---
 
@@ -213,7 +214,8 @@ files lane 1 doesn't touch, and is merged by the orchestrator.
   Re-run each mutation from the audit's mutation table and confirm it now FAILS a test.
   Paste the outputs.
 
-### L1-G — sweep 3 (shared `clamp`) — `docs/CONSOLIDATION-REDO-PLAN.md` § Sweep 3, verbatim scope
+### L1-G — BUG-165, then sweep 3 (shared `clamp`) — `docs/CONSOLIDATION-REDO-PLAN.md` § Sweep 3, verbatim scope
+- **BUG-165 first:** remove the "Portfolio target" field from Horizon `MyDetailsScreen` (Classic keeps it, where its milestone cards do use it). Update `input-propagation.test.js`'s allow-list reason to say "Classic-only; not rendered in Horizon". Add a guard that fails if a Horizon screen renders a bundle field that is on the allow-list as "Classic only".
 ### L1-H — sweep 4 (percent/rate formatting) — same doc § Sweep 4, verbatim scope; LAST
 
 ### Lane 2 (parallel, isolated worktree) — L2: BUG-154, then sweeps 1 + 2
