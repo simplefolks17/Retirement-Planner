@@ -260,3 +260,49 @@ describe("anchorWhatIfToHeadline (BUG-176) — edge states", () => {
     expect(mk(Infinity, Infinity).scenarioYears).toBe(13);
   });
 });
+
+// ── BUG-180 (Opus review 2, S-2): a hurting lever on a sustainable headline ───────────────────────
+describe("anchorWhatIfToHeadline (BUG-180) — sustainable headline, lever hurts", () => {
+  const head = { years: Infinity, depletionAge: null, totalAtRet: 1_000_000 };
+  const mk = (sy, ny) => anchorWhatIfToHeadline({
+    scenario: { scenarioYears: sy, scenarioTotalAtRet: 900_000, scenarioDepletionAge: 81 },
+    noChange: { scenarioYears: ny, scenarioTotalAtRet: 1_000_000 }, headline: head, scenarioRetAge: 55,
+  });
+  it("a finite negative delta returns the not-comparable state, never the blended absolute", () => {
+    const a = mk(25.5, 35.2);
+    expect(a.comparable).toBe(false);
+    expect(a.scenarioYears).toBeNull();
+    expect(a.scenarioDepletionAge).toBeNull();
+    expect(a.deltaYears).toBeCloseTo(-9.7, 9);
+    expect(a.baseYears).toBe(Infinity);
+  });
+  it("-Infinity delta (blended no-change sustainable, scenario not) is not comparable either", () => {
+    const a = mk(40, Infinity);
+    expect(a.comparable).toBe(false); expect(a.scenarioYears).toBeNull(); expect(a.deltaYears).toBeNull();
+  });
+  it("a helping or neutral lever on a sustainable headline stays Infinity and comparable", () => {
+    expect(mk(36, 35.2)).toMatchObject({ comparable: true, scenarioYears: Infinity, scenarioDepletionAge: null });
+    expect(mk(35.2, 35.2)).toMatchObject({ comparable: true, scenarioYears: Infinity });
+  });
+});
+
+describe("BUG-180: the Classic panel never prints an absolute age beside 'Sustainable indefinitely'", () => {
+  it("sustainable younger-spouse household + 'Retire 2 years early': no 'lasts to age N' for the scenario", () => {
+    const r = buildYoungerSpouse();
+    fire(() => L().spending.annualExpenses.set(30_000));
+    expect(L().yearsSustained).toBe(Infinity);   // fixture precondition (the review's $30k spend)
+    fire(() => L().onShowClassic());
+    const panel = r.root.findAllByType(WhatIfPanel)[0];
+    const header = panel.findAll(n => n.type === "div" && typeof n.props.onClick === "function"
+      && textOf(n).includes("What-If Calculator"))[0];
+    fire(() => header.props.onClick());
+    const preset = panel.findAll(n => n.type === "button" && /Retire 2 years early/.test(textOf(n)))[0];
+    expect(preset, "preset button").toBeTruthy();
+    fire(() => preset.props.onClick());
+    const txt = textOf(panel);
+    act(() => r.unmount());
+    expect(txt).toContain("Sustainable indefinitely");
+    expect(txt).not.toMatch(/lasts to age \d+/);
+    expect(txt).toContain("Weaker than your plan");
+  });
+});

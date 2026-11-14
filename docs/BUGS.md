@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-180 — the BUG-176 anchor printed the blended walk's absolute age for a sustainable plan made worse (Opus review 2 S-2; FIXED 2026-11-14; BUG-36 stays Open)
+
+**Severity: MEDIUM.** Younger-spouse household at $30k spend (headline `yearsSustained` Infinity), Classic "Retire 2 years early": panel read "Portfolio lasts to age 81" vs "Sustainable indefinitely" with chip -9.7 yrs; committing the age gives depletion age 183. `anchorWhatIfToHeadline` fell back to the blended scenario's own absolute when the headline was Infinity and the lever hurt (R-9's contradiction in an edge state).
+**Fix.** That case (and the -Infinity delta case) now returns a documented not-comparable state: `comparable: false`, `scenarioYears`/`scenarioDepletionAge` null, `deltaYears` the finite blended delta or null. Classic `WhatIfPanel` renders "Weaker than your plan (no comparable age)"; the Horizon surplus preview already renders null years as "—". Helping/neutral levers and all finite-headline cases are unchanged. **Files:** `src/model/what-if.js`, `src/components/WhatIfPanel.jsx`.
+**Tests/revert-and-confirm.** `display-consistency-r2b.test.js` (3 unit + a Classic render of the review's household). Old fallback restored: 3 fail; panel null branch disabled: the render test fails.
+
 ### BUG-181 — "not modelled" conversion events were dropped from what-if previews that would bring them back (Opus review 2 S-6; FIXED 2026-11-14)
 
 **Severity: MEDIUM (BUG-175 made it a designed state; whatif-parity class).** $500k pre-tax, in-service conversions, one $100,000 event at age 60, retirement 65 -> 58 (event flagged "not modelled"). Work-longer +5 / `calcWhatIfScenario` at 63: totalAtRet 5,941,869; committing 63: 5,905,265 (event modelled again) — preview optimistic by $36,604 of conversion tax.

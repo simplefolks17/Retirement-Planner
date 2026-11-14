@@ -596,27 +596,47 @@ export function calcWhatIfDelta({
 //     the SAME blended engine, so the engine bias cancels and only the lever's own effect remains.
 // `noChange` is calcWhatIfDelta run with no override at all; `scenario` the run being previewed.
 // Edge states: a lever's delta is +/-Infinity when one side never depletes; "+Infinity" anchors to
-// Infinity (the lever made the blended plan sustainable); "-Infinity" (the blended no-change walk
-// was sustainable but the scenario is not) cannot be expressed as headline + delta, so it falls
-// back to the scenario's own figure rather than inventing one.
+// Infinity (the lever made the blended plan sustainable); "-Infinity", and a hurting lever on an
+// already-sustainable headline, cannot be expressed as headline + delta, so the result is the
+// documented "not comparable" state (BUG-180: `comparable: false`, null years/age) instead of
+// the blended walk's own absolute figure, which contradicts the headline.
 // Basis: years/ages are basis-free; totalAtRet is in the scenario's retirement-year dollars, as
 // calcWhatIfDelta's own scenarioTotalAtRet is (the difference is added to the headline's).
 export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioRetAge }) {
   const deltaYears = deltaYearsFrom(scenario.scenarioYears, noChange.scenarioYears);
+  // BUG-180 (Opus review 2, S-2): a lever that HURTS cannot be expressed as headline + delta when
+  // the headline never depletes (Infinity - n is still Infinity), nor when the blended no-change
+  // walk was sustainable but the scenario is not (delta = -Infinity). The old fallback printed the
+  // blended scenario's OWN absolute age ("lasts to 81" next to "Sustainable indefinitely", ~100
+  // years off the committed 127). Honest state instead: `scenarioYears`/`scenarioDepletionAge`
+  // are null and `comparable: false`, so a UI shows only that the plan gets weaker (and the
+  // finite delta, if any), never an absolute age from the other engine.
+  const unanchorable = deltaYears === -Infinity
+    || (headline.years === Infinity && Number.isFinite(deltaYears) && deltaYears < 0);
+  if (unanchorable) {
+    return {
+      baseYears: headline.years,
+      scenarioYears: null,
+      comparable: false,
+      deltaYears: Number.isFinite(deltaYears) ? deltaYears : null,
+      scenarioDepletionAge: null,
+      baseTotalAtRet: headline.totalAtRet,
+      scenarioTotalAtRet: headline.totalAtRet + (scenario.scenarioTotalAtRet - noChange.scenarioTotalAtRet),
+    };
+  }
   let years;
   if (deltaYears === Infinity) years = Infinity;
-  else if (deltaYears === -Infinity) years = scenario.scenarioYears;
-  else if (headline.years === Infinity) years = deltaYears < 0 ? scenario.scenarioYears : Infinity;
+  else if (headline.years === Infinity) years = Infinity;
   else years = headline.years + deltaYears;
   let depletionAge;
   if (years === Infinity) depletionAge = null;
-  else if (years === scenario.scenarioYears) depletionAge = scenario.scenarioDepletionAge ?? null;
   else if (deltaYears === 0) depletionAge = headline.depletionAge ?? null;
   else depletionAge = Math.round(scenarioRetAge + years);
   return {
     baseYears: headline.years,
     scenarioYears: years,
-    deltaYears: deltaYears === -Infinity ? deltaYearsFrom(years, headline.years) : deltaYears,
+    comparable: true,
+    deltaYears,
     scenarioDepletionAge: depletionAge,
     baseTotalAtRet: headline.totalAtRet,
     scenarioTotalAtRet: headline.totalAtRet + (scenario.scenarioTotalAtRet - noChange.scenarioTotalAtRet),

@@ -37,6 +37,10 @@ function DeltaChip({ delta }) {
 // scenario figure (BUG-176: it used to be the base plan's age for both, so "work 2 more years"
 // printed an age 2 years early).
 function YearsSustainedLabel({ years, retAge }) {
+  // BUG-180: model-provided "not comparable" state (scenarioYears null) — never an absolute age.
+  if (years === null || years === undefined) {
+    return <span style={{ color: "#f85149" }}>Weaker than your plan (no comparable age)</span>;
+  }
   if (years === Infinity) return <span style={{ color: C.green }}>Sustainable indefinitely</span>;
   const depletionAge = Math.round(retAge + years);
   return <span>Portfolio lasts to age <strong>{depletionAge}</strong></span>;
