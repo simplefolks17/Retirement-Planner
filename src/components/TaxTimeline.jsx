@@ -6,7 +6,9 @@ export function TaxTimeline({ phase2End, totalYears, fedMarginal, effectiveRMDTa
   const workingPct    = totalYears > 0 ? (phase2End / totalYears) * 100 : 0;
   const retirementPct = totalYears > 0 ? ((totalYears - phase2End) / totalYears) * 100 : 0;
 
-  const Seg = ({ pct, color, label, rate }) => {
+  // dp per segment (docs/DESIGN.md "Percent formatting"): fedMarginal is a bracket rate (0 dp),
+  // effectiveRMDTaxRate is a computed rate (1 dp) and must read the same as everywhere else (BUG-174).
+  const Seg = ({ pct, color, label, rate, dp }) => {
     if (pct <= 0) return null;
     return (
       <div style={{
@@ -18,7 +20,7 @@ export function TaxTimeline({ phase2End, totalYears, fedMarginal, effectiveRMDTa
       }}>
         {pct > 8 && (
           <span style={{ fontSize: 10, color: "#0d1117", fontWeight: 700, whiteSpace: "nowrap" }}>
-            {label}: {fmtRate(rate, 0)}
+            {label}: {fmtRate(rate, dp)}
           </span>
         )}
       </div>
@@ -27,8 +29,8 @@ export function TaxTimeline({ phase2End, totalYears, fedMarginal, effectiveRMDTa
 
   return (
     <div style={{ borderRadius: 6, overflow: "hidden", height: 26, display: "flex", marginBottom: 4 }}>
-      <Seg pct={workingPct}    color={C.gold}  label="Working" rate={fedMarginal} />
-      <Seg pct={retirementPct} color={C.green} label="Ret."    rate={effectiveRMDTaxRate} />
+      <Seg pct={workingPct}    color={C.gold}  label="Working" rate={fedMarginal} dp={0} />
+      <Seg pct={retirementPct} color={C.green} label="Ret."    rate={effectiveRMDTaxRate} dp={1} />
     </div>
   );
 }

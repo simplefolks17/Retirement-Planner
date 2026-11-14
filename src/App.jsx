@@ -1678,10 +1678,10 @@ export default function App() {
   // conversion-window count. Null when already retired. Feeds the Strategies
   // "Working longer" card + flow (rule 10 — the screen renders these fields only).
   const workLongerView = useMemo(() => calcWorkLongerBreakEven({
+    // BUG-173: no separate ssInputs — the SS column reads `whatIfBundle.ssInputs`, the exact
+    // object the scenario engine itself uses (override, spouse, basis), so the two can't differ.
     bundle: whatIfBundle, safeRetAge, currentAge, includeSS,
-    ssInputs: { currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge },
-  }), [whatIfBundle, safeRetAge, currentAge, includeSS,
-       currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge]);
+  }), [whatIfBundle, safeRetAge, currentAge, includeSS]);
 
   // ── Horizon display bundles (WI-0.1) — derived numbers come from the model, ──
   // pre-gated and display-ready, so screens only format (principle 6).

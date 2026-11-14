@@ -1666,16 +1666,26 @@ export function calcWorkLongerBreakEven({
   const { baseTotalAtRet, baseYearsSustained, baseDepletionAge, safeLifeExp } = bundle;
   const baseSustainable = baseYearsSustained === Infinity;
 
-  const { currentIncome = 0, incomeGrowth = 0, incomeGrowthEndAge = null, ssClaimingAge = SS_FRA } = ssInputs;
-  const ssAnnualAt = (retAge) => includeSS
-    ? calcBenefit(
-        calcPIA(calcAIME(currentIncome, incomeGrowth, retAge - currentAge, incomeGrowthEndAge, currentAge)),
-        ssClaimingAge,
-      ) * ASSUMPTIONS.MONTHS_PER_YEAR
+  // BUG-173 (Opus review R-2): SS per row comes from the SAME `calcRetirementIncome` the scenario
+  // itself uses (`scenarioSocialSecurity`), fed the same inputs — so a pinned `ssOverride` is
+  // honoured (BUG-150/154's class) and the figure is the HOUSEHOLD's `householdSS` (primary +
+  // spouse), the same quantity the plan headline shows. Inputs: the bundle's own `ssInputs` (what
+  // the scenario engine reads) overlaid by any explicit `ssInputs` argument. When neither carries
+  // the override / spouse keys the defaults are the pre-fix primary-only, PIA-derived behaviour.
+  const ssSrc = { ...(bundle.ssInputs ?? {}), ...ssInputs };
+  const ssPinned = includeSS && (ssSrc.ssOverride ?? null) !== null;
+  const ssAt = (retAge) => includeSS
+    ? calcRetirementIncome({
+        currentIncome: 0, incomeGrowth: 0, incomeGrowthEndAge: null,
+        ssClaimingAge: SS_FRA, spouseSsEstimate: 0, pensionMonthly: 0, pensionStartAge: 0,
+        ...ssSrc,
+        ssOverride: ssSrc.ssOverride ?? null,
+        includeSS: true, currentAge, safeRetAge: retAge,
+      }).householdSS
     : 0;
   const windowAt = (retAge) => Math.max(0, RMD_START_AGE - 1 - retAge);
 
-  const baseSSAnnual = ssAnnualAt(safeRetAge);
+  const baseSSAnnual = ssAt(safeRetAge);
   const baseWindow = windowAt(safeRetAge);
 
   const rows = offsets.map((k) => {
@@ -1689,7 +1699,7 @@ export function calcWorkLongerBreakEven({
       (baseSustainable || scenSustainable || depletionAge == null || baseDepletionAge == null)
         ? null
         : depletionAge - baseDepletionAge;
-    const ssAnnual = ssAnnualAt(retAge);
+    const ssAnnual = ssAt(retAge);
     const window = windowAt(retAge);
     // See the header note: the plan-horizon test, not the never-depletes test.
     // `retAge < safeLifeExp` is required before the year-count comparison:
@@ -1711,6 +1721,9 @@ export function calcWorkLongerBreakEven({
       portfolioAtRet, portfolioDelta: portfolioAtRet - baseTotalAtRet,
       depletionAge, sustainable: scenSustainable, coversPlan, longevityDeltaYears,
       ssAnnual, ssDelta: ssAnnual - baseSSAnnual,
+      // A pinned override with nothing else moving the figure: the screen says "your entered figure"
+      // instead of an unexplained "+$0/yr" (rule 10 — the model decides, the screen renders).
+      ssPinnedFlat: ssPinned && ssAnnual === baseSSAnnual,
       conversionWindowYrs: window, conversionWindowDelta: window - baseWindow,
     };
   }).filter(Boolean);
