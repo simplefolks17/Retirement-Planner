@@ -14,6 +14,7 @@ import { calcRetirementIncome } from "./retirement-income.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
+import { buildSpouseSimInput, runSpouseSim, resolveSpouseIncomeEndAge } from "./spouse-sim.js";
 import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
@@ -23,6 +24,52 @@ import { buildPreviewMetric } from "./apply-preview.js";
 import { calcAIME, calcPIA, calcBenefit } from "./social-security.js";
 import { fmtSigned } from "../formatters.js";
 import { toRetirementYearDollars, inflationRebaseFactor } from "./finance-math.js";
+
+// BUG-157/158: the SCENARIO's own re-derivation of everything the spouse side takes from the
+// PRIMARY's retirement age. Under "auto" (spouseRetirementAge === null) both the spouse's
+// MAGI cutoff in the primary's sim (spouseIncomeEndAge) and the spouse's own accumulation sim
+// (contribution end + the primary-income cutoff) move with the scenario's retirement age;
+// committing the change recomputes them (App.jsx), so a preview that inherits the base plan's
+// frozen results disagrees with its own commit. Both go through the SAME shared builders App
+// uses (spouse-sim.js) — never a second copy. Returns the primary re-sim inputs (with the
+// BUG-138 contribEnd coupling and the cutoff) plus the spouse bundle for the seed/chart.
+// With no spouse (spouseSeedInputs null) or an unchanged retirement age this is inert.
+function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge) {
+  const primaryInputs = coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge);
+  if (!spouseSeedInputs || scenarioRetAge === safeRetAge) {
+    return { primaryInputs, seedInputs: spouseSeedInputs, chartInputs: spouseChartInputs };
+  }
+  const raw = spouseSeedInputs.spouseSimRaw;
+  const spouseIncomeEndAge = resolveSpouseIncomeEndAge({
+    hasSpouse: true,
+    currentAge: simInputs.currentAge,
+    spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+    spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
+    primaryRetAge: scenarioRetAge,
+    lifeExp: spouseSeedInputs.lifeExp,
+  });
+  // Hand-built bundles with no spouseSimRaw keep the old (frozen) spouse sim.
+  if (!raw) {
+    return { primaryInputs: { ...primaryInputs, spouseIncomeEndAge }, seedInputs: spouseSeedInputs, chartInputs: spouseChartInputs };
+  }
+  const spouseSimData = runSpouseSim(buildSpouseSimInput({
+    totalYears: simInputs.totalYears, currentAge: simInputs.currentAge,
+    currentIncome: simInputs.currentIncome, incomeGrowth: simInputs.incomeGrowth,
+    incomeGrowthEndAge: simInputs.incomeGrowthEndAge, filingStatus: simInputs.filingStatus,
+    returnRate: simInputs.returnRate, primaryContribHSA: simInputs.contribHSA,
+    hsaCoverageType: raw.hsaCoverageType,
+    primaryRetAge: scenarioRetAge,
+    spouseRetirementAge: spouseSeedInputs.spouseRetirementAge, lifeExp: spouseSeedInputs.lifeExp,
+    spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+    spouseIncome: simInputs.spouseIncome, spouseIncomeGrowth: simInputs.spouseIncomeGrowth,
+    ...raw,
+  }));
+  return {
+    primaryInputs: { ...primaryInputs, spouseIncomeEndAge },
+    seedInputs: { ...spouseSeedInputs, spouseSimData },
+    chartInputs: spouseChartInputs ? { ...spouseChartInputs, spouseSimData } : spouseChartInputs,
+  };
+}
 
 // Infinity-aware longevity delta: scenarioYears vs baseYearsSustained, with
 // the ±Infinity edges handled explicitly (plain subtraction gives NaN when
@@ -396,6 +443,7 @@ export function calcWhatIfDelta({
 
   // ── Step 1: determine scenario starting balance at retirement ──────────────
   let scenarioTotalAtRet = baseTotalAtRet;
+  let spDelta = null;
 
   // Guard a degenerate retirement-age override: retiring at or before the
   // current age has no accumulation phase, so re-running the sim and indexing
@@ -410,10 +458,12 @@ export function calcWhatIfDelta({
     // the no-resim baseline (baseTotalAtRet) already includes them, so dropping
     // them here would make a forced re-sim's basis asymmetric (BUG-75 fix; same
     // class as the BUG-34/BUG-61 basis mismatches).
+    // BUG-157/158: one shared scenario re-derivation (see scenarioSpouseAwareInputs).
+    spDelta = scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, null, safeRetAge, scenarioRetAge);
     const raw = runSimulation({
       // BUG-138: same contribEnd coupling as calcWhatIfScenario's resim above —
-      // one shared rule, applied at both resim sites.
-      ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+      // one shared rule, applied at both resim sites (+ BUG-157's spouse cutoff).
+      ...spDelta.primaryInputs,
       ...(contribOverrides ?? {}),
       moneyEvents: [...(simInputs.moneyEvents ?? []), ...accumEvents],
     });
@@ -431,7 +481,7 @@ export function calcWhatIfDelta({
       // both the base plan and every scenario, never a stale mix of the two.
       const spouseSeed = spouseSeedInputs
         ? buildSpouseRetirementSeed({
-            ...spouseSeedInputs,
+            ...spDelta.seedInputs,
             currentAge: simInputs.currentAge,
             primaryRetAge: scenarioRetAge,
             spouseRetAge: resolveSpouseRetAge({
@@ -642,8 +692,11 @@ export function calcWhatIfScenario({
   const needsResim = scenarioRetAge !== safeRetAge || scenarioAccum.length > 0 || excludeEventId != null;
 
   let resimRaw = null;
+  let spScen = null;
   if (needsResim) {
     try {
+      // BUG-157/158: one shared scenario re-derivation (see scenarioSpouseAwareInputs).
+      spScen = scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge);
       // Keep permanent accumulation-phase plan events in the re-sim (BUG-34).
       // Kind-aware filter (money-events.js): a duration event spanning the
       // boundary stays in — the sim result is read at the retirement-age row,
@@ -661,7 +714,7 @@ export function calcWhatIfScenario({
       // scenario, exactly as App.jsx's setRetirementAgeCoupled moves it on commit.
       // Without this a work-longer preview stopped contributing at the BASE age.
       resimRaw = runSimulation({
-        ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+        ...spScen.primaryInputs,
         moneyEvents: accumEvents,
       }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     } catch {
@@ -713,10 +766,12 @@ export function calcWhatIfScenario({
   // ── Primary path: the per-account engine (BUG-35/BUG-31) ──────────────────
   if (retPhaseBase) {
     // BUG-77: re-seed the spouse at the SCENARIO's retirement age. Uses the same
-    // shared builder as the main path so the two can never diverge. No spouse
-    // RE-SIM is needed: spouseContribEnd is the spouse's OWN retirement age, so
-    // spouseSimData is invariant to a primary-retirement-age scenario — only the
-    // seed point + gap-year maps (read/built relative to scenarioRetAge) change.
+    // shared builder as the main path so the two can never diverge.
+    // BUG-158: spouseSimData is NOT invariant to a primary-retirement-age scenario.
+    // (The earlier comment here claimed it was; that holds only for an EXPLICIT
+    // spouseRetirementAge — under "auto" the spouse's contribution end follows the
+    // primary's retirement age, so scenarioSpouseAwareInputs re-runs the spouse's sim
+    // at the scenario's age via the same builder App.jsx uses.)
     // Only recomputed when a resim is already happening (retirement age moved, a
     // scenario event forced a re-sim, or an excluded committed event); otherwise
     // retPhaseBase's own spouse fields (already correct for the base retirement
@@ -743,7 +798,7 @@ export function calcWhatIfScenario({
       : null;
     const spouseSeed = (needsResim && spouseSeedInputs)
       ? buildSpouseRetirementSeed({
-          ...spouseSeedInputs,
+          ...spScen.seedInputs,
           currentAge: simInputs.currentAge,
           primaryRetAge: scenarioRetAge,
           spouseRetAge: scenarioSpouseRetAge,
@@ -783,7 +838,7 @@ export function calcWhatIfScenario({
           balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
           // A8: household, not primary-only — the same spouse args App's own
           // buildAccumChart call passes for the solid-line chart.
-          ...(spouseChartInputs ?? {}),
+          ...((spScen?.chartInputs ?? spouseChartInputs) ?? {}),
         })
       : (baseChart ?? []).filter(r => r.age <= scenarioRetAge);
 

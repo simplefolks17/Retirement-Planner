@@ -959,10 +959,23 @@ describe("spouse-household golden master (T-X.4, exact-locked — the auto/null 
   //   62:        99,220 -> 134,194   (187,641)
   // The residual gap is BUG-136 (the conversion schedule is still inherited from the
   // base plan); these locks are expected to close onto the truth column when it lands.
+  //
+  // RE-LOCKED again 2026-11-14 (BUG-157 + BUG-158). Under "auto" the scenario used to
+  // reuse the spouse's accumulation sim frozen at the BASE retirement age and the BASE
+  // plan's spouse-income MAGI cutoff, while the seed iterated the spouse's gap years at
+  // the scenario's age — a spouse earning full wages and saving nothing. The scenario now
+  // rebuilds both through the same shared builders App.jsx uses (src/model/spouse-sim.js).
+  // Only spillover moved (totalAtRet / depletionAge unchanged), and only TOWARD truth:
+  //        preview before -> after   (committed truth)
+  //   58:       743,001 -> 743,001   (742,667)   unchanged: no extra gap years to rebuild
+  //   60:       444,590 -> 474,936   (474,771)   gap 30,181 -> 165
+  //   62:       134,194 -> 192,945   (187,641)   gap 53,447 -> 5,304 (now just above)
+  // The remaining gap is BUG-136 and nothing else: with the conversion schedule zeroed
+  // preview and commit agree EXACTLY (whatif-parity-wiring.test.js, "BUG-157/158" block).
   const S = {
     58: { depletionAge: 112,  totalAtRet: 3_831_682, spillover: 743_001 },
-    60: { depletionAge: 135,  totalAtRet: 4_453_337, spillover: 444_590 },
-    62: { depletionAge: null, totalAtRet: 5_163_187, spillover: 134_194 },
+    60: { depletionAge: 135,  totalAtRet: 4_453_337, spillover: 474_936 },
+    62: { depletionAge: null, totalAtRet: 5_163_187, spillover: 192_945 },
   };
 
   it("resolves the spouse's retirement age from the AUTO default, not an explicit input", () => {

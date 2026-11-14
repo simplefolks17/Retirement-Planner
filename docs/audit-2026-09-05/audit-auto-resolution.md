@@ -53,6 +53,7 @@ Direction: the frozen cutoff stops the spouse's wages counting in household MAGI
 under-stated MAGI ⇒ the primary's Roth-IRA phase-out doesn't bite ⇒ phantom contributions.
 The error GROWS with each extra year worked (optimistic bias, monotonic).
 Files: `src/App.jsx:1297`; `src/model/what-if.js:371`, `:605`.
+**FIXED by BUG-157 (2026-11-14, batch L1-D)** — shared `resolveSpouseIncomeEndAge` (`src/model/spouse-sim.js`), recomputed at both scenario re-sims; see `docs/BUGS.md` and `whatif-parity-wiring.test.js`.
 
 ---
 ## VERIFIED FINDING B (MEDIUM-HIGH) — `spouseSimData` is NOT scenario-invariant under "auto"; what-if.js's comment asserting it is, is false
@@ -93,6 +94,7 @@ scenRet=65  years 19.263 / 19.510   (+0.247)
 only in longevity, so it is understated but real and monotone.
 Files: `src/App.jsx:358` (`spouseContribEnd`), `:1479` (`spouseSeedInputs.spouseSimData`);
 `src/model/what-if.js:657-690`.
+**FIXED by BUG-158 (2026-11-14, batch L1-D)** — one shared spouse-sim builder (`buildSpouseSimInput`, `src/model/spouse-sim.js`) used by App.jsx and re-run by the scenario at its own retirement age; the false invariant comment is gone.
 
 ---
 ## VERIFIED FINDING C (HIGH) — `retirementState` is seeded ONCE from `selectedState` and never re-derives

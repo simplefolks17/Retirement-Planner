@@ -272,3 +272,160 @@ describe("BUG-150 — a pinned ssOverride must not freeze the spouse's spousal f
     }
   }
 });
+
+// ── BUG-157 + BUG-158 — scenarios under an "auto" spouse retirement age ──────────────
+//
+// This block is parity Finding 7's gap ("no spouse household under auto is covered") and
+// closes Findings A/B of audit-auto-resolution (2026-09-05). Under spouseRetirementAge ===
+// null the spouse retires the same calendar year as the primary, so EVERYTHING the spouse
+// side derives from the primary's retirement age must be re-derived for a scenario's own
+// age, never inherited from the base plan:
+//   BUG-157 — whatIfSimInputs.spouseIncomeEndAge (the age after which the spouse's wages
+//             stop counting in the PRIMARY's MAGI) — needs an OLDER spouse so the cutoff
+//             lands inside accumulation, where it drives the primary's Roth phase-out.
+//   BUG-158 — the spouse's own accumulation sim (contribution end = the spouse's resolved
+//             retirement age) — needs a YOUNGER spouse with a real 401k contribution so
+//             there are gap years in which saving visibly stops or continues.
+// Conversions are zeroed (as in the FULL PARITY block) so BUG-136's inherited window is
+// not involved: with it removed preview and commit must agree EXACTLY.
+import {
+  buildSpouseSimInput, runSpouseSim, resolveSpouseIncomeEndAge,
+} from "../model/spouse-sim.js";
+
+const noConv = (a) => {
+  a.fire(() => a.latest().conversion.conversionMode.set("custom"));
+  a.fire(() => a.latest().conversion.annualConversionAmt.set(0));
+};
+
+// Finding A's printed repro: MFJ, primary 45 retiring at 60, OLDER spouse 55, both
+// earning $150k, Roth $7k/yr, spouseRetirementAge left at null.
+const setupOlderSpouse = (a) => {
+  a.fire(() => a.latest().assumptions.currentAge.set(45));
+  a.fire(() => a.latest().assumptions.retirementAge.set(60));
+  a.fire(() => a.latest().profile.filingStatus.set("mfj"));
+  a.fire(() => a.latest().ss.isMarried.set(true));
+  a.fire(() => a.latest().ss.spouseCurrentAge.set(55));
+  a.fire(() => a.latest().profile.currentIncome.set(150_000));
+  a.fire(() => a.latest().profile.spouseIncome.set(150_000));
+  a.fire(() => a.latest().accounts.roth.contrib.set(7_000));
+  a.fire(() => a.latest().spouseAccounts.roth.contrib.set(7_000));
+  noConv(a);
+};
+
+// Finding B's printed repro: MFJ, primary 48 retiring at 57, YOUNGER spouse 37 (an 11-year
+// auto gap) earning $120k with a $20k 401k contribution, $120k spend.
+const setupYoungerSpouse = (a) => {
+  a.fire(() => a.latest().assumptions.currentAge.set(48));
+  a.fire(() => a.latest().assumptions.retirementAge.set(57));
+  a.fire(() => a.latest().profile.filingStatus.set("mfj"));
+  a.fire(() => a.latest().ss.isMarried.set(true));
+  a.fire(() => a.latest().ss.spouseCurrentAge.set(37));
+  a.fire(() => a.latest().profile.spouseIncome.set(120_000));
+  a.fire(() => a.latest().spouseAccounts.trad401k.contrib.set(20_000));
+  a.fire(() => a.latest().spending.annualExpenses.set(120_000));
+  noConv(a);
+};
+
+// Snapshot-then-unmount: two live apps share the module-level `captured` array, so
+// anything read after the second mount would be the second app's props.
+function snapshotPreviewAndCommit(setup, target) {
+  const a1 = mount(); setup(a1);
+  const base = a1.latest();
+  const baseEnd = base.whatIfSimInputs.simInputs.spouseIncomeEndAge;
+  const baseRows = base.whatIfSimInputs.spouseSeedInputs.spouseSimData;
+  const baseTotal = base.totalAtRet;
+  const preview = calcWhatIfScenario(base.whatIfSimInputs, { retirementAge: target });
+  a1.unmount();
+
+  const a2 = mount(); setup(a2);
+  a2.fire(() => a2.latest().assumptions.retirementAge.set(target));
+  const c = a2.latest();
+  const out = {
+    baseEnd, baseRows, baseTotal, preview,
+    committedEnd: c.whatIfSimInputs.simInputs.spouseIncomeEndAge,
+    committedRows: c.whatIfSimInputs.spouseSeedInputs.spouseSimData,
+    committed: {
+      totalAtRet: c.totalAtRet, years: c.yearsSustained, chart: c.chartData,
+      depletion: c.retirementWalk.depletionAge, spillover: c.retirementWalk.totalSpouseSpillover,
+    },
+  };
+  a2.unmount();
+  return out;
+}
+
+describe("BUG-157 — the spouse's MAGI cutoff moves with the scenario's retirement age (auto)", () => {
+  it("fixture precondition: under auto the cutoff really is tied to the primary's age and lands in accumulation", () => {
+    const r = snapshotPreviewAndCommit(setupOlderSpouse, 65);
+    expect(r.baseEnd).toBe(50);        // spouse retires at 55 <=> primary is 50 (age 60 base)
+    expect(r.committedEnd).toBe(55);   // committing a 65 retirement moves it to 55
+  });
+
+  for (const target of [63, 65, 68]) {
+    it(`retire ${target}: scenarioTotalAtRet / years / chart match the committed plan exactly`, () => {
+      const r = snapshotPreviewAndCommit(setupOlderSpouse, target);
+      expect(r.preview.scenarioTotalAtRet).toBe(r.committed.totalAtRet);
+      expect(r.preview.scenarioYears).toBe(r.committed.years);
+      expect(r.preview.chart).toEqual(r.committed.chart);
+    });
+  }
+
+  it("resolveSpouseIncomeEndAge is the one derivation (auto follows the primary, explicit does not)", () => {
+    const args = { hasSpouse: true, currentAge: 45, spouseCurrentAge: 55, lifeExp: 95 };
+    expect(resolveSpouseIncomeEndAge({ ...args, spouseRetirementAge: null, primaryRetAge: 60 })).toBe(50);
+    expect(resolveSpouseIncomeEndAge({ ...args, spouseRetirementAge: null, primaryRetAge: 65 })).toBe(55);
+    expect(resolveSpouseIncomeEndAge({ ...args, spouseRetirementAge: 62, primaryRetAge: 60 })).toBe(52);
+    expect(resolveSpouseIncomeEndAge({ ...args, spouseRetirementAge: 62, primaryRetAge: 65 })).toBe(52);
+    expect(resolveSpouseIncomeEndAge({ ...args, hasSpouse: false, spouseRetirementAge: null, primaryRetAge: 60 })).toBeNull();
+  });
+});
+
+describe("BUG-158 — the spouse's own accumulation sim is re-run at the scenario's age (auto)", () => {
+  for (const target of [60, 63, 65]) {
+    it(`retire ${target}: scenarioYears / chart / depletion match the committed plan exactly`, () => {
+      const r = snapshotPreviewAndCommit(setupYoungerSpouse, target);
+      expect(r.preview.scenarioYears).toBe(r.committed.years);
+      expect(r.preview.scenarioTotalAtRet).toBe(r.committed.totalAtRet);
+      expect(r.preview.chart).toEqual(r.committed.chart);
+      expect(r.preview.scenarioDepletionAge).toBe(r.committed.depletion);
+      expect(r.preview.totalSpouseSpillover).toBe(r.committed.spillover);
+    });
+  }
+
+  it("fixture precondition: the commit really does move the spouse's contributions (frozen rows would differ)", () => {
+    const r = snapshotPreviewAndCommit(setupYoungerSpouse, 63);
+    const sum = (rows) => rows.reduce((s, d) => s + (d.c401k ?? 0), 0);
+    expect(sum(r.committedRows)).toBeGreaterThan(sum(r.baseRows));
+  });
+
+  it("an EXPLICIT spouseRetirementAge keeps the spouse's contributions untouched by a primary-age scenario", () => {
+    const explicit = (a) => { setupYoungerSpouse(a); a.fire(() => a.latest().spouseAccounts.spouseRetirementAge.set(62)); };
+    const r = snapshotPreviewAndCommit(explicit, 63);
+    // spouseContribEnd is the spouse's OWN 62, whatever the primary does.
+    const c401k = (rows) => rows.map(d => d.c401k ?? 0);
+    expect(c401k(r.committedRows)).toEqual(c401k(r.baseRows));
+    expect(r.preview.scenarioYears).toBe(r.committed.years);
+    expect(r.preview.scenarioTotalAtRet).toBe(r.committed.totalAtRet);
+  });
+
+  it("the scenario's rebuilt spouse rows are byte-identical to App's own at the base retirement age", () => {
+    const a = mount(); setupYoungerSpouse(a);
+    const bundle = a.latest().whatIfSimInputs;
+    const b = bundle.simInputs;
+    const raw = bundle.spouseSeedInputs.spouseSimRaw;
+    const rebuilt = runSpouseSim(buildSpouseSimInput({
+      totalYears: b.totalYears, currentAge: b.currentAge,
+      currentIncome: b.currentIncome, incomeGrowth: b.incomeGrowth,
+      incomeGrowthEndAge: b.incomeGrowthEndAge, filingStatus: b.filingStatus,
+      returnRate: b.returnRate, primaryContribHSA: b.contribHSA,
+      hsaCoverageType: raw.hsaCoverageType,
+      primaryRetAge: a.latest().assumptions.retirementAge.value,
+      spouseRetirementAge: bundle.spouseSeedInputs.spouseRetirementAge, lifeExp: bundle.spouseSeedInputs.lifeExp,
+      spouseCurrentAge: bundle.spouseSeedInputs.spouseCurrentAge,
+      spouseIncome: b.spouseIncome, spouseIncomeGrowth: b.spouseIncomeGrowth,
+      ...raw,
+    }));
+    expect(rebuilt.length).toBeGreaterThan(0);
+    expect(rebuilt).toEqual(bundle.spouseSeedInputs.spouseSimData);
+    a.unmount();
+  });
+});

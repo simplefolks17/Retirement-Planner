@@ -9,7 +9,8 @@ import { C, panel, sectionTitle, mono, selectStyle } from "./theme.js";
 import { fmt, fmtPct, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge, coupleContribEndAges, coupleCurrentAge } from "./model/simulation.js";
-import { clampIncomePlateauAge, plateauAgeInFrame } from "./model/income-growth.js";
+import { clampIncomePlateauAge } from "./model/income-growth.js";
+import { buildSpouseSimInput, runSpouseSim, resolveSpouseIncomeEndAge, spouseHsaLimitFor } from "./model/spouse-sim.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -308,14 +309,15 @@ export default function App() {
   const effectiveSpouseRetAge = resolveSpouseRetAge({
     spouseRetirementAge, primaryRetAge: retirementAge, spouseCurrentAge, lifeExp: lifeExpect,
   });
+  const spouseIncomeEndAgeBase = resolveSpouseIncomeEndAge({
+    hasSpouse, currentAge, spouseCurrentAge, spouseRetirementAge, primaryRetAge: retirementAge, lifeExp: lifeExpect,
+  });
   // HSA family HDHP limit is a SHARED household ceiling (rule 4). Under 'self' each
   // person keeps the self-only cap (runSimulation's default, HSA_LIMIT_2026 — the
   // existing behavior, byte-identical). Under 'family' the household shares
   // HSA_FAMILY_LIMIT_2026: primary draws first, spouse gets the rest.
   const primaryHsaLimit = hsaCoverageType === "family" ? HSA_FAMILY_LIMIT_2026 : HSA_LIMIT_2026;
-  const spouseHsaLimit  = hsaCoverageType === "family"
-    ? Math.max(0, HSA_FAMILY_LIMIT_2026 - Math.min(contribHSA, HSA_FAMILY_LIMIT_2026))
-    : HSA_LIMIT_2026;
+  const spouseHsaLimit  = spouseHsaLimitFor(hsaCoverageType, contribHSA);
 
   const simData = useMemo(() => {
     const raw = runSimulation({
@@ -331,7 +333,7 @@ export default function App() {
       // The primary's age in the calendar year the SPOUSE retires. Inclusive (income
       // counts THROUGH the retirement year), matching contribEnd*'s `age <= end`
       // convention. null when there's no spouse — inert (byte-identical).
-      spouseIncomeEndAge: hasSpouse ? primaryAgeAt(currentAge, spouseCurrentAge, effectiveSpouseRetAge) : null,
+      spouseIncomeEndAge: spouseIncomeEndAgeBase,
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards
@@ -351,7 +353,7 @@ export default function App() {
     moneyEvents,
     activeConversionEvents, stateRate,
     primaryHsaLimit,
-    hasSpouse, effectiveSpouseRetAge, spouseCurrentAge,
+    spouseIncomeEndAgeBase,
   ]);
 
   // Spouse's own accumulation sim (#30) — mirrors the primary's runSimulation call
@@ -365,34 +367,24 @@ export default function App() {
   // does (rule 9). Money events and Roth-conversion events are primary/household-
   // modeled only — never run on the spouse sim (no double-count). hasSpouse=false →
   // [] → every spouse scalar below is 0.
-  const spouseContribEnd = effectiveSpouseRetAge;
   const spouseSimData = useMemo(() => {
     if (!hasSpouse) return [];
-    const raw = runSimulation({
-      totalYears, currentAge: spouseCurrentAge,
-      // BUG-156: the spouse's OWN salary has no plateau input (null); the PRIMARY's plateau
-      // applies only to the primary's income (the "other earner" here), re-expressed in the
-      // spouse's age frame (same calendar year).
-      currentIncome: spouseIncome, incomeGrowth: spouseIncomeGrowth, incomeGrowthEndAge: null, filingStatus,
-      otherEarnerGrowthEndAge: plateauAgeInFrame(incomeGrowthEndAge, currentAge, spouseCurrentAge),
-      spouseIncome: currentIncome, spouseIncomeGrowth: incomeGrowth, returnRate,
-      bal401k: spouseBal401k, balRoth: spouseBalRoth, balTaxable: spouseBalTaxable, balHSA: spouseBalHSA,
-      contrib401k: spouseContrib401k, contribRoth: spouseContribRoth,
-      contribTaxable: spouseContribTaxable, contribHSA: spouseContribHSA,
-      contribEnd401k: spouseContribEnd, contribEndRoth: spouseContribEnd,
-      contribEndTaxable: spouseContribEnd, contribEndHSA: spouseContribEnd,
-      calcEmployerMatchFn: spouseEmployerMatch,
-      hsaLimit: spouseHsaLimit,
-      // = spouseAgeAtPrimaryRet. Without this the spouse's own sim counted the PRIMARY's
-      // salary in household MAGI forever, including years after the primary retired —
-      // wrongly suppressing the spouse's Roth contributions during the gap years.
-      spouseIncomeEndAge: spouseAgeAt(currentAge, spouseCurrentAge, safeRetAge),
-    });
-    return raw.map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
+    // BUG-157/158: ONE shared builder (spouse-sim.js) — the scenario re-sim in what-if.js
+    // calls the same function with the scenario's retirement age, so the two can't drift.
+    return runSpouseSim(buildSpouseSimInput({
+      totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
+      returnRate, primaryContribHSA: contribHSA, hsaCoverageType,
+      primaryRetAge: safeRetAge, spouseRetirementAge, lifeExp: lifeExpect,
+      spouseCurrentAge, spouseIncome, spouseIncomeGrowth,
+      spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
+      spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA,
+      spouseEmployerMatch,
+    }));
   }, [hasSpouse, totalYears, spouseCurrentAge, spouseIncome, spouseIncomeGrowth, incomeGrowthEndAge,
       filingStatus, currentIncome, incomeGrowth, returnRate, spouseBal401k, spouseBalRoth,
       spouseBalTaxable, spouseBalHSA, spouseContrib401k, spouseContribRoth, spouseContribTaxable,
-      spouseContribHSA, spouseContribEnd, spouseEmployerMatch, spouseHsaLimit, safeRetAge, currentAge]);
+      spouseContribHSA, spouseEmployerMatch, contribHSA, hsaCoverageType, safeRetAge,
+      spouseRetirementAge, lifeExpect, currentAge]);
 
   const spouseCurrentSnapshot = useMemo(() => ({
     age: currentAge, tradGross: spouseBal401k, "Roth IRA": spouseBalRoth,
@@ -1367,14 +1359,14 @@ export default function App() {
     // Permanent plan input (Step 7) — a what-if re-sim must apply the same
     // spouse-retires-first MAGI cutoff the main plan uses, or a forced resim's
     // baseline would silently diverge from the committed plan.
-    spouseIncomeEndAge: hasSpouse ? primaryAgeAt(currentAge, spouseCurrentAge, effectiveSpouseRetAge) : null,
+    spouseIncomeEndAge: spouseIncomeEndAgeBase,
   }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
        contrib401k, contribRoth, contribTaxable, contribHSA,
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
        employerMatch, moneyEvents, activeConversionEvents, stateRate,
-       hasSpouse, effectiveSpouseRetAge, spouseCurrentAge]);
+       spouseIncomeEndAgeBase]);
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.
@@ -1598,12 +1590,13 @@ export default function App() {
     // "before" longevity metric doesn't fall back to a round(retAge+years)
     // derivation that can land one year early.
     baseDepletionAge: depletionAge,
-    // BUG-77: scenario-invariant spouse re-seed inputs. spouseContribEnd is the
-    // spouse's OWN retirement age (independent of the primary's), so spouseSimData
-    // itself never changes for a primary-retirement-age scenario — only the seed
-    // point (read at the SCENARIO's retirement age) and the gap-year maps need to be
-    // rebuilt, via the SAME buildSpouseRetirementSeed builder the main path uses. null
-    // with no spouse (inert).
+    // BUG-77: spouse re-seed inputs. The seed point (read at the SCENARIO's retirement
+    // age) and the gap-year maps are rebuilt via the SAME buildSpouseRetirementSeed
+    // builder the main path uses. BUG-158: spouseSimData is NOT scenario-invariant —
+    // under "auto" (spouseRetirementAge null) the spouse's contribution end follows the
+    // PRIMARY's retirement age, so what-if.js re-runs the spouse's sim (same
+    // spouse-sim.js builder, spouseSimRaw below) at the scenario's age. null with no
+    // spouse (inert).
     // BUG-127: carry the RAW spouseRetirementAge (may be null = "auto") plus
     // spouseCurrentAge/lifeExp, not the already-resolved effectiveSpouseRetAge
     // — a scenario must resolve the spouse's retirement age against ITS OWN
@@ -1613,6 +1606,14 @@ export default function App() {
     spouseSeedInputs: hasSpouse ? {
       spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
       spouseRetirementAge, lifeExp: lifeExpect, spouseNetRate, inflationRate,
+      // BUG-158: RAW inputs for the scenario's spouse re-sim (spouse-sim.js builder) — the
+      // spouse's contribution end follows the primary's retirement age under "auto".
+      spouseSimRaw: {
+        hsaCoverageType,
+        spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
+        spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA,
+        spouseEmployerMatch,
+      },
     } : null,
     // #30 interop: the same two args App's own buildAccumChart call passes, so a
     // resim's accumulation chart is HOUSEHOLD like the main path's (a pre-existing
@@ -1642,6 +1643,8 @@ export default function App() {
        hasSpouse, spouseSimData, spouseCurrentSnapshot, spouseCurrentAge,
        spouseRetirementAge, lifeExpect, spouseNetRate, inflationRate,
        spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
+       spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA,
+       spouseEmployerMatch, hsaCoverageType,
        currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge, includeSS,
        ssOverride, spouseSsEstimate, pensionMonthly, pensionStartAge,
        isMarried, spouseClaimingAge, spouseBenefitBasis]);
