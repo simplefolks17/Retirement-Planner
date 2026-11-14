@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-178 — the wizard's untouched spend answer was stale against a changed income answer (Opus review 2 S-5, HIGH, regression from BUG-167; FIXED 2026-11-14)
+
+**Severity: HIGH.** BUG-167 sent `monthlySpend` only when it differed from the PRE-wizard seed. An untouched answer leaves `annualExpenses` auto, and auto spending follows the wizard's NEW income. Income $200k with Q5 untouched: summary showed $4,781/mo, saved plan used $10,617 (2.2x, 15 years worse); $60k: used $2,267 (0.47x, 56 years better). The summary label also read "Monthly income" for a spending figure.
+**Fix (commit the shown figure once it could be stale).** `handleSave` now sends `monthlySpend` when spend OR income OR current age changed; only a fully untouched wizard still leaves auto alone (so BUG-167's identical-plan guarantee holds). Chosen over re-seeding because a live seed needs the whole tax/contribution pipeline recomputed from the wizard's income, which is model work not available to the screen (rule 10). Label is now "Monthly spending". **Files:** `src/components/HorizonShell.jsx`.
+**Tests/revert-and-confirm.** `onboarding-wizard-save.test.js` (real wizard): income to $200k and to $60k, Q5 untouched, saved `monthlyTodaysExp` == seeded/shown figure; summary says "Monthly spending". Reverting the condition and label: both new tests fail; restored, 11/11 pass.
+
 ### BUG-177 — a pinned SS override did not rescale with the claim age (owner decision on the BUG-154 follow-up; FIXED 2026-11-14)
 
 **Severity: MEDIUM.** Opus review, BUG-154 verdict: with 38,000 pinned and the claim slider moved 70 -> 67 -> 65 -> 62, the claim leg stayed 38,000 while the age-70 leg went 38,000 -> 47,120 -> 54,348 -> 67,314, a fake "delay gain" created by exploring an earlier age. **Owner decision (2026-11-14):** a pinned override is the benefit at the claim age it was ENTERED at; a different claim age rescales it so benefits are never overstated.

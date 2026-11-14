@@ -178,3 +178,38 @@ describe("onboarding wizard → typed savings answer (BUG-171)", () => {
     act(() => r.unmount());
   });
 });
+
+// ── BUG-178 (Opus review 2, S-5, HIGH): the shown spend answer must be the plan's ─────────
+// BUG-167 sent monthlySpend only when it differed from the PRE-wizard seed. But an untouched answer
+// leaves annualExpenses on auto, and auto spending follows the wizard's NEW income, so changing only
+// the income made the confirmed plan disagree with the figure the summary showed.
+describe("onboarding wizard → shown spend equals saved spend (BUG-178)", () => {
+  const runIncome = (steps /* +/- 5k steps on Q2 */) => {
+    const r = mountWizard();
+    const seed = lastProps().statementView.monthlyTodaysExp;
+    click(r.root, byText("Next →"), "Next"); // Q1 -> Q2
+    const aria = steps > 0 ? "increase What do you earn a year?" : "decrease What do you earn a year?";
+    for (let i = 0; i < Math.abs(steps); i++) click(r.root, byAria(aria), "income step");
+    for (let i = 0; i < 3; i++) click(r.root, byText("Next →"), "Next");
+    click(r.root, byText("Build my plan →"), "Build my plan");
+    const summary = textOf(r.root.findAll(n => n.type === "div")[0]);
+    click(r.root, byText("Save as my plan →"), "Save as my plan");
+    click(r.root, byText("Yes, save my plan"), "confirm");
+    const saved = lastProps().statementView.monthlyTodaysExp;
+    const income = lastProps().currentIncome;
+    act(() => r.unmount());
+    return { seed, saved, income, summary };
+  };
+  it("income raised to $200k, spend untouched: saved monthly spend is the figure shown", () => {
+    const { seed, saved, income, summary } = runIncome(20);
+    expect(income).toBe(200_000);
+    expect(summary).toContain("Monthly spending");
+    expect(summary).not.toContain("Monthly income");
+    expect(saved).toBe(seed);
+  });
+  it("income lowered to $60k, spend untouched: saved monthly spend is the figure shown", () => {
+    const { seed, saved, income } = runIncome(-8);
+    expect(income).toBe(60_000);
+    expect(saved).toBe(seed);
+  });
+});

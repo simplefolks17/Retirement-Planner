@@ -297,14 +297,25 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
       retirementAge: vals.retirementAge,
       // BUG-167: only when the user CHANGED the seeded answer — an untouched seed must leave the
       // auto (null) annualExpenses auto, not freeze it into a fixed number.
-      ...(vals.monthlySpend !== initialValues?.monthlySpend ? { monthlySpend: vals.monthlySpend } : {}),
+      //
+      // BUG-178 (review S-5): ALSO send it when the income or age answer changed. The seed is
+      // computed once from the PRE-wizard state, but auto spending (take-home minus saving)
+      // follows the NEW income, so an untouched answer would leave the plan on a different figure
+      // (2.2x at $200k, 0.47x at $60k) than the one the summary showed and the user confirmed.
+      // Committing the shown figure explicitly makes the confirm screen truthful. Re-seeding from
+      // the live income would need the whole tax/contribution pipeline re-run per keystroke, which
+      // lives in the model, so we freeze only in the case where the shown number would be stale.
+      ...((vals.monthlySpend !== initialValues?.monthlySpend
+        || vals.currentIncome !== initialValues?.currentIncome
+        || vals.currentAge !== initialValues?.currentAge)
+        ? { monthlySpend: vals.monthlySpend } : {}),
     });
     onComplete();
   };
 
   const summaryStats = [
     ["Retire at",       String(vals.retirementAge),                        t.ink],
-    ["Monthly income",  `${fmtFull(vals.monthlySpend)}/mo`,                t.warm],
+    ["Monthly spending", `${fmtFull(vals.monthlySpend)}/mo`,                t.warm],
     ["Savings today",   fmt(vals.totalSaved),                              t.ink],
   ];
 
