@@ -719,6 +719,35 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 
+### BUG-164 — event-panel age inputs committed unclamped values on every keystroke (CONSOLIDATION-REDO-PLAN sweep 2; FIXED 2026-11-14)
+
+**Severity: LOW.** `MoneyEventsPanel` wrote `Number(e.target.value)` straight into committed state on
+every keystroke, so typing "65" ran every model memo on age 6 for a frame. `ConversionEventsPanel`
+guarded non-finite input but never clamped to its own min/max until blur.
+**Fix:** both panels now use the shared `DeferredInput` (draft locally, clamp and commit on blur or
+Enter). `DeferredInput` gained optional `placeholder` / `ariaLabel` passthrough; the Conversion
+panel's now-unused `clampAge` was removed.
+**Files:** `src/components/DeferredInput.jsx`, `src/components/MoneyEventsPanel.jsx`,
+`src/components/ConversionEventsPanel.jsx`.
+**Test:** `src/__tests__/event-panel-age-input.test.js` (4). **Revert-and-confirm** (lane-2 agent,
+observed): `DeferredInput` mutated to commit per keystroke -> 3 of 4 fail; restored -> pass.
+
+### BUG-163 — event ids minted four different ways; one had no entropy (CONSOLIDATION-REDO-PLAN sweep 1; FIXED 2026-11-14)
+
+**Severity: LOW.** Three sites minted numeric `Date.now() + Math.random()` ids and one
+(`LifeEventSheet`) minted `String(Date.now())`. Mixed types could land in one array (so an `===`
+lookup could miss), and two life events created in the same millisecond collided. PR #58 filed this
+as "BUG-77", a number since taken by PR #59; it is re-filed here.
+**Fix:** one exported `mintEventId()` in `src/model/money-events.js` (string
+`ev-<time36>-<seq36>-<rand>`; a monotonic counter guarantees same-millisecond uniqueness), used by
+all four sites. Every id comparison was audited (`===` between an event's own id values; no
+`Number(id)` anywhere), so legacy numeric ids in existing state still match.
+**Files:** `src/model/money-events.js`, `src/components/MoneyEventsPanel.jsx`,
+`src/components/ConversionEventsPanel.jsx`, `src/horizon/LifeEventSheet.jsx`, `src/App.jsx`.
+**Tests:** `money-events.test.js` (string type; 10,000 unique ids with frozen time and randomness),
+`src/__tests__/event-id-wiring.test.js` (real App). **Revert-and-confirm** (re-run by the
+orchestrator): `mintEventId` -> `String(Date.now())` fails the uniqueness test; restored -> pass.
+
 ### BUG-162 — Classic What-If panel seeded its ages once and never re-synced (found 2026-11-14 by the oversight audit; FIXED 2026-11-14)
 
 **Severity: LOW.** `WhatIfPanel.jsx` seeded `eventAge`/`affAge` (`currentAge + 5`) and `targetAge`
