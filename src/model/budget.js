@@ -56,6 +56,7 @@ export function calcOptimizedAllocation({
   contribRoth,
   contribHSA,
   contribTaxable,
+  hsaLimit = HSA_LIMIT_2026, // BUG-182: the primary's coverage-aware ceiling (default: self-only)
   rothFullyPhased,
   matchMode,
   matchFormulaCap,
@@ -85,7 +86,7 @@ export function calcOptimizedAllocation({
   }
 
   // 2. HSA (triple tax advantage)
-  const hsaRoom = Math.max(0, HSA_LIMIT_2026 - contribHSA);
+  const hsaRoom = Math.max(0, hsaLimit - contribHSA);
   if (remaining > 0 && hsaRoom > 0) {
     const hsaAdd = Math.min(remaining, hsaRoom);
     alloc.extraHSA = hsaAdd;

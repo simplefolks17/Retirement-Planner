@@ -25,6 +25,16 @@ export function spouseHsaLimitFor(hsaCoverageType, primaryContribHSA) {
     : HSA_LIMIT_2026;
 }
 
+// BUG-182 (Opus review 2, S-4): the HSA contribution ceiling the PRIMARY's own surplus lever
+// (optimizer + HSA action card) may use. Self-only: the self-only cap. Family: the shared family
+// ceiling minus the share the spouse is already using (their EFFECTIVE contribution), so raising
+// the primary can never squeeze the spouse's share (the household total stays <= the family cap).
+export function primaryHsaCeilingForSurplus(hsaCoverageType, spouseContribHSAEffective) {
+  return hsaCoverageType === "family"
+    ? Math.max(0, HSA_FAMILY_LIMIT_2026 - Math.max(0, spouseContribHSAEffective || 0))
+    : HSA_LIMIT_2026;
+}
+
 // The PRIMARY's age in the calendar year the SPOUSE retires (inclusive — income counts
 // THROUGH the retirement year, matching contribEnd*'s `age <= end`). null with no spouse.
 // Takes the RAW spouseRetirementAge + the primary retirement age in play, so a scenario

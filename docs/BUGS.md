@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-182 — family HSA coverage did not reach the surplus optimizer, HSA card, Classic slider, or the surplus preview (Opus review 2 S-4; FIXED 2026-11-14)
+
+**Severity: LOW.** Family coverage raised the sim cap and the Horizon field to 8,750 but `calcOptimizedAllocation`, the HSA action card and Classic's HSA slider stayed on the self-only 4,400, so a family household with 4,900 of room got +550 and the rest overflowed to Taxable. Separately every what-if resim lacked `hsaLimit`, so the surplus Apply preview capped the primary at 4,400 (preview $8.4M vs applied $8.77M, spouse HSA 0), and a primary HSA override never re-capped the spouse's squeezed share.
+**Fix.** New `primaryHsaCeilingForSurplus` (family: shared ceiling minus the spouse's effective share); `hsaLimit` param on the optimizer and action cards; Classic `contribMax` uses `primaryHsaLimit`; `whatIfSimInputs.hsaLimit`; `scenarioSpouseAwareInputs` re-runs the spouse sim under family coverage when `contribOverrides.contribHSA` changes. Defaults keep self-only behaviour (golden masters unmoved). **Files:** `src/model/spouse-sim.js`, `src/model/budget.js`, `src/model/action-cards.js`, `src/model/what-if.js`, `src/App.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/family-hsa-surplus.test.js` (5), each site reverted singly (optimizer arg, Classic max, resim cap, squeeze, card). Gap: App's `hsaLimit` arg at the Classic action-card call site is untested (card not on the default Classic tab). See `impl-log-R3-A.md`.
+
 ### BUG-180 — the BUG-176 anchor printed the blended walk's absolute age for a sustainable plan made worse (Opus review 2 S-2; FIXED 2026-11-14; BUG-36 stays Open)
 
 **Severity: MEDIUM.** Younger-spouse household at $30k spend (headline `yearsSustained` Infinity), Classic "Retire 2 years early": panel read "Portfolio lasts to age 81" vs "Sustainable indefinitely" with chip -9.7 yrs; committing the age gives depletion age 183. `anchorWhatIfToHeadline` fell back to the blended scenario's own absolute when the headline was Infinity and the lever hurt (R-9's contradiction in an edge state).

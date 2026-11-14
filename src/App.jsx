@@ -10,7 +10,7 @@ import { fmt, fmtPct, fmtRate, fmtFull } from "./formatters.js";
 import { calcTaxBasis } from "./model/tax-basis.js";
 import { runSimulation, buildProjectedIncomeByAge, projectedIncomeAtAge, coupleContribEndAges, coupleCurrentAge } from "./model/simulation.js";
 import { clampIncomePlateauAge } from "./model/income-growth.js";
-import { buildSpouseSimInput, runSpouseSim, resolveSpouseIncomeEndAge, spouseHsaLimitFor } from "./model/spouse-sim.js";
+import { buildSpouseSimInput, runSpouseSim, resolveSpouseIncomeEndAge, spouseHsaLimitFor, primaryHsaCeilingForSurplus } from "./model/spouse-sim.js";
 import { calcEmployerMatch } from "./model/employer-match.js";
 import { calcSavingsCapacity, calcOptimizedAllocation, calcMegaBackdoorGrowth, calcStatementView } from "./model/budget.js";
 import { projectRetirementBracket } from "./model/taxes.js";
@@ -343,6 +343,8 @@ export default function App() {
   const primaryHsaLimit = hsaCoverageType === "family" ? HSA_FAMILY_LIMIT_2026 : HSA_LIMIT_2026;
   const spouseHsaLimit  = spouseHsaLimitFor(hsaCoverageType, contribHSA);
   const spouseContribHSA = Math.min(spouseContribHSAStored, spouseHsaLimit);
+  // BUG-182: the surplus lever's / HSA card's ceiling for the primary (family: net of the spouse's share).
+  const surplusHsaCeiling = primaryHsaCeilingForSurplus(hsaCoverageType, spouseContribHSA);
 
   const simData = useMemo(() => {
     const raw = runSimulation({
@@ -469,10 +471,10 @@ export default function App() {
   // changed. Deps mirror the calcOptimizedAllocation call exactly.
   const optimizedAllocation = useMemo(() => calcOptimizedAllocation({
     availableSurplus, savingsSurplusPct,
-    contrib401k, contribRoth, contribHSA, contribTaxable,
+    contrib401k, contribRoth, contribHSA, contribTaxable, hsaLimit: surplusHsaCeiling,
     rothFullyPhased, matchMode, matchFormulaCap, matchFormulaRate,
     employerMatchPct, currentIncome,
-  }), [availableSurplus, savingsSurplusPct, contrib401k, contribRoth, contribHSA, contribTaxable,
+  }), [availableSurplus, savingsSurplusPct, contrib401k, contribRoth, contribHSA, contribTaxable, surplusHsaCeiling,
        rothFullyPhased, matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct, currentIncome]);
 
   // ── Optimized-allocation Apply/Revert — ONE implementation shared by Classic's ──
@@ -516,7 +518,7 @@ export default function App() {
       endAge: contribEndTaxable, setEndAge: setContribEndTaxable },
     { key: "HSA",              dataKey: "HSA",       color: C.purple, note: "Triple tax-free",
       growsWithIncome: false,
-      val: balHSA,     setVal: setBalHSA,     contribMax: HSA_LIMIT_2026,
+      val: balHSA,     setVal: setBalHSA,     contribMax: primaryHsaLimit, // BUG-182: coverage-aware (was self-only)
       contrib: contribHSA,     setContrib: setContribHSA,
       endAge: contribEndHSA,   setEndAge: setContribEndHSA },
   ];
@@ -1390,13 +1392,16 @@ export default function App() {
     // baseline would silently diverge from the committed plan.
     spouseIncomeEndAge: spouseIncomeEndAgeBase,
     inflationRate, // BUG-159: scenario re-sims must index the Roth phase-out too
+    // BUG-182: the same family-aware HSA cap the committed sim uses; without it every scenario
+    // resim fell back to runSimulation's self-only default and capped the primary at 4,400.
+    hsaLimit: primaryHsaLimit,
   }), [totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
        contrib401k, contribRoth, contribTaxable, contribHSA,
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
        employerMatch, moneyEvents, scenarioConversionEvents, stateRate,
-       spouseIncomeEndAgeBase, inflationRate, incomeGrowthEndAgeStored]);
+       spouseIncomeEndAgeBase, inflationRate, incomeGrowthEndAgeStored, primaryHsaLimit]);
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.
@@ -5183,7 +5188,7 @@ export default function App() {
               totalAtRet, netPortfolioNeed, withdrawalRate, yearsSustained,
               isSustainable, safeRetAge, safeLifeExp, currentAge, effectivePension,
               availableSurplus, savingsSurplusPct, effectiveLiving,
-              grossAfterTax, currentContribTotal, contrib401k, contribHSA,
+              grossAfterTax, currentContribTotal, contrib401k, contribHSA, hsaLimit: surplusHsaCeiling,
               matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
               employerMatchAmt, currentIncome,
               rothPhaseoutWarning, rothFullyPhased, rothMAGI, filingStatus,

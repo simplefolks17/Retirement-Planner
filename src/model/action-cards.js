@@ -16,6 +16,7 @@ export function generatePhaseActions({
   // Budget
   availableSurplus, savingsSurplusPct, effectiveLiving,
   grossAfterTax, currentContribTotal, contrib401k, contribHSA,
+  hsaLimit = HSA_LIMIT_2026, // BUG-182: coverage-aware primary HSA ceiling (default: self-only)
   // Employer match
   matchMode, matchFormulaCap, matchFormulaRate, employerMatchPct,
   employerMatchAmt, currentIncome,
@@ -106,18 +107,18 @@ export function generatePhaseActions({
     });
   }
 
-  const hsaRoom = Math.max(0, HSA_LIMIT_2026 - contribHSA);
+  const hsaRoom = Math.max(0, hsaLimit - contribHSA);
   if (hsaRoom > 0 && contribHSA > 0) {
     phase1Actions.push({
       mode: "educational",
       title: "HSA: The Stealth Retirement Account",
-      body: `You have ${fmt(hsaRoom)} of unused HSA space. The HSA is the only account with a triple tax advantage: tax-deductible contributions, tax-free growth, and tax-free withdrawals for medical expenses. After 65, you can withdraw for any reason (taxed like a 401k). Maxing it adds ${fmt(HSA_LIMIT_2026)}/yr of tax-sheltered growth.`,
+      body: `You have ${fmt(hsaRoom)} of unused HSA space. The HSA is the only account with a triple tax advantage: tax-deductible contributions, tax-free growth, and tax-free withdrawals for medical expenses. After 65, you can withdraw for any reason (taxed like a 401k). Maxing it adds ${fmt(hsaLimit)}/yr of tax-sheltered growth.`,
     });
   } else if (contribHSA === 0) {
     phase1Actions.push({
       mode: "educational",
       title: "Consider an HSA",
-      body: `If you have a high-deductible health plan, you can contribute up to ${fmt(HSA_LIMIT_2026)}/yr to an HSA. It's the only triple-tax-advantaged account: deductible going in, tax-free growth, tax-free out for medical expenses. After 65 it works like a traditional IRA for any withdrawal. Over ${safeRetAge - currentAge} years, even small HSA contributions compound significantly.`,
+      body: `If you have a high-deductible health plan, you can contribute up to ${fmt(hsaLimit)}/yr to an HSA. It's the only triple-tax-advantaged account: deductible going in, tax-free growth, tax-free out for medical expenses. After 65 it works like a traditional IRA for any withdrawal. Over ${safeRetAge - currentAge} years, even small HSA contributions compound significantly.`,
     });
   }
 

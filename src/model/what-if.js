@@ -55,10 +55,16 @@ export function scenarioResolvedInputs(simInputs, scenarioRetAge) {
   return out;
 }
 
-function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge) {
+// BUG-182: `contribHsaOverride` (a contribOverrides.contribHSA) re-runs the spouse sim too under
+// FAMILY coverage: the primary draws the shared HSA ceiling first, so raising the primary's HSA
+// squeezes the spouse's effective share. A preview that kept the base spouse sim reported the
+// un-squeezed household ($9.4M vs the applied plan's $9,302,229).
+function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge, contribHsaOverride = null) {
   const resolved = scenarioResolvedInputs(simInputs, scenarioRetAge);
   const primaryInputs = coupleContribEndAges(resolved, safeRetAge, scenarioRetAge, simInputs.currentAge);
-  if (!spouseSeedInputs || scenarioRetAge === safeRetAge) {
+  const hsaSqueeze = contribHsaOverride != null && contribHsaOverride !== simInputs.contribHSA
+    && spouseSeedInputs?.spouseSimRaw?.hsaCoverageType === "family";
+  if (!spouseSeedInputs || (scenarioRetAge === safeRetAge && !hsaSqueeze)) {
     return { primaryInputs, seedInputs: spouseSeedInputs, chartInputs: spouseChartInputs };
   }
   const raw = spouseSeedInputs.spouseSimRaw;
@@ -78,7 +84,7 @@ function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInput
     totalYears: simInputs.totalYears, currentAge: simInputs.currentAge,
     currentIncome: simInputs.currentIncome, incomeGrowth: simInputs.incomeGrowth,
     incomeGrowthEndAge: resolved.incomeGrowthEndAge, filingStatus: simInputs.filingStatus,
-    returnRate: simInputs.returnRate, primaryContribHSA: simInputs.contribHSA,
+    returnRate: simInputs.returnRate, primaryContribHSA: contribHsaOverride ?? simInputs.contribHSA,
     inflationRate: simInputs.inflationRate ?? 0,
     hsaCoverageType: raw.hsaCoverageType,
     primaryRetAge: scenarioRetAge,
@@ -487,7 +493,7 @@ export function calcWhatIfDelta({
     // them here would make a forced re-sim's basis asymmetric (BUG-75 fix; same
     // class as the BUG-34/BUG-61 basis mismatches).
     // BUG-157/158: one shared scenario re-derivation (see scenarioSpouseAwareInputs).
-    spDelta = scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, null, safeRetAge, scenarioRetAge);
+    spDelta = scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, null, safeRetAge, scenarioRetAge, contribOverrides?.contribHSA ?? null);
     const raw = runSimulation({
       // BUG-138: same contribEnd coupling as calcWhatIfScenario's resim above —
       // one shared rule, applied at both resim sites (+ BUG-157's spouse cutoff).
