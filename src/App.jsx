@@ -19,7 +19,7 @@ import { calcPlanProgress, calcPlanDrivers, buildYearlyRows } from "./model/reti
 import { buildRetirementPhase, buildConversionByAge, walkBalanceAt, buildRmdComparison, buildRmdTaxByAge, buildSpouseRetirementSeed, spouseAgeAt, primaryAgeAt, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./model/retirement-phase.js";
 import { calcSignals } from "./model/signals.js";
 import { calcFlowDown } from "./model/flow-down.js";
-import { calcRetirementIncome, calcSSBreakEven } from "./model/retirement-income.js";
+import { calcRetirementIncome, calcSSBreakEven, ssOverrideAtAge } from "./model/retirement-income.js";
 import { calcRMDIncomeFloor, calcWithdrawalOrderTax } from "./model/retirement-tax.js";
 import { buildIncomeFloors, calcBracketFillTargets } from "./model/conversion-planning.js";
 import { findOptimalConversionPlan } from "./model/roth-conversion.js";
@@ -192,7 +192,14 @@ export default function App() {
   // null = "auto: the same NUMERIC age the primary retires at" (design doc C.2). Mirrors the
   // livingExpenses / annualExpenses / conversionStartAge null-default pattern.
   const [spouseRetirementAge, setSpouseRetirementAge] = useState(null);
-  const [ssOverride,        setSsOverride]        = useState(null);
+  const [ssOverride,        setSsOverrideRaw]     = useState(null);
+  // BUG-177: the claim age the pinned override was ENTERED at — the model rescales it by the
+  // SS_FACTORS ratio when the claim age later moves. null whenever the override is auto/null.
+  const [ssOverrideAnchorAge, setSsOverrideAnchorAge] = useState(null);
+  const setSsOverride = useCallback(v => {
+    setSsOverrideRaw(v);
+    setSsOverrideAnchorAge(v === null ? null : ssClaimingAge);
+  }, [ssClaimingAge]);
   const [includeSS,         setIncludeSS]         = useState(true);
 
   const [pensionMonthly,   setPensionMonthly]   = useState(0);
@@ -587,7 +594,7 @@ export default function App() {
     spouseAlt, spouseAltHigher,
   } = calcRetirementIncome({
     currentIncome, incomeGrowth, incomeGrowthEndAge, safeRetAge, currentAge,
-    ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
+    ssClaimingAge, includeSS, ssOverride, ssOverrideAnchorAge, spouseSsEstimate,
     pensionMonthly, pensionStartAge,
     isMarried, spouseClaimingAge, spouseBenefitBasis,
   });
@@ -1658,7 +1665,7 @@ export default function App() {
     // freeze that caused the bug (BUG-127's lesson, same shape).
     ssInputs: {
       currentIncome, incomeGrowth, incomeGrowthEndAge,
-      ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
+      ssClaimingAge, includeSS, ssOverride, ssOverrideAnchorAge, spouseSsEstimate,
       pensionMonthly, pensionStartAge,
       isMarried, spouseClaimingAge, spouseBenefitBasis,
     },
@@ -1671,7 +1678,7 @@ export default function App() {
        spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA,
        spouseEmployerMatch, hsaCoverageType,
        currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge, includeSS,
-       ssOverride, spouseSsEstimate, pensionMonthly, pensionStartAge,
+       ssOverride, ssOverrideAnchorAge, spouseSsEstimate, pensionMonthly, pensionStartAge,
        isMarried, spouseClaimingAge, spouseBenefitBasis]);
 
   // Working-longer break-even (#55): +1/+3/+5-year comparison built on the SAME
@@ -2543,8 +2550,12 @@ export default function App() {
   // exactly). householdSS / withdrawalRate / effectivePension / effectiveExpenses
   // are read directly from horizonProps by the flow (already wired — no dup).
   const ssView = useMemo(() => ({
-    ssMonthly:    ssOverride !== null ? Math.round(ssOverride / ASSUMPTIONS.MONTHS_PER_YEAR) : ssMonthlyBenefit,
+    ssMonthly:    ssOverride !== null ? Math.round(ssOverrideAtAge(ssOverride, ssOverrideAnchorAge, ssClaimingAge) / ASSUMPTIONS.MONTHS_PER_YEAR) : ssMonthlyBenefit,
     ssAnnual:     effectiveSS > 0 ? effectiveSS : ssAnnualBenefit,
+    // BUG-177: model-provided wording (rule 10) when the claim age moved off the age the pinned
+    // override was entered at — the benefit shown is the rescaled one.
+    overrideRescaleNote: ssOverride !== null && ssOverrideAnchorAge !== null && ssOverrideAnchorAge !== ssClaimingAge
+      ? `You entered ${fmt(ssOverride)}/yr at age ${ssOverrideAnchorAge}; at age ${ssClaimingAge} that is ${fmt(effectiveSS)}/yr.` : null,
     ssEstimateAnnual: ssAnnualBenefit,   // the PIA estimate (override seed / "estimated was")
     ssAIME,
     claimAge:     ssClaimingAge,
@@ -2577,7 +2588,7 @@ export default function App() {
     // review-fix round, PR #62 — this site had been missed).
     showEffectivePension: effectivePension > 0,
     effectivePensionAnnual: retPensionBasis,
-  }), [ssOverride, ssMonthlyBenefit, effectiveSS, ssAnnualBenefit, ssAIME, ssClaimingAge,
+  }), [ssOverride, ssOverrideAnchorAge, ssMonthlyBenefit, effectiveSS, ssAnnualBenefit, ssAIME, ssClaimingAge,
        ssBreakEven, retSpendBasis, ss70DrawReduction, includeSS, wr70, ssDelayGainYrs,
        spouseSsBenefit, spouseAlt, spouseAltHigher, householdSS, effectivePension, retPensionBasis]);
 
@@ -4132,6 +4143,8 @@ export default function App() {
                   {ssOverride !== null && (
                     <p style={{ margin: "4px 0 0", fontSize: 9, color: C.blue }}>
                       Using your override · estimated was {fmt(ssAnnualBenefit)}/yr
+                      {ssOverrideAnchorAge !== null && ssOverrideAnchorAge !== ssClaimingAge
+                        ? ` · entered at age ${ssOverrideAnchorAge}, rescaled to ${fmt(effectiveSS)}/yr at age ${ssClaimingAge}` : ""}
                     </p>
                   )}
                 </div>
@@ -4140,7 +4153,7 @@ export default function App() {
                 <div style={{ background: C.card, borderRadius: 8, padding: "10px 12px", opacity: includeSS ? 1 : 0.4 }}>
                   <p style={{ margin: "0 0 2px", fontSize: 10, color: C.muted }}>Monthly Benefit</p>
                   <p style={{ margin: "0 0 2px", fontSize: 18, color: C.green, ...mono }}>
-                    ${ssOverride !== null ? Math.round(ssOverride / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString() : ssMonthlyBenefit.toLocaleString()}
+                    ${ssOverride !== null ? Math.round(ssOverrideAtAge(ssOverride, ssOverrideAnchorAge, ssClaimingAge) / ASSUMPTIONS.MONTHS_PER_YEAR).toLocaleString() : ssMonthlyBenefit.toLocaleString()}
                   </p>
                   <p style={{ margin: 0, fontSize: 9, color: C.muted }}>at age {ssClaimingAge}</p>
                 </div>

@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-177 — a pinned SS override did not rescale with the claim age (owner decision on the BUG-154 follow-up; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** Opus review, BUG-154 verdict: with 38,000 pinned and the claim slider moved 70 -> 67 -> 65 -> 62, the claim leg stayed 38,000 while the age-70 leg went 38,000 -> 47,120 -> 54,348 -> 67,314, a fake "delay gain" created by exploring an earlier age. **Owner decision (2026-11-14):** a pinned override is the benefit at the claim age it was ENTERED at; a different claim age rescales it so benefits are never overstated.
+**Fix.** New `ssOverrideAtAge(override, anchorAge, atAge)` in `src/model/retirement-income.js` (override x `claimFactor(atAge)/claimFactor(anchorAge)`; null/equal anchor returns the override untouched, so entered-at-the-claim-age is byte-identical). `calcRetirementIncome` takes `ssOverrideAnchorAge` and uses it for the claim leg (`effectiveSS`) and the age-70 leg (`ss70Annual`). App has new state `ssOverrideAnchorAge`, captured by the single `setSsOverride` wrapper (set to the current `ssClaimingAge` on any numeric write, cleared on null), which every writer (Horizon bundle, Classic input, Classic reset) already goes through. The anchor is passed to the base `calcRetirementIncome` and into `whatIfBundle.ssInputs`, which feeds `scenarioSocialSecurity` and the work-longer rows (BUG-173). UI shows the number as entered plus model-provided `ssView.overrideRescaleNote` (Horizon SS flow) and an "entered at age N, rescaled to ..." suffix (Classic); the monthly tile reads the rescaled figure. **Files:** `src/model/retirement-income.js`, `src/App.jsx`, `src/horizon/screens/strategies/SSTimingFlow.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/ss-override-wiring.test.js` (real App): entered at 70, slider to 67/65/62 gives factor-ratio claim legs and a flat 38,000 age-70 leg; entered at 67 and kept = unchanged, no note; clearing the override clears the anchor; preview == commit; work-longer rows carry the rescaled figure. Each site reverted singly and confirmed to fail a test: anchor capture, rescale function, claim leg, age-70 leg, App base-calc wiring, monthly tile, and `whatIfBundle.ssInputs` (the last survived until the work-longer test was added). Golden masters unmoved (`impl-log-BUG-177.md`).
+
 ### BUG-173 — work-longer "Social Security / yr" ignored a pinned override and was primary-only (Opus review R-2; FIXED 2026-11-14)
 
 **Severity: MEDIUM (pre-existing; BUG-154 sibling).** `calcWorkLongerBreakEven` recomputed SS from the PIA (`calcBenefit(calcPIA(calcAIME(...)))`) with no `ssOverride` and no spouse. T-X.3 repro (override 38,000 at claim 67; plan `householdSS` 38,000): rows showed SS **23,232 / 25,956 / 28,848** with deltas +1,308 / +4,032 / +6,924 per year, i.e. about $15k BELOW the figure the user typed, and told them working longer raises it, while the scenario each row describes (`scenarioSocialSecurity`) keeps the pinned 38,000. BUG-154 fixed one instance of "a second SS derivation that doesn't honour the override", not the class.
@@ -819,6 +825,7 @@ judged both the fix and the re-lock CORRECT (`docs/audit-2026-11-14/opus-review.
 **Follow-up (owner/product call, from that review):** a pinned override is "the benefit at
 whatever claim age is currently selected" and does not rescale when the claim slider moves, so
 exploring an earlier claim age inflates the displayed delay gain. See the review's BUG-154 verdict.
+**RESOLVED by BUG-177** (2026-11-14): the override is anchored to the claim age it was entered at.
 
 ### BUG-166 — percent formatting hand-rolled at ~39 sites with unit confusion (CONSOLIDATION-REDO-PLAN sweep 4; FIXED 2026-11-14)
 

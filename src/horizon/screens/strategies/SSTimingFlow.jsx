@@ -44,6 +44,7 @@ export default function SSTimingFlow({ t, props, isMobile = false }) {
           field: ss.ssOverride,   // already { value, set, min, max, step } — extra `estimated` is ignored by DetailField
           format: money, seed: sv.ssEstimateAnnual,
           nullLabel: `Estimate · ${money(sv.ssEstimateAnnual)}` })}
+        {includeSS && sv.overrideRescaleNote && <NoteBox t={t}>{sv.overrideRescaleNote}</NoteBox>}
       </div>
 
       <div style={row3}>

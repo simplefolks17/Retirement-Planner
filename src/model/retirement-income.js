@@ -14,9 +14,20 @@
 import { calcAIME, calcPIA, calcBenefit, calcSpousal, claimFactor } from "./social-security.js";
 import { SS_FRA, SS_MAX_CLAIM_AGE, SS_FACTORS, ASSUMPTIONS } from "../config/irs-2026.js";
 
+// BUG-177 (owner decision 2026-11-14): a pinned ssOverride is the annual benefit AT THE CLAIM AGE IT
+// WAS ENTERED AT (`anchorAge`). Exploring a different claim age rescales it by the SS_FACTORS ratio,
+// so benefits are never overstated by a fake delay gain. ONE function — every consumer of the
+// override (claim leg, age-70 leg, what-if scenarios) goes through it. anchorAge null/equal to
+// claimAge => the override is returned untouched (byte-identical to pre-fix behaviour).
+export function ssOverrideAtAge(override, anchorAge, atAge) {
+  if (override === null || override === undefined) return null;
+  if (anchorAge === null || anchorAge === undefined || anchorAge === atAge) return override;
+  return Math.round(override * claimFactor(atAge) / claimFactor(anchorAge));
+}
+
 export function calcRetirementIncome({
   currentIncome, incomeGrowth, incomeGrowthEndAge = null, safeRetAge, currentAge,
-  ssClaimingAge, includeSS, ssOverride, spouseSsEstimate,
+  ssClaimingAge, includeSS, ssOverride, ssOverrideAnchorAge = null, spouseSsEstimate,
   pensionMonthly, pensionStartAge,
   isMarried = false, spouseClaimingAge = SS_FRA, spouseBenefitBasis = "own",
 }) {
@@ -30,7 +41,7 @@ export function calcRetirementIncome({
   const ss67Monthly      = calcBenefit(ssPIA, SS_FRA);
 
   // ssOverride lets the user pin their own annual SS figure; includeSS zeroes it.
-  const effectiveSS  = includeSS ? (ssOverride !== null ? ssOverride : ssAnnualBenefit) : 0;
+  const effectiveSS  = includeSS ? (ssOverride !== null ? ssOverrideAtAge(ssOverride, ssOverrideAnchorAge, ssClaimingAge) : ssAnnualBenefit) : 0;
 
   // Spouse SS: choose between own record (earns delayed credits) or spousal floor
   // (capped at 50% of PIA — no delayed credits). The unchosen basis is reported as
@@ -56,7 +67,7 @@ export function calcRetirementIncome({
   // override it is the PIA-derived figure, unchanged. includeSS=false zeroes both legs.
   const ss70Annual        = !includeSS ? 0
     : ssOverride !== null
-      ? Math.round(ssOverride * SS_FACTORS[SS_MAX_CLAIM_AGE] / claimFactor(ssClaimingAge))
+      ? ssOverrideAtAge(ssOverride, ssOverrideAnchorAge ?? ssClaimingAge, SS_MAX_CLAIM_AGE)
       : Math.round(ssPIA * SS_FACTORS[SS_MAX_CLAIM_AGE]) * MPY;
   const household70SS     = includeSS ? ss70Annual + spouseSsBenefit : 0;
   const ss70DrawReduction = Math.max(0, household70SS - householdSS);
