@@ -196,9 +196,11 @@ export default function App() {
   // BUG-177: the claim age the pinned override was ENTERED at — the model rescales it by the
   // SS_FACTORS ratio when the claim age later moves. null whenever the override is auto/null.
   const [ssOverrideAnchorAge, setSsOverrideAnchorAge] = useState(null);
+  // BUG-183 (review S-3): only a NEW pin (previous override null) anchors at the current claim
+  // age. Editing an existing pin keeps its anchor, so the field edits the figure it displays.
   const setSsOverride = useCallback(v => {
     setSsOverrideRaw(v);
-    setSsOverrideAnchorAge(v === null ? null : ssClaimingAge);
+    setSsOverrideAnchorAge(prev => (v === null ? null : (prev ?? ssClaimingAge)));
   }, [ssClaimingAge]);
   const [includeSS,         setIncludeSS]         = useState(true);
 

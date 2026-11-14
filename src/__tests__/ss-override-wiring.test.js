@@ -74,6 +74,22 @@ describe("ssOverride anchor age (BUG-177)", () => {
     app.unmount();
   });
 
+  // BUG-183 (review S-3): editing a live pin must keep its anchor age. Pre-fix the write
+  // re-anchored to the CURRENT claim age, turning a $500 nudge into a +79% SS raise.
+  it("editing an existing pin keeps its anchor age (BUG-183)", () => {
+    const app = mount();
+    app.fire(() => app.latest().ss.ssClaimingAge.set(70));
+    app.fire(() => app.latest().ss.ssOverride.set(38_000));
+    app.fire(() => app.latest().ss.ssClaimingAge.set(62));
+    app.fire(() => app.latest().ss.ssOverride.set(38_500));
+    // anchor still 70: the claim leg rescales the 38,500 entered at 70, not treated as entered at 62
+    expect(app.latest().ssView.ssAnnual).toBe(Math.round(38_500 * 0.7 / 1.24));
+    expect(app.latest().ssView.overrideRescaleNote).toContain("age 70");
+    app.fire(() => app.latest().ss.ssClaimingAge.set(70));
+    expect(app.latest().ssView.ssAnnual).toBe(38_500);
+    app.unmount();
+  });
+
   it("clearing the override clears the anchor (re-pin later anchors to the then-current age)", () => {
     const app = mount();
     app.fire(() => app.latest().ss.ssClaimingAge.set(70));
