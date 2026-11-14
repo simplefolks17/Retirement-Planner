@@ -130,6 +130,18 @@ A short mutation sweep over App.jsx glue lines no batch touched (full suite each
 
 _(in progress)_
 
-## BUG-154 verdict
+## BUG-154 verdict — fix CORRECT, proposed re-lock CORRECT; approve, with one follow-up
 
-_(in progress)_
+**Executed:** I applied `ce5c4c0`'s `src/` diff to a HEAD snapshot (`git apply` is clean) and ran the full suite: **1 failed | 1613 passed**. The single failure is the T-X.3 lock, received **0.9726563582272075**, which is byte-identical to the value the L2 agent measured against `main`. No other golden master or test moved. That includes this branch's `input-propagation` / `bounds-invariant` / BUG-159 locks and the optimizer (which also reads `ss70Annual`).
+
+**Mechanism re-derived by hand** (T-X.3: `ssOverride` 38,000 at claim 67, `totalAtRet` 4,429,144):
+- Pre-fix, the age-70 leg ignored the override. It used `round(PIA × 1.24) × 12` = **27,192** (PIA from a 12-year earnings record), below the 38,000 the same household's `withdrawalRate` uses.
+- Post-fix: 38,000 × 1.24 / 1.00 = **47,120**.
+- Δ household70SS = 19,928, and 19,928 / 4,429,144 = 0.4499 pts, which is exactly the observed `wr70` drop (1.42259 → 0.97266). Direction DOWN is right: more SS at 70 means a smaller draw.
+- Also moved but unlocked on T-X.3 (record them in the re-lock comment): `ss70DrawReduction` 0 → 9,120, `delayApplicable` false → true, `delayGainYrs` 0 → 1.
+
+**The fix is in the right place.** `calcRetirementIncome` is the one shared source, so `wr70`, `ssDelayGainYrs` (`drawdown.js`), the action cards, and `calcOptimizedScenario`'s delay leg (`optimization.js:70`) all move onto the override basis together. The `includeSS = false` zeroing is also right: pre-fix, `household70SS` stayed nonzero with SS excluded.
+
+**Practical:** `git cherry-pick ce5c4c0` CONFLICTS (add/add on `docs/audit-2026-11-14/impl-log-L2.md`, which the branch already carries). Apply the `src/` part only (`git show ce5c4c0 -- src | git apply`), then re-lock and add the BUGS entry from `impl-log-L2.md`.
+
+**Follow-up to file, not a blocker (CONFIRMED on HEAD+`ce5c4c0`, probe `zz-rev-154b`):** the fix inherits a pre-existing semantic. A pinned override is "the benefit at whatever claim age is currently selected", and it doesn't rescale when the claim slider moves. BUG-154 now rescales only the age-70 leg from it. With 38,000 pinned, moving the claim slider 70 → 67 → 65 → 62 leaves the claim leg at **38,000** every time, while the age-70 leg goes **38,000 → 47,120 → 54,348 → 67,314**. So the delay card, newly visible for override users, shows a +77% "delay gain" just because the user explored an earlier claim age. The coherent model anchors the override to the claim age it was entered at (or treats it as an at-FRA figure, as `spouseSsEstimate` already is) and rescales BOTH legs by `claimFactor` ratios. That's an owner/product call. R-2 (the work-longer SS tile) is a separate BUG-154 sibling this commit does not reach.
