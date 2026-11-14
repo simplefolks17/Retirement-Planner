@@ -6,7 +6,103 @@ numbers; PLAUSIBLE = code-read only.
 
 ## Findings
 
-_(in progress)_
+### R-1 — MEDIUM — CONFIRMED — Classic "Retirement Age" slider bypasses BUG-155's plateau coupling; the two UIs now build different plans from the same moves
+- **Where:** `src/App.jsx:3504-3511` (Classic slider's inline `onChange`) vs `setRetirementAgeCoupled` (`src/App.jsx:1381-1393`).
+- **Repro** (probe `zz-rev-a.test.js` A3, real App; Classic driven by calling the rendered `<Slider label="Retirement Age">`'s `onChange`): plateau (`incomeGrowthEndAge`) 55, then retirement 65 -> 50 -> 65.
+  - Horizon setters: mid-state plateau `null`, 0 bound violations; end plateau `null`, `totalAtRet` 4,178,538, `yearsSustained` 22.642.
+  - Classic slider: mid-state plateau **55 > max 50** (bounds violation); end plateau **55**, `totalAtRet` **4,116,477**, `yearsSustained` **22.272**.
+  - Same household, same moves, $62,061 apart at retirement.
+- **Why it matters:** BUG-155 says "`setRetirementAgeCoupled` keeps the plateau in range"; that is true only for Horizon and onboarding. The Classic handler is an inline copy of the coupling (contribEnd only), the exact "fix the instance, miss the class" pattern. `bounds-invariant.test.js` drives only the Horizon bundles, so it can't see it.
+- **Second half (design, Horizon):** the coupling it *does* apply is lossy. The Horizon desktop slider calls `set` on every tick (`fields.jsx:201`), so dragging retirement down through the plateau age and back silently deletes the user's plateau (55 -> `null`), and the plan moves +$62k. Before BUG-155 the out-of-range plateau was inert (the audit called it "harmless"). The sibling `coupleContribEndAges` deliberately PRESERVES a value the user set away from retirement; the plateau rule destroys it.
+- **Smallest fix:** route the Classic slider through `setRetirementAgeCoupled` (one handler, both UIs, as the Current Age slider already does). For the lossy half, stop nulling a plateau at/after retirement: it is already inert in `incomeGrowthSteps`, so keep the stored value and clamp only the bundle's displayed `value`/`max` (or widen `max` to `lifeExpect - 1`).
+
+### R-2 — MEDIUM — CONFIRMED — Work-longer flow's "Social Security / yr" ignores a pinned `ssOverride` (a BUG-154 sibling that BUG-154 does not fix; pre-existing, not on this branch)
+- **Where:** `src/model/what-if.js:1669-1674` (`calcWorkLongerBreakEven` → `ssAnnualAt` = `calcBenefit(calcPIA(calcAIME(...)))`, no override, no spouse); App passes `ssInputs: { currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge }` only (`src/App.jsx:1659-1663`); rendered by `WorkLongerFlow.jsx:37-38`.
+- **Repro** (probe `zz-rev-154.test.js`, real App, T-X.3 household: `ssOverride` 38,000 at claim 67): the plan's `householdSS` = **38,000**, but `workLongerView.rows` show SS **23,232 / 25,956 / 28,848** with deltas **+1,308 / +4,032 / +6,924 per year** for +1/+3/+5 years. Identical on HEAD+`ce5c4c0`, so BUG-154 does not reach it.
+- **Why it matters:** a user who typed in their SSA-statement figure is shown a Social Security number about $15k/yr LOWER than the one they entered, and told that working longer raises it. Meanwhile the scenario that row describes keeps the pinned 38,000 (`scenarioSocialSecurity` → `calcRetirementIncome`, `effectiveSS = ssOverride`; BUG-150). It is also primary-only, while the plan's SS is household. This is BUG-154's exact class (a second SS derivation that doesn't honour the override): an instance was fixed, not the class.
+- **Smallest fix:** derive `ssAnnual` per row from the scenario's own `calcRetirementIncome` (the same `scenarioSocialSecurity` the scenario uses), passing `ssOverride` / spouse inputs, and report `householdSS`. With an override pinned, the delta is honestly 0, or the row says the figure is pinned.
+
+### R-3 — MEDIUM — CONFIRMED — `commitPlan` (onboarding) never bounds the retirement age it is given; BUG-153's "every field in range" holds only for the one input its test uses
+- **Where:** `src/App.jsx:1403-1425` (`commitPlan`: `st = { ...st, ...coupleContribEndAges(...), retirementAge: ra }`, with no clamp of `ra` to `[currentAge, lifeExpect-1]`); the wizard clamps each answer independently (`HorizonShell.jsx:211-217` `OB_CLAMPS`: currentAge 18-80, retirementAge 40-90).
+- **Repro** (probe `zz-rev-b.test.js` / `zz-rev-a.test.js` A1/A2, real App, `commitPlan` exactly as `handleSave` calls it):
+  - `{currentAge: 70, retirementAge: 60}` → `retirementAge=60 < min 70` (bounds violation). Plan shows `planView.depletionAge` **63** ("money runs out at 63") for a **70-year-old**, `withdrawalRate` 36.4%, `retirementDuration` 30. The same household through the normal controls lifts retirement to 70 (`yearsSustained` 3.03 vs 2.75 via onboarding).
+  - `{currentAge: 34, retirementAge: 90}` → `retirementAge=90 > max 89` and `lifeExpect=90 < min 91` (two violations); `retirementDuration` 1.
+- **Why it matters:** onboarding is every new Horizon user's first screen, and "I'm 70 and retired at 60" is a realistic answer. BUG-153 was filed as "onboarding bypasses the coupling the normal controls apply"; this is the same class one field over. The new test (`onboarding-coupling-wiring.test.js`) and the `bounds-invariant.test.js` SEQS only use `retirementAge > currentAge`, so they can't see it.
+- **Smallest fix:** in `commitPlan`, resolve `ra` against the coupled state before coupling (`ra = clamp(ra, ca ?? currentAge, st.lifeExpect - 1)`, or lift `lifeExpect` to `ra + 1`, as `coupleCurrentAge` does for age). Add `commitPlan(70, 60)` and `commitPlan(34, 90)` to `bounds-invariant.test.js` SEQS. Optionally make the wizard's retirement-age lower bound follow its age answer.
+
+### R-4 — HIGH — CONFIRMED — The onboarding wizard pre-fills "monthly spend (today's dollars)" with a RETIREMENT-YEAR figure; clicking through untouched multiplies spending by 3.95x (pre-existing, not on this branch, missed by the BUG-152 onboarding audit)
+- **Where:** `src/components/HorizonShell.jsx:654` (`monthlySpend: props.statementView.monthlyTotal`). Since BUG-91, `monthlyTotal` is `retSpendBasis / 12`, i.e. retirement-year dollars (`src/model/budget.js:223`). The question is captioned "today's dollars" (`HorizonShell.jsx:200`), and `commitPlan` writes `monthlySpend x 12` into `annualExpenses`, which is a today's-dollar input.
+- **Repro** (probe `zz-rev-d.test.js`, driving the REAL wizard end to end like `onboarding-wizard-save.test.js`, with no answer changed):
+  - Q5 shows **"$18,868"** under "today's dollars". The default household's real spend is $57,377/yr (= $4,781/mo; `statementView.monthlyTodaysExp` already exists for exactly this).
+  - Summary shows "Monthly income $18,868/mo".
+  - After "Yes, save my plan": `effectiveExpenses` 57,377 → **226,416**, `yearsSustained` 22.64 → **4.19**, depletion age 88 → **70**, `withdrawalRate` 5.42% → **21.38%**.
+  - Same on `main` (21.65 → 4.02).
+- **Second defect, same line:** even a user who *does* fix the number has their "auto" `annualExpenses` (null, follows income) frozen into a fixed value. After onboarding, raising income to $150k leaves spending at 226,416; without onboarding, auto spending follows to 92,265. That is the Lens-1 "seeded once" class.
+- **Why it matters:** every new Horizon user goes through this wizard first. The default answer silently turns a plan that lasts to 88 into one that runs out at 70, and the screen labels the inflated number "today's dollars". Rule 11 names this exact class: a site reading a converted figure where the raw one is needed. It survived BUG-91, BUG-114, BUG-143/144 (which ADDED `monthlyTodaysExp` but didn't re-point this seed), and this audit's onboarding pass, which asked "does every answer land" but not "is every pre-filled answer on the right basis".
+- **Smallest fix:** seed from the today's-dollar figure (`props.statementView.monthlyTodaysExp`, or a named onboarding-seed field from the model). Send `monthlySpend` from `handleSave` only when the user changed it, so `annualExpenses` stays `null` (auto) otherwise. Add a wizard test: completing it untouched leaves `effectiveExpenses` / `yearsSustained` unchanged (it fails today: 22.64 → 4.19).
+
+### R-5 — LOW — CONFIRMED — Edge defects BUG-152 made consequential: `allocateSavedTotal` can return a negative balance, and the wizard's parser turns "250k" into $250
+- **Where:** `src/model/accumulation.js:30-45` (residual added to `biggest`); `src/components/HorizonShell.jsx:244` (`parseInt(draft.replace(/[^0-9]/g, ""))`).
+- **Repro** (probe `zz-rev-c.test.js` C2 + a node one-liner of the wizard's parse rule):
+  - `allocateSavedTotal({1000,1000,1000,1000}, 0, 2)` → `{ bal401k: -1, balRoth: 1, balTaxable: 1, balHSA: 1 }`. Each share rounds `0.5 → 1`, the sum overshoots by 2, and the residual is charged to a $1 "biggest" (ties keep the first key). That stores a balance below the field's `min: 0`.
+  - The wizard parse rule gives `"250k" → 250`, `"1.5M" → 15`, `"900000.75" → 90000075` (then clamped to $10M).
+  - Before BUG-152 the savings answer was discarded, so the parse rule was harmless. It now sets every balance.
+- **Why it matters:** both need unusual input (an answer of a few dollars; shorthand or cents). But a negative account balance breaks the bounds contract, and "250k" → $250 rewrites the whole plan. The confirm screen does echo "$250", which limits the damage.
+- **Smallest fix:** in `allocateSavedTotal`, add the residual only if it keeps that entry ≥ 0 (or use largest-remainder rounding). In `ObInput`, reject or parse `k`/`M`/decimals instead of stripping them (e.g. `parseFloat` on the digits-and-dot part, with a suffix multiplier).
+
+### R-6 — MEDIUM — CONFIRMED (mutation) — Central parts of three fixes, plus one allow-list "proof", can be deleted with 0 of 1,609 tests failing
+Method: I broke one line, ran the full suite (`npx vitest run`, zz-* excluded), and restored the file from a copy. `git status` was clean after every run.
+
+| Mutation (one line) | Fix it undoes | Tests failing | Measured effect |
+|---|---|---|---|
+| `spouse-sim.js:65` `otherEarnerGrowthEndAge: plateauAgeInFrame(...)` → `incomeGrowthEndAge` (no frame conversion) | **BUG-156**, the bug's literal title ("passed in the primary's age frame") | **0** | Probe `zz-rev-e`: MFJ, both $90k at 6%, 2.5% inflation, primary 40 with plateau 45, spouse 30 retiring 60 with $7k Roth. Spouse Roth at 60 is **531,135 → 353,778** (-$177k). |
+| `spouse-sim.js:64` spouse's own salary gets the primary's plateau, frame-converted | BUG-156 (the other wrong variant) | **0** | The App test's fixture (spouse 55, plateau → spouse-frame 65 = spouse retirement) makes this variant inert. Only the *unconverted* variant is caught. |
+| `what-if.js:467` `...spDelta.primaryInputs` → `...coupleContribEndAges(...)` | **BUG-157** at the `calcWhatIfDelta` site (the entry claims both sites) | **0** | Probe `zz-rev-f`, Finding A's own older-spouse fixture: `calcWhatIfDelta` totalAtRet at retire 63 is **1,343,614** mutated vs **1,334,822** fixed (= commit); at 65, 1,568,498 vs 1,554,539. |
+| `App.jsx:2082` spouse HSA bundle `max: primaryHsaLimit` → `HSA_FAMILY_LIMIT_2026` | BUG-161 (the spouse half of the bound) | **0** | Under self-only coverage the spouse field again accepts 8,750 while the sim caps at 4,400. |
+| `App.jsx:3590` Classic `<select value={effectiveRetirementState}>` → `{retirementState}`; or its `onChange` → `setRetirementStateRaw` | BUG-151 ("the Classic `<select>` must behave the same way", plan L1-A) | **0** / **0** | The first shows `null` (no selection) at the default; the second stores an explicit TX that stops following the work state. |
+| `MyDetailsScreen.jsx:228` `isAuto` hint removed | BUG-151's "Same as home state" label | **0** | — |
+| `App.jsx:667` `calcMilestones({... retirementTarget })` → `retirementTarget: 3_000_000` | the input-propagation ALLOW proof for `spending.retirementTarget` | **0** | The "proof" calls `calcMilestones` directly with two targets, so it proves the MODEL reads the argument, not that the App passes the user's input. The file's header promise ("for every 'it only feeds X' reason the test asserts that X itself moves") is false for this entry, and the Classic Portfolio-target control could go dead silently. |
+| `spouse-sim.js:78` spouse sim `spouseIncomeEndAge` → `null`; `spouse-sim.js:74` `hsaLimit` → `HSA_LIMIT_2026` | the new "one shared builder"'s MAGI cutoff (BUG-87) and family-HSA split | **0** / **0** | Pre-existing gaps, but in the module now documented as THE derivation for both App and scenarios. |
+
+- **Why it matters:** every batch log reports revert-and-confirm, but each reverted the WHOLE fix at once, so whichever sub-claim the fixture happened to exercise carried the result. BUG-156's frame conversion is the clearest case: the L1-C log's M5 reverted both terms together, the "household total identical" fixture is sensitive only to the spouse's-own-salary half, and the frame conversion that names the bug has no test at all.
+- **Smallest fix:** one targeted test per row. For example: a spouse-Roth household like `zz-rev-e` asserting the spouse's `cRoth` series (BUG-156); `calcWhatIfDelta` totalAtRet = commit on the older-spouse fixture (BUG-157); `spouseAccounts.hsa.contrib.max === 4400` under self coverage; a Classic-render test of the retirement `<select>` value and snap. Make the retirementTarget proof mount the App and read the Classic milestone cards (or expose the milestones from App), not call `calcMilestones` itself.
+
+### R-7 — LOW — CONFIRMED — BUG-161's invariant ("the field equals the modelled value") still fails for the spouse under FAMILY coverage
+- **Where:** `src/App.jsx:2082` (spouse HSA bundle `max: primaryHsaLimit`, which is 8,750 under family) vs the model's real spouse ceiling `spouseHsaLimitFor` = `8,750 − primary's contribution` (`src/model/spouse-sim.js:23-27`). `setHsaCoverageCoupled` (`App.jsx:1536-1541`) clamps only on a switch to self.
+- **Repro** (probe `zz-rev-g.test.js`, real App): married MFJ, family coverage, primary HSA 3,850 (default), spouse HSA set to 8,000. The spouse field shows **8,000** (max 8,750, so in bounds and `bounds-invariant` is green), but the spouse sim contributes **4,900** per year.
+- **Why it matters:** this is exactly the state BUG-161 was filed for (the field shows a number the model isn't using), one coverage mode over. The plan's own acceptance test for BUG-161 ("field value equals the modelled value") was only written for family→self. Totals are right because the sim caps (rule 4), so this is LOW.
+- **Smallest fix:** give the spouse field `max: spouseHsaLimit` (the shared remainder App already computes at `App.jsx:320`). Re-clamp the stored spouse value when the primary's HSA contribution or the coverage changes (one coupled setter), or show `min(stored, limit)`.
+
+### R-8 — LOW — CONFIRMED — Sweep 4 (BUG-166) breaks its own "one value renders one way" rule on the Classic tax panel
+- **Where:** `src/components/TaxTimeline.jsx:20` renders BOTH segments with `fmtRate(rate, 0)`, but the "Ret." segment is `effectiveRMDTaxRate` (`App.jsx:3536-3539`). `docs/DESIGN.md` → "Percent formatting" lists `effectiveRMDTaxRate` as a 1-dp computed rate: "The same value must render identically everywhere (e.g. 24.0%, never 24% in one place)".
+- **Repro** (probe `zz-rev-h.test.js`, default state): `effectiveRMDTaxRate` = 0.12833. TaxTimeline renders **"Ret.: 13%"**; the same Classic panel ~35 lines below (`App.jsx:3571`), `rmdView.effectiveRMDTaxRateLabel`, the action cards and Horizon all render **"12.8%"**. The L1-H log classed TaxTimeline as "0dp (bracket)", which is right for its Working segment (`fedMarginal`) and wrong for the Ret. segment.
+- **Smallest fix:** pass a `dp` per `Seg` (0 for `fedMarginal`, 1 for `effectiveRMDTaxRate`).
+
+### R-9 — MEDIUM — CONFIRMED — BUG-36 ("Low (accepted), deltas only") badly understates a live contradiction in spouse-gap households; BUG-157/158's `calcWhatIfDelta` changes can't reach it (pre-existing)
+- **Where:** `calcWhatIfDelta` (`src/model/what-if.js:367+`) still walks retirement with the blended `buildRetirementDrawdown`, which has no spouse gap-year income. Consumers: the Horizon surplus "Apply" preview (`App.jsx:2297-2330`, `surplusApplySite`) and Classic `WhatIfPanel` ("Work 2 more years", `WhatIfPanel.jsx:129`).
+- **Repro** (probe `zz-rev-f.test.js`, real App, Finding B's younger-spouse "auto" household: primary 48 retiring 57, spouse 37 earning $120k, $120k spend, conversions zeroed):
+  - The headline says money lasts to **70** (`yearsSustained` 12.97).
+  - The Apply preview (living expenses $60k, so a surplus exists) shows Longevity **"to age 63" → "to age 67"**. The BEFORE contradicts the plan by 7 years, and the AFTER (more saving) reads as *worse* than the plan's own 70.
+  - `calcWhatIfDelta` with no change at all gives `scenarioYears` **5.41** vs headline **12.97**.
+  - Classic "work 2 more years" (retire 60) gives **6.80** years vs **14.71** when the same change is committed.
+  - At the no-spouse default the gap is the documented one in the other direction (25.51 vs 22.64).
+- **Why it matters:** the index row says "Low (accepted) — deltas only", but the preview prints ABSOLUTE before/after values next to a headline they contradict. This is the audit's Lens 8 ("an 'accepted' verdict stops anyone looking"). It also means BUG-157/158's `calcWhatIfDelta` plumbing is mostly inert: the spouse seed it rebuilds never reaches the blended walk's years (mutation M37 changes no output, R-6).
+- **Smallest fix:** in the near term, show deltas only (not absolute before/after ages) on the two `calcWhatIfDelta` previews, or derive "before" from the headline. The real fix is BUG-36's planned port of `calcWhatIfDelta` onto `buildRetirementPhase`; raise BUG-36's index severity and add this repro.
+
+### R-10 — MEDIUM — CONFIRMED — REGRESSION from BUG-153: onboarding users aged 65+ now stop contributing the year after their current age, whatever retirement age they enter; the new equality test locks the defect in
+- **Where:** `src/App.jsx:1410-1415` (`commitPlan`: `coupleCurrentAge` FIRST, then `coupleContribEndAges(st, st.retirementAge, ra)`) and `src/model/simulation.js:60-69` (`coupleCurrentAge`). Lifting the retirement age to the new current age sets each `contribEnd*` to `newAge + 1`, not to the lifted retirement age. That breaks the "`contribEnd === retirementAge` means tracking" convention `coupleContribEndAges` relies on, so the retirement move that follows leaves contributions behind.
+- **Repro** (probe `zz-rev-i.test.js`, real App; the same probe on `main`):
+
+  | Path | contribEnd* | 401k contrib at 74 / 75 | totalAtRet |
+  |---|---|---|---|
+  | `main`: onboarding `commitPlan({currentAge: 72, retirementAge: 75})` | 75 | 13,390 / 13,792 | **282,679** |
+  | **HEAD: same onboarding call** | **73** | **0 / 0** | **221,179** (-$61,500, -22%) |
+  | Controls: age 72, then retire 75 | 73 | 0 / 0 | 221,179 |
+  | Controls: retire 75, then age 72 | 75 | 13,390 / 13,792 | 282,679 |
+
+  Same final inputs, two answers depending on the order the user moved the controls. BUG-153 made onboarding reproduce the WORSE order. `onboarding-coupling-wiring.test.js` "matches the same values entered through the normal coupled setters" asserts `ends` equal to that order (`[73,73,73,73]`), so the defect is now locked by a test. It hits every onboarding answer with `currentAge >= 65` (65 already lifts `contribEnd` to 66) and `retirementAge > currentAge + 1`. Before this branch, onboarding got contributions right (and SS wrong).
+- **Why it matters:** an older user still working ("I'm 70, retiring at 75") gets a plan that silently stops saving at 71. BUG-153 fixed one coupling (SS claim age) and regressed another, and its equality test can't see it because it compares against an order-dependent baseline instead of an order-independent truth.
+- **Smallest fix:** in `commitPlan`, apply the retirement-age coupling against the ORIGINAL tracking state, before `coupleCurrentAge`. Equivalently: couple the retirement age first, then the current age, which gives ends 75 and still clamps SS to 70. Fix the controls-order dependence the same way (in `coupleContribEndAges`, also treat `contribEnd === baseRetAge + 1` as tracking when `baseRetAge === currentAge`). Change the BUG-153 test to assert order independence (both control orders and onboarding agree) and contributions through the retirement year.
 
 ## Checked and CLEAN
 
