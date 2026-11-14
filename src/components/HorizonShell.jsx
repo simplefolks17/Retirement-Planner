@@ -293,7 +293,9 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
       currentIncome: vals.currentIncome,
       totalSaved:    vals.totalSaved,
       retirementAge: vals.retirementAge,
-      monthlySpend:  vals.monthlySpend,
+      // BUG-167: only when the user CHANGED the seeded answer — an untouched seed must leave the
+      // auto (null) annualExpenses auto, not freeze it into a fixed number.
+      ...(vals.monthlySpend !== initialValues?.monthlySpend ? { monthlySpend: vals.monthlySpend } : {}),
     });
     onComplete();
   };
@@ -652,8 +654,11 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               currentIncome: props.currentIncome,
               totalSaved:    props.currentTotalSaved,
               retirementAge: retirementAge,
-              // model-provided monthly figure (calcStatementView) — no /12 here
-              monthlySpend:  props.statementView.monthlyTotal,
+              // BUG-167 (R-4): TODAY's-dollar monthly figure (calcStatementView.monthlyTodaysExp).
+              // The question is captioned "today's dollars" and commitPlan writes the answer into
+              // annualExpenses (a today's-dollar input), so this must NOT be monthlyTotal, which is
+              // retirement-year dollars (3.95x at the default).
+              monthlySpend:  props.statementView.monthlyTodaysExp,
             }}
             onComplete={handleOnboardingComplete}
             commitPlan={props.commitPlan}

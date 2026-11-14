@@ -72,3 +72,70 @@ describe("onboarding wizard → plan (BUG-152)", () => {
     act(() => renderer.unmount());
   });
 });
+
+// ── BUG-167 (Opus review R-4, HIGH) ──────────────────────────────────────────
+// Q5 is captioned "today's dollars" and its answer is written into annualExpenses (a
+// today's-dollar input), but the wizard seeded it from statementView.monthlyTotal, which
+// is RETIREMENT-YEAR dollars (3.95x at the default). Clicking through untouched turned a
+// plan that lasts to 88 into one that runs out at 70. And a user who did fix the number had
+// the auto (null) annualExpenses frozen into a fixed value.
+const Q5 = "How much to spend each month\nin retirement?";
+function mountWizard() {
+  captured.length = 0;
+  let renderer;
+  act(() => { renderer = create(React.createElement(App)); });
+  return renderer;
+}
+function walkToSummary(renderer, { beforeNextOnQ5 } = {}) {
+  for (let i = 0; i < 4; i++) click(renderer.root, byText("Next →"), "Next");
+  beforeNextOnQ5?.();
+  click(renderer.root, byText("Build my plan →"), "Build my plan");
+  click(renderer.root, byText("Save as my plan →"), "Save as my plan");
+  click(renderer.root, byText("Yes, save my plan"), "confirm");
+}
+const lastProps = () => captured[captured.length - 1];
+
+describe("onboarding wizard → plan (BUG-167: the spend question's basis)", () => {
+  it("seeds Q5 with the TODAY's-dollar monthly figure, not the retirement-year one", () => {
+    const r = mountWizard();
+    const sv = lastProps().statementView;
+    expect(sv.monthlyTotal).not.toBe(sv.monthlyTodaysExp); // the two bases genuinely differ
+    for (let i = 0; i < 4; i++) click(r.root, byText("Next →"), "Next");
+    const input = r.root.findAll(n => n.type === "input")[0];
+    const shown = input.props.value;
+    expect(shown.replace(/[^0-9]/g, "")).toBe(String(sv.monthlyTodaysExp));
+    act(() => r.unmount());
+  });
+
+  it("completing the wizard with nothing changed leaves the plan unchanged", () => {
+    const r = mountWizard();
+    const before = { e: lastProps().effectiveExpenses, y: lastProps().yearsSustained,
+                     wr: lastProps().withdrawalRate };
+    walkToSummary(r);
+    expect(lastProps().effectiveExpenses).toBe(before.e);
+    expect(lastProps().yearsSustained).toBe(before.y);
+    expect(lastProps().withdrawalRate).toBe(before.wr);
+    act(() => r.unmount());
+  });
+
+  it("an untouched spend answer keeps annualExpenses on auto (follows income)", () => {
+    const r = mountWizard();
+    walkToSummary(r);
+    // auto spending follows income; a frozen annualExpenses would not.
+    const e0 = lastProps().effectiveExpenses;
+    act(() => { lastProps().profile.currentIncome.set(250_000); });
+    expect(lastProps().effectiveExpenses).toBeGreaterThan(e0);
+    act(() => r.unmount());
+  });
+
+  it("a CHANGED spend answer lands in today's dollars", () => {
+    const r = mountWizard();
+    walkToSummary(r, { beforeNextOnQ5: () => {
+      for (let i = 0; i < 5; i++) click(r.root, byAria(`increase ${Q5}`), "increase spend");
+    } });
+    const sv0 = Math.round(captured[0].effectiveExpenses / 12);
+    // 5 steps of $100/mo on top of the seeded monthly figure, written x12 into annualExpenses.
+    expect(lastProps().effectiveExpenses).toBe((sv0 + 500) * 12);
+    act(() => r.unmount());
+  });
+});
