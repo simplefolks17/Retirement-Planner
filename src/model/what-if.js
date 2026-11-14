@@ -10,6 +10,8 @@
 // Baseline values are passed in from App.jsx to avoid re-computing them.
 
 import { runSimulation, projectedIncomeAtAge, coupleContribEndAges } from "./simulation.js";
+import { clampIncomePlateauAge } from "./income-growth.js";
+import { conversionEventOutsideWorkingYears } from "./conversion-events.js";
 import { calcRetirementIncome } from "./retirement-income.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./retirement-phase.js";
@@ -34,8 +36,28 @@ import { toRetirementYearDollars, inflationRebaseFactor } from "./finance-math.j
 // uses (spouse-sim.js) — never a second copy. Returns the primary re-sim inputs (with the
 // BUG-138 contribEnd coupling and the cutoff) plus the spouse bundle for the seed/chart.
 // With no spouse (spouseSeedInputs null) or an unchanged retirement age this is inert.
+// BUG-179/181 (Opus review 2, S-1/S-6): two App-side derivations are keyed on the retirement age
+// and were handed to scenarios already resolved against the BASE age, so a scenario that moves the
+// age disagreed with committing it. App now passes the STORED plateau and the UNFILTERED conversion
+// events; THIS is the one place a scenario resolves both against its OWN retirement age (the same
+// clampIncomePlateauAge / conversionEventOutsideWorkingYears App uses for the committed plan).
+// Idempotent at the base age, so an already-resolved hand-built bundle is unchanged.
+export function scenarioResolvedInputs(simInputs, scenarioRetAge) {
+  const out = {
+    ...simInputs,
+    incomeGrowthEndAge: clampIncomePlateauAge(
+      simInputs.incomeGrowthEndAge ?? null, simInputs.currentAge, scenarioRetAge),
+  };
+  if (Array.isArray(simInputs.conversionEvents)) {
+    out.conversionEvents = simInputs.conversionEvents.filter(
+      e => e.amount > 0 && !conversionEventOutsideWorkingYears(e, simInputs.currentAge, scenarioRetAge));
+  }
+  return out;
+}
+
 function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge) {
-  const primaryInputs = coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge, simInputs.currentAge);
+  const resolved = scenarioResolvedInputs(simInputs, scenarioRetAge);
+  const primaryInputs = coupleContribEndAges(resolved, safeRetAge, scenarioRetAge, simInputs.currentAge);
   if (!spouseSeedInputs || scenarioRetAge === safeRetAge) {
     return { primaryInputs, seedInputs: spouseSeedInputs, chartInputs: spouseChartInputs };
   }
@@ -55,7 +77,7 @@ function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInput
   const spouseSimData = runSpouseSim(buildSpouseSimInput({
     totalYears: simInputs.totalYears, currentAge: simInputs.currentAge,
     currentIncome: simInputs.currentIncome, incomeGrowth: simInputs.incomeGrowth,
-    incomeGrowthEndAge: simInputs.incomeGrowthEndAge, filingStatus: simInputs.filingStatus,
+    incomeGrowthEndAge: resolved.incomeGrowthEndAge, filingStatus: simInputs.filingStatus,
     returnRate: simInputs.returnRate, primaryContribHSA: simInputs.contribHSA,
     inflationRate: simInputs.inflationRate ?? 0,
     hsaCoverageType: raw.hsaCoverageType,
@@ -348,7 +370,12 @@ export function verdictInfoForScenario(scenario, safeLifeExp) {
 // re-derive is a no-op there. One path, correct for both.
 function scenarioSocialSecurity(ssInputs, currentAge, baseRetAge, scenarioRetAge) {
   if (!ssInputs || scenarioRetAge === baseRetAge) return null;
-  return calcRetirementIncome({ ...ssInputs, currentAge, safeRetAge: scenarioRetAge });
+  // BUG-179: the plateau is clamped against the SCENARIO's retirement age (App passes the stored one).
+  return calcRetirementIncome({
+    ...ssInputs,
+    incomeGrowthEndAge: clampIncomePlateauAge(ssInputs.incomeGrowthEndAge ?? null, currentAge, scenarioRetAge),
+    currentAge, safeRetAge: scenarioRetAge,
+  });
 }
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
@@ -1168,6 +1195,7 @@ export function eventIncomeImpact(event, simInputs, safeRetAge) {
   if (!event || !isIncomeReplacingEvent(event)) return null;
   if (eventFirstAge(event) > safeRetAge) return null;
 
+  const resolvedInputs = scenarioResolvedInputs(simInputs, safeRetAge); // BUG-179: App passes the stored plateau
   let monthsWorking = 0;
   let usualPay = 0;
   let eventPay = 0;
@@ -1176,7 +1204,7 @@ export function eventIncomeImpact(event, simInputs, safeRetAge) {
     const months = monthsActiveInYear(event, age);
     if (months <= 0) continue;
     monthsWorking += months;
-    usualPay += (months / 12) * projectedIncomeAtAge(simInputs, age);
+    usualPay += (months / 12) * projectedIncomeAtAge(resolvedInputs, age);
     eventPay += (months / 12) * Math.abs(event.incomeAnnual);
   }
   if (monthsWorking <= 0) return null;
@@ -1737,6 +1765,7 @@ export function calcWorkLongerBreakEven({
         currentIncome: 0, incomeGrowth: 0, incomeGrowthEndAge: null,
         ssClaimingAge: SS_FRA, spouseSsEstimate: 0, pensionMonthly: 0, pensionStartAge: 0,
         ...ssSrc,
+        incomeGrowthEndAge: clampIncomePlateauAge(ssSrc.incomeGrowthEndAge ?? null, currentAge, retAge), // BUG-179
         ssOverride: ssSrc.ssOverride ?? null,
         includeSS: true, currentAge, safeRetAge: retAge,
       }).householdSS

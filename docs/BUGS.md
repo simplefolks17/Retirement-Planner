@@ -733,6 +733,18 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-181 — "not modelled" conversion events were dropped from what-if previews that would bring them back (Opus review 2 S-6; FIXED 2026-11-14)
+
+**Severity: MEDIUM (BUG-175 made it a designed state; whatif-parity class).** $500k pre-tax, in-service conversions, one $100,000 event at age 60, retirement 65 -> 58 (event flagged "not modelled"). Work-longer +5 / `calcWhatIfScenario` at 63: totalAtRet 5,941,869; committing 63: 5,905,265 (event modelled again) — preview optimistic by $36,604 of conversion tax.
+**Fix.** App's `whatIfSimInputs.conversionEvents` is the toggle+amount list WITHOUT the base-age filter (new `scenarioConversionEvents`); `scenarioResolvedInputs` (see BUG-179) applies the BUG-175 predicate at each scenario's OWN retirement age. **Files:** `src/App.jsx`, `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `whatif-parity-wiring.test.js` "BUG-181": preview==commit at 63 (with a toggle-off non-vacuity check), the reverse direction, and the work-longer row. Reverting App to the pre-filtered list fails 2; the what-if-side filter is equivalent defence in depth (see `impl-log-R3-A.md`).
+
+### BUG-179 — scenarios clamped the stored income plateau against the BASE retirement age (Opus review 2 S-1, regression from BUG-170; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** BUG-170 made the plateau non-destructive (stored kept, effective = clamp(stored, age, retAge)) but App fed scenarios the EFFECTIVE value clamped at the base age. Stored 56, base retirement 55, work-longer to 60: preview totalAtRet 3,049,317 vs committed 3,042,033; stored 45/44/49: 1,417,679 vs 1,412,418, SS 31,920 vs 31,656 (preview optimistic). Before BUG-170 both read null and agreed.
+**Fix.** App passes the STORED plateau in `whatIfSimInputs` and `whatIfBundle.ssInputs`; `what-if.js` resolves it per scenario through one exported helper `scenarioResolvedInputs` (shared with BUG-181), used by `scenarioSpouseAwareInputs` (primary re-sim and the spouse re-sim), `scenarioSocialSecurity`, the work-longer `ssAt`, and `eventIncomeImpact`. At the base age it reproduces App's value exactly. **Files:** `src/model/what-if.js`, `src/App.jsx`.
+**Tests/revert-and-confirm.** `whatif-parity-wiring.test.js` "BUG-179" (real App): both review rows preview==commit, scenarioYears, and work-longer portfolio/SS. Each site reverted singly and confirmed to fail (details in `impl-log-R3-A.md`).
+
 ### BUG-178 — the wizard's untouched spend answer was stale against a changed income answer (Opus review 2 S-5, HIGH, regression from BUG-167; FIXED 2026-11-14)
 
 **Severity: HIGH.** BUG-167 sent `monthlySpend` only when it differed from the PRE-wizard seed. An untouched answer leaves `annualExpenses` auto, and auto spending follows the wizard's NEW income. Income $200k with Q5 untouched: summary showed $4,781/mo, saved plan used $10,617 (2.2x, 15 years worse); $60k: used $2,267 (0.47x, 56 years better). The summary label also read "Monthly income" for a spending figure.

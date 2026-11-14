@@ -460,3 +460,107 @@ describe("BUG-158 — the spouse's own accumulation sim is re-run at the scenari
     a.unmount();
   });
 });
+
+// ── BUG-179 (Opus review 2, S-1): the stored plateau is clamped against the SCENARIO's age ──────
+// BUG-170 made the plateau non-destructive (stored kept; effective = clamp(stored, age, retAge)).
+// App handed scenarios the EFFECTIVE value clamped at the BASE age, so a stored plateau of 56 with
+// base retirement 55 read `null` inside a retire-at-60 preview, while committing 60 restores 56.
+describe("BUG-179 — a stored plateau above the base retirement age survives into the scenario", () => {
+  const setupPlateau = (stored, baseRet) => (a) => {
+    a.fire(() => a.latest().assumptions.retirementAge.set(65));
+    a.fire(() => a.latest().profile.incomeGrowthEndAge.set(stored));
+    a.fire(() => a.latest().assumptions.retirementAge.set(baseRet));
+  };
+  for (const [stored, baseRet, target] of [[56, 55, 60], [45, 44, 49]]) {
+    it(`plateau ${stored}, base retirement ${baseRet}, target ${target}: preview == commit`, () => {
+      const r = previewVsCommit(target, (a) => {
+        a.fire(() => a.latest().assumptions.currentAge.set(34));
+        setupPlateau(stored, baseRet)(a);
+      });
+      expect(r.baseRetAge).toBe(baseRet);
+      // fixture precondition: the plateau really changes the outcome (stored-vs-null differ)
+      const noPlateau = previewVsCommit(target, (a) => { a.fire(() => a.latest().assumptions.currentAge.set(34));
+        a.fire(() => a.latest().assumptions.retirementAge.set(baseRet)); });
+      expect(noPlateau.committedTotalAtRet).not.toBe(r.committedTotalAtRet);
+      expect(r.preview.scenarioTotalAtRet).toBe(r.committedTotalAtRet);
+    });
+  }
+  it("the scenario's own Social Security (scenarioYears) matches committing — review S-1's 45/44/49 row", () => {
+    const setup = (a) => { a.fire(() => a.latest().assumptions.currentAge.set(34)); setupPlateau(45, 44)(a);
+      // a finite (not Infinity) plan, so a different SS figure moves scenarioYears
+      a.fire(() => a.latest().spending.annualExpenses.set(28_000)); };
+    const a1 = mount(); setup(a1);
+    const preview = calcWhatIfScenario(a1.latest().whatIfSimInputs, { retirementAge: 49 });
+    a1.unmount();
+    const a2 = mount(); setup(a2);
+    a2.fire(() => a2.latest().assumptions.retirementAge.set(49));
+    expect(preview.scenarioYears).toBe(a2.latest().yearsSustained);
+    expect(preview.scenarioTotalAtRet).toBe(a2.latest().totalAtRet);
+    a2.unmount();
+  });
+  it("the calcWorkLongerBreakEven rows (Social Security too) agree with committing", () => {
+    const a1 = mount();
+    a1.fire(() => a1.latest().assumptions.currentAge.set(34));
+    setupPlateau(45, 44)(a1); // review S-1's row where Social Security itself differs (56/55 does not)
+    const rows = a1.latest().workLongerView.rows;
+    const row5 = rows.find(x => x.retAge === 49) ?? rows.find(x => x.yearsLater === 5);
+    expect(row5).toBeTruthy();
+    const preview = { port: row5.portfolioAtRet, ss: row5.ssAnnual };
+    a1.unmount();
+    const a2 = mount();
+    a2.fire(() => a2.latest().assumptions.currentAge.set(34));
+    setupPlateau(45, 44)(a2);
+    a2.fire(() => a2.latest().assumptions.retirementAge.set(49));
+    expect(preview.port).toBe(a2.latest().totalAtRet);
+    expect(preview.ss).toBe(a2.latest().ssView.ssEstimateAnnual);
+    a2.unmount();
+  });
+});
+
+// ── BUG-181 (Opus review 2, S-6): "not modelled" conversion events are re-judged per scenario ──────
+// BUG-175 flags a working-year conversion event past the base retirement age "not modelled" (kept,
+// not clamped, so it survives retirement moving back). App handed scenarios the list already
+// filtered at the BASE age, so a work-longer preview that re-enters the event's window dropped it
+// while committing the same age brought it back (review repro: $36,604 of conversion tax).
+describe("BUG-181 — a conversion event re-enters a scenario whose retirement age brings it back", () => {
+  const setupEvent = (a) => {
+    const L = () => a.latest();
+    a.fire(() => L().assumptions.retirementAge.set(65));
+    a.fire(() => L().accounts.trad401k.bal.set(500_000));
+    a.fire(() => L().conversionView.events.inServiceField.set?.(true));
+    a.fire(() => L().conversionView.events.add());
+    a.fire(() => L().conversionView.events.rows[0].amountField.set(100_000));
+    a.fire(() => L().conversionView.events.rows[0].ageField.set(60));
+    a.fire(() => L().assumptions.retirementAge.set(58));
+  };
+  it("fixture precondition: at base retirement 58 the age-60 event is flagged not modelled", () => {
+    const a = mount(); setupEvent(a);
+    expect(a.latest().conversionView.events.rows[0].notModelled).toBe(true);
+    a.unmount();
+  });
+  it("retire at 63: preview == commit (the event is modelled again)", () => {
+    const r = previewVsCommit(63, setupEvent);
+    expect(r.baseRetAge).toBe(58);
+    // precondition: the event genuinely matters (without it the committed total differs)
+    const without = previewVsCommit(63, (a) => { setupEvent(a); a.fire(() => a.latest().conversionView.events.inServiceField.set(false)); });
+    expect(without.committedTotalAtRet).not.toBe(r.committedTotalAtRet);
+    expect(r.preview.scenarioTotalAtRet).toBe(r.committedTotalAtRet);
+  });
+  it("the reverse: base retirement 65 models the age-60 event, a retire-at-58 preview must drop it", () => {
+    const early = (a) => { setupEvent(a); a.fire(() => a.latest().assumptions.retirementAge.set(65)); };
+    const r = previewVsCommit(58, early);
+    expect(r.baseRetAge).toBe(65);
+    expect(r.preview.scenarioTotalAtRet).toBe(r.committedTotalAtRet);
+  });
+  it("calcWhatIfDelta and the work-longer row agree too", () => {
+    const a1 = mount(); setupEvent(a1);
+    const row = a1.latest().workLongerView.rows.find(x => x.retAge === 63);
+    expect(row).toBeTruthy();
+    const port = row.portfolioAtRet;
+    a1.unmount();
+    const a2 = mount(); setupEvent(a2);
+    a2.fire(() => a2.latest().assumptions.retirementAge.set(63));
+    expect(port).toBe(a2.latest().totalAtRet);
+    a2.unmount();
+  });
+});

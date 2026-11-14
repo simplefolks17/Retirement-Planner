@@ -312,6 +312,11 @@ export default function App() {
     return conversionEvents.filter(e => e.amount > 0 && !conversionEventOutsideWorkingYears(e, currentAge, safeRetAge));
   }, [conversionInService, conversionEvents, currentAge, safeRetAge]);
 
+  // BUG-181: the same toggle + amount gate, but NOT age-filtered — scenarios filter per their own age.
+  const scenarioConversionEvents = useMemo(
+    () => (conversionInService ? conversionEvents.filter(e => e.amount > 0) : []),
+    [conversionInService, conversionEvents]);
+
   // Spouse accounts are modeled only when there's a spouse to model. Default (all
   // zero, unmarried) → hasSpouse false → the spouse sim below is skipped entirely
   // and every household total equals the primary total → golden master untouched.
@@ -1366,7 +1371,9 @@ export default function App() {
   // whatIfBundle below receive a stable reference and their useMemos only fire on
   // genuine input changes.
   const whatIfSimInputs = useMemo(() => ({
-    totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
+    // BUG-179: the STORED plateau (not the base-age-clamped effective one) — what-if.js clamps it
+    // against each SCENARIO's own retirement age (scenarioResolvedInputs).
+    totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge: incomeGrowthEndAgeStored, filingStatus,
     spouseIncome, spouseIncomeGrowth, returnRate,
     bal401k, balRoth, balTaxable, balHSA,
     contrib401k, contribRoth, contribTaxable, contribHSA,
@@ -1375,19 +1382,21 @@ export default function App() {
     moneyEvents,
     // Permanent working-year conversions must travel with the re-sim so the what-if
     // BASELINE matches the main plan (same class as the BUG-34 money-events fix).
-    conversionEvents: activeConversionEvents, stateRate,
+    // BUG-181: every real (amount > 0) event when the toggle is on, NOT filtered against the base
+    // retirement age — what-if.js re-applies the working-years predicate at each scenario's own age.
+    conversionEvents: scenarioConversionEvents, stateRate,
     // Permanent plan input (Step 7) — a what-if re-sim must apply the same
     // spouse-retires-first MAGI cutoff the main plan uses, or a forced resim's
     // baseline would silently diverge from the committed plan.
     spouseIncomeEndAge: spouseIncomeEndAgeBase,
     inflationRate, // BUG-159: scenario re-sims must index the Roth phase-out too
-  }), [totalYears, currentAge, currentIncome, incomeGrowth, incomeGrowthEndAge, filingStatus,
+  }), [totalYears, currentAge, currentIncome, incomeGrowth, filingStatus,
        spouseIncome, spouseIncomeGrowth, returnRate,
        bal401k, balRoth, balTaxable, balHSA,
        contrib401k, contribRoth, contribTaxable, contribHSA,
        contribEnd401k, contribEndRoth, contribEndTaxable, contribEndHSA,
-       employerMatch, moneyEvents, activeConversionEvents, stateRate,
-       spouseIncomeEndAgeBase, inflationRate]);
+       employerMatch, moneyEvents, scenarioConversionEvents, stateRate,
+       spouseIncomeEndAgeBase, inflationRate, incomeGrowthEndAgeStored]);
 
   // Retirement-age coupled update: mirrors the Classic UI onChange that keeps
   // contribEnd ages in sync when they track the retirement age.
@@ -1664,7 +1673,7 @@ export default function App() {
     // scenario supplies its own, and carrying the base plan's here is exactly the
     // freeze that caused the bug (BUG-127's lesson, same shape).
     ssInputs: {
-      currentIncome, incomeGrowth, incomeGrowthEndAge,
+      currentIncome, incomeGrowth, incomeGrowthEndAge: incomeGrowthEndAgeStored, // BUG-179: stored; clamped per scenario
       ssClaimingAge, includeSS, ssOverride, ssOverrideAnchorAge, spouseSsEstimate,
       pensionMonthly, pensionStartAge,
       isMarried, spouseClaimingAge, spouseBenefitBasis,
@@ -1677,7 +1686,7 @@ export default function App() {
        spouseBal401k, spouseBalRoth, spouseBalTaxable, spouseBalHSA,
        spouseContrib401k, spouseContribRoth, spouseContribTaxable, spouseContribHSA,
        spouseEmployerMatch, hsaCoverageType,
-       currentIncome, incomeGrowth, incomeGrowthEndAge, ssClaimingAge, includeSS,
+       currentIncome, incomeGrowth, incomeGrowthEndAgeStored, ssClaimingAge, includeSS,
        ssOverride, ssOverrideAnchorAge, spouseSsEstimate, pensionMonthly, pensionStartAge,
        isMarried, spouseClaimingAge, spouseBenefitBasis]);
 
