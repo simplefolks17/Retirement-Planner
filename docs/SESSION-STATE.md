@@ -246,6 +246,24 @@ agents, followed by a deep Opus review.
 - **Progress:** each batch's `impl-log-<BATCH>.md` in `docs/audit-2026-11-14/` is the
   durable record. Re-verify each batch (test, lint, build, revert-and-confirm) before
   starting the next.
+- **Status (updated 13:15 UTC):**
+  - DONE + orchestrator-verified + pushed: L1-A (BUG-151); L1-B (BUG-152/153/160/161/162),
+    plus an orchestrator-added end-to-end wizard test (`onboarding-wizard-save.test.js`)
+    because L1-B's tests missed the bug's own site; lane-2 BUG-163/164 (cherry-picked).
+    Suite 1,436.
+  - **HELD for an owner decision: BUG-154** (`ce5c4c0` on branch
+    `worktree-agent-ac3e1fbacc480ed97`).
+    - Its fix moves T-X.3 `ssView.wr70` from 1.4225852835455082 to 0.9726563582272075, the
+      correct direction: the age-70 leg now honours the 38,000 override (× 1.24).
+    - The lane-2 agent's re-lock edit was denied by the permission classifier, so it is
+      surfaced to the owner, not done by the orchestrator. Do NOT re-lock without an
+      explicit owner "approve".
+    - On approval: cherry-pick `ce5c4c0`, re-lock that one value with an old → new comment,
+      and add the BUG-154 BUGS entry (its text is in `impl-log-L2.md`).
+  - L1-C was interrupted by a rate limit before making any edits, and was resumed via
+    SendMessage at 13:13.
+  - Remaining after it: L1-D, L1-E, L1-F, L1-G, L1-H, then the Opus deep review, then the
+    close-out (CLAUDE.md test counts are still at 1408 and need reconciling).
 
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
