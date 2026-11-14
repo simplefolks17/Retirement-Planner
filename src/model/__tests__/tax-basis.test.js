@@ -95,6 +95,27 @@ describe("calcTaxBasis — state rate override", () => {
   });
 });
 
+// BUG-151 (moved from the removed test-only calcStateTax): real non-TX work states
+// through the PRODUCTION path.
+describe("calcTaxBasis — real non-TX work states (BUG-151)", () => {
+  it("CA charges 9.3% of AGI from the work-state table", () => {
+    const b = calcTaxBasis({ ...defaults, selectedState: "CA" });
+    expect(b.stateRate).toBe(0.093);
+    expect(b.stateTax).toBeCloseTo(b.agi * 0.093, 6);
+    expect(b.noStateTax).toBe(false);
+    expect(b.grossAfterTax).toBeLessThan(calcTaxBasis(defaults).grossAfterTax);
+  });
+  it("an unknown state code falls back to no state tax", () => {
+    const b = calcTaxBasis({ ...defaults, selectedState: "ZZ" });
+    expect(b.stateTax).toBe(0);
+    expect(b.noStateTax).toBe(true);
+  });
+  it("an explicit override beats the CA table rate", () => {
+    const b = calcTaxBasis({ ...defaults, selectedState: "CA", stateRateOverride: 0.05 });
+    expect(b.stateTax).toBe(b.agi * 0.05);
+  });
+});
+
 // ── BUG-145 — a non-MFJ filer must not be charged their spouse's FICA ─────────
 //
 // `householdIncome` is primary-only for every status except MFJ (rule 3), but FICA

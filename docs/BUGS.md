@@ -719,6 +719,32 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 ## Resolved Issues
 
 
+### BUG-151 — retirement state never followed the work state; the state-tax path was untested (found 2026-11-14 by the oversight audit; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** `retirementState` was `useState(selectedState)` (App.jsx), so it captured the
+INITIAL work state ("TX") once and never followed it. A user who set their home state to CA kept a
+0% retirement state tax in the engine, `retStateRate`, the RMD/conversion tax and the headline.
+**Root cause / why it survived:** eight compounding causes, summarised in
+`docs/audit-2026-11-14/oversight-root-causes.md` (Part 1 and the Lens 4 mutation table). The key
+ones: golden masters all run TX/TX; the only state-tax "tests" exercised `calcStateTax`, a
+test-only function production never called (and `spouse-household.test.js` comments falsely
+claimed the fixture exercised it); no App-level test touched the state glue. Before this fix,
+`stateRateDefault = 0` (tax-basis.js:42) and `retStateRate = 0` (App.jsx) each failed 0 of 1,408 tests.
+**Fix:** `retirementState` is now an explicit auto sentinel (`null` = same as the work state),
+resolved ONCE as `effectiveRetirementState` and used by `retStateRate`, the bundle value and the
+Classic `<select>`. The bundle `set` snaps to `null` when the picked state equals the work state;
+the bundle exposes `isAuto` (rule 10) and Horizon My details shows "following your home state".
+Removed test-only `calcStateTax`; its assertions moved to `calcTaxBasis` (CA/ZZ/override) and
+App-level tests. Fixed the false T-X.3 comments (values unmoved; CA retirement + TX work stays an
+explicit non-auto choice).
+**Files:** `src/App.jsx`, `src/horizon/screens/MyDetailsScreen.jsx`, `src/model/taxes.js`,
+`src/model/__tests__/taxes.test.js`, `src/model/__tests__/tax-basis.test.js`,
+`src/__tests__/retirement-state-wiring.test.js` (new, 6 tests), `src/__tests__/spouse-household.test.js`
+(comments), `docs/ARCHITECTURE.md`.
+**Mutation evidence** (`docs/audit-2026-11-14/impl-log-L1-A.md`): `stateRateDefault = 0` now fails 2
+tests (tax-basis CA, App take-home CA); `retStateRate = 0` fails 2; reverting the sentinel
+(auto resolves to constant TX) fails 2. No golden master moved.
+
 ### BUG-150 — a pinned `ssOverride` froze the spouse's spousal floor in every what-if scenario (found 2026-09-06 by CodeRabbit on PR #67, against BUG-135's own fix; verified independently and FIXED 2026-10-02)
 
 **Owner:** me_theguy. **Severity: MEDIUM — a 14–17% error on household SS, optimistic in the

@@ -113,7 +113,11 @@ export default function App() {
   const [filingStatus,  setFilingStatus]  = useState("single");
   const [otherPreTaxDeduc, setOtherPreTaxDeduc] = useState(0);
 
-  const [retirementState, setRetirementState] = useState(selectedState);
+  // BUG-151: null = "auto" — retirement state follows the work state (mirrors
+  // spouseRetirementAge / stateRateOverride). Previously useState(selectedState)
+  // captured the INITIAL work state once and never followed it. Resolved ONCE below
+  // as effectiveRetirementState; every consumer reads that, never this raw value.
+  const [retirementState, setRetirementStateRaw] = useState(null);
 
   const [bal401k,    setBal401k]    = useState(50_000);
   const [balRoth,    setBalRoth]    = useState(25_000);
@@ -229,7 +233,12 @@ export default function App() {
   // redesign (2026-07-11).
   const [committedPlan, setCommittedPlan] = useState(null);
 
-  const retStateRate = RETIREMENT_STATE_TAX[retirementState]?.rate ?? 0;
+  const effectiveRetirementState = retirementState ?? selectedState;
+  const retirementStateIsAuto = retirementState === null;
+  // Picking the work state again returns to "auto" (keeps following it).
+  const setRetirementState = useCallback(
+    v => setRetirementStateRaw(v === selectedState ? null : v), [selectedState]);
+  const retStateRate = RETIREMENT_STATE_TAX[effectiveRetirementState]?.rate ?? 0;
 
   const safeRetAge = retirementAge;
   const phase2End  = safeRetAge - currentAge;
@@ -2102,10 +2111,13 @@ export default function App() {
     lifeExpect:        { value: lifeExpect, set: guardWrite(setLifeExpectCoupled, readOnly), min: retirementAge + 1, max: 115, step: 1 },
     returnRate:        { value: returnRate, set: guardWrite(setReturnRate, readOnly), min: 1, max: 15, step: 1 },
     inflationRate:     { value: inflationRate, set: guardWrite(setInflationRate, readOnly), min: 1, max: 8, step: 0.5 },
-    retirementState:   { value: retirementState, set: guardWrite(setRetirementState, readOnly), options: RETIREMENT_STATE_OPTIONS },
+    // value = the EFFECTIVE state (BUG-151); isAuto lets screens label "same as home
+    // state" without comparing values (rule 10).
+    retirementState:   { value: effectiveRetirementState, isAuto: retirementStateIsAuto,
+      set: guardWrite(setRetirementState, readOnly), options: RETIREMENT_STATE_OPTIONS },
     savingsSurplusPct: { value: savingsSurplusPct,
       set: guardWrite(v => { setSavingsSurplusPct(v); setPreApplySnapshot(null); }, readOnly), min: 0, max: 100, step: 5 },
-  }), [currentAge, retirementAge, lifeExpect, returnRate, inflationRate, retirementState, savingsSurplusPct,
+  }), [currentAge, retirementAge, lifeExpect, returnRate, inflationRate, effectiveRetirementState, retirementStateIsAuto, savingsSurplusPct,
        setCurrentAgeCoupled, setRetirementAgeCoupled, setLifeExpectCoupled, setReturnRate, setInflationRate,
        setRetirementState, setSavingsSurplusPct, setPreApplySnapshot, readOnly]);
 
@@ -3514,7 +3526,7 @@ export default function App() {
                   ? <span style={{ color: C.orange }}> · +{(retStateRate * 100).toFixed(1)}% on 401k/IRA</span>
                   : <span style={{ color: C.green }}> · no tax on retirement income</span>}
               </p>
-              <select value={retirementState} onChange={e => setRetirementState(e.target.value)}
+              <select value={effectiveRetirementState} onChange={e => setRetirementState(e.target.value)}
                 style={{ ...selectStyle, borderColor: `${C.green}50`, color: C.green, fontSize: 11 }}>
                 {Object.entries(RETIREMENT_STATE_TAX).sort((a, b) => a[1].name.localeCompare(b[1].name))
                   .map(([code, { name, rate }]) => (
@@ -3523,9 +3535,9 @@ export default function App() {
                     </option>
                   ))}
               </select>
-              {RETIREMENT_STATE_TAX[retirementState]?.note && (
+              {RETIREMENT_STATE_TAX[effectiveRetirementState]?.note && (
                 <p style={{ margin: "4px 0 0", fontSize: 9, color: C.muted, lineHeight: 1.5 }}>
-                  {RETIREMENT_STATE_TAX[retirementState].note}
+                  {RETIREMENT_STATE_TAX[effectiveRetirementState].note}
                 </p>
               )}
             </div>

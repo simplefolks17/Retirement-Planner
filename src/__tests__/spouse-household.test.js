@@ -727,8 +727,9 @@ describe("BUG-96 — RMD tiles/table scope agreement", () => {
 // were locked by zero golden-master value, only by the narrower, synthetic
 // wiring tests in pension-timing-wiring.test.js. This fixture closes that gap:
 // a REAL pension (starts after retirement, before RMD age — the exact shape
-// that was double-gated), MFJ filing, a non-TX retirement state (exercises
-// calcStateTax's table path instead of TX's 0% no-op), a spouse with an
+// that was double-gated), MFJ filing, a non-TX RETIREMENT state (CA, set
+// explicitly while the work state stays TX — exercises the retStateRate path
+// instead of TX's 0% no-op; BUG-151: this is an explicit, non-auto choice), a spouse with an
 // active gap window, and a genuinely open conversion window with real RMD,
 // wr70, and projected-bracket signal (none of the three locked values is
 // degenerate — see the build helper's comment for how each was tuned).
@@ -760,7 +761,7 @@ function buildTX3Household() {
   // (retPensionAtRMDAge, retPensionAt70) were about.
   app.fire(() => app.latest().pension.pensionMonthly.set(3_000));
   app.fire(() => app.latest().pension.pensionStartAge.set(65));
-  app.fire(() => app.latest().assumptions.retirementState.set("CA")); // non-TX — exercises calcStateTax's real table
+  app.fire(() => app.latest().assumptions.retirementState.set("CA")); // non-TX retirement state (explicit, != work state) — exercises retStateRate
   return app;
 }
 

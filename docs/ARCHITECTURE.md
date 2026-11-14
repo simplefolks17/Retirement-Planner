@@ -7,7 +7,7 @@ src/
   config/
     irs-2026.js           All 2026 IRS constants + ASSUMPTIONS object           [CLIENT]
   model/                  Pure functions — no React. Used client-side AND server-side.
-    taxes.js              calcTax, marginalRate, ltcgRate, calcStateTax, stackedIncomeTax, projectRetirementBracket  [CLIENT]
+    taxes.js              calcTax, marginalRate, ltcgRate, stackedIncomeTax, projectRetirementBracket  [CLIENT]
     tax-basis.js          calcTaxBasis (working-year agi / fed+state+FICA / Roth phase-out / grossAfterTax)  [CLIENT]
     social-security.js    calcAIME, calcPIA, calcBenefit, calcSpousal           [CLIENT]
     retirement-income.js  calcRetirementIncome (SS + pension composition), calcSSBreakEven  [CLIENT]

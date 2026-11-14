@@ -227,7 +227,9 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
             {F({ label: "Plan to age", field: assumptions.lifeExpect, format: ageFmt })}
             {F({ label: "Annual return", field: assumptions.returnRate, format: pctYr })}
             {F({ label: "Inflation", field: assumptions.inflationRate, format: pctYr })}
-            {F({ label: "Retirement state", field: assumptions.retirementState })}
+            {F({ label: "Retirement state",
+                 hint: assumptions.retirementState.isAuto ? "following your home state" : undefined,
+                 field: assumptions.retirementState })}
             {F({ label: "Deploy surplus", hint: "share of leftover income to invest",
                  field: assumptions.savingsSurplusPct, format: pct })}
           </Card>
