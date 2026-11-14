@@ -116,8 +116,6 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
                  seed: effLiving, nullLabel: `Auto · ${money(effLiving)}` })}
             {F({ label: "Retirement spending", field: spending.annualExpenses, format: money,
                  seed: effExp, nullLabel: `Auto · ${money(effExp)}` })}
-            {F({ label: "Portfolio target", hint: "milestone goal at retirement",
-                 field: spending.retirementTarget, format: money })}
           </Card>
 
           {/* ── Accounts & match ── */}

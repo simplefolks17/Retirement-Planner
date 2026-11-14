@@ -719,6 +719,15 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-165 — Horizon "Portfolio target" field is a dead control: rendered, consumed only by Classic (found 2026-11-14 in L1-F; FIXED 2026-11-14)
+
+**Severity: LOW.** Horizon's My Details rendered "Portfolio target — milestone goal at retirement" (`spending.retirementTarget`), but nothing in Horizon reads it: Horizon's milestones come from `calcChartMilestones`, which takes no target. Only Classic's `calcMilestones` (milestone cards) uses it.
+**Root cause.** Same class as BUG-160: a control rendered in a UI with no consumer in that UI. It was found only because the L1-F input-propagation allow-list explained it away ("Horizon shows the control but no Horizon prop reads it") instead of failing it.
+**Fix.** Field removed from `src/horizon/screens/MyDetailsScreen.jsx`; Classic keeps it. The allow-list entry is now `classicOnly: true` with reason "Classic-only; not rendered in Horizon".
+**Guard.** New test in `src/__tests__/input-propagation.test.js`: scans every non-test `src/horizon/**/*.js(x)` source (comments stripped) for the leaf name of any allow-list entry flagged `classicOnly`, as a whole word, so `spending.x`, `spending?.x`, destructuring and string lookups are all caught.
+**Revert-and-confirm.** Re-adding the field to MyDetailsScreen fails the guard (`Horizon renders a Classic-only bundle field ...: screens/MyDetailsScreen.jsx -> spending.retirementTarget`); restoring the fix passes (`docs/audit-2026-11-14/impl-log-L1-G.md`).
+**Files.** `src/horizon/screens/MyDetailsScreen.jsx`, `src/__tests__/input-propagation.test.js`.
+
 ### BUG-159 — Roth IRA income phase-out frozen at 2026 limits while salary grows: the default user stops Roth contributions at 53 (oversight audit Lens 6; FIXED 2026-11-14)
 
 **Severity: MEDIUM.** `ROTH_PHASEOUT_2026` was applied unindexed in `runSimulation`'s `cRoth` block while salary grows nominally (`incomeGrowth`, default 3%). At the shipped default (age 30, $100k, 3% raises, 4% inflation, single) `cRoth` was 7,000 to age 50, then 5,270 (51), 2,507 (52) and 0 from 53 to 65 — though with 4% inflation the user's REAL income is falling and the IRS indexes these thresholds yearly, so in reality they would never be phased out. Invisible because sweeping "Roth end age" showed nothing moving at the default.

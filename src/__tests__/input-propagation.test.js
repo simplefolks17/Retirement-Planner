@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
+import fs from "node:fs";
+import path from "node:path";
 import { act, create } from "react-test-renderer";
 import { calcMilestones } from "../model/accumulation.js";
 
@@ -202,7 +204,8 @@ const ACA_ON = (a) => { ACA_SETUP(a); set(a, "health.hasMarketplaceInsurance", t
 
 const ALLOW = {
   "spending.retirementTarget": {
-    reason: "Portfolio target feeds the milestone cards only (calcMilestones, App.jsx ~667, rendered by Classic; Horizon shows the control but no Horizon prop reads it).",
+    classicOnly: true,
+    reason: "Classic-only; not rendered in Horizon. Portfolio target feeds the milestone cards only (calcMilestones, App.jsx ~667, rendered by Classic). Horizon's milestones (calcChartMilestones) take no target (BUG-165).",
     proof: () => {
       const a = mount();
       const { simData, currentAge, retirementAge } = a.L();
@@ -321,6 +324,34 @@ describe("input propagation: every bundle field reaches the model", () => {
         `Either it is a DEAD CONTROL (wire it to the model, or remove it as BUG-160 did for livingExpenseGrowth),\n` +
         `or it only matters in a setup this test does not know about (add a TARGETED entry),\n` +
         `or it legitimately feeds something other than the headline (add an ALLOW entry with a reason and a proof that its real consumer moves).`);
+    });
+  });
+
+  describe("BUG-165 guard: Horizon never renders a Classic-only field", () => {
+    it("no src/horizon/**/*.jsx source references a field the allow-list marks classicOnly", () => {
+      const classicOnly = Object.entries(ALLOW).filter(([, e]) => e.classicOnly).map(([p]) => p);
+      expect(classicOnly.length).toBeGreaterThan(0);
+      const root = path.resolve(__dirname, "../horizon");
+      const files = [];
+      const walkDir = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) { if (e.name !== "__tests__") walkDir(full); }
+        else if (/\.jsx?$/.test(e.name)) files.push(full);
+      } };
+      walkDir(root);
+      expect(files.length).toBeGreaterThan(5);
+      const offenders = [];
+      for (const f of files) {
+        // strip comments so prose mentioning a field does not trip the guard
+        const src = fs.readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+        for (const p of classicOnly) {
+          // match the leaf name as a whole word: catches `spending.x`, `spending?.x`,
+          // destructuring `{ x } = spending`, and `["x"]` lookups alike.
+          const leaf = p.split(".").pop();
+          if (new RegExp(`\\b${leaf}\\b`).test(src)) offenders.push(`${path.relative(root, f)} -> ${p}`);
+        }
+      }
+      expect(offenders, "Horizon renders a Classic-only bundle field (a dead control there, BUG-165): " + offenders.join("; ")).toEqual([]);
     });
   });
 
