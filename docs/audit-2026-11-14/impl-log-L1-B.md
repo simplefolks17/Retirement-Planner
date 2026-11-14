@@ -45,3 +45,12 @@
 - BUG-162: WhatIfPanel ages = user value|null, clamped at use; test whatif-panel-ages.test.js (4); revert output above
 - BUGS.md entries 152/153/160/161/162 added; ARCHITECTURE commitPlan row updated
 - gate: npm test 1427 passed (1413 + 14), lint clean, build OK; no golden master moved
+
+## Orchestrator re-verification (2026-11-14)
+- `npm test` 1427, lint clean, build OK, no golden master moved. Re-confirmed independently
+  with a fresh probe: a 900,000 answer lands (272,727 / 136,364 / 436,364 / 54,545). The age-72
+  onboarding path now equals the coupled path (yearsSustained 3.818, SS claim age 70).
+  `livingExpenseGrowth` is gone from the bundle.
+- **Gap found:** deleting `totalSaved: vals.totalSaved` from HorizonShell `handleSave` (the bug's own
+  site) passed all 1,427 tests. Added `onboarding-wizard-save.test.js`, which drives the real wizard
+  end to end. Revert-and-confirm: line removed -> `expected 165000 to be 265000`; restored -> pass.

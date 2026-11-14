@@ -786,6 +786,14 @@ primary -> everything to taxable; an unchanged answer touches nothing (no roundi
 **Test:** `onboarding-coupling-wiring.test.js` (5: scale, no-op, spouse kept, clamp at 0,
 all-zero -> taxable). **Revert-and-confirm:** `totalSaved` branch disabled -> 4 of the 5 fail
 (the no-op test legitimately passes); fix restored -> pass.
+**Orchestrator re-verification found the fix unprotected AT THE BUG'S OWN SITE:** those tests call
+`commitPlan` directly with HorizonShell mocked away, so deleting `totalSaved: vals.totalSaved` from
+`handleSave` (the exact line that was missing) still left all 1,427 tests green. Added
+`src/__tests__/onboarding-wizard-save.test.js`: it renders the REAL wizard, clicks through all five
+questions (+$100,000 on the savings question), confirms, and reads `currentTotalSaved` from the
+props the real shell receives. With the line removed it fails (`expected 165000 to be 265000`);
+restored, it passes. Lesson: test at the site where the bug lived, not at the nearest function
+boundary.
 
 ### BUG-151 — retirement state never followed the work state; the state-tax path was untested (found 2026-11-14 by the oversight audit; FIXED 2026-11-14)
 
@@ -797,7 +805,8 @@ INITIAL work state ("TX") once and never followed it. A user who set their home 
 ones: golden masters all run TX/TX; the only state-tax "tests" exercised `calcStateTax`, a
 test-only function production never called (and `spouse-household.test.js` comments falsely
 claimed the fixture exercised it); no App-level test touched the state glue. Before this fix,
-`stateRateDefault = 0` (tax-basis.js:42) and `retStateRate = 0` (App.jsx) each failed 0 of 1,408 tests.
+`stateRateDefault = 0` (tax-basis.js:42) failed 0 of 1,408 tests and `retStateRate = 0` (App.jsx)
+failed only 1 (the T-X.3 golden master).
 **Fix:** `retirementState` is now an explicit auto sentinel (`null` = same as the work state),
 resolved ONCE as `effectiveRetirementState` and used by `retStateRate`, the bundle value and the
 Classic `<select>`. The bundle `set` snaps to `null` when the picked state equals the work state;
