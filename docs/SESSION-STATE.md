@@ -281,6 +281,12 @@ agents, followed by a deep Opus review.
   3. BUG-136, BUG-125.
   4. Owner calls: BUG-142, BUG-149, and the pinned-SS-override vs claim-slider semantics.
 
+- **Owner decision (2026-11-14, after close-out):** a pinned SS override is anchored to the claim
+  age it was ENTERED at. Exploring a different claim age rescales it by `F(newAge)/F(anchorAge)` on
+  BOTH legs (claim and age 70), so benefits are never overstated. Pre-assigned **BUG-177**. After
+  that: open the PR, then a fresh independent Opus audit of the whole branch. Fixes go to
+  Sonnet/Haiku agents (owner asked for token efficiency), and Opus is used for the review only.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an
