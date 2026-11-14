@@ -271,6 +271,16 @@ agents, followed by a deep Opus review.
   onboarding spend-basis bug) and 1 regression from this branch (R-10). Round 2 (R2-A/B/C) in
   IMPLEMENTATION-PLAN.md fixes them, with BUG-167..176 pre-assigned.
 
+- **CLOSED (2026-11-14, late):** all work is done, verified and pushed. That covers L1-A..H, BUG-154
+  (owner-approved re-lock), the Opus review, and Round 2 R2-A/B/C (BUG-167..176). Suite **1,683**, lint
+  clean, build OK. CLAUDE.md counts and Status are reconciled. The open-bug index has 16 entries
+  (BUG-36 raised to Medium).
+  **Next steps for a future session:**
+  1. Open a PR for this branch (the owner has not asked yet).
+  2. BUG-36's real fix: port `calcWhatIfDelta` onto `buildRetirementPhase`.
+  3. BUG-136, BUG-125.
+  4. Owner calls: BUG-142, BUG-149, and the pinned-SS-override vs claim-slider semantics.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an
