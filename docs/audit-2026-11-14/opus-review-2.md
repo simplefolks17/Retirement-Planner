@@ -68,3 +68,12 @@ they are verified. CONFIRMED = reproduced by execution with printed numbers; PLA
   - committing retirement 63: **5,905,265** (the event is modelled again, `notModelled` false). Preview overstates by **$36,604** (the conversion's tax), optimistic direction.
 - **Why it matters:** the S-1 mechanism again (an App-side derivation keyed on the base retirement age that the scenario inherits instead of re-deriving): CLAUDE.md's whatif-parity class. BUG-175's own test moves retirement but never previews a scenario that re-enters the working window.
 - **Smallest fix:** give the bundle the unfiltered `conversionEvents` + `conversionInService`, and filter inside the scenario path with the same `conversionEventOutsideWorkingYears(ev, currentAge, scenarioRetAge)` predicate (base age gives today's list exactly). Add a whatif-parity test with this fixture. `[judgement]`
+
+### S-7 — LOW — CONFIRMED — BUG-170 made two coupled setters non-destructive but missed the third: the spouse's current-age setter still overwrites an explicit spouse retirement age
+- **Where:** `src/App.jsx:1595-1598` (`setSpouseCurrentAgeCoupled`: `if (spouseRetirementAge != null && spouseRetirementAge <= v) setSpouseRetirementAge(v + 1)`), 20 lines below the BUG-170 comment in `setLifeExpectCoupled` explaining why the stored value is now left alone (every consumer reads it through `resolveSpouseRetAge`, which already clamps to `[spouseCurrentAge + 1, lifeExpect - 1]`).
+- **Repro** (probe `zz-r2-h`, real App: MFJ, spouse 30 earning $90k with a $15k 401k, explicit spouse retirement 60):
+  - A: spouse retirement **60**, `totalAtRet` 6,414,934, years 12.065.
+  - B: spouse age -> 61 (e.g. a slider drag): spouse retirement 62.
+  - C: spouse age back -> 30: spouse retirement stays **62**, `totalAtRet` **6,512,487** (+$97,553), years 12.251. Same inputs as A, different plan.
+- **Why it matters:** this is R-1's "lossy coupling" class, which BUG-170 fixed for the plateau and plan-to age but not here; the Horizon slider calls `set` on every tick, so a drag through the value is enough. `classic-horizon-parity.test.js` covers only the two fixed setters.
+- **Smallest fix:** delete the write (reads are already clamped by `resolveSpouseRetAge`), and add the A-C sequence beside the BUG-170 spouse test. `[mechanical]`
