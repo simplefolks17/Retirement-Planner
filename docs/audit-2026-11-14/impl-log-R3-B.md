@@ -37,3 +37,13 @@ Revert (one line at a time, file restored from backup after each, `git status` c
 - M5 `WorkLongerFlow.jsx` `row.ssPinnedFlat ? "your entered figure"` -> `false ? ...`: `1 failed | 4 passed (5)` (BUG-173 test).
 Restored: `5 passed (5)`.
 Note on M1: under the fix the preview reads 74 and the committed plan at 59 reads 74 (diff 0 at the printed resolution in the run above is not the case; the assertion allowed |diff| <= 1). The mutation gives 71, diff 3. The tolerance is the parity suite's "within a year".
+- Correction to the step-4 M1 note above: the mutation gives `preview 71`, i.e. 57 + 14. The fixed preview is therefore 59 + 14 = 73, against a committed plan at 59 of 74. Diff 1, which is inside the "within a year" tolerance. The earlier "74 vs 74" wording was wrong.
+
+## Step 5 — S-10 docs and comments (no behaviour change)
+1. `docs/BUGS.md` BUG-177: the revert claim now names the Horizon `ssView.ssMonthly` tile as the one reverted, and says that the Classic "Monthly Benefit" tile had 0 covering tests until `render-halves-s8.test.js`. The anchor description is corrected to "new pin only" (BUG-183).
+2. `src/App.jsx` ~L2117-2119 stale comment: the HSA cap is `spouseHsaLimit` (BUG-172), not the "household FAMILY ceiling".
+3. `docs/BUGS.md` BUG-36 heading: "(accepted, low)" -> "(Medium; raised from low 2026-11-14, R-9)", matching the index row.
+4. `src/App.jsx` `overrideRescaleNote`: the TYPED override now reads `fmtFull` ("$38,000/yr", not "$38k/yr"). The derived "that is $X/yr" figure stays `fmt`, since the user did not type it. Classic's "rescaled to" suffix is also derived and was left alone.
+5. `src/model/simulation.js` `coupleCurrentAge` dead plateau branch: comment only, no code removed.
+6. `src/__tests__/whatif-parity-wiring.test.js` header: BUG-135 removed from the "known remaining gaps" list (fixed 2026-09-06).
+Verification: `ss-override-wiring`, `whatif-parity-wiring`, and `render-halves-s8` 56/56 green. Full suite and lint as in the commit.

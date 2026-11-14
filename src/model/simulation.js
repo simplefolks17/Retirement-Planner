@@ -79,6 +79,9 @@ export function coupleCurrentAge(state, newAge) {
   }
   // BUG-155: the stored income-plateau age stays in [newAge + 1, retirementAge) or snaps to
   // null (opt-in: only when the caller's state carries the key).
+  // NOTE (review 2 S-10, 2026-11-14): this branch is DEAD in production. No App caller passes
+  // `incomeGrowthEndAge` since BUG-170 stopped rewriting the stored plateau; only
+  // income-plateau.test.js exercises it. Kept for now (no code removed); see BUG-155/BUG-170.
   if ("incomeGrowthEndAge" in state) {
     next.incomeGrowthEndAge = clampIncomePlateauAge(state.incomeGrowthEndAge, newAge, next.retirementAge);
   }

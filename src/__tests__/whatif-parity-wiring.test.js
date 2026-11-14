@@ -18,9 +18,9 @@ import { coupleContribEndAges } from "../model/simulation.js";
 // must agree. New parity findings belong here.
 //
 // Known remaining gaps, deliberately asserted as CURRENT behaviour below so that
-// fixing them fails this file loudly rather than silently: BUG-135 (Social Security is
-// not re-derived for the scenario's own working years) and BUG-136 (the Roth-conversion
-// schedule is inherited from the base plan).
+// fixing them fails this file loudly rather than silently: BUG-136 (the Roth-conversion
+// schedule is inherited from the base plan). BUG-135 (Social Security not re-derived for
+// the scenario's own working years) was fixed 2026-09-06 and is no longer a known gap.
 
 const captured = [];
 vi.mock("../components/HorizonShell.jsx", () => ({

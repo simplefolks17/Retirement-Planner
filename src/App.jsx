@@ -2114,9 +2114,9 @@ export default function App() {
   // self-describing field convention (rule 10) — minus contribEnd (the spouse
   // contributes until household retirement, no separate end-age lever). Balances
   // min 0 max 5M sliderMax 1M step 10k (accountsBundle's convention). Contribution
-  // caps are the IRS per-account limits (rule 1); HSA's contribution cap is the
-  // household FAMILY ceiling (not spouseHsaLimit, which is a derived per-run split,
-  // not a slider bound the user should see shrink as the primary's HSA contrib moves).
+  // caps are the IRS per-account limits (rule 1); HSA's contribution cap is the spouse's
+  // real share of the household ceiling: `spouseHsaLimit` (BUG-172, the sim's own cap). The
+  // slider max is what the sim enforces, so it is not a looser bound than the model uses.
   const spouseAccountsBundle = useMemo(() => {
     const acct = (bal, setBal, contrib, setContrib, contribMax) => ({
       bal:     { value: bal, set: guardWrite(setBal, readOnly), min: 0, max: 5_000_000, sliderMax: 1_000_000, step: 10_000 },
@@ -2573,7 +2573,7 @@ export default function App() {
     // BUG-177: model-provided wording (rule 10) when the claim age moved off the age the pinned
     // override was entered at — the benefit shown is the rescaled one.
     overrideRescaleNote: ssOverride !== null && ssOverrideAnchorAge !== null && ssOverrideAnchorAge !== ssClaimingAge
-      ? `You entered ${fmt(ssOverride)}/yr at age ${ssOverrideAnchorAge}; at age ${ssClaimingAge} that is ${fmt(effectiveSS)}/yr.` : null,
+      ? `You entered ${fmtFull(ssOverride)}/yr at age ${ssOverrideAnchorAge}; at age ${ssClaimingAge} that is ${fmt(effectiveSS)}/yr.` : null,
     ssEstimateAnnual: ssAnnualBenefit,   // the PIA estimate (override seed / "estimated was")
     ssAIME,
     claimAge:     ssClaimingAge,
