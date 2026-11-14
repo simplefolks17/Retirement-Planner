@@ -51,6 +51,9 @@ function viaClassic(r, label, values) {
     expect(sl, `Classic slider "${label}" not found`).toBeTruthy();
     fire(() => sl.props.onChange(v));
   }
+  backToHorizon(r);
+}
+function backToHorizon(r) {
   const back = r.root.findAll(n => n.type === "button" && typeof n.props.onClick === "function"
     && (n.children ?? []).join("").includes("Horizon view"))[0];
   expect(back, "Horizon-view button not found").toBeTruthy();
@@ -150,3 +153,46 @@ describe("Classic and Horizon build the same plan from the same moves (BUG-170)"
     act(() => c.unmount());
   });
 });
+
+// ── BUG-151 (R-6): Classic's "Retirement state" <select> behaves like Horizon's field ──────────
+// Mutations that used to fail 0 tests: `value={effectiveRetirementState}` -> `{retirementState}`
+// (renders no selection at the default) and `onChange={setRetirementState}` -> the RAW setter
+// (stores an explicit pick that never snaps back to "following your home state").
+function classicRetSelect(r) {
+  const all = r.root.findAll(n => n.type === "select");
+  const hit = all.filter(n => {
+    const p = n.parent;
+    return p && p.findAll(m => m.type === "p").some(m => (m.children ?? []).join("").includes("Retirement state"));
+  });
+  expect(hit.length, "Classic retirement-state <select> not found").toBe(1);
+  return hit[0];
+}
+
+describe("Classic retirement-state <select> (BUG-151)", () => {
+  it("shows the EFFECTIVE state (follows the work state) at the default and after the work state changes", () => {
+    const c = mount();
+    fire(() => L().onShowClassic());
+    expect(classicRetSelect(c).props.value).toBe("TX");
+    fire(() => L().profile.selectedState.set("CA"));
+    expect(classicRetSelect(c).props.value).toBe("CA");    // still auto: it follows, never null
+    act(() => c.unmount());
+  });
+
+  it("onChange goes through the snapping setter: an explicit pick sticks, re-picking the work state returns to auto", () => {
+    const c = mount();
+    fire(() => L().profile.selectedState.set("CA"));
+    fire(() => L().onShowClassic());
+    // (Horizon's captured props are only fresh while Horizon is mounted, so flip back to read.)
+    fire(() => classicRetSelect(c).props.onChange({ target: { value: "TX" } }));
+    backToHorizon(c);
+    expect(L().assumptions.retirementState.value).toBe("TX");
+    expect(L().assumptions.retirementState.isAuto).toBe(false);
+    fire(() => L().onShowClassic());
+    fire(() => classicRetSelect(c).props.onChange({ target: { value: "CA" } }));
+    backToHorizon(c);
+    expect(L().assumptions.retirementState.value).toBe("CA");
+    expect(L().assumptions.retirementState.isAuto).toBe(true);   // raw setter would store explicit CA
+    act(() => c.unmount());
+  });
+});
+

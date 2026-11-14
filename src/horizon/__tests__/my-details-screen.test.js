@@ -134,6 +134,23 @@ describe("MyDetailsScreen", () => {
     act(() => app.r.unmount());
   });
 
+  // BUG-151 (R-6): the "following your home state" hint was deletable with 0 failing tests.
+  it("labels the retirement state 'following your home state' only while it is in auto mode", () => {
+    const auto = makeProps();
+    auto.assumptions.retirementState.isAuto = true;
+    const a = mount(auto);
+    a.click(n => textOf(n).startsWith("Assumptions"));
+    expect(a.text()).toContain("following your home state");
+    act(() => a.r.unmount());
+
+    const explicit = makeProps();
+    explicit.assumptions.retirementState.isAuto = false;
+    const b = mount(explicit);
+    b.click(n => textOf(n).startsWith("Assumptions"));
+    expect(b.text()).not.toContain("following your home state");
+    act(() => b.r.unmount());
+  });
+
   it("shows the Default edge state for an unset state-tax override", () => {
     const props = makeProps();
     const app = mount(props);

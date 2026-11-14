@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { act, create } from "react-test-renderer";
-import { calcWhatIfScenario } from "../model/what-if.js";
+import { calcWhatIfScenario, calcWhatIfDelta } from "../model/what-if.js";
 import { coupleContribEndAges } from "../model/simulation.js";
 
 // ── Preview/commit parity ────────────────────────────────────────────────────
@@ -381,6 +381,22 @@ describe("BUG-157 — the spouse's MAGI cutoff moves with the scenario's retirem
       expect(r.preview.scenarioTotalAtRet).toBe(r.committed.totalAtRet);
       expect(r.preview.scenarioYears).toBe(r.committed.years);
       expect(r.preview.chart).toEqual(r.committed.chart);
+    });
+  }
+
+  // R-6 (Opus review 2026-11-14): calcWhatIfDelta is the SECOND re-sim site that takes the
+  // spouse's MAGI cutoff (spDelta.primaryInputs). R2-B anchored its previews to the headline
+  // (BUG-176), but its own scenarioTotalAtRet is still the absolute figure the anchor adds a
+  // difference of, and it is directly observable: it must equal the committed plan's totalAtRet
+  // on the older-spouse fixture (mutation: spread coupleContribEndAges(...) instead of
+  // spDelta.primaryInputs -> 1,343,614 vs the committed 1,334,822 at retire 63).
+  for (const target of [63, 65]) {
+    it(`calcWhatIfDelta (retire ${target}): scenarioTotalAtRet equals the committed totalAtRet (cutoff site 2)`, () => {
+      const a1 = mount(); setupOlderSpouse(a1);
+      const delta = calcWhatIfDelta({ ...a1.latest().whatIfSimInputs, retirementAgeOverride: target });
+      a1.unmount();
+      const r = snapshotPreviewAndCommit(setupOlderSpouse, target);
+      expect(delta.scenarioTotalAtRet).toBe(r.committed.totalAtRet);
     });
   }
 
