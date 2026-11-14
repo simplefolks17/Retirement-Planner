@@ -239,3 +239,28 @@ A fresh Opus agent reviews the full branch diff against `main`:
 - anything else.
 
 It must verify by EXECUTING (mount the App, run mutations), not only by reading.
+
+---
+
+## Round 2 — fixing the Opus deep review's findings (`opus-review.md`, R-1..R-13)
+
+The owner asked for Sonnet implementation followed by Opus review. The review found 13 CONFIRMED
+issues, and fixing them completes that request. The same rules apply to every agent (the "Rules
+for EVERY implementing agent" section above). Pre-assigned ids continue from BUG-166:
+
+| id | review | what |
+|---|---|---|
+| BUG-167 | R-4 (HIGH) | Wizard pre-fills "monthly spend (today's dollars)" with a retirement-year figure (3.95x); also freezes auto `annualExpenses` |
+| BUG-168 | R-10 | REGRESSION from BUG-153: onboarding users 65+ stop contributing at currentAge+1; control-order dependence in `coupleContribEndAges` |
+| BUG-169 | R-3 | `commitPlan` never bounds the retirement age it is given (70/60, 34/90) |
+| BUG-170 | R-1 | Classic Retirement Age and Life Expectancy sliders are inline copies that bypass the coupled setters; the plateau coupling destroys a user's value |
+| BUG-171 | R-5 | `allocateSavedTotal` can return a negative balance; the wizard parses "250k" as $250 |
+| BUG-172 | R-7 | Spouse HSA field max under FAMILY coverage isn't the spouse's real share |
+| BUG-173 | R-2 | Work-longer "Social Security / yr" ignores a pinned override and is primary-only |
+| BUG-174 | R-8 | TaxTimeline renders `effectiveRMDTaxRate` at 0 dp (breaks BUG-166's rule) |
+| BUG-175 | R-13 | Working-year conversion-event rows keep showing an event the model silently drops once retirement moves before its age |
+| BUG-176 | R-9 | `calcWhatIfDelta` previews print ABSOLUTE before/after ages that contradict the headline in spouse-gap households (BUG-36 amendment + near-term display fix) |
+
+### R2-A — onboarding + coupling (BUG-167, 168, 169, 170, 171, 172)
+### R2-B — display/consistency (BUG-173, 174, 175, 176)
+### R2-C — tests that can't fail + guards + docs (R-6, R-11, R-13's guard walker, R-12)

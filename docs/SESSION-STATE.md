@@ -265,6 +265,12 @@ agents, followed by a deep Opus review.
   - Remaining after it: L1-D, L1-E, L1-F, L1-G, L1-H, then the Opus deep review, then the
     close-out (CLAUDE.md test counts are still at 1408 and need reconciling).
 
+- **Status (updated 18:20 UTC):** all of L1-A..H and BUG-154 are done, verified and pushed (owner
+  approved the wr70 re-lock 18:1x). Suite 1,614. The Opus deep review is COMPLETE
+  (`docs/audit-2026-11-14/opus-review.md`): 13 CONFIRMED findings, including 1 HIGH (R-4, the
+  onboarding spend-basis bug) and 1 regression from this branch (R-10). Round 2 (R2-A/B/C) in
+  IMPLEMENTATION-PLAN.md fixes them, with BUG-167..176 pre-assigned.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an
