@@ -10,9 +10,12 @@ import {
   ROTH_PHASEOUT_2026,
   EARLY_WITHDRAWAL_AGE,
   EARLY_WITHDRAWAL_PENALTY,
+  SS_MIN_CLAIM_AGE,
+  SS_MAX_CLAIM_AGE,
 } from "../config/irs-2026.js";
 import { ltcgRate, stackedIncomeTax } from "./taxes.js";
 import { applyConversionEvents } from "./conversion-events.js";
+import { incomeGrowthSteps, clampIncomePlateauAge } from "./income-growth.js";
 import { eventSimAdjustmentForYear, eventsIncomeAdjustment } from "./money-events.js";
 
 // Contribution-end ages that TRACK the retirement age (BUG-138).
@@ -29,10 +32,21 @@ import { eventSimAdjustmentForYear, eventsIncomeAdjustment } from "./money-event
 // (BUG-31's class). A `contribEnd*` the user has deliberately set AWAY from the
 // retirement age is left alone — that is the same rule the coupled setter uses, and it
 // is what makes "stop contributing at 55 but retire at 65" survive a scenario.
-export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge) {
+//
+// BUG-168 (review R-10): `currentAge` (optional) makes the rule ORDER-INDEPENDENT. Raising the
+// current age to/past the retirement age lifts retirement to the new age and each `contribEnd*`
+// to newAge + 1 (it must stay > current age), which is NOT the retirement age, so a retirement
+// move made AFTER an age move used to leave contributions behind at currentAge + 1 (72 then
+// retire 75 => contributions stop at 73; retire 75 then 72 => 75). When the base retirement age
+// equals the current age, a `contribEnd* === baseRetAge + 1` is that lifted-tracking state, so it
+// tracks too, and the new end is never at/before the current age. Callers that know the current
+// age pass it; omitted => the original rule, unchanged.
+export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge, currentAge = null) {
   if (!Number.isFinite(baseRetAge) || !Number.isFinite(scenarioRetAge)
       || scenarioRetAge === baseRetAge) return ends;
-  const track = (v) => (v === baseRetAge ? scenarioRetAge : v);
+  const liftedTracking = Number.isFinite(currentAge) && baseRetAge === currentAge;
+  const target = Number.isFinite(currentAge) ? Math.max(scenarioRetAge, currentAge + 1) : scenarioRetAge;
+  const track = (v) => (v === baseRetAge || (liftedTracking && v === baseRetAge + 1) ? target : v);
   return {
     ...ends,
     contribEnd401k:    track(ends.contribEnd401k),
@@ -40,6 +54,38 @@ export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge) {
     contribEndTaxable: track(ends.contribEndTaxable),
     contribEndHSA:     track(ends.contribEndHSA),
   };
+}
+
+// Current-age coupling (BUG-153): the ONE place the "raising current age drags its
+// dependants forward" rules live. Pure; shared by App.jsx's `setCurrentAgeCoupled`
+// (the Classic/Horizon age control) and `commitPlan` (onboarding), which previously
+// called the bare, un-coupled setter and so left e.g. an SS claiming age of 67 under
+// the min of 70 for a 72-year-old (yearsSustained 4.73 vs 3.82 for the same household
+// entered through the normal controls).
+//  - lifeExpect stays above the (raised) current age;
+//  - the stored SS claiming age is lifted to the claim-age floor (min(70, max(62, age)));
+//  - retirementAge and every contribEnd* never sit at/before the new current age
+//    (retirement may equal it; contribEnd must be > it).
+// `state` = { lifeExpect, ssClaimingAge, retirementAge, contribEnd401k, contribEndRoth,
+// contribEndTaxable, contribEndHSA }; returns a NEW object with the same keys.
+export function coupleCurrentAge(state, newAge) {
+  const next = { ...state };
+  if (state.lifeExpect <= newAge) next.lifeExpect = newAge + 1;
+  const minSsClaimAge = Math.min(SS_MAX_CLAIM_AGE, Math.max(SS_MIN_CLAIM_AGE, newAge));
+  if (state.ssClaimingAge < minSsClaimAge) next.ssClaimingAge = minSsClaimAge;
+  if (state.retirementAge < newAge) next.retirementAge = newAge;
+  for (const k of ["contribEnd401k", "contribEndRoth", "contribEndTaxable", "contribEndHSA"]) {
+    if (state[k] <= newAge) next[k] = newAge + 1;
+  }
+  // BUG-155: the stored income-plateau age stays in [newAge + 1, retirementAge) or snaps to
+  // null (opt-in: only when the caller's state carries the key).
+  // NOTE (review 2 S-10, 2026-11-14): this branch is DEAD in production. No App caller passes
+  // `incomeGrowthEndAge` since BUG-170 stopped rewriting the stored plateau; only
+  // income-plateau.test.js exercises it. Kept for now (no code removed); see BUG-155/BUG-170.
+  if ("incomeGrowthEndAge" in state) {
+    next.incomeGrowthEndAge = clampIncomePlateauAge(state.incomeGrowthEndAge, newAge, next.retirementAge);
+  }
+  return next;
 }
 
 // The NO-EVENT baseline salary in the year the person turns `age`
@@ -50,16 +96,14 @@ export function coupleContribEndAges(ends, baseRetAge, scenarioRetAge) {
 // sabbatical freezes the clock, so post-pause salaries resume where they left
 // off instead of rejoining a clock that kept ticking (owner spec, PR #54).
 export function projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge = null, currentAge }, age) {
-  const growthYears = incomeGrowthEndAge != null
-    ? Math.min(age - currentAge - 1, incomeGrowthEndAge - currentAge)
-    : age - currentAge - 1;
+  const growthYears = incomeGrowthSteps(age - currentAge - 1, incomeGrowthEndAge, currentAge);
   // Clamped at 0: never discount income BACKWARD. Negative growthYears can
   // reach here via eventIncomeImpact when a committed event's age sits at or
   // below currentAge (the user raised their age after committing it), or via
   // an incomeGrowthEndAge in the past — in both cases "no growth yet" (the
   // current salary) is the honest projection, not a shrunken one. Inert for
   // the sim loop, which only asks about ages ≥ currentAge + 1. (Gemini PR #53.)
-  return currentIncome * Math.pow(1 + incomeGrowth / 100, Math.max(0, growthYears));
+  return currentIncome * Math.pow(1 + incomeGrowth / 100, growthYears);
 }
 
 // Projected salary by age over a range, 0 past retirementAge (no salary in
@@ -73,6 +117,16 @@ export function buildProjectedIncomeByAge({ currentIncome, incomeGrowth, incomeG
       projectedIncomeAtAge({ currentIncome, incomeGrowth, incomeGrowthEndAge, currentAge }, age));
   }
   return out;
+}
+
+// Pure helper (BUG-159): Roth IRA phase-out thresholds for a year `yearsAfterBase` years
+// after the base (2026) year, indexed by the user's inflation assumption (percent/yr).
+// yearsAfterBase 0 or inflationRate 0/invalid ⇒ the unindexed config figures, unchanged.
+export function indexedRothPhaseout(po, inflationRate, yearsAfterBase) {
+  const i = Number.isFinite(inflationRate) ? inflationRate / 100 : 0;
+  if (!(yearsAfterBase > 0) || i === 0 || i <= -1) return po;
+  const f = Math.pow(1 + i, yearsAfterBase);
+  return { start: po.start * f, end: po.end * f };
 }
 
 // Runs the accumulation simulation.
@@ -104,7 +158,21 @@ export function runSimulation({
   // doesn't pass it. Expressed in the subject's own frame because runSimulation is called for
   // BOTH people and each run's `age` variable is its own subject's age.
   spouseIncomeEndAge = null,
+  // Plateau of the OTHER earner's income, in THIS run's (subject's) age frame (BUG-156).
+  // `undefined` (every existing caller) = same as incomeGrowthEndAge, i.e. the primary's run
+  // where both earners share the one plateau input — byte-identical. The spouse's run passes
+  // incomeGrowthEndAge: null (the spouse's own salary has no plateau input) plus the primary's
+  // plateau converted to the spouse's frame here (plateauAgeInFrame).
+  otherEarnerGrowthEndAge = undefined,
+  // User's inflation assumption (%/yr, e.g. 4). BUG-159: the IRS indexes the Roth IRA
+  // income phase-out thresholds to inflation every year, so the unindexed 2026 figures
+  // are applied ONLY to the first sim year (y = 1, the "2026" year by convention) and
+  // grown by this rate for each later year. Default 0 = unindexed (hand-built callers,
+  // byte-identical to the old behaviour). Scope: Roth phase-out ONLY — federal/LTCG
+  // brackets and contribution limits stay unindexed (BUG-100/101).
+  inflationRate = 0,
 }) {
+  if (otherEarnerGrowthEndAge === undefined) otherEarnerGrowthEndAge = incomeGrowthEndAge;
   let trad    = bal401k;
   let roth    = balRoth;
   let taxable = balTaxable;
@@ -132,19 +200,17 @@ export function runSimulation({
     const age        = currentAge + y;
     // Unpaused, age-based clock — used by SPOUSE income only (income
     // replacement is primary-only, #30 scope) and kept for reference.
-    const growthYears = incomeGrowthEndAge != null
-      ? Math.min(y - 1, incomeGrowthEndAge - currentAge)
-      : y - 1;
+    // The OTHER earner's raise steps: capped by THEIR plateau, expressed in THIS run's
+    // age frame (BUG-156: the spouse's run gets the primary's plateau converted).
+    const growthYears = incomeGrowthSteps(y - 1, otherEarnerGrowthEndAge, currentAge);
 
     // Income-replacement channel (owner decision: incomeAnnual on a duration
     // outflow event means "my TOTAL income during this period", not a bolt-on).
     const { workedFrac, eventIncome } = eventsIncomeAdjustment(moneyEvents, age);
     // Primary salary from the pause-aware clock (plateau stays an absolute
     // AGE cap — "income stops growing at this age" — applied on top).
-    const clockYears = incomeGrowthEndAge != null
-      ? Math.min(growthClock, incomeGrowthEndAge - currentAge)
-      : growthClock;
-    const growFactor = Math.pow(1 + g, Math.max(0, clockYears));
+    const clockYears = incomeGrowthSteps(growthClock, incomeGrowthEndAge, currentAge);
+    const growFactor = Math.pow(1 + g, clockYears);
     const baseSalary = currentIncome * growFactor;
     const primaryIncomeYr = baseSalary * workedFrac + eventIncome;
     // Savings scale with INCOME, not worked months: incomeAnnual === salary ⇒
@@ -203,7 +269,12 @@ export function runSimulation({
       // AGI-net MAGI (see netOrdinaryIncome): MFJ uses combined, every other status uses
       // primary-only (spouse income/contributions tracked separately). CLAUDE.md rules 3 & 9, BUG-12.
       const yearMAGI    = netOrdinaryIncome;
-      const po = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
+      // BUG-186: the IRS does NOT index the married-filing-separately phase-out (0-10,000),
+      // so mfs stays on its unindexed figures; every other status indexes as before.
+      const rothPo = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
+      const po = filingStatus === "mfs"
+        ? rothPo
+        : indexedRothPhaseout(rothPo, inflationRate, y - 1);
       if (yearMAGI >= po.end) return 0;
       if (yearMAGI <= po.start) return baseContrib;
       // Phase-out reduces the contribution LIMIT, then you contribute min(desired, reduced

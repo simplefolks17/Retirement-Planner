@@ -12,7 +12,7 @@ Retirement financial planner. React + Vite. Owner is not a programmer — explai
 5. **Dependency order matters.** SS and pension must compute before any drawdown metric that depends on them. If adding a new income source, wire it into `netPortfolioNeed` first.
    - **5b. Income timing.** SS only counts from `ssClaimingAge`; pension only counts from `pensionStartAge`. Any year-by-year loop (drawdown chart, conversion window draws, `retIncomeFloors[]`) must check these ages per iteration — never use the static `netPortfolioNeed` scalar inside a retirement-phase loop. **A still-working spouse's gap-year income** (#30/BUG-82 — active only between the primary's retirement and the spouse's own `spouseRetirementAge`) is a fourth such source: it offsets the engine's per-year draw internally, AND (BUG-82's rule-5 wiring, Step 6) `netPortfolioNeed`/`withdrawalRate`/`calcOptimizedScenario`/Plan's Income Meter all read the same per-year map (`spouseSeed.spouseIncomeFloorByAge`) so the headline can never disagree with what the walk actually offset that year.
 6. **Financial model = pure functions.** No React state inside `src/model/` files. Inputs in, outputs out, testable without rendering.
-7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1408 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`). That file now holds THREE locked fixtures: T-X.2 and T-X.3 pin `spouseRetirementAge` explicitly, and **T-X.4 leaves it at its `null` default ("auto")** — the path every real user starts on, and the one BUG-127/BUG-134 both hid on precisely because no locked fixture exercised it. **A fixture intended to catch a what-if/scenario bug must lock SCENARIO outputs, not just base-plan headline numbers** — T-X.2/T-X.3 lock only the committed plan, which is structurally incapable of catching either bug; T-X.4 locks `calcWhatIfScenario` output too, and both reverts were confirmed to fail it.
+7. **Test after every model change.** Run `npm test` before committing any change to `src/model/` or `src/config/`. The suite (1716 tests) includes a **golden master** (`src/model/__tests__/golden-master.test.js`) that locks every headline number at the default state — if it fails, a model change moved a value. Update the locked values only when the change was intended. A second, married/spouse-household golden master (`src/__tests__/spouse-household.test.js`) locks the same class of headline numbers for a spouse-gap fixture — the no-spouse default alone was structurally blind to the scope/unit bugs #30 kept producing (see BUG-91's Resolved entry in `docs/BUGS.md`). That file now holds THREE locked fixtures: T-X.2 and T-X.3 pin `spouseRetirementAge` explicitly, and **T-X.4 leaves it at its `null` default ("auto")** — the path every real user starts on, and the one BUG-127/BUG-134 both hid on precisely because no locked fixture exercised it. **A fixture intended to catch a what-if/scenario bug must lock SCENARIO outputs, not just base-plan headline numbers** — T-X.2/T-X.3 lock only the committed plan, which is structurally incapable of catching either bug; T-X.4 locks `calcWhatIfScenario` output too, and both reverts were confirmed to fail it.
 8. **Hybrid client/server split (pre-launch, not during development).** Model files marked [SERVER] in ARCHITECTURE.md will move behind API routes before launch. During development, import them directly — do NOT set up API routes until feature-complete. See `docs/INTEGRATIONS.md`.
 9. **MFJ tax calculations use combined household income.** `agi`, `stateTax`, and `grossAfterTax` all include `spouseIncome` when `filingStatus === "mfj"`. **FICA follows the same basis**: the spouse's wages enter FICA only when they are also in the income basis it is charged against — i.e. MFJ only (BUG-145; charging a single filer their spouse's payroll tax lowered that filer's own take-home AND, downstream, their own retirement spending target). Within whatever earners are included, the Social Security wage base is capped PER EARNER, never against combined wages (`Math.min(primaryIncome, FICA_WAGE_BASE) + Math.min(spouseIncome, FICA_WAGE_BASE)` for MFJ) — that per-earner capping is what this rule has always been about. Contribution limits and account sliders remain per-person (primary earner's accounts only — spouse accounts are a planned premium feature, #30).
 10. **Horizon screens render, never compute.** No arithmetic on model values in `src/horizon/` — screens format and lay out only; derived numbers (percentages, month↔year, residuals, deltas, age math) come from `src/model/` via named `horizonProps` fields, pre-gated for applicability (eligibility booleans from the model, never age comparisons in JSX), with documented null/Infinity edge states instead of `?? 0`-style fallbacks. Never scale or approximate a real number to fill a gap — designed empty state instead; decorative fakes only in isolated `Ghost*` components. Full principles (16 — #16 is rule 11's Horizon-facing twin) + violations register: `docs/ROADMAP.md` → Design principles.
@@ -618,10 +618,52 @@ review battery entry, `docs/BUGS.md`). This section now keeps only the current a
   (auto-resolution, test-coverage, and 4 of the 7 parity findings), BUG-136, and BUG-125's
   owner-approved model fix — all sequenced in `docs/SESSION-STATE.md`.
 
+- **Oversight root-cause audit + BUG-151..176 (2026-11-14, branch `claude/oversight-root-cause-audit`).**
+  The owner asked how a glaring bug survived: the retirement state never followed the work state
+  (`useState(selectedState)` captured "TX" once). The answer, `docs/audit-2026-11-14/oversight-root-causes.md`,
+  is eight compounding causes. The key ones: tests locked values at a default (TX, 0% tax) where the
+  bug cannot show; the only state-tax tests exercised a function production never called; no test
+  followed a user through an input; and a "fully wired" verdict stopped anyone looking again.
+  Turned into eight search lenses plus mutation testing, it found **six real calculations deletable
+  with 0 of 1,408 tests failing** (including the work state's whole income-tax lookup), the setup
+  wizard discarding the savings answer, a dead control in both UIs, and a frozen Roth phase-out.
+  1. **Owner request: implement via Sonnet agents, then a deep Opus review.** Batches L1-A..H + L2
+     (`docs/audit-2026-11-14/IMPLEMENTATION-PLAN.md`; one `impl-log-*.md` each, every one
+     re-verified by the orchestrator, including independent mutations) fixed BUG-151..166, including
+     audit-auto-resolution Findings A-F and CONSOLIDATION-REDO-PLAN sweeps 1-4.
+     **Owner decision:** the retirement state follows the work state unless set separately.
+  2. **The Opus review (`opus-review.md`) found 13 more, CONFIRMED by execution.** These include
+     R-4 (HIGH: the wizard pre-filled spending in retirement-year dollars, so an untouched wizard cut
+     the default plan from 88 to 70), a regression from BUG-153 (onboarding 65+ stopped contributing),
+     and **tests that still couldn't fail**, because every batch had reverted whole fixes at once.
+     Round 2 (R2-A/B/C, BUG-167..176) fixed all 13, each sub-fix mutation-tested at its own site.
+  3. **Permanent guards:**
+     - `input-propagation.test.js`: every `{value, set}` field in horizonProps must move an output,
+       or sit on an allow-list whose "only feeds X" proof shows X moving;
+     - `bounds-invariant.test.js`: every field stays within its own min/max after scripted user moves;
+     - `input-wiring.test.js`, `classic-horizon-parity.test.js`, and the one-percent-formatter
+       guard.
+  4. **Golden masters moved deliberately, each re-measured by the orchestrator:**
+     - BUG-159 (Roth phase-out indexed): default totalAtRet 4,035,855 -> 4,178,538, depletion 87 -> 88;
+     - BUG-157/158: T-X.4 scenario spillover moved toward the committed truth;
+     - BUG-154: T-X.3 wr70 1.42 -> 0.97, **owner-approved** after the permission system blocked the
+       agent's own re-lock.
+  **Process lessons recorded:**
+  - revert-and-confirm must be done per sub-fix AND at the bug's own site (the nearest function
+    boundary hid two gaps);
+  - shared `captured` arrays in `mount()` make two live apps read one set of props (hit by 4 agents);
+  - an allow-list or "accepted" verdict is the new place things get explained away (BUG-165, R-9).
+  1408 -> **1716 tests**. Still open: BUG-36 (raised to Medium), BUG-125, BUG-136, BUG-142, BUG-149.
+  **Owner decision:** a pinned SS override is anchored to the claim age it was entered at, and it
+  rescales on exploration (BUG-177).
+  **Second independent Opus audit** (`opus-review-2.md`) found 10 more, 3 of them regressions from
+  Round 2. All were fixed in Round 3: Sonnet did the judgement items (BUG-178..182) and Haiku the
+  mechanical ones (BUG-183..185, plus untested render halves and docs). PR #70.
+
 ## Commands
 
 - `npm run dev` — start dev server
-- `npm test` — run model + formatter + render-smoke tests (1408 tests). Excludes throwaway
+- `npm test` — run model + formatter + render-smoke tests (1716 tests). Excludes throwaway
   `zz-*.test.js` probes, so the reported count is trustworthy: `.gitignore` stops them being
   committed but vitest still COLLECTED them, which twice inflated the count and once turned
   the suite red on a failure that was not a regression. The exclusion lives in the npm script,

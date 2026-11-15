@@ -99,6 +99,7 @@ const sim = runSimulation({
   contrib401k, contribRoth, contribTaxable, contribHSA,
   contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
   calcEmployerMatchFn: em,
+  inflationRate, // BUG-159: mirrors App.jsx, which passes the live inflation assumption
 });
 const at = sim[phase2End - 1];
 
@@ -184,11 +185,11 @@ const E = {
   ssAnnualBenefit:      48_120,     // higher PIA from 2026 bend points (was 46_968)
   retTrad401k:          2_120_026,   // GROSS (BUG-35; was 1_653_620 after-tax)
   retTradGross:         2_120_026,
-  retRoth:              659_072,     // AGI-net Roth MAGI: pre-tax deductions delay the phase-out → more in-band Roth (was 587_692)
+  retRoth:              801_755,     // BUG-159: was 659_072. UP — Roth phase-out thresholds now index with inflation (4%/yr), so the 3%-growth salary never crosses the phase-out; cRoth keeps its 7,000 (was 0 from age 53). Before that: AGI-net Roth MAGI delays the phase-out (was 587_692)
   retTaxable:           836_477,
   retHSA:               420_280,
-  totalAtRet:           4_035_855,   // gross (+retRoth delta; was 3_964_475) — unaffected by BUG-91 (accumulation-side, not touched)
-  spendableAtRet:       3_763_788,   // BUG-91: effectiveRMDTaxRate drops (was 3_654_179) — much smaller lifetime RMD bite
+  totalAtRet:           4_178_538,   // BUG-159: was 4_035_855 (+142,683 = the retRoth delta only; trad/taxable/HSA unchanged). UP: more Roth contributions kept past age 52
+  spendableAtRet:       3_906_471,   // BUG-159: was 3_763_788 (UP, +142,683 — the extra Roth is untaxed in the after-tax reference). BUG-91: effectiveRMDTaxRate drops (was 3_654_179)
   effectiveExpenses:    57_377,      // current living spend, TODAY's dollars — unchanged, this is the raw user-facing figure
   // BUG-91: netPortfolioNeed/withdrawalRate/yearsSustained now use retSpendBasis
   // (effectiveExpenses inflated to the retirement-year frame the engine walks
@@ -196,8 +197,8 @@ const E = {
   // headline result: withdrawalRate now FAILS the app's 4% guideline instead
   // of comfortably passing it, and the plan is no longer trivially sustainable.
   netPortfolioNeed:     226_414.74822089862,  // = retSpendBasis (ssAtRet = 0, no pension) — was 57_377
-  withdrawalRate:       5.610081338920716,    // was 1.4216814033209817 — now fails SAFE_WITHDRAWAL_GUIDELINE_PCT (4%)
-  yearsSustained:       21.648529319276392,   // was Infinity — the honest spend is NOT trivially sustainable
+  withdrawalRate:       5.418515955123506,    // BUG-159: was 5.610081338920716 (DOWN — same draw over a larger portfolio). BUG-91: was 1.4216814033209817 — now fails SAFE_WITHDRAWAL_GUIDELINE_PCT (4%)
+  yearsSustained:       22.64243816663232,    // BUG-159: was 21.648529319276392 (UP — larger seed lasts ~1 year longer). BUG-91: was Infinity — the honest spend is NOT trivially sustainable
   firstRMD:             32_213,      // much larger draw depletes the Traditional 401k faster (was 62_508)
   totalRMDs:            79_341,      // conversions + spending drain the 401k well before age 73 (was 1_152_878)
   rmdTaxBite:           10_182,      // far fewer/smaller RMDs to tax (was 207_557)

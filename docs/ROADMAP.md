@@ -399,7 +399,7 @@ feature, now fully interactive in Horizon.
 **Target:** Horizon can write every Classic input to shared App.jsx state.
 **Actions:** extend `horizonProps` with topic-grouped bundles of existing state + setters (names verified in App.jsx):
 - `profile`: `currentIncome / incomeGrowth / incomeGrowthEndAge / spouseIncome / spouseIncomeGrowth / filingStatus / selectedState / stateRateOverride / otherPreTaxDeduc` + setters
-- `spending`: `livingExpenses / livingExpenseGrowth / annualExpenses / retirementTarget` + setters
+- `spending`: `livingExpenses / annualExpenses / retirementTarget` + setters
 - `accounts`: the 4 × (`bal` / `contrib` / `contribEnd`) sets + `addlPreTaxBal`; `matchMode / employerMatchPct / matchFormulaRate / matchFormulaCap`
 - `ss`: `includeSS / ssClaimingAge / ssOverride / isMarried / spouseSsEstimate / spouseClaimingAge / spouseBenefitBasis / spouseCurrentAge / spouseIsSoleBenef`
 - `pension`: `pensionMonthly / pensionStartAge`

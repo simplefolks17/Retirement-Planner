@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "../accumulation.js";
+import { allocateSavedTotal, sumAccountRow, calcMilestones, buildAccumChart, calcChartMilestones, buildAccumulationRows, calcTaxDiversification } from "../accumulation.js";
 import { RMD_START_AGE } from "../../config/irs-2026.js";
 
 describe("buildAccumulationRows (WI-2.5)", () => {
@@ -357,5 +357,36 @@ describe("calcTaxDiversification (#56)", () => {
       rmdTaxBite: 500_000, effectiveRMDTaxRate: 0,
     });
     expect(r.rateRiseCost).toBeNull();
+  });
+});
+
+// BUG-171 (Opus review R-5): the old "round each, dump the residual on the biggest" rule could
+// return a NEGATIVE balance. Largest-remainder rounding cannot.
+describe("allocateSavedTotal — never negative, always sums to the share (BUG-171)", () => {
+  const keys = ["bal401k", "balRoth", "balTaxable", "balHSA"];
+  const sum = (o) => keys.reduce((a, k) => a + o[k], 0);
+
+  it("the review's repro: four $1,000 balances, target $2 (was bal401k = -1)", () => {
+    const out = allocateSavedTotal({ bal401k: 1000, balRoth: 1000, balTaxable: 1000, balHSA: 1000 }, 0, 2);
+    for (const k of keys) expect(out[k], k).toBeGreaterThanOrEqual(0);
+    expect(sum(out)).toBe(2);
+  });
+
+  it("no balance is ever negative and the total is exact across many awkward shapes", () => {
+    const shapes = [[1, 1, 1, 1], [1000, 1, 1, 1], [3, 5, 7, 11], [0, 0, 1, 0], [99_999, 1, 0, 0], [333, 333, 333, 1]];
+    for (const s of shapes) {
+      const bals = { bal401k: s[0], balRoth: s[1], balTaxable: s[2], balHSA: s[3] };
+      for (const target of [1, 2, 3, 5, 7, 11, 99, 1001, 12_345, 250_000]) {
+        const out = allocateSavedTotal(bals, 0, target);
+        for (const k of keys) expect(out[k], `${s} -> ${target} ${k}`).toBeGreaterThanOrEqual(0);
+        expect(sum(out), `${s} -> ${target}`).toBe(target);
+      }
+    }
+  });
+
+  it("keeps the proportional mix to within a dollar", () => {
+    const bals = { bal401k: 100_000, balRoth: 40_000, balTaxable: 20_000, balHSA: 5_000 };
+    const out = allocateSavedTotal(bals, 0, 330_000);
+    for (const k of keys) expect(Math.abs(out[k] - bals[k] * 2)).toBeLessThanOrEqual(1);
   });
 });

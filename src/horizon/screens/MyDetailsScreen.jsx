@@ -114,11 +114,8 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
             note="What you live on today and what you expect to spend in retirement.">
             {F({ label: "Living expenses (today)", field: spending.livingExpenses, format: money,
                  seed: effLiving, nullLabel: `Auto · ${money(effLiving)}` })}
-            {F({ label: "Living expense growth", field: spending.livingExpenseGrowth, format: pctYr })}
             {F({ label: "Retirement spending", field: spending.annualExpenses, format: money,
                  seed: effExp, nullLabel: `Auto · ${money(effExp)}` })}
-            {F({ label: "Portfolio target", hint: "milestone goal at retirement",
-                 field: spending.retirementTarget, format: money })}
           </Card>
 
           {/* ── Accounts & match ── */}
@@ -227,7 +224,9 @@ export default function MyDetailsScreen({ t, props, isMobile }) {
             {F({ label: "Plan to age", field: assumptions.lifeExpect, format: ageFmt })}
             {F({ label: "Annual return", field: assumptions.returnRate, format: pctYr })}
             {F({ label: "Inflation", field: assumptions.inflationRate, format: pctYr })}
-            {F({ label: "Retirement state", field: assumptions.retirementState })}
+            {F({ label: "Retirement state",
+                 hint: assumptions.retirementState.isAuto ? "following your home state" : undefined,
+                 field: assumptions.retirementState })}
             {F({ label: "Deploy surplus", hint: "share of leftover income to invest",
                  field: assumptions.savingsSurplusPct, format: pct })}
           </Card>

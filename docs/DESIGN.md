@@ -70,7 +70,6 @@ selectStyle // styled dropdown (custom arrow, dark theme)
 ### Domain-Specific (financial planner context)
 | Component | Purpose | Key Props |
 |---|---|---|
-| `TaxPhaseCard` | Bracket picker for a tax phase | phaseNum, label, color, rate, setRate, combinedRate |
 | `TaxTimeline` | Proportional colored bar across phases | phase1End, phase2End, totalYears, rates |
 | `ChartTooltip` | Dark recharts tooltip | active, payload, label, valueFormatter |
 | `ActionCard` | Prescriptive/comparative/educational card | mode, title, body, impact, vsA, vsB |
@@ -144,6 +143,31 @@ Results should be explained in plain terms too. Don't just show "$1,275 saved" �
 > Before shipping any label, question, or result — ask: *"Would I say it this way if I were explaining this to a friend at dinner?"* If not, rewrite it. The planner should feel like a knowledgeable friend walking you through your taxes — not a government form.
 
 ---
+
+## Percent formatting (Sweep 4, BUG-166)
+
+Two formatters, split by **unit** (the unit was the root fault: some scalars are fractions,
+some already-whole percents, and call sites disagreed). Never hand-roll `.toFixed(n)}%` or
+`Math.round(x*100)}%` outside `src/formatters.js` (a guard test enforces it).
+
+| Formatter | Input | Use for |
+|---|---|---|
+| `fmtRate(fraction, dp = 1)` | fraction (0.237) | rates the model keeps as fractions |
+| `fmtPct(wholePct, dp = 1)` | whole percent (23.7) | scalars already in whole percent |
+
+Both render `"—"` for null / undefined / NaN / Infinity.
+
+Canonical precision per scalar:
+
+- **Computed / blended rates, 1 dp** (`fmtRate`): `effectiveRMDTaxRate`, `fedEffective` (`fedEffRate`),
+  `combinedEffRate`, `stateRate` / `stateRateDefault` / `retStateRate`, `yr1TradRate`, real return (`rReal`),
+  state-table rates. The same value must render identically everywhere (e.g. `24.0%`, never `24%` in one place).
+- **Statutory brackets, whole** (`fmtRate(x, 0)`): `fedMarginal`, `projectedRetBracket` (`projRetBracketPct` via `fmtPct(x, 0)`).
+- **Already-whole percents** (`fmtPct`, 1 dp): `withdrawalRate`, `wr70`, `pctTotal`.
+- **Ratios shown as a share, whole** (`fmtRate(a / b, 0)`): SS-covers-expenses.
+- Out of scope (not rates, left as-is): integer fields the model already rounds and names `*Pct` (`keepPct`, `taxPct`,
+  `successPct`...), user-entered whole-number slider inputs (`returnRate`, `inflationRate`, match %), CSS geometry
+  (`width: \`${x}%\``), and the config-table bracket buttons.
 
 ## Layout Patterns
 

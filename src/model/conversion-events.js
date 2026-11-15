@@ -35,3 +35,22 @@ export function totalConversionRequested(conversionEvents = []) {
     return s + (Number.isFinite(amount) ? Math.max(0, amount) : 0);
   }, 0);
 }
+
+// BUG-175 (Opus review R-13): the ONE definition of "this working-year conversion event is
+// outside the years the model converts in". Valid working years are strictly after today and
+// strictly before retirement (the retirement-phase window owns >= retirement). App's
+// `activeConversionEvents` filter and both UIs' per-row "not modelled" state read THIS, so a row
+// can never show an event the model has silently dropped (a field displaying an input the model
+// isn't using — BUG-161's class). The flag is AGE-only, not amount-gated: a $0 event stranded past
+// retirement still sits outside its own range and still carries the "401k -> Roth" label, so it
+// must be flagged too (BUG-185, review 2 S-9). The model's own filter (App's
+// `activeConversionEvents`, what-if) still drops a $0 event, which is harmless.
+export function conversionEventOutsideWorkingYears(ev, currentAge, safeRetAge) {
+  const age = Number(ev?.age);
+  return !(age >= currentAge + 1 && age <= safeRetAge - 1);
+}
+export function conversionEventNotModelled(ev, currentAge, safeRetAge) {
+  return conversionEventOutsideWorkingYears(ev, currentAge, safeRetAge);
+}
+export const CONVERSION_EVENT_NOT_MODELLED_LABEL =
+  "outside your working years — not modelled";

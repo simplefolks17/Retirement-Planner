@@ -1,6 +1,10 @@
 import { useState, useRef } from "react";
+import { clamp } from "../model/finance-math.js";
 
-export function DeferredInput({ value, min = -Infinity, max = Infinity, onChange, style }) {
+// Draft locally, clamp to [min, max] and commit on blur/Enter only — an intermediate keystroke
+// value (typing "6" on the way to "65") never reaches committed state. Optional `placeholder`
+// and `ariaLabel` pass straight through to the <input>.
+export function DeferredInput({ value, min = -Infinity, max = Infinity, onChange, style, placeholder, ariaLabel }) {
   const [local,   setLocal]   = useState(String(value));
   const [focused, setFocused] = useState(false);
   const prev = useRef(value);
@@ -14,7 +18,7 @@ export function DeferredInput({ value, min = -Infinity, max = Infinity, onChange
   const commit = () => {
     const n = parseInt(local.replace(/,/g, ""), 10);
     if (!isNaN(n)) {
-      const clamped = Math.min(max, Math.max(min, n));
+      const clamped = clamp(n, min, max);
       onChange(clamped);
       setLocal(String(clamped));
     } else {
@@ -33,6 +37,8 @@ export function DeferredInput({ value, min = -Infinity, max = Infinity, onChange
       onBlur={commit}
       onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
       style={style}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
     />
   );
 }

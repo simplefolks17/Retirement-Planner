@@ -71,9 +71,12 @@ describe("WI-3.1 setter bundles", () => {
     expect(app.latest().spouseAccounts.trad401k.bal.value).toBe(400_000);
     app.fire(() => app.latest().spouseAccounts.hsaCoverageType.set("family"));
     expect(app.latest().spouseAccounts.hsaCoverageType.value).toBe("family");
-    // Spouse HSA contribution cap is the FAMILY limit (shared household ceiling, rule 4),
-    // not the self-only limit — a self-describing bound, so the screen never hardcodes it.
-    expect(app.latest().spouseAccounts.hsa.contrib.max).toBe(8_750);
+    // Spouse HSA contribution cap is the spouse's REAL share of the FAMILY limit (shared household
+    // ceiling, rule 4: 8,750 minus the primary's 3,850 default = 4,900), not the self-only limit
+    // and not the whole household ceiling — a self-describing bound, so the screen never
+    // hardcodes it. BUG-172 (review R-7) changed this from the full 8,750, which let the field
+    // show a number the spouse sim could not contribute.
+    expect(app.latest().spouseAccounts.hsa.contrib.max).toBe(8_750 - 3_850);
     // BUG-83 (CodeRabbit review): the PRIMARY's own HSA bound must also widen to the
     // family ceiling under family coverage — the sim already allows it (hsaLimit:
     // primaryHsaLimit); before this fix the slider bound stayed at the self-only

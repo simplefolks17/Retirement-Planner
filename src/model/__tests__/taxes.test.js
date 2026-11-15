@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcTax, marginalRate, ltcgRate, calcStateTax, projectRetirementBracket } from "../taxes.js";
+import { calcTax, marginalRate, ltcgRate, projectRetirementBracket } from "../taxes.js";
 
 describe("calcTax", () => {
   it("returns zero tax on zero income", () => {
@@ -86,30 +86,6 @@ describe("ltcgRate", () => {
 
   it("top bracket: uses table rate, not hardcoded 0.20", () => {
     expect(ltcgRate(999_999_999, "mfj")).toBe(0.20);
-  });
-});
-
-describe("calcStateTax", () => {
-  it("uses STATE_TAX table for working", () => {
-    // TX rate = 0, so tax = 0
-    expect(calcStateTax(100_000, "working", "TX")).toBe(0);
-    // CA rate = 0.093
-    expect(calcStateTax(100_000, "working", "CA")).toBeCloseTo(9_300, 0);
-  });
-
-  it("uses RETIREMENT_STATE_TAX for retirement", () => {
-    // IL retirement rate = 0 (exempts retirement income)
-    expect(calcStateTax(100_000, "retirement", "IL")).toBe(0);
-    // CA retirement rate = 0.093
-    expect(calcStateTax(100_000, "retirement", "CA")).toBeCloseTo(9_300, 0);
-  });
-
-  it("honors rateOverride regardless of tableKey or stateCode", () => {
-    expect(calcStateTax(100_000, "working", "CA", 0.05)).toBe(5_000);
-  });
-
-  it("returns 0 for unknown state code", () => {
-    expect(calcStateTax(100_000, "working", "ZZ")).toBe(0);
   });
 });
 

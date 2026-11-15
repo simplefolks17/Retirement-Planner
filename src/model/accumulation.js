@@ -14,6 +14,42 @@ export function sumAccountRow(row) {
        + (row["Taxable"]   ?? 0) + (row["HSA"]       ?? 0);
 }
 
+// BUG-152: allocate an onboarding "How much have you saved so far?" household total
+// across the PRIMARY's four accounts. Pure; today's dollars (a balance, not a flow).
+//   - answer === the current household total  -> return `bals` UNCHANGED (same object):
+//     no rounding drift when the user did not move the number;
+//   - the spouse's balances are untouched, so the primary's share is
+//     max(0, target - spouseTotal);
+//   - the primary's four balances scale PROPORTIONALLY to hit that share (their mix is
+//     the user's own; only the level is being corrected);
+//   - if the primary holds nothing, the whole share goes to the taxable account (the
+//     one account with no rules attached);
+//   - whole dollars, with the rounding residual given to the largest balance so the
+//     four still sum to the share exactly.
+// `bals` = { bal401k, balRoth, balTaxable, balHSA }.
+export function allocateSavedTotal(bals, spouseTotal, targetTotal) {
+  const keys = ["bal401k", "balRoth", "balTaxable", "balHSA"];
+  const spouse = Number.isFinite(spouseTotal) ? Math.max(0, spouseTotal) : 0;
+  const primaryNow = keys.reduce((a, k) => a + (Number.isFinite(bals[k]) ? Math.max(0, bals[k]) : 0), 0);
+  if (!Number.isFinite(targetTotal) || targetTotal < 0 || primaryNow + spouse === targetTotal) return bals;
+  const share = Math.max(0, Math.round(targetTotal - spouse));
+  if (primaryNow <= 0) return { bal401k: 0, balRoth: 0, balTaxable: share, balHSA: 0 };
+  // BUG-171 (review R-5): LARGEST-REMAINDER rounding. The old "round each, dump the residual on
+  // the biggest balance" could drive a $1 balance to -1 (four $1,000 balances, target $2:
+  // each share rounds 0.5 -> 1, the sum overshoots by 2, and the residual was charged to the
+  // first/"biggest" $1 entry). Floors can never overshoot the share, and the units left over
+  // go one apiece to the largest fractional parts, so every balance stays >= 0 and the four
+  // still sum to the share exactly.
+  const exact = keys.map(k => Math.max(0, bals[k] || 0) * share / primaryNow);
+  const out = {};
+  keys.forEach((k, i) => { out[k] = Math.floor(exact[i]); });
+  let left = share - keys.reduce((a, k) => a + out[k], 0);
+  const order = keys.map((k, i) => ({ k, frac: exact[i] - out[k], i }))
+    .sort((x, y) => y.frac - x.frac || x.i - y.i);
+  for (let j = 0; left > 0 && order.length; j++, left--) out[order[j % order.length].k] += 1;
+  return out;
+}
+
 // Milestone cards from the accumulation simulation: every 5th age from the next
 // multiple of 5 up to retirement, plus retirement itself. Stops at the first card
 // that reaches the savings target; if the target is hit between milestone ages,

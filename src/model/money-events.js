@@ -1,3 +1,4 @@
+import { clamp } from "./finance-math.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 
 // Money events: windfalls, large purchases, inheritances, travel years, sabbaticals.
@@ -142,7 +143,7 @@ export function isIncomeReplacingEvent(ev) {
 export function monthsActiveInYear(ev, age) {
   const k = age - ev.age;
   if (k < 0) return 0;
-  return Math.max(0, Math.min(12, spanMonths(ev) - 12 * k));
+  return clamp(spanMonths(ev) - 12 * k, 0, 12);
 }
 
 // The event's OWN signed cash for the year, EXCLUDING the incomeAnnual term.
@@ -230,6 +231,31 @@ export function eventLastAge(ev) {
   return ev.age;
 }
 
+// BUG-190 (CodeRabbit, PR #70): the FIRST age at which a one-time/duration event is ever charged.
+// runSimulation's accumulation rows begin at currentAge + 1 and the retirement walks start after
+// retirement, so an event dated AT currentAge is silently never applied (a "Max Affordable" run
+// then reports a large amount for a purchase that costs nothing). Screens use this as the lower
+// bound for a typed event age instead of repeating the arithmetic (rule 10).
+export function firstChargedEventAge(currentAge) {
+  return Number.isFinite(currentAge) ? currentAge + 1 : null;
+}
+
+// BUG-192 (CodeRabbit, PR #70): the effective end of an open-ended ("until an age") duration event
+// plus whether an end is available at all. An end must sit strictly after the start age and within
+// the plan horizon; when the start is already AT the horizon (startAge >= maxAge) no valid end
+// exists (clamp(untilAge, startAge + 1, maxAge) would have reversed bounds and returned an age
+// past the horizon). Returns:
+//   { available, minUntilAge, effUntilAge, reachesPlanEnd }
+//   available false -> effUntilAge null, reachesPlanEnd false: the caller must show a designed
+//   "no end available" state and must NOT save an until-event.
+export function resolveUntilAge(untilAge, startAge, maxAge) {
+  const minUntilAge = Number.isFinite(startAge) ? startAge + 1 : null;
+  const available = minUntilAge != null && Number.isFinite(maxAge) && minUntilAge <= maxAge;
+  if (!available) return { available: false, minUntilAge, effUntilAge: null, reachesPlanEnd: false };
+  const effUntilAge = clamp(untilAge, minUntilAge, maxAge);
+  return { available: true, minUntilAge, effUntilAge, reachesPlanEnd: effUntilAge >= maxAge };
+}
+
 // Gross size of the event itself, before any income offset (display: "Total: $X").
 // Duration events sum per active YEAR (not a flat monthly × months) so growthPct
 // escalation is reflected in the total; flat/no-growth events reduce to the
@@ -266,6 +292,9 @@ export function eventNetTotal(ev) {
 // ASSUMPTIONS (irs-2026.js, rule 1) so this file's existing import sites
 // (MoneyEventsPanel, eventsView) don't need to change.
 export const MAX_MONEY_EVENTS = ASSUMPTIONS.MAX_MONEY_EVENTS;
+
+// (mintEventId lives in src/utils/event-id.js: it holds mutable module state and reads the
+// clock/RNG, so it is UI plumbing, not a pure model function — rule 6, Opus review R-12.)
 
 export function applyMoneyEvents(events = [], age) {
   let portfolioAdjustment = 0;

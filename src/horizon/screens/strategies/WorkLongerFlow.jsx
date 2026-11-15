@@ -35,7 +35,7 @@ export default function WorkLongerFlow({ t, props }) {
               sub={row.longevityDeltaYears != null ? `${row.longevityDeltaYears >= 0 ? "+" : ""}${row.longevityDeltaYears} yrs` : (row.sustainable ? "still for life" : undefined)} />
             {wl.includeSS && (
               <StatTile t={t} label="Social Security / yr" value={fmt(row.ssAnnual)}
-                sub={`${fmtSigned(row.ssDelta)}/yr`} tone="good" />
+                sub={row.ssPinnedFlat ? "your entered figure" : `${fmtSigned(row.ssDelta)}/yr`} tone="good" />
             )}
             <StatTile t={t} label="Roth-conversion window" value={`${row.conversionWindowYrs} yrs`}
               sub={row.conversionWindowDelta !== 0 ? `${row.conversionWindowDelta >= 0 ? "+" : ""}${row.conversionWindowDelta} vs now` : "unchanged"} tone="warm" />

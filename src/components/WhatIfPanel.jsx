@@ -8,8 +8,9 @@
 import { useState, useMemo } from "react";
 import { C } from "../theme.js";
 import { fmt, fmtPct } from "../formatters.js";
-import { calcWhatIfDelta, calcAffordabilityMax } from "../model/what-if.js";
+import { calcWhatIfDeltaAnchored, calcAffordabilityMax } from "../model/what-if.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
+import { clamp } from "../model/finance-math.js";
 
 const PRESETS = [
   { label: "Work 2 more years",  retirementAgeOffset: +2 },
@@ -32,9 +33,16 @@ function DeltaChip({ delta }) {
   );
 }
 
-function YearsSustainedLabel({ years, safeRetAge }) {
+// `retAge` is the retirement age the `years` were measured FROM — the scenario's own for a
+// scenario figure (BUG-176: it used to be the base plan's age for both, so "work 2 more years"
+// printed an age 2 years early).
+function YearsSustainedLabel({ years, retAge }) {
+  // BUG-180: model-provided "not comparable" state (scenarioYears null) — never an absolute age.
+  if (years === null || years === undefined) {
+    return <span style={{ color: "#f85149" }}>Weaker than your plan (no comparable age)</span>;
+  }
   if (years === Infinity) return <span style={{ color: C.green }}>Sustainable indefinitely</span>;
-  const depletionAge = Math.round(safeRetAge + years);
+  const depletionAge = Math.round(retAge + years);
   return <span>Portfolio lasts to age <strong>{depletionAge}</strong></span>;
 }
 
@@ -66,14 +74,28 @@ export function WhatIfPanel({
   // Delta mode inputs
   const [label,    setLabel]    = useState("");
   const [amount,   setAmount]   = useState("");
-  const [eventAge, setEventAge] = useState(currentAge + 5);
+  // BUG-162: the three age inputs hold what the USER typed, or null while untouched.
+  // They used to be seeded once from currentAge / safeLifeExp (useState's initial
+  // value runs once), so raising the plan's age left a stale, now-impossible default
+  // (e.g. a purchase "at 39" for a 60-year-old). Untouched -> follow the live default;
+  // edited -> keep the user's number but clamp it to the CURRENT bounds at use.
+  const [eventAgeIn, setEventAgeIn] = useState(null);
   const [isInflow, setIsInflow] = useState(false);
   const [retAgeOff,setRetAgeOff]= useState(0);
   const [expenseDelta, setExpenseDelta] = useState("");
 
   // Affordability mode inputs
-  const [affAge,   setAffAge]   = useState(currentAge + 5);
-  const [targetAge,setTargetAge]= useState(safeLifeExp);
+  const [affAgeIn,   setAffAgeIn]   = useState(null);
+  const [targetAgeIn, setTargetAgeIn] = useState(null);
+    const MAX_AGE = 120;
+  // What the inputs DISPLAY (raw, so typing "6" on the way to "65" isn't fought) ...
+  const eventAgeShown  = eventAgeIn  ?? currentAge + 5;
+  const affAgeShown    = affAgeIn    ?? currentAge + 5;
+  const targetAgeShown = targetAgeIn ?? safeLifeExp;
+  // ... and what the model USES / the result text quotes (clamped to the live bounds).
+  const eventAge  = clamp(Number(eventAgeShown)  || 0, currentAge, MAX_AGE);
+  const affAge    = clamp(Number(affAgeShown)    || 0, currentAge, MAX_AGE);
+  const targetAge = clamp(Number(targetAgeShown) || 0, safeRetAge, MAX_AGE);
 
   // Memoized so deltaResult/affordResult can list it honestly in their deps
   // (a fresh object each render would re-run them every render — principle 13).
@@ -111,7 +133,7 @@ export function WhatIfPanel({
 
     if (events.length === 0 && retirementAgeOverride === null && annualExpensesOverride === null) return null;
 
-    return calcWhatIfDelta({ ...sharedArgs, moneyEvents: events, retirementAgeOverride, annualExpensesOverride });
+    return calcWhatIfDeltaAnchored({ ...sharedArgs, moneyEvents: events, retirementAgeOverride, annualExpensesOverride });
   }, [mode, amount, eventAge, isInflow, label, retAgeOff, preset, expenseDelta, sharedArgs,
       safeRetAge, retDrawShared.effectiveExpenses]);
 
@@ -202,7 +224,7 @@ export function WhatIfPanel({
                     value={amount} onChange={e => setAmount(e.target.value)} />
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min={currentAge} max={120}
                     placeholder="At age"
-                    value={eventAge} onChange={e => setEventAge(Number(e.target.value))} />
+                    value={eventAgeShown} onChange={e => setEventAgeIn(Number(e.target.value))} />
                   <select style={{ ...inputStyle, width: "auto" }} value={isInflow ? "in" : "out"}
                     onChange={e => setIsInflow(e.target.value === "in")}>
                     <option value="out">Expense</option>
@@ -232,11 +254,11 @@ export function WhatIfPanel({
                 <div style={{ background: C.card, borderRadius: 8, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
                     <span style={{ fontSize: 13, color: C.text }}>
-                      <YearsSustainedLabel years={deltaResult.scenarioYears} safeRetAge={safeRetAge} />
+                      <YearsSustainedLabel years={deltaResult.scenarioYears} retAge={deltaResult.scenarioRetAge} />
                     </span>
                     <span style={{ fontSize: 12, color: C.muted }}>
                       vs&nbsp;
-                      <YearsSustainedLabel years={deltaResult.baseYears} safeRetAge={safeRetAge} />
+                      <YearsSustainedLabel years={deltaResult.baseYears} retAge={safeRetAge} />
                       &nbsp;→&nbsp;<DeltaChip delta={deltaResult.deltaYears} />
                     </span>
                   </div>
@@ -269,10 +291,10 @@ export function WhatIfPanel({
                 <div style={{ display: "grid", gridTemplateColumns: "auto 100px auto 100px", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 12, color: C.muted }}>One-time purchase at age</span>
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min={currentAge} max={120}
-                    value={affAge} onChange={e => setAffAge(Number(e.target.value))} />
+                    value={affAgeShown} onChange={e => setAffAgeIn(Number(e.target.value))} />
                   <span style={{ fontSize: 12, color: C.muted }}>sustaining to age</span>
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min={safeRetAge} max={120}
-                    value={targetAge} onChange={e => setTargetAge(Number(e.target.value))} />
+                    value={targetAgeShown} onChange={e => setTargetAgeIn(Number(e.target.value))} />
                 </div>
               </div>
 

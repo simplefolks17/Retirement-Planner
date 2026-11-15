@@ -24,7 +24,7 @@
 //                 codebase's existing convention, e.g. withdrawalRate). Delta
 //                 is in percentage points ("+2.1 pts" / "−2.1 pts").
 
-import { fmt, fmtFull, fmtSigned } from "../formatters.js";
+import { fmt, fmtFull, fmtSigned, fmtPct } from "../formatters.js";
 
 // `fmtMoney` — kept as a named export (aliased to the canonical fmtFull) for
 // existing importers (action-line copy below, and tests that check exact
@@ -127,17 +127,9 @@ function longevityMetric({ id, label, before, after, betterDir }) {
   return { id, label, before: beforeStr, after: afterStr, delta };
 }
 
-// Sign-aware whole-number-percent formatter — "15.3%" (one decimal place).
-// Matches this codebase's convention that percent fields are already
-// whole-number percents (15.3 means 15.3%, not 0.153).
-function fmtPercent(v) {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toFixed(1)}%`;
-}
-
 function percentMetric({ id, label, before, after, betterDir }) {
-  const beforeStr = fmtPercent(before);
-  const afterStr = fmtPercent(after);
+  const beforeStr = fmtPct(before);
+  const afterStr = fmtPct(after);
 
   let delta;
   if (before == null || after == null || !Number.isFinite(before) || !Number.isFinite(after)) {

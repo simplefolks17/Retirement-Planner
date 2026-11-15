@@ -89,3 +89,29 @@ export function fmtMo(annual) {
 export function fmtPct(n, dp = 1) {
   return Number.isFinite(n) ? `${n.toFixed(dp)}%` : "—";
 }
+
+// fmtRate(fraction, dp = 1) — "23.7%" from a FRACTION (0.237). The unit-twin of
+// fmtPct, which takes an already-whole percent (23.7). Use fmtRate for rates the
+// model keeps as fractions (effectiveRMDTaxRate, fedMarginal, stateRate, real return...);
+// use fmtPct for scalars already in whole percent (withdrawalRate, wr70). "—" for
+// null/undefined/NaN/Infinity — same contract as fmtPct. Canonical per-scalar precision:
+// docs/DESIGN.md → "Percent formatting".
+export function fmtRate(fraction, dp = 1) {
+  return typeof fraction === "number" && Number.isFinite(fraction)
+    ? `${(fraction * 100).toFixed(dp)}%`
+    : "—";
+}
+
+// Parses what a person types into a dollar/age box: "250000", "$250,000", "250k", "1.5M",
+// "900000.75". Returns a rounded number, or null when the text is not a plain amount (so the
+// caller can keep the previous value instead of storing garbage). BUG-171 (Opus review R-5):
+// the wizard used to strip every non-digit, which read "250k" as 250 and "1.5M" as 15 — and
+// since BUG-152 that answer sets every balance in the plan.
+export function parseAmountInput(text) {
+  if (typeof text !== "string") return null;
+  const m = text.replace(/[$,\s]/g, "").match(/^(\d+\.?\d*|\.\d+)([kKmM])?$/);
+  if (!m) return null;
+  const mult = m[2] ? (m[2].toLowerCase() === "k" ? 1e3 : 1e6) : 1;
+  const n = parseFloat(m[1]) * mult;
+  return Number.isFinite(n) ? Math.round(n) : null;
+}

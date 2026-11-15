@@ -224,6 +224,74 @@ work rebuilt the system underneath PR #58's "unaffordable → accent" conclusion
 the working agreement, the explicitly-out-of-scope list, and a paste-able kickoff prompt.
 Next free bug id: **BUG-151**.
 
+## Session: 2026-11-14 — oversight root-cause audit + implementation
+**Branch:** `claude/oversight-root-cause-audit`
+
+Owner asked how Finding C (retirement state never follows the work state) survived, and for
+the same causes to be hunted across the codebase. Then: implement everything via Sonnet
+agents, followed by a deep Opus review.
+- **Audit:** `docs/audit-2026-11-14/oversight-root-causes.md` (8 causes, 8 lenses, mutation
+  table). Probes and their raw output are preserved in `docs/audit-2026-11-14/probes/`.
+- **Headline new findings:**
+  - onboarding discards the savings answer (BUG-152);
+  - onboarding's age commit is un-coupled (BUG-153);
+  - "Living expense growth" is a dead control (BUG-160);
+  - the frozen Roth phase-out stops the default user's Roth contributions at 53 (BUG-159);
+  - **six calculations can be deleted with 0 of 1,408 tests failing**, including the work
+    state's whole income-tax lookup.
+- **Owner decision:** the retirement state follows the work state unless set separately.
+- **Plan:** `docs/audit-2026-11-14/IMPLEMENTATION-PLAN.md`. Lane 1 runs L1-A → L1-H
+  sequentially on the branch; lane 2 (BUG-154 + sweeps 1/2) runs in a worktree. Then the
+  Opus review. Pre-assigned ids BUG-151..164.
+- **Progress:** each batch's `impl-log-<BATCH>.md` in `docs/audit-2026-11-14/` is the
+  durable record. Re-verify each batch (test, lint, build, revert-and-confirm) before
+  starting the next.
+- **Status (updated 13:15 UTC):**
+  - DONE + orchestrator-verified + pushed: L1-A (BUG-151); L1-B (BUG-152/153/160/161/162),
+    plus an orchestrator-added end-to-end wizard test (`onboarding-wizard-save.test.js`)
+    because L1-B's tests missed the bug's own site; lane-2 BUG-163/164 (cherry-picked).
+    Suite 1,436.
+  - **HELD for an owner decision: BUG-154** (`ce5c4c0` on branch
+    `worktree-agent-ac3e1fbacc480ed97`).
+    - Its fix moves T-X.3 `ssView.wr70` from 1.4225852835455082 to 0.9726563582272075, the
+      correct direction: the age-70 leg now honours the 38,000 override (× 1.24).
+    - The lane-2 agent's re-lock edit was denied by the permission classifier, so it is
+      surfaced to the owner, not done by the orchestrator. Do NOT re-lock without an
+      explicit owner "approve".
+    - On approval: cherry-pick `ce5c4c0`, re-lock that one value with an old → new comment,
+      and add the BUG-154 BUGS entry (its text is in `impl-log-L2.md`).
+  - L1-C was interrupted by a rate limit before making any edits, and was resumed via
+    SendMessage at 13:13.
+  - Remaining after it: L1-D, L1-E, L1-F, L1-G, L1-H, then the Opus deep review, then the
+    close-out (CLAUDE.md test counts are still at 1408 and need reconciling).
+
+- **Status (updated 18:20 UTC):** all of L1-A..H and BUG-154 are done, verified and pushed (owner
+  approved the wr70 re-lock 18:1x). Suite 1,614. The Opus deep review is COMPLETE
+  (`docs/audit-2026-11-14/opus-review.md`): 13 CONFIRMED findings, including 1 HIGH (R-4, the
+  onboarding spend-basis bug) and 1 regression from this branch (R-10). Round 2 (R2-A/B/C) in
+  IMPLEMENTATION-PLAN.md fixes them, with BUG-167..176 pre-assigned.
+
+- **CLOSED (2026-11-14, late):** all work is done, verified and pushed. That covers L1-A..H, BUG-154
+  (owner-approved re-lock), the Opus review, and Round 2 R2-A/B/C (BUG-167..176). Suite **1,683**, lint
+  clean, build OK. CLAUDE.md counts and Status are reconciled. The open-bug index has 16 entries
+  (BUG-36 raised to Medium).
+  **Next steps for a future session:**
+  1. Open a PR for this branch (the owner has not asked yet).
+  2. BUG-36's real fix: port `calcWhatIfDelta` onto `buildRetirementPhase`.
+  3. BUG-136, BUG-125.
+  4. Owner calls: BUG-142, BUG-149, and the pinned-SS-override vs claim-slider semantics.
+
+- **Owner decision (2026-11-14, after close-out):** a pinned SS override is anchored to the claim
+  age it was ENTERED at. Exploring a different claim age rescales it by `F(newAge)/F(anchorAge)` on
+  BOTH legs (claim and age 70), so benefits are never overstated. Pre-assigned **BUG-177**. After
+  that: open the PR, then a fresh independent Opus audit of the whole branch. Fixes go to
+  Sonnet/Haiku agents (owner asked for token efficiency), and Opus is used for the review only.
+
+- **Round 3 DONE (2026-11-15 ~00:00 UTC):** BUG-178..185 + S-8/S-10 fixed and orchestrator-verified,
+  suite 1,716. Next: a CodeRabbit review on the settled head, then owner review/merge of PR #70.
+  Leftover: `src/__tests__/zz-probe-s8.test.js` (gitignored probe). The Haiku agent's `rm` was blocked
+  by a safety check; it was surfaced to the owner, not deleted by the orchestrator.
+
 ### Gotchas worth not rediscovering
 - Under "auto", the spouse gap window's WIDTH is invariant to the primary's retirement age
   (both ends move together). To make a scenario create or destroy a gap you need an

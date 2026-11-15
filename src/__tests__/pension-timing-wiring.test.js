@@ -84,7 +84,7 @@ describe("pension timing — RMD floor and projected bracket (PR #62 review fix)
     const rateOf = (wv) => {
       const step = wv.steps.find(s => s.key === "trad");
       expect(step).toBeTruthy(); // precondition: there IS a traditional draw to tax
-      return Number(step.note.match(/~(\d+)%/)[1]);
+      return Number(step.note.match(/~(\d+(?:\.\d+)?)%/)[1]);
     };
     const noPensionRate = rateOf(app.latest().withdrawalView);
 

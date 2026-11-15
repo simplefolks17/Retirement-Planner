@@ -30,7 +30,7 @@ place this gets checked).
 | **BUG-39** | Low (accepted) | Flow-Down *accumulation* growth is a residual plug, not `Σ(row.growth)` (the one documented exception to the no-residual-plug rule) | `src/model/flow-down.js` |
 | **BUG-38** | Low (accepted) | Engine charges only *incremental* tax above the SS/pension floor — SS/pension effectively tax-free | `src/model/retirement-engine.js` |
 | **BUG-37** | Low (accepted, owner-deferred) | Engine ignores `conversionTaxSource` — always funds conversion tax from the pool | `src/model/retirement-engine.js` |
-| **BUG-36** | Low (accepted) | What-if/optimized-scenario deltas still use the blended (not taxed-once) engine for *deltas* only | `src/model/what-if.js`, `src/model/optimization.js` |
+| **BUG-36** | Medium (raised 2026-11-14, R-9) | `calcWhatIfDelta` (blended walk) contradicts the headline in spouse-gap households; the ABSOLUTE before/after previews were fixed by BUG-176 (headline-anchored), the underlying walk is still blended | `src/model/what-if.js`, `src/model/optimization.js` |
 
 ---
 
@@ -320,6 +320,7 @@ today's brackets, correctly).
 `calcTax`/`stackedIncomeTax` call site), `docs/FINANCIAL-MODEL.md` → Known Simplifications (existing note,
 needs a magnitude update).
 **Not fixed here.** No code change; filed for a future session.
+**Addendum (2026-11-14, BUG-159):** the Roth IRA income phase-out thresholds are the ONE exception that is now indexed to inflation inside `runSimulation` (accumulation phase). Federal/LTCG brackets, standard deductions and contribution limits stay unindexed — that remains this bug's scope.
 
 ### BUG-101 — Accumulation-phase `contrib401k` (and other flat-dollar contribution inputs) stay nominal, understating real savings by retirement (found 2026-07-26, BUG-91's original filing; re-filed as its own scoped bug at BUG-91's close-out)
 
@@ -448,7 +449,7 @@ Trad/Roth/Taxable/HSA draw order needs separately-tracked spouse Roth/Taxable/HS
 exist yet (only `tradSp` is split out). Recommend fixing BUG-85's buckets first; option 2 becomes a
 smaller add-on once they exist. Noted on `feature-tracker.html`'s #30 entry.
 
-### BUG-36 — What-if / optimized deltas not yet on the taxed-once engine (accepted, low)
+### BUG-36 — What-if / optimized deltas not yet on the taxed-once engine (Medium; raised from low 2026-11-14, R-9)
 
 **Found:** 2026-06-15 (BUG-35 follow-up, surfaced in PR #32 review). **Owner:** me_theguy.
 **What:** `what-if.js` (`calcWhatIfDelta` / `calcWhatIfScenario`) and `calcOptimizedScenario`
@@ -472,6 +473,20 @@ The remaining BUG-36 gap is (a) the retirement-phase **delta** still using the b
 `moneyEvents` taxable-inflow income tax still uncharged in accumulation / the blended walk.
 **Fix path:** migrate both to `buildRetirementPhase`/engine (planned with the Level-3 Strategies
 work). Tracked here so the gross-basis headline vs. blended-overlay split stays owned.
+**Amendment (2026-11-14, Opus review R-9; severity raised Low -> MEDIUM).** "Deltas only, accepted" badly
+understated this in SPOUSE-GAP households: the blended walk has no spouse gap-year income, so its
+ABSOLUTE figures contradict the headline by years, and the preview surfaces printed them beside it.
+Repro (real App; primary 48 retiring 57, spouse 37 earning $120k with a $20k 401k, $120k spend,
+conversions zeroed, spouse retirement "auto"): the headline says money lasts to **70**
+(`yearsSustained` 12.97); the Horizon surplus Apply preview said Longevity **"to age 63" -> "to age 67"**
+(before contradicts the plan by 7 years, and "more saving" read as WORSE than the plan's own 70);
+`calcWhatIfDelta` with NO change at all gave `scenarioYears` 5.41 vs 12.97; Classic "Work 2 more
+years" gave 6.80 vs the 14.71 the same change gives when committed. At the no-spouse default the gap
+runs the other way (25.51 vs 22.64). Also: BUG-157/158's spouse re-seed inside `calcWhatIfDelta` is
+mostly inert, because the seed never reaches the blended walk's years.
+**Display half FIXED by BUG-176** (both preview surfaces now print headline-anchored figures). The real
+fix (port `calcWhatIfDelta` and `calcOptimizedScenario` onto `buildRetirementPhase`) is **still open**
+and remains the only way the lever's own delta stops carrying the blended walk's bias.
 **Re-verified 2026-07-08 (L3c close-out):** `what-if.js` and `optimization.js` still import and
 call `buildRetirementDrawdown` exclusively — still reproduces. Note: this session's WI-3.9 Apply
 preview for the conversion optimizer suggestion deliberately does **not** use `calcWhatIfDelta` —
@@ -718,6 +733,377 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-192 — LifeEventSheet's until-age had reversed bounds at the plan horizon, and the policy was age math in a Horizon screen (CodeRabbit review of PR #70; FIXED 2026-11-15)
+
+**Severity: LOW-MEDIUM.** `effUntilAge = clamp(untilAge, age + 1, bounds.maxAge)` with `age === bounds.maxAge` reverses the bounds (min 91 > max 90) and returns an end past the plan horizon, which was then saved. It was also age arithmetic inside `src/horizon/` (rule 10).
+**Fix.** New pure `resolveUntilAge(untilAge, startAge, maxAge)` in `src/model/money-events.js` returns `{ available, minUntilAge, effUntilAge, reachesPlanEnd }`; at/after the horizon `available` is false and `effUntilAge` null. The sheet renders a designed "An end age isn't available..." state instead of the slider, disables "Add to plan", skips the evaluation, and `handleSave` refuses to save. The "(rest of your plan)" test also reads the model's `reachesPlanEnd`. **Files:** `src/model/money-events.js`, `src/horizon/LifeEventSheet.jsx`.
+**Tests/revert-and-confirm.** `life-event-sheet.test.js` (at maxAge: unavailable text, no slider, Save disabled and `onSave` not called; one year below: saved untilAge inside the plan), `money-events.test.js` (helper). Neutralising the sheet's `untilBlocked`/unavailable branch: the maxAge test fails; restored, pass. See `docs/audit-2026-11-14/impl-log-R4-B.md`.
+
+### BUG-189 — the anchored fallback depletion age rounded instead of using the engine's year convention (CodeRabbit review of PR #70; introduced by BUG-176; FIXED 2026-11-15)
+
+**Severity: LOW.** The fallback in `anchorWhatIfToHeadline` was `Math.round(scenarioRetAge + years)`. The engine (`retirement-engine.js`) reports `yearsSustained = (age - startAge - 1) + frac` with `depletionAge = age`, so a fractional duration Y depletes in year `startAge + floor(Y) + 1`. Rounding printed the depletion one year early (retire 65 with 10.2 years: 75 instead of 76).
+**Fix.** `depletionAge = scenarioRetAge + Math.floor(years) + 1`, matching the engine. **Files:** `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `src/__tests__/anchor-duration-clamp.test.js` (retire 65, 10.2 years -> 76). Restoring `Math.round`: `expected 75 to be 76`, 1 failing; restored, pass. Known edge: a pool emptied exactly with full funding reports an integer duration that maps to age + 1 under this rule; the engine's convention cannot distinguish it from a fractional year. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
+### BUG-188 — the BUG-176 anchor could print a negative scenario duration (CodeRabbit review of PR #70; introduced by BUG-176; FIXED 2026-11-15)
+
+**Severity: LOW.** `anchorWhatIfToHeadline` computed "after" as headline + delta with no floor. A lever that removes more years than the headline has (headline 5, no-change 20, scenario 10: delta -10) printed -5 years.
+**Fix.** The anchored years clamp at 0. When the clamp applies, `deltaYears` is restated as clamped years minus the headline, so headline + delta still equals the years the screen prints (Classic's delta chip reads `deltaYears`). **Files:** `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `src/__tests__/anchor-duration-clamp.test.js` (the 5 / 20 / 10 example: years 0, delta -5). Removing the clamp: `expected -5 to be +0`, 1 failing; restored, pass. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
+### BUG-187 — the primary's income plateau capped the SPOUSE's salary in every primary simulation (CodeRabbit review of PR #70; default left by BUG-156; FIXED 2026-11-15)
+
+**Severity: MEDIUM.** `runSimulation`'s `otherEarnerGrowthEndAge` defaults to the subject's own `incomeGrowthEndAge` when omitted. BUG-156 added that param for the spouse run but left the default in place, so the primary's plateau (set in the primary's frame) also froze the spouse's raises in the primary sim, App's chart and the what-if resims alike. Spouse income is then understated in household MAGI and the Roth phase-out, and in the spouse's wages that feed the walk.
+**Fix.** Every PRIMARY `runSimulation` call passes `otherEarnerGrowthEndAge: null` (the spouse's own salary has no plateau input): App.jsx's primary sim and the two what-if primary resims (`calcWhatIfDelta`, `calcWhatIfScenario`) in `src/model/what-if.js`. `spouse-sim.js` already passes its own value and is unchanged. **Files:** `src/App.jsx`, `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `src/__tests__/other-earner-plateau-wiring.test.js` (4): a model test (explicit null equals the no-plateau run; the omitted default changes Roth, so it is not vacuous), and two App-level tests that spy on `runSimulation` and assert every primary-plateau call passes null (one for the App sim, one for the what-if resims). Removing the App line: the App test fails. Removing either what-if line: the what-if test fails. Restored: 4/4 pass. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
+### BUG-186 — the Roth IRA phase-out for married-filing-separately was inflation-indexed, but the IRS does not index it (CodeRabbit review of PR #70; introduced by BUG-159; FIXED 2026-11-15)
+
+**Severity: LOW.** BUG-159 indexed the Roth phase-out thresholds for every filing status. The IRS does not index the married-filing-separately band (0 to 10,000). At 4% inflation, year 2 widened it to 10,400, so an MFS filer with MAGI 10,200 kept contributing Roth (144 in year 2) where the real cliff gives 0.
+**Fix.** In `runSimulation`, `mfs` uses `ROTH_PHASEOUT_2026.mfs` unindexed; every other status is indexed as before. **Files:** `src/model/simulation.js`.
+**Tests/revert-and-confirm.** `src/model/__tests__/roth-phaseout-indexing.test.js` (2 new, MFS). Removing the fix line: both fail (year-2 Roth 144 instead of 0; constant-MAGI year 2 gives 1,010 instead of 750). Restored: 9/9 pass. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
+### BUG-183 — editing a pinned Social Security override re-anchored it to the current claim age (Opus review 2 S-3, from BUG-177; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** Pin 38,000 at claim age 70, move the claim age to 62 (field still shows 38,000, effective 21,452), then nudge the field to 38,500: the anchor silently became 62, so the claim leg read 38,500 (+79%) and moving back to 70 gave 68,200 (a fake delay gain BUG-177 was filed to stop).
+**Fix.** `setSsOverride` sets the anchor only on a NEW pin (previous anchor null). Editing a live pin keeps its anchor; clearing still nulls it. **Files:** `src/App.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/ss-override-wiring.test.js` "editing an existing pin keeps its anchor age (BUG-183)" (real App). Reverting the anchor line: `expected 38500 to be 21734`, 1 failing; restored, 7/7 pass. See `impl-log-R3-B.md`.
+
+### BUG-184 — the spouse current-age setter overwrote an explicit spouse retirement age (Opus review 2 S-7; BUG-170's missed sibling; FIXED 2026-11-14)
+
+**Severity: LOW.** Explicit spouse retirement 60; moving the spouse's age to 61 set the stored retirement age to 62, and moving it back to 30 left it at 62. Same inputs, different plan (+$97,553 `totalAtRet`). BUG-170 had removed the same overwrite from `setLifeExpectCoupled`.
+**Fix.** `setSpouseCurrentAgeCoupled` no longer writes `spouseRetirementAge`; reads already clamp through `resolveSpouseRetAge`. **Files:** `src/App.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/ss-override-wiring.test.js` "BUG-184" (real App, explicit 60 survives age 61 and back to 30). Restoring the old overwrite: `expected 62 to be 60`, 1 failing; restored, pass. See `impl-log-R3-B.md`.
+
+### BUG-185 — a $0 conversion event stranded past retirement was not flagged "not modelled" (Opus review 2 S-9; FIXED 2026-11-14)
+
+**Severity: LOW.** BUG-175's flag required `amount > 0`. A just-added $0 event with retirement moved 65 -> 40 read age 48, range [31, 39], flag false, and the label "401k → Roth, taxed as income", so it sat outside its own range unflagged and the bounds invariant's exemption did not cover it.
+**Fix.** `conversionEventNotModelled` is age-only (the predicate that defines "outside the working years"); a $0 event carries the same flag and label. The model's own filter still drops $0 events, so nothing converts. **Files:** `src/model/conversion-events.js`.
+**Tests/revert-and-confirm.** `src/__tests__/bounds-invariant.test.js`: new "$0 event" SEQS entry and a dedicated "BUG-185" test. Restoring the amount gate: 2 fail (`expected false to be true`; the invariant `expected [ Array(1) ] to deeply equal []`); restored 42/42. See `impl-log-R3-B.md`.
+
+### BUG-182 — family HSA coverage did not reach the surplus optimizer, HSA card, Classic slider, or the surplus preview (Opus review 2 S-4; FIXED 2026-11-14)
+
+**Severity: LOW.** Family coverage raised the sim cap and the Horizon field to 8,750 but `calcOptimizedAllocation`, the HSA action card and Classic's HSA slider stayed on the self-only 4,400, so a family household with 4,900 of room got +550 and the rest overflowed to Taxable. Separately every what-if resim lacked `hsaLimit`, so the surplus Apply preview capped the primary at 4,400 (preview $8.4M vs applied $8.77M, spouse HSA 0), and a primary HSA override never re-capped the spouse's squeezed share.
+**Fix.** New `primaryHsaCeilingForSurplus` (family: shared ceiling minus the spouse's effective share); `hsaLimit` param on the optimizer and action cards; Classic `contribMax` uses `primaryHsaLimit`; `whatIfSimInputs.hsaLimit`; `scenarioSpouseAwareInputs` re-runs the spouse sim under family coverage when `contribOverrides.contribHSA` changes. Defaults keep self-only behaviour (golden masters unmoved). **Files:** `src/model/spouse-sim.js`, `src/model/budget.js`, `src/model/action-cards.js`, `src/model/what-if.js`, `src/App.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/family-hsa-surplus.test.js` (5), each site reverted singly (optimizer arg, Classic max, resim cap, squeeze, card). Gap: App's `hsaLimit` arg at the Classic action-card call site is untested (card not on the default Classic tab). See `impl-log-R3-A.md`.
+
+### BUG-180 — the BUG-176 anchor printed the blended walk's absolute age for a sustainable plan made worse (Opus review 2 S-2; FIXED 2026-11-14; BUG-36 stays Open)
+
+**Severity: MEDIUM.** Younger-spouse household at $30k spend (headline `yearsSustained` Infinity), Classic "Retire 2 years early": panel read "Portfolio lasts to age 81" vs "Sustainable indefinitely" with chip -9.7 yrs; committing the age gives depletion age 183. `anchorWhatIfToHeadline` fell back to the blended scenario's own absolute when the headline was Infinity and the lever hurt (R-9's contradiction in an edge state).
+**Fix.** That case (and the -Infinity delta case) now returns a documented not-comparable state: `comparable: false`, `scenarioYears`/`scenarioDepletionAge` null, `deltaYears` the finite blended delta or null. Classic `WhatIfPanel` renders "Weaker than your plan (no comparable age)"; the Horizon surplus preview already renders null years as "—". Helping/neutral levers and all finite-headline cases are unchanged. **Files:** `src/model/what-if.js`, `src/components/WhatIfPanel.jsx`.
+**Tests/revert-and-confirm.** `display-consistency-r2b.test.js` (3 unit + a Classic render of the review's household). Old fallback restored: 3 fail; panel null branch disabled: the render test fails.
+
+### BUG-181 — "not modelled" conversion events were dropped from what-if previews that would bring them back (Opus review 2 S-6; FIXED 2026-11-14)
+
+**Severity: MEDIUM (BUG-175 made it a designed state; whatif-parity class).** $500k pre-tax, in-service conversions, one $100,000 event at age 60, retirement 65 -> 58 (event flagged "not modelled"). Work-longer +5 / `calcWhatIfScenario` at 63: totalAtRet 5,941,869; committing 63: 5,905,265 (event modelled again) — preview optimistic by $36,604 of conversion tax.
+**Fix.** App's `whatIfSimInputs.conversionEvents` is the toggle+amount list WITHOUT the base-age filter (new `scenarioConversionEvents`); `scenarioResolvedInputs` (see BUG-179) applies the BUG-175 predicate at each scenario's OWN retirement age. **Files:** `src/App.jsx`, `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `whatif-parity-wiring.test.js` "BUG-181": preview==commit at 63 (with a toggle-off non-vacuity check), the reverse direction, and the work-longer row. Reverting App to the pre-filtered list fails 2; the what-if-side filter is equivalent defence in depth (see `impl-log-R3-A.md`).
+
+### BUG-179 — scenarios clamped the stored income plateau against the BASE retirement age (Opus review 2 S-1, regression from BUG-170; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** BUG-170 made the plateau non-destructive (stored kept, effective = clamp(stored, age, retAge)) but App fed scenarios the EFFECTIVE value clamped at the base age. Stored 56, base retirement 55, work-longer to 60: preview totalAtRet 3,049,317 vs committed 3,042,033; stored 45/44/49: 1,417,679 vs 1,412,418, SS 31,920 vs 31,656 (preview optimistic). Before BUG-170 both read null and agreed.
+**Fix.** App passes the STORED plateau in `whatIfSimInputs` and `whatIfBundle.ssInputs`; `what-if.js` resolves it per scenario through one exported helper `scenarioResolvedInputs` (shared with BUG-181), used by `scenarioSpouseAwareInputs` (primary re-sim and the spouse re-sim), `scenarioSocialSecurity`, the work-longer `ssAt`, and `eventIncomeImpact`. At the base age it reproduces App's value exactly. **Files:** `src/model/what-if.js`, `src/App.jsx`.
+**Tests/revert-and-confirm.** `whatif-parity-wiring.test.js` "BUG-179" (real App): both review rows preview==commit, scenarioYears, and work-longer portfolio/SS. Each site reverted singly and confirmed to fail (details in `impl-log-R3-A.md`).
+
+### BUG-178 — the wizard's untouched spend answer was stale against a changed income answer (Opus review 2 S-5, HIGH, regression from BUG-167; FIXED 2026-11-14)
+
+**Severity: HIGH.** BUG-167 sent `monthlySpend` only when it differed from the PRE-wizard seed. An untouched answer leaves `annualExpenses` auto, and auto spending follows the wizard's NEW income. Income $200k with Q5 untouched: summary showed $4,781/mo, saved plan used $10,617 (2.2x, 15 years worse); $60k: used $2,267 (0.47x, 56 years better). The summary label also read "Monthly income" for a spending figure.
+**Fix (commit the shown figure once it could be stale).** `handleSave` now sends `monthlySpend` when spend OR income OR current age changed; only a fully untouched wizard still leaves auto alone (so BUG-167's identical-plan guarantee holds). Chosen over re-seeding because a live seed needs the whole tax/contribution pipeline recomputed from the wizard's income, which is model work not available to the screen (rule 10). Label is now "Monthly spending". **Files:** `src/components/HorizonShell.jsx`.
+**Tests/revert-and-confirm.** `onboarding-wizard-save.test.js` (real wizard): income to $200k and to $60k, Q5 untouched, saved `monthlyTodaysExp` == seeded/shown figure; summary says "Monthly spending". Reverting the condition and label: both new tests fail; restored, 11/11 pass.
+
+### BUG-177 — a pinned SS override did not rescale with the claim age (owner decision on the BUG-154 follow-up; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** Opus review, BUG-154 verdict: with 38,000 pinned and the claim slider moved 70 -> 67 -> 65 -> 62, the claim leg stayed 38,000 while the age-70 leg went 38,000 -> 47,120 -> 54,348 -> 67,314, a fake "delay gain" created by exploring an earlier age. **Owner decision (2026-11-14):** a pinned override is the benefit at the claim age it was ENTERED at; a different claim age rescales it so benefits are never overstated.
+**Fix.** New `ssOverrideAtAge(override, anchorAge, atAge)` in `src/model/retirement-income.js` (override x `claimFactor(atAge)/claimFactor(anchorAge)`; null/equal anchor returns the override untouched, so entered-at-the-claim-age is byte-identical). `calcRetirementIncome` takes `ssOverrideAnchorAge` and uses it for the claim leg (`effectiveSS`) and the age-70 leg (`ss70Annual`). App has new state `ssOverrideAnchorAge`, captured by the single `setSsOverride` wrapper (set to the current `ssClaimingAge` on a NEW pin only, kept on edits, cleared on null; BUG-183 corrected the original "any numeric write" version), which every writer (Horizon bundle, Classic input, Classic reset) already goes through. The anchor is passed to the base `calcRetirementIncome` and into `whatIfBundle.ssInputs`, which feeds `scenarioSocialSecurity` and the work-longer rows (BUG-173). UI shows the number as entered plus model-provided `ssView.overrideRescaleNote` (Horizon SS flow) and an "entered at age N, rescaled to ..." suffix (Classic); the monthly tile reads the rescaled figure. **Files:** `src/model/retirement-income.js`, `src/App.jsx`, `src/horizon/screens/strategies/SSTimingFlow.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/ss-override-wiring.test.js` (real App): entered at 70, slider to 67/65/62 gives factor-ratio claim legs and a flat 38,000 age-70 leg; entered at 67 and kept = unchanged, no note; clearing the override clears the anchor; preview == commit; work-longer rows carry the rescaled figure. Each site reverted singly and confirmed to fail a test: anchor capture, rescale function, claim leg, age-70 leg, App base-calc wiring, the Horizon `ssView.ssMonthly` tile, and `whatIfBundle.ssInputs` (the last survived until the work-longer test was added). Correction (review 2 S-8/S-10, 2026-11-14 R3-B): the CLASSIC "Monthly Benefit" tile was NOT covered by that evidence. It recomputes its own figure from `ssOverride`, and reverting it failed 0 tests until `src/__tests__/render-halves-s8.test.js` added a render test for it, together with the Classic rescale note and the Horizon `overrideRescaleNote` NoteBox. Golden masters unmoved (`impl-log-BUG-177.md`).
+
+### BUG-173 — work-longer "Social Security / yr" ignored a pinned override and was primary-only (Opus review R-2; FIXED 2026-11-14)
+
+**Severity: MEDIUM (pre-existing; BUG-154 sibling).** `calcWorkLongerBreakEven` recomputed SS from the PIA (`calcBenefit(calcPIA(calcAIME(...)))`) with no `ssOverride` and no spouse. T-X.3 repro (override 38,000 at claim 67; plan `householdSS` 38,000): rows showed SS **23,232 / 25,956 / 28,848** with deltas +1,308 / +4,032 / +6,924 per year, i.e. about $15k BELOW the figure the user typed, and told them working longer raises it, while the scenario each row describes (`scenarioSocialSecurity`) keeps the pinned 38,000. BUG-154 fixed one instance of "a second SS derivation that doesn't honour the override", not the class.
+**Fix.** Each row's SS (and `baseSSAnnual`) comes from the same `calcRetirementIncome(...).householdSS` the scenario uses, fed `{ ...bundle.ssInputs, ...ssInputs }` (the scenario engine's own inputs: override, spouse estimate/claiming age/basis). App no longer passes a separate, narrower `ssInputs`. New per-row `ssPinnedFlat` (model-provided, rule 10) makes the screen say "your entered figure" instead of an unexplained "+$0/yr". **Files:** `src/model/what-if.js`, `src/App.jsx`, `src/horizon/screens/strategies/WorkLongerFlow.jsx`.
+**Tests/revert-and-confirm.** `src/__tests__/display-consistency-r2b.test.js` (real App): override pinned -> `baseSSAnnual` and every row 38,000, delta 0, pinned flag; spouse estimate 20,000 without override -> `baseSSAnnual` == plan `householdSS` (41,924) and rows are household. Reverted at the exact sites: dropping `bundle.ssInputs` from the merge -> 2 fail; `ssOverride: null` -> pinned test fails (21,924 vs 38,000); zeroing the spouse -> household test fails (21,924 vs 41,924). Golden masters unmoved (`impl-log-R2-B.md`).
+
+### BUG-174 — TaxTimeline rendered `effectiveRMDTaxRate` at 0 dp (Opus review R-8; FIXED 2026-11-14)
+
+**Severity: LOW.** BUG-166's "one value renders one way" rule (`docs/DESIGN.md` "Percent formatting": `effectiveRMDTaxRate` is a 1-dp computed rate) was broken by `TaxTimeline`'s two segments sharing `fmtRate(rate, 0)`: at the default the Classic bar read "Ret.: 13%" while the same panel ~35 lines below, `rmdView.effectiveRMDTaxRateLabel`, the action cards and Horizon read "12.8%". Its Working segment (`fedMarginal`, a bracket rate) is correctly 0 dp.
+**Fix.** `Seg` takes a `dp`: Working 0, Ret. 1. **Files:** `src/components/TaxTimeline.jsx`. **Test/revert-and-confirm:** `display-consistency-r2b.test.js` renders Classic and asserts "Ret.: 12.8%" equals `rmdView.effectiveRMDTaxRateLabel`; Ret. `dp={1}` -> `dp={0}` fails with "expected 'Working: 22%Ret.: 13%' to contain 'Ret.: 12.8%'".
+
+### BUG-175 — a working-year conversion event the model drops kept rendering as live (Opus review R-13, defect half; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** $500k pre-tax, in-service conversions on, an event of $100,000 at the default age 48; then retirement moves 65 -> 40. The Horizon row still read age 48 / $100,000 / "401k -> Roth, taxed as income" (its own `ageField.max` was 39), while the model silently dropped the event (`simData.convEvent` sum 100,000 -> 0). BUG-161's class (a field showing an input the model isn't using).
+**Fix (flag, not clamp, so the user's event survives retirement moving back).** One predicate in `conversion-events.js` (`conversionEventOutsideWorkingYears` / `conversionEventNotModelled`, plus the label constant) now defines "outside the working years"; App's `activeConversionEvents` filter and both UIs read it. `conversionView.events.rows[i].notModelled` + `estTaxLabel` ("outside your working years - not modelled") are model-provided (rule 10 - no age comparison in JSX); the Horizon row shows it in the warm tone; Classic `ConversionEventsPanel` shows the same label for the same rows. Only events with a real amount flag. **Files:** `src/model/conversion-events.js`, `src/App.jsx`, `src/horizon/screens/strategies/ConversionPlannerFlow.jsx`, `src/components/ConversionEventsPanel.jsx`.
+**Not done here (R2-C):** the structural-guard half of R-13 (the two guards walking every `{value, set}` in `horizonProps`).
+**Tests/revert-and-confirm.** `display-consistency-r2b.test.js` (real App; the review's repro and a Classic row with working years remaining): App row `notModelled`/label off -> 2 fail; Classic panel `notModelled = false` -> 2 fail (the panel still shows "401k -> Roth, taxed as income").
+
+### BUG-176 — `calcWhatIfDelta` previews printed ABSOLUTE before/after ages that contradict the headline (Opus review R-9; display half FIXED 2026-11-14; BUG-36 stays Open)
+
+**Severity: MEDIUM.** See BUG-36's 2026-11-14 amendment for the full repro (headline "to age 70"; surplus Apply preview "to age 63" -> "to age 67"; Classic "Work 2 more years" 6.80 vs 14.71 committed). Two defects on the Classic panel: its AFTER and delta came from the blended walk against a headline "before" (a mixed-engine difference, -6.7 yrs in the repro), and its "lasts to age" label measured BOTH ages from the base retirement age (the scenario's own is 2 years later).
+**Fix (near-term, per the review).** `anchorWhatIfToHeadline`: "before" IS the headline; "after" = headline + (scenario - no-change), both terms from the SAME blended engine so its bias cancels (Infinity edges documented). The Horizon surplus preview (`surplusApplySite`) and Classic `WhatIfPanel` (`calcWhatIfDeltaAnchored`) use it; the panel's label measures from `scenarioRetAge`. Repro after: preview before "to age 70", after >= 70; Classic "to age 73 vs to age 70 -> +0.9 yrs". **Not done (out of scope):** porting `calcWhatIfDelta` onto `buildRetirementPhase` - that is BUG-36. **Files:** `src/model/what-if.js`, `src/App.jsx`, `src/components/WhatIfPanel.jsx`.
+**Tests/revert-and-confirm.** `display-consistency-r2b.test.js`: Horizon preview (before == `to age ${retirementWalk.depletionAge}`, nest egg before == `fmt(totalAtRet)`), Classic panel driven through its preset, and 4 unit tests of the anchor. Surplus preview back to `before.scenarioYears` -> fails ("to age 63" vs "to age 70"); panel back to raw `calcWhatIfDelta` -> fails (label "NaN", "-6.7 yrs").
+
+### BUG-167 — onboarding seeds "monthly spend (today's dollars)" with a retirement-year figure, 3.95x too high (Opus review R-4, HIGH; FIXED 2026-11-14)
+
+**Severity: HIGH (every new Horizon user).** Wizard Q5 is captioned "today's dollars" and `commitPlan` writes `monthlySpend x 12` into `annualExpenses` (a today's-dollar input), but `HorizonShell` seeded it from `statementView.monthlyTotal`, which since BUG-91 is `retSpendBasis / 12` (retirement-year dollars). At the default the box showed $18,868 and clicking through untouched moved `effectiveExpenses` 57,377 -> 226,416, `yearsSustained` 22.64 -> 4.19, depletion age 88 -> 70, `withdrawalRate` 5.42% -> 21.38%.
+**Root cause.** CLAUDE.md rule 11 (a figure read on the wrong dollar basis). BUG-143/144 added `monthlyTodaysExp` but never re-pointed this seed, and the BUG-152 onboarding audit asked "does every answer land", not "is every pre-filled answer on the right basis". **Second defect, same line:** `handleSave` always sent `monthlySpend`, so even a user who left the (correct) seed alone had the auto (`null`) `annualExpenses` frozen into a fixed number (raising income to $150k afterwards left spending at the frozen value).
+**Fix.** Seed from `statementView.monthlyTodaysExp`; send `monthlySpend` from `handleSave` ONLY when it differs from the seed. **Files:** `src/components/HorizonShell.jsx`.
+**Tests.** `src/__tests__/onboarding-wizard-save.test.js` (drives the REAL wizard): seed is the today's-dollar figure; completing untouched leaves `effectiveExpenses`/`yearsSustained`/`withdrawalRate` unchanged; untouched keeps spending auto; a changed answer lands as (seed+500) x 12. **Revert-and-confirm** at each site: seed back to `monthlyTotal` -> 2 fail; `...(changed ? {monthlySpend} : {})` back to `monthlySpend: vals.monthlySpend,` -> 2 fail (`impl-log-R2-A.md`).
+
+### BUG-168 — REGRESSION from BUG-153: onboarding users 65+ stop contributing the year after their current age (Opus review R-10; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** `commitPlan({currentAge: 72, retirementAge: 75})` gave every `contribEnd*` = 73 (`main` gave 75): `coupleCurrentAge` ran first and lifted each end to newAge+1, which broke the "`contribEnd === retirementAge` means tracking" convention `coupleContribEndAges` relies on, so the retirement move that followed left contributions behind. Same final inputs, two answers depending on control order: "retire 75 then age 72" -> ends 75, totalAtRet 282,679; "age 72 then retire 75" -> ends 73, totalAtRet 221,179 (-22%).
+**Correction to BUG-153.** BUG-153's test "matches the same values entered through the normal coupled setters" asserted equality with the order-dependent baseline and so locked `[73,73,73,73]`; its claim that the committed result was correct was wrong. That test now asserts ORDER INDEPENDENCE (onboarding, age-then-retire and retire-then-age all agree: ends 75, SS claim 70, identical `totalAtRet`/`yearsSustained`).
+**Fix.** (1) `coupleContribEndAges(ends, base, scenario, currentAge)`: with the current age supplied, when base retirement == current age a `contribEnd == base+1` (the lifted state) also tracks, and the new end is never at/before the current age; `setRetirementAgeCoupled` and what-if.js's scenario re-sim pass the current age. (2) `commitPlan` couples the RETIREMENT age first against the original state, then the current age. **Files:** `src/model/simulation.js`, `src/model/what-if.js`, `src/App.jsx`.
+**Tests/revert-and-confirm.** `onboarding-coupling-wiring.test.js` (order independence) + unit test in `whatif-parity-wiring.test.js`. Each sub-fix reverted at its own line: `liftedTracking = false`, dropping `currentAge` from `setRetirementAgeCoupled`, swapping commitPlan's order -> the order-independence test fails each time.
+
+### BUG-169 — `commitPlan` never bounded the retirement age it was given (Opus review R-3; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** The wizard clamps each answer independently (age 18-80, retire 40-90), so `{currentAge: 70, retirementAge: 60}` stored retirement 60 < min 70 ("money runs out at 63" for a 70-year-old) and `{currentAge: 34, retirementAge: 90}` stored retirement 90 > max 89 with `lifeExpect` 90 < min 91.
+**Correction to BUG-153.** BUG-153's "every bundle `value` within its own min/max" held only for the one input its test used.
+**Fix.** `commitPlan` clamps the retirement age to `[coupled current age, max(lifeExpect, currentAge+1) - 1]`, the same range the controls' own min/max give. **Files:** `src/App.jsx`. **Tests.** `onboarding-coupling-wiring.test.js` (70/60, 34/90, and a retirement-age-only lower bound) + both fixtures added to `bounds-invariant.test.js` SEQS. **Revert-and-confirm:** removing the upper bound fails (34,90) in both files; removing only the lower bound fails the age-less test (note (70,60) alone is NOT caught by the lower bound because `coupleCurrentAge` also lifts retirement to the age; the age-less test covers its own job).
+
+### BUG-170 — Classic "Retirement Age"/"Life Expectancy" sliders bypassed the coupled setters; the plateau and spouse-retirement couplings destroyed user values (Opus review R-1; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** Both Classic sliders were inline copies of the coupling (contribEnd only / minus the spouse clamp). Repro (plateau 55, retirement 65 -> 50 -> 65): Horizon ended plateau `null`, totalAtRet 4,178,538; Classic ended plateau 55 (and a bounds violation mid-state), totalAtRet 4,116,477 - $62,061 apart. Second half: Horizon's coupling was itself LOSSY - dragging retirement down through the plateau and back deleted it (55 -> null), and lowering plan-to age overwrote an explicit spouse retirement age (85 -> 79, never restored; Classic kept 85, `yearsSustained` 14.16 vs 16.76).
+**Corrections.** BUG-155's "`setRetirementAgeCoupled` keeps the plateau in range" was true only for Horizon and onboarding. BUG-161/BUG-156 claims are corrected under BUG-172/R-6 in this batch/round.
+**Fix.** Both Classic sliders now call `setRetirementAgeCoupled` / `setLifeExpectCoupled` (the same function objects the Horizon bundle exposes). The plateau is non-destructive: the STORED value is the user's own and every consumer reads the EFFECTIVE `clampIncomePlateauAge(stored, currentAge, retirementAge)` (computed on read in App.jsx), so a plateau at/after retirement still means "no plateau" without being overwritten; `setRetirementAgeCoupled`, `setCurrentAgeCoupled` and `commitPlan` no longer write it. The spouse-retirement overwrite in `setLifeExpectCoupled` is removed: every consumer already reads through `resolveSpouseRetAge`, which clamps to `[spouseCurrentAge+1, lifeExpect-1]`. **Files:** `src/App.jsx`.
+**Tests.** New `src/__tests__/classic-horizon-parity.test.js` (real App; Classic driven by calling the rendered `<Slider>`'s `onChange`): the $62,061 plateau repro and the spouse 85/80/95 repro are identical between UIs and the user's own values survive; Classic retirement slider keeps contributions after an age move; Classic sliders' `onChange` IS the Horizon setter (structural pin, because after the non-destructive change the two paths' outputs coincide for most moves); 2 new `bounds-invariant` sequences. **Revert-and-confirm** each sub-fix: inline Classic Retirement copy -> 2 fail; inline Life Expectancy copy -> identity test fails; destructive plateau write re-added -> plateau test fails; spouse overwrite re-added -> spouse test fails.
+
+### BUG-171 — `allocateSavedTotal` could return a negative balance; the wizard parsed "250k" as $250 (Opus review R-5; FIXED 2026-11-14)
+
+**Severity: LOW.** `allocateSavedTotal({1000,1000,1000,1000}, 0, 2)` -> `{bal401k: -1, ...}` (each share rounds 0.5 -> 1, the residual was charged to a $1 "biggest"). The wizard's `parseInt(draft.replace(/[^0-9]/g, ""))` read "250k" as 250, "1.5M" as 15 and "900000.75" as 90,000,075 - harmless while BUG-152 discarded the answer, consequential once it started setting every balance.
+**Fix.** Largest-remainder rounding in `allocateSavedTotal` (floors + leftover units to the largest fractional parts: never negative, sums exactly); new `parseAmountInput` in `src/formatters.js` (k/M suffix, decimals rounded, `$`/separators ignored, null on junk so the previous answer is kept). **Files:** `src/model/accumulation.js`, `src/formatters.js`, `src/components/HorizonShell.jsx`.
+**Tests/revert-and-confirm.** Unit tests (`accumulation.test.js`, `formatters.test.js`) and wizard tests typing "250k", "1.5M", "$900,000.75", "lots" into the real input. Old parse line restored -> 3 wizard tests fail; old round+residual restored -> 2 unit tests fail.
+
+### BUG-172 — the spouse HSA field's max under FAMILY coverage was not the spouse's real share (Opus review R-7; FIXED 2026-11-14)
+
+**Severity: LOW.** BUG-161's "field equals the modelled value" was only written for family -> self. Under family coverage the field's max was the whole 8,750 while the model's spouse ceiling is `8,750 - primary's contribution` (`spouseHsaLimitFor`): with the primary at 3,850 and the spouse field at 8,000 the field showed 8,000 and the spouse sim contributed 4,900.
+**Correction to BUG-161.** Its "the spouse HSA field's max now follows the coverage ceiling" held only for self-only; under family it was the full household ceiling.
+**Fix.** The bundle `max` is `spouseHsaLimit`, and the stored value is read through `min(stored, spouseHsaLimit)` everywhere (an on-read clamp rather than a per-writer re-clamp: the primary's HSA contribution has several writers - bundle, Classic slider, optimizer Apply/Revert - and this also returns the user's larger value if the primary's contribution drops). **Files:** `src/App.jsx`.
+**Tests/revert-and-confirm.** `onboarding-coupling-wiring.test.js` (value == max == 4,900 at the default; follows the primary both ways; self-only unchanged), `setter-bundles.test.js` expectation changed 8,750 -> 8,750 - 3,850 (it locked the contradicted contract), 1 new `bounds-invariant` sequence. Bundle max back to `primaryHsaLimit` -> 3 fail; effective clamp removed -> 3 fail.
+
+### BUG-154 — "delay SS to 70" ignored a pinned Social Security amount (audit-auto-resolution Finding D; FIXED 2026-11-14)
+
+**Severity: MEDIUM-HIGH.** `calcRetirementIncome` derived the age-70 benefit (`ss70Annual`) from
+`ssPIA` and never consulted `ssOverride`. So for anyone who typed in their own SS figure,
+`ss70DrawReduction` clamped to 0 and the "delay to 70" card disappeared (`delayApplicable` false).
+It also left `wr70` and `withdrawalRate` on different SS bases, so delaying could read as strictly
+worse. Repro (default household, claim 62, override 90,000): pre-fix `ss70DrawReduction` 0,
+`delayApplicable` false.
+**Fix:** the override is treated as the annual benefit at the chosen claim age, so
+age-70 = override × F(70) / F(claim). `includeSS = false` now zeroes both legs (pre-fix, the age-70
+leg stayed nonzero). **Files:** `src/model/retirement-income.js`.
+**Tests:** 4 model tests in `retirement-income.test.js`, 1 App-level test in
+`src/__tests__/ss-override-wiring.test.js`. **Revert-and-confirm** (lane-2 agent, observed): the
+old PIA-only line fails 4 of 5; restored -> pass.
+**Golden master (owner-approved re-lock, 2026-11-14):** T-X.3 `ssView.wr70` 1.4225852835455082
+-> 0.9726563582272075 (DOWN). T-X.3 pins 38,000 at claim 67, and the age-70 leg now honours it
+(×1.24 = 47,120). It was the only value to move; the lane-2 agent's own re-lock attempt was
+blocked by the permission system and surfaced to the owner. The Opus deep review independently
+judged both the fix and the re-lock CORRECT (`docs/audit-2026-11-14/opus-review.md`).
+**Follow-up (owner/product call, from that review):** a pinned override is "the benefit at
+whatever claim age is currently selected" and does not rescale when the claim slider moves, so
+exploring an earlier claim age inflates the displayed delay gain. See the review's BUG-154 verdict.
+**RESOLVED by BUG-177** (2026-11-14): the override is anchored to the claim age it was entered at.
+
+### BUG-166 — percent formatting hand-rolled at ~39 sites with unit confusion (CONSOLIDATION-REDO-PLAN sweep 4; FIXED 2026-11-14)
+
+**Root cause:** no shared fraction-aware percent formatter. Scalars are fractions (0.237) or whole percents (23.7), and every call site did its own `.toFixed(n)` / `Math.round(x*100)`, with differing precision for the same value (e.g. `effectiveRMDTaxRate` `24%` on Numbers→Taxes vs `24.0%` in the RMD flow; `yr1TradRate` 0 dp vs 1 dp). A private `fmtPercent` duplicated `fmtPct`.
+**Files:** `src/formatters.js` (new `fmtRate`), `src/model/action-cards.js`, `src/model/apply-preview.js` (private `fmtPercent` deleted), `src/App.jsx`, `src/components/TaxPhaseCard.jsx` (**since deleted, R2-C: it was imported nowhere**), `src/components/TaxTimeline.jsx`, `src/horizon/screens/NumbersScreen.jsx`, `src/horizon/screens/strategies/SSTimingFlow.jsx`; per-scalar precision recorded in `docs/DESIGN.md` → "Percent formatting".
+**Fix:** `fmtRate(fraction, dp=1)` beside `fmtPct(whole, dp)`; all sites migrated; guard test in `src/__tests__/formatters.test.js` fails on any hand-rolled percent outside `formatters.js` (revert-and-confirm done). Rendered text intentionally changed (computed rates now 1 dp); no model value or golden master moved. Log: `docs/audit-2026-11-14/impl-log-L1-H.md`.
+
+### BUG-165 — Horizon "Portfolio target" field is a dead control: rendered, consumed only by Classic (found 2026-11-14 in L1-F; FIXED 2026-11-14)
+
+**Severity: LOW.** Horizon's My Details rendered "Portfolio target — milestone goal at retirement" (`spending.retirementTarget`), but nothing in Horizon reads it: Horizon's milestones come from `calcChartMilestones`, which takes no target. Only Classic's `calcMilestones` (milestone cards) uses it.
+**Root cause.** Same class as BUG-160: a control rendered in a UI with no consumer in that UI. It was found only because the L1-F input-propagation allow-list explained it away ("Horizon shows the control but no Horizon prop reads it") instead of failing it.
+**Fix.** Field removed from `src/horizon/screens/MyDetailsScreen.jsx`; Classic keeps it. The allow-list entry is now `classicOnly: true` with reason "Classic-only; not rendered in Horizon".
+**Guard.** New test in `src/__tests__/input-propagation.test.js`: scans every non-test `src/horizon/**/*.js(x)` source (comments stripped) for the leaf name of any allow-list entry flagged `classicOnly`, as a whole word, so `spending.x`, `spending?.x`, destructuring and string lookups are all caught.
+**Revert-and-confirm.** Re-adding the field to MyDetailsScreen fails the guard (`Horizon renders a Classic-only bundle field ...: screens/MyDetailsScreen.jsx -> spending.retirementTarget`); restoring the fix passes (`docs/audit-2026-11-14/impl-log-L1-G.md`).
+**Files.** `src/horizon/screens/MyDetailsScreen.jsx`, `src/__tests__/input-propagation.test.js`.
+
+### BUG-159 — Roth IRA income phase-out frozen at 2026 limits while salary grows: the default user stops Roth contributions at 53 (oversight audit Lens 6; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** `ROTH_PHASEOUT_2026` was applied unindexed in `runSimulation`'s `cRoth` block while salary grows nominally (`incomeGrowth`, default 3%). At the shipped default (age 30, $100k, 3% raises, 4% inflation, single) `cRoth` was 7,000 to age 50, then 5,270 (51), 2,507 (52) and 0 from 53 to 65 — though with 4% inflation the user's REAL income is falling and the IRS indexes these thresholds yearly, so in reality they would never be phased out. Invisible because sweeping "Roth end age" showed nothing moving at the default.
+**Fix.** New pure `indexedRothPhaseout(po, inflationRate, yearsAfterBase)` (`simulation.js`); `runSimulation` takes `inflationRate` (default 0 = unindexed, so hand-built callers are byte-identical). Convention: sim year y=1 (age currentAge+1, the first contribution year) is the "2026" year and uses the config figures; year y uses `(1+inflation)^(y-1)`. No new constant (rule 1 — figures stay in `irs-2026.js`). Wiring: App.jsx primary sim; `buildSpouseSimInput` (`spouse-sim.js`, the shared builder, new `inflationRate` param, App passes it); `whatIfSimInputs.inflationRate` (both scenario primary re-sims spread it) and the scenario's spouse re-sim in `what-if.js`.
+**Scope boundary.** Roth phase-out ONLY. Federal and LTCG brackets, standard deductions and contribution limits stay unindexed (BUG-100/101, out of scope; addendum added to BUG-100). `budget.js`/`tax-basis.js` read the same constant for the CURRENT year, where unindexed is correct.
+**Files.** `src/model/simulation.js`, `src/model/spouse-sim.js`, `src/model/what-if.js`, `src/App.jsx`, `docs/FINANCIAL-MODEL.md`.
+**Tests.** `src/model/__tests__/roth-phaseout-indexing.test.js` (helper; inflation 0 reproduces the old 7000/5270/2507/0 schedule exactly; default keeps 7,000 through 65; exact in-band partial amounts derived independently; higher inflation phases out later; MFJ) and `src/__tests__/roth-phaseout-wiring.test.js` (real App: default Roth continues past 53; changing `inflationRate` changes `simData` Roth; `whatIfSimInputs.simInputs.inflationRate` live; preview == commit at 6% inflation, with and without a spouse).
+**Revert-and-confirm** (`docs/audit-2026-11-14/impl-log-L1-E.md`): unindexing the `cRoth` block fails 12 tests (new + both golden masters); dropping `inflationRate` from App's primary sim fails 3; from `whatIfSimInputs` fails 2; from the spouse builder fails 1; from what-if's spouse re-sim fails 1.
+**Golden-master movement** (every value re-measured directly; direction = more Roth contributions kept past 52 -> larger seed). Only the no-spouse default moves; the T-X.2/3/4 spouse fixtures and every other value are unmoved (MFJ income never reaches the indexed-or-not 242k phase-out in those fixtures).
+**Addendum (R2-C, Opus review R-12, 2026-11-14): "every other value unmoved" is true of the LOCKED values only.** A main-vs-HEAD signature diff in the review found unlocked, user-visible values that did move, each a correct consequence of the same mechanism (more Roth kept, so a different seed and a different MFJ band) but unrecorded: T-X.3's `workLongerView.sub` text went from "+$869k" to "+$878k portfolio" (the +3-year scenario crosses the MFJ phase-out band), and the default `ssView.wr70` went 4.13 -> 3.99. Neither is locked by any golden master, which is why the claim above read as complete.
+
+| Fixture | Field | Old | New | Direction |
+|---|---|---|---|---|
+| default (`golden-master.test.js`, now passes `inflationRate` like App) | retRoth | 659,072 | 801,755 | UP |
+| default | totalAtRet | 4,035,855 | 4,178,538 | UP (+142,683 = the Roth delta only) |
+| default | spendableAtRet | 3,763,788 | 3,906,471 | UP (+142,683) |
+| default | withdrawalRate | 5.6100813% | 5.4185160% | DOWN (same draw / larger portfolio) |
+| default | yearsSustained | 21.6485 | 22.6424 | UP |
+| default (`golden-master-app-wiring.test.js`) | same as above + rangeSuccessPct | 24 | 29 | UP |
+| default (app wiring, planView) | depletionAge / yearsShortOfPlan | 87 / 3 | 88 / 2 | UP / DOWN |
+
+Unmoved: retTrad/Taxable/HSA, firstRMD, totalRMDs, rmdTaxBite, conversionWindowYrs, netConversionBenefit (the engine spends Roth last; the Traditional balance is exhausted/converted before the extra Roth is touched), T-X.2/T-X.3/T-X.4.
+
+### BUG-157 — `spouseIncomeEndAge` frozen at the base plan inside what-if scenarios under "auto" (audit Finding A; FIXED 2026-11-14)
+
+**Severity: HIGH.** `whatIfSimInputs.spouseIncomeEndAge` was built from the BASE plan's resolved `effectiveSpouseRetAge`; both scenario re-sims in `what-if.js` spread it unchanged, while `resolveSpouseRetAge` moved the spouse's retirement to the scenario's. Under `spouseRetirementAge === null` the cutoff stayed put, so with an OLDER spouse the spouse's wages stopped counting in the primary's MAGI too early, the Roth phase-out never bit, and the preview added phantom contributions (audit repro: +37,743 / +66,154 / +114,325 at retire 63/65/68).
+**Fix.** New `src/model/spouse-sim.js`: ONE `resolveSpouseIncomeEndAge` (takes the RAW `spouseRetirementAge` + the primary retirement age in play). App.jsx's `simData` and `whatIfSimInputs` use it, and both scenario re-sims (`calcWhatIfDelta`, `calcWhatIfScenario`) override the cutoff via the shared `scenarioSpouseAwareInputs` helper in `what-if.js`. (Tests, revert evidence and golden-master note: see BUG-158 below, same batch.)
+
+### BUG-158 — `spouseSimData` frozen under "auto" spouse retirement in scenarios (audit Finding B / parity Finding 2; FIXED 2026-11-14)
+
+**Severity: MEDIUM-HIGH.** Under auto the spouse's contribution end is the primary's retirement age, so `spouseSimData` is NOT scenario-invariant; what-if.js reused it frozen (its comment claiming invariance was false — only true for an explicit `spouseRetirementAge`) while `buildSpouseRetirementSeed` iterated the spouse's gap years at the scenario's age: a spouse earning full wages and saving nothing. Working 3 years longer deleted $54,013 of modelled spouse 401k saving (6 years: $131,333); longevity understated by +0.024 / +0.110 / +0.247 years at retire 60/63/65 in the audit repro.
+**Fix.** `spouse-sim.js` also holds the ONE `buildSpouseSimInput` (+ `runSpouseSim`, `spouseHsaLimitFor`): the exact `runSimulation` argument for the spouse's sim, including L1-C's `incomeGrowthEndAge: null` / `otherEarnerGrowthEndAge`, the HSA family-limit split, the match function, and the spouse's `spouseIncomeEndAge`. App.jsx's `spouseSimData` memo calls it with raw inputs; `spouseSeedInputs` gained `spouseSimRaw` (raw spouse balances/contribs/match fn/coverage) so the scenario helper calls the SAME builder with the scenario's retirement age whenever it differs from the base. The rebuilt rows feed the spouse seed/maps and the accumulation chart. An explicit `spouseRetirementAge` keeps the spouse's contributions unchanged (tested). The false invariant comments in what-if.js and App.jsx were rewritten.
+**Files (both bugs).** `src/model/spouse-sim.js` (new), `src/model/what-if.js`, `src/App.jsx`. **Tests.** `src/__tests__/whatif-parity-wiring.test.js` "BUG-157 + BUG-158" block: preview == commit exactly (totalAtRet, years, chart, depletion, spillover) for an older-spouse fixture (Finding A) at retire 63/65/68 and a younger-spouse fixture (Finding B) at 60/63/65; explicit-age no-op; rebuilt spouse rows byte-identical (`toEqual`) to App's own at the base retirement age; `resolveSpouseIncomeEndAge` unit.
+**Revert-and-confirm** (details in `docs/audit-2026-11-14/impl-log-L1-D.md`): dropping the cutoff override -> the 3 BUG-157 parity tests fail (BUG-158's stay green); reverting the spouse re-sim to the frozen rows -> the 3 BUG-158 tests + 3 BUG-157 tests + the T-X.4 scenario lock fail.
+**Golden masters.** Only T-X.4's scenario spillover locks moved (60: 444,590 -> 474,936 vs committed 474,771; 62: 134,194 -> 192,945 vs committed 187,641; 58 unchanged); totalAtRet and depletion unchanged; direction proven by preview vs commit, residual gap is BUG-136 only (with conversions zeroed preview == commit exactly). T-X.4 still fails on BUG-127/134/138 reverts. No other golden master moved.
+
+### BUG-155 — `incomeGrowthEndAge` resolved at four sites (two unguarded) and never re-clamped (audit Finding E; FIXED 2026-11-14)
+
+**Severity: MEDIUM-HIGH.** The "income plateau" sentinel was re-implemented in `calcAIME`, `projectedIncomeAtAge`, and `runSimulation`'s `growthYears` + `clockYears`; sites 1 and 3 lacked the `Math.max(0, ...)` guard, and `setCurrentAgeCoupled`/`setRetirementAgeCoupled`/`commitPlan` never re-clamped the stored value. Repro: age 40, $150k, plateau 45, then currentAge -> 50: stored 45 (out of range), `calcAIME` priced income at `1.03^-5` (AIME 4,621 vs honest 5,357, -$521/month SS for life).
+**Fix.** New `src/model/income-growth.js`: `incomeGrowthSteps` (the one resolver, floored at 0), `plateauAgeInFrame`, `clampIncomePlateauAge`. All four sites call it. Convention documented in `docs/FINANCIAL-MODEL.md`. The audit's "sites 1 and 2 differ by one year" is a mapping artefact: `calcAIME`'s index `y` is already the raise-step count (= sim year - 1), so at the same step count they were always equal; a test now pins `calcAIME` year y == `projectedIncomeAtAge(currentAge+y+1)`. `coupleCurrentAge` (opt-in via the state key), `setRetirementAgeCoupled` and `commitPlan` keep the stored plateau within `[currentAge+1, retirementAge)` or snap it to null. Lowering retirement to/below the plateau drops it (raising retirement again does not restore it).
+**Files.** `src/model/income-growth.js` (new), `social-security.js`, `simulation.js`, `src/App.jsx`. **Tests.** `src/__tests__/income-plateau.test.js` (model + App). **Revert-and-confirm** (each at its own line; see `docs/audit-2026-11-14/impl-log-L1-C.md`): unguarded `calcAIME` formula -> stale-plateau AIME test fails; removing the plateau write in `setCurrentAgeCoupled` / `setRetirementAgeCoupled` / `commitPlan` -> the matching App test fails; unguarded other-earner `growthYears` (`expected 2704 to be +0`) and unguarded `clockYears` (`[78353,...] vs [100000,...]`) -> model tests fail. No golden master moved.
+**Correction (2026-11-14, Opus review R-1; BUG-170):** "`setRetirementAgeCoupled` keeps the plateau in range" was true for Horizon and onboarding only (the Classic Retirement Age slider was an inline copy), and the coupling was lossy (nulling a plateau when retirement merely dipped below it). BUG-170 routes Classic through the shared setter and makes the plateau a stored value clamped on read.
+
+### BUG-156 — primary's plateau passed in the primary's age frame into the spouse's sim (audit Finding F; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** `App.jsx` handed the primary's `incomeGrowthEndAge` unchanged to the spouse's `runSimulation`, whose frame is the spouse's. Repro: primary 40 (plateau 50), spouse 55, both $100k, spouse 401k $10k/yr: the spouse's own salary froze (cap 50-55 = -5) and spouse savings were understated (household total at retirement 274,560 vs honest 311,036 in the App fixture).
+**Fix.** `runSimulation` gained `otherEarnerGrowthEndAge` (the OTHER earner's plateau in the subject's frame; `undefined` = same as `incomeGrowthEndAge`, so every existing caller is byte-identical). The spouse's run passes `incomeGrowthEndAge: null` (no spouse plateau input) and `otherEarnerGrowthEndAge: plateauAgeInFrame(primaryPlateau, currentAge, spouseCurrentAge)`.
+**Files.** `simulation.js`, `src/App.jsx`. **Tests.** `income-plateau.test.js` (model: own salary unplateaued; App: household total with plateau 50 == without). **Revert-and-confirm:** restoring `incomeGrowthEndAge` as the spouse run's own plateau -> `expected 274560 to be 311036`. No golden master moved.
+**Addendum (R2-C, Opus review R-6, 2026-11-14): the evidence above covered only the own-salary variant.** The original revert undid the whole fix at once, and the App fixture (spouse 55, plateau -> spouse-frame 65 = spouse retirement) makes the frame conversion inert, so the conversion the bug is NAMED for was untested: dropping `plateauAgeInFrame` (passing the primary-frame age unchanged) failed 0 of 1,609 tests. New `src/model/__tests__/spouse-sim.test.js` tests the shared builder directly with a spouse-Roth household (primary 40 plateau 45, spouse 30 retiring 60): the frame-35 input, the value-level spouse Roth balance at 60 (locked 647,613), and the own-salary term each fail independently under their own mutation (no frame conversion: 2 fail; spouse's own salary given the plateau: 2 fail; before the tests: 0 / 0). See `docs/audit-2026-11-14/impl-log-R2-C.md`.
+
+
+### BUG-164 — event-panel age inputs committed unclamped values on every keystroke (CONSOLIDATION-REDO-PLAN sweep 2; FIXED 2026-11-14)
+
+**Severity: LOW.** `MoneyEventsPanel` wrote `Number(e.target.value)` straight into committed state on
+every keystroke, so typing "65" ran every model memo on age 6 for a frame. `ConversionEventsPanel`
+guarded non-finite input but never clamped to its own min/max until blur.
+**Fix:** both panels now use the shared `DeferredInput` (draft locally, clamp and commit on blur or
+Enter). `DeferredInput` gained optional `placeholder` / `ariaLabel` passthrough; the Conversion
+panel's now-unused `clampAge` was removed.
+**Files:** `src/components/DeferredInput.jsx`, `src/components/MoneyEventsPanel.jsx`,
+`src/components/ConversionEventsPanel.jsx`.
+**Test:** `src/__tests__/event-panel-age-input.test.js` (4). **Revert-and-confirm** (lane-2 agent,
+observed): `DeferredInput` mutated to commit per keystroke -> 3 of 4 fail; restored -> pass.
+
+### BUG-163 — event ids minted four different ways; one had no entropy (CONSOLIDATION-REDO-PLAN sweep 1; FIXED 2026-11-14)
+
+**Severity: LOW.** Three sites minted numeric `Date.now() + Math.random()` ids and one
+(`LifeEventSheet`) minted `String(Date.now())`. Mixed types could land in one array (so an `===`
+lookup could miss), and two life events created in the same millisecond collided. PR #58 filed this
+as "BUG-77", a number since taken by PR #59; it is re-filed here.
+**Fix:** one exported `mintEventId()` in `src/model/money-events.js` (**moved 2026-11-14, R2-C, to `src/utils/event-id.js`: it holds module state and reads the clock/RNG, so it is UI plumbing, not model code, rule 6; its tests moved to `src/__tests__/event-id.test.js`**) (string
+`ev-<time36>-<seq36>-<rand>`; a monotonic counter guarantees same-millisecond uniqueness), used by
+all four sites. Every id comparison was audited (`===` between an event's own id values; no
+`Number(id)` anywhere), so legacy numeric ids in existing state still match.
+**Files:** `src/model/money-events.js`, `src/components/MoneyEventsPanel.jsx`,
+`src/components/ConversionEventsPanel.jsx`, `src/horizon/LifeEventSheet.jsx`, `src/App.jsx`.
+**Tests:** `money-events.test.js` (string type; 10,000 unique ids with frozen time and randomness),
+`src/__tests__/event-id-wiring.test.js` (real App). **Revert-and-confirm** (re-run by the
+orchestrator): `mintEventId` -> `String(Date.now())` fails the uniqueness test; restored -> pass.
+
+### BUG-162 — Classic What-If panel seeded its ages once and never re-synced (found 2026-11-14 by the oversight audit; FIXED 2026-11-14)
+
+**Severity: LOW.** `WhatIfPanel.jsx` seeded `eventAge`/`affAge` (`currentAge + 5`) and `targetAge`
+(`safeLifeExp`) with `useState(<initial>)`, which runs once. Raising the current age or the
+plan-to age left a stale, impossible default (a purchase "at 39" for a 60-year-old).
+**Fix:** the three inputs hold the user's typed value or `null` (untouched). Untouched follows the
+live default; a typed value is kept but clamped to the CURRENT bounds (`[currentAge,120]`,
+`[safeRetAge,120]`) at use, while the input shows the raw text so typing isn't fought.
+**Files:** `src/components/WhatIfPanel.jsx`. **Test:** `src/__tests__/whatif-panel-ages.test.js` (4).
+**Revert-and-confirm:** original panel restored from `HEAD` -> 4 of 4 fail; fix restored -> 4 pass.
+
+### BUG-161 — HSA contribution left above the limit after switching coverage family -> self (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: LOW (display/state consistency).** After family -> contribution 8,000 -> self-only,
+`accounts.hsa.contrib` still showed 8,000 against `max` 4,400. The sim caps it (rule 4), so totals
+were right but the field showed a number the model wasn't using.
+**Fix:** `hsaCoverageType.set` is now `setHsaCoverageCoupled`, which clamps the stored primary AND
+spouse HSA contributions to the new ceiling (`HSA_LIMIT_2026` for self, `HSA_FAMILY_LIMIT_2026` for
+family; never raises). The spouse HSA field's `max` now follows the coverage ceiling too (it was
+always the family ceiling, so under self the spouse could hold a value the sim would cap).
+**Files:** `src/App.jsx`. **Test:** `src/__tests__/onboarding-coupling-wiring.test.js` (2).
+**Revert-and-confirm:** bare `setHsaCoverageType` restored -> both BUG-161 tests fail; fix restored -> pass.
+**Correction (2026-11-14, Opus review R-7; BUG-172):** "the spouse HSA field's max now follows the coverage ceiling" held for self-only only; under FAMILY coverage the field's max was the whole 8,750 rather than the spouse's real share (8,750 minus the primary's contribution). BUG-172 fixes the bound and reads the value through the same cap.
+
+### BUG-160 — "Living expense growth" control shown in both UIs, consumed by nothing (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: LOW.** A visible slider (Classic) and field (Horizon My details) that did nothing:
+3% -> 8% moved no output. BUG-91's note called it "not a live bug"; a visible control that
+silently ignores the user's input is one. **Fix:** removed the control, its state, and its
+`spending` bundle field, plus the screen-test fake bundle entry and the docs lists. Wiring it into
+the model (expenses growing faster/slower than general inflation) would be a FEATURE, not a fix,
+and needs its own design (basis, interaction with `inflationRate`, `toRetirementYearDollars`).
+**Files:** `src/App.jsx`, `src/horizon/screens/MyDetailsScreen.jsx`,
+`src/horizon/__tests__/my-details-screen.test.js`, docs. **Test:**
+`onboarding-coupling-wiring.test.js` (spending bundle has no such field). **Revert-and-confirm:**
+re-adding the field -> test fails; removal restored -> passes.
+
+### BUG-153 — `commitPlan` used the un-coupled `setCurrentAge` (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** Onboarding's `commitPlan({currentAge: 72, retirementAge: 75, ...})` left
+`ssClaimingAge` at 67 (below its min of 70) and `contribEnd*` un-moved; `yearsSustained` was 4.73
+vs 3.82 for the same values entered through the normal controls. The class twin of the PR #52
+retirement-age fix, which only patched that one instance.
+**Fix:** the current-age coupling rules now live in ONE pure function, `coupleCurrentAge`
+(`src/model/simulation.js`), used by `setCurrentAgeCoupled` AND `commitPlan`. `commitPlan` computes
+the final coupled state ONCE (`coupleCurrentAge`, then `coupleContribEndAges` for the retirement
+age) and writes each changed field - avoiding the stale-closure trap of calling the two coupled
+setters back to back (the second would re-couple from this render's old values).
+**Files:** `src/App.jsx`, `src/model/simulation.js`. **Test:** `onboarding-coupling-wiring.test.js`
+(every bundle `value` within its own min/max; result equals the coupled-setter path, SS claim = 70).
+**Revert-and-confirm:** removing the `coupleCurrentAge` step in `commitPlan` -> both tests fail
+(the first draft of the equality test passed vacuously because `captured` is shared across mounts -
+fixed by snapshotting each run before the next mount); fix restored -> pass.
+**Correction (2026-11-14, Opus review R-3/R-10; BUG-168/BUG-169):** the claim "every bundle `value` within its own min/max" held only for the input this test used (`retirementAge < currentAge` and `retirementAge >= lifeExpect` stayed out of range), and the equality test locked an order-dependent baseline (`contribEnd` 73 for a 72-year-old retiring at 75). Fixed and re-asserted order-independently under BUG-168/BUG-169.
+
+### BUG-152 — onboarding discarded the "How much have you saved so far?" answer (found 2026-11-14; FIXED 2026-11-14)
+
+**Severity: HIGH (every new Horizon user).** `OnboardingScreen` asked it and echoed it back as
+"Savings today", but `handleSave` never sent it and `commitPlan` had no parameter: answering
+$900,000 left `currentTotalSaved` at the default 165,000.
+**Fix:** `handleSave` passes `totalSaved`; `commitPlan` accepts it and applies the pure
+`allocateSavedTotal` (`src/model/accumulation.js`): the answer is the HOUSEHOLD total (same basis
+as `currentTotalSaved`); the spouse's balances are untouched; the primary's four balances scale
+proportionally to `max(0, answer - spouseTotal)` (whole dollars, residual to the largest); all-zero
+primary -> everything to taxable; an unchanged answer touches nothing (no rounding drift).
+**Files:** `src/components/HorizonShell.jsx`, `src/App.jsx`, `src/model/accumulation.js`.
+**Test:** `onboarding-coupling-wiring.test.js` (5: scale, no-op, spouse kept, clamp at 0,
+all-zero -> taxable). **Revert-and-confirm:** `totalSaved` branch disabled -> 4 of the 5 fail
+(the no-op test legitimately passes); fix restored -> pass.
+**Orchestrator re-verification found the fix unprotected AT THE BUG'S OWN SITE:** those tests call
+`commitPlan` directly with HorizonShell mocked away, so deleting `totalSaved: vals.totalSaved` from
+`handleSave` (the exact line that was missing) still left all 1,427 tests green. Added
+`src/__tests__/onboarding-wizard-save.test.js`: it renders the REAL wizard, clicks through all five
+questions (+$100,000 on the savings question), confirms, and reads `currentTotalSaved` from the
+props the real shell receives. With the line removed it fails (`expected 165000 to be 265000`);
+restored, it passes. Lesson: test at the site where the bug lived, not at the nearest function
+boundary.
+
+### BUG-151 — retirement state never followed the work state; the state-tax path was untested (found 2026-11-14 by the oversight audit; FIXED 2026-11-14)
+
+**Severity: MEDIUM.** `retirementState` was `useState(selectedState)` (App.jsx), so it captured the
+INITIAL work state ("TX") once and never followed it. A user who set their home state to CA kept a
+0% retirement state tax in the engine, `retStateRate`, the RMD/conversion tax and the headline.
+**Root cause / why it survived:** eight compounding causes, summarised in
+`docs/audit-2026-11-14/oversight-root-causes.md` (Part 1 and the Lens 4 mutation table). The key
+ones: golden masters all run TX/TX; the only state-tax "tests" exercised `calcStateTax`, a
+test-only function production never called (and `spouse-household.test.js` comments falsely
+claimed the fixture exercised it); no App-level test touched the state glue. Before this fix,
+`stateRateDefault = 0` (tax-basis.js:42) failed 0 of 1,408 tests and `retStateRate = 0` (App.jsx)
+failed only 1 (the T-X.3 golden master).
+**Fix:** `retirementState` is now an explicit auto sentinel (`null` = same as the work state),
+resolved ONCE as `effectiveRetirementState` and used by `retStateRate`, the bundle value and the
+Classic `<select>`. The bundle `set` snaps to `null` when the picked state equals the work state;
+the bundle exposes `isAuto` (rule 10) and Horizon My details shows "following your home state".
+Removed test-only `calcStateTax`; its assertions moved to `calcTaxBasis` (CA/ZZ/override) and
+App-level tests. Fixed the false T-X.3 comments (values unmoved; CA retirement + TX work stays an
+explicit non-auto choice).
+**Files:** `src/App.jsx`, `src/horizon/screens/MyDetailsScreen.jsx`, `src/model/taxes.js`,
+`src/model/__tests__/taxes.test.js`, `src/model/__tests__/tax-basis.test.js`,
+`src/__tests__/retirement-state-wiring.test.js` (new, 6 tests), `src/__tests__/spouse-household.test.js`
+(comments), `docs/ARCHITECTURE.md`.
+**Mutation evidence** (`docs/audit-2026-11-14/impl-log-L1-A.md`): `stateRateDefault = 0` now fails 2
+tests (tax-basis CA, App take-home CA); `retStateRate = 0` fails 2; reverting the sentinel
+(auto resolves to constant TX) fails 2. No golden master moved.
 
 ### BUG-150 — a pinned `ssOverride` froze the spouse's spousal floor in every what-if scenario (found 2026-09-06 by CodeRabbit on PR #67, against BUG-135's own fix; verified independently and FIXED 2026-10-02)
 

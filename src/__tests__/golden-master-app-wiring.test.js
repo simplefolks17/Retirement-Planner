@@ -54,11 +54,16 @@ function mount() {
 // Mirrors golden-master.test.js's `E` object exactly, at the same default
 // state (see that file's header comment for the full default-state list).
 const E = {
-  totalAtRet:           4_035_855,
-  spendableAtRet:       3_763_788,
+  // BUG-159 (Roth phase-out indexed by inflation) re-lock — mirrors golden-master.test.js:
+  // totalAtRet 4_035_855 → 4_178_538 (UP), spendableAtRet 3_763_788 → 3_906_471 (UP),
+  // withdrawalRate 5.6100… → 5.4185… (DOWN), yearsSustained 21.65 → 22.64 (UP),
+  // rangeSuccessPct 24 → 29 (UP), depletionAge 87 → 88. Mechanism: the Roth contribution
+  // no longer phases out to 0 at 53 as nominal salary outgrows the unindexed 2026 limits.
+  totalAtRet:           4_178_538,
+  spendableAtRet:       3_906_471,
   effectiveExpenses:    57_377,
-  withdrawalRate:       5.610081338920716,
-  yearsSustained:       21.648529319276392,
+  withdrawalRate:       5.418515955123506,
+  yearsSustained:       22.64243816663232,
   firstRMD:             32_213,
   totalRMDs:            79_341,     // household total — byte-identical to primary-only at the no-spouse default
   rmdTaxBite:           10_182,
@@ -80,7 +85,7 @@ const E = {
   // same-direction contradiction between this number and the withdrawal/
   // longevity drivers should prompt a re-look at MONTE_CARLO_SUCCESS_
   // GUIDELINE_PCT/LOW_ODDS_PCT (irs-2026.js), not just a silent re-lock.
-  rangeSuccessPct: 24,
+  rangeSuccessPct: 29, // BUG-159: was 24 (UP — larger seed; see the totalAtRet note above)
 };
 
 describe("golden master ↔ App wiring cross-check (default state)", () => {
@@ -125,8 +130,8 @@ const PH = {
   yearsToRetirement:   35,
   retirementDuration:  25,
   outlastsPlan:        false,
-  depletionAge:        87,
-  yearsShortOfPlan:    3,
+  depletionAge:        88, // BUG-159: was 87 (UP, larger seed from indexed Roth phase-out)
+  yearsShortOfPlan:    2, // BUG-159: was 3 (DOWN — depletion 87 → 88 against the same plan horizon)
 };
 
 describe("planHighlights ↔ App wiring cross-check (default state, item 5)", () => {

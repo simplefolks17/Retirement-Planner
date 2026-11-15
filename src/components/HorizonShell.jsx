@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GhostArc } from "./ArcGraph.jsx";
 import { PALETTES, HF, HM, HD, useTheme, safeGet, safeSet } from "../horizon/ThemeContext.jsx";
-import { fmt, fmtFull } from "../formatters.js";
+import { fmt, fmtFull, parseAmountInput } from "../formatters.js";
 import { Btn } from "../horizon/shared.jsx";
 import { useDialogBehaviour } from "../horizon/useDialogBehaviour.js";
 import ConfirmModal from "../horizon/ConfirmModal.jsx";
@@ -17,6 +17,7 @@ import StrategiesScreen from "../horizon/screens/StrategiesScreen.jsx";
 import SomedayScreen from "../horizon/screens/SomedayScreen.jsx";
 import MyDetailsScreen from "../horizon/screens/MyDetailsScreen.jsx";
 import SettingsScreen from "../horizon/screens/SettingsScreen.jsx";
+import { clamp } from "../model/finance-math.js";
 
 // ── Small shared primitives (nav-only) ────────────────────────────────────────
 
@@ -240,8 +241,10 @@ function ObInput({ t, field, vals, setVals }) {
       onFocus={() => { setFocused(true); setDraft(String(vals[field])); }}
       onChange={e => setDraft(e.target.value)}
       onBlur={() => {
-        const n = parseInt(draft.replace(/[^0-9]/g, ""), 10);
-        if (!isNaN(n)) setVals(v => ({ ...v, [field]: Math.max(lo, Math.min(hi, n)) }));
+        // BUG-171: "250k" / "1.5M" / decimals parse properly; anything unparseable keeps the
+        // previous answer (the field snaps back to it) instead of storing a mangled number.
+        const n = parseAmountInput(draft);
+        if (n !== null) setVals(v => ({ ...v, [field]: clamp(n, lo, hi) }));
         setFocused(false);
       }}
       onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -280,7 +283,7 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
   const adjust = (field, dir) => {
     const inc = OB_STEP_SIZES[field];
     const [lo, hi] = OB_CLAMPS[field];
-    setVals(v => ({ ...v, [field]: Math.max(lo, Math.min(hi, v[field] + dir * inc)) }));
+    setVals(v => ({ ...v, [field]: clamp(v[field] + dir * inc, lo, hi) }));
   };
 
   // Write the key retirement parameters back to App.jsx state.
@@ -290,15 +293,29 @@ function OnboardingScreen({ t, initialValues, onComplete, commitPlan }) {
     commitPlan({
       currentAge:    vals.currentAge,
       currentIncome: vals.currentIncome,
+      totalSaved:    vals.totalSaved,
       retirementAge: vals.retirementAge,
-      monthlySpend:  vals.monthlySpend,
+      // BUG-167: only when the user CHANGED the seeded answer — an untouched seed must leave the
+      // auto (null) annualExpenses auto, not freeze it into a fixed number.
+      //
+      // BUG-178 (review S-5): ALSO send it when the income or age answer changed. The seed is
+      // computed once from the PRE-wizard state, but auto spending (take-home minus saving)
+      // follows the NEW income, so an untouched answer would leave the plan on a different figure
+      // (2.2x at $200k, 0.47x at $60k) than the one the summary showed and the user confirmed.
+      // Committing the shown figure explicitly makes the confirm screen truthful. Re-seeding from
+      // the live income would need the whole tax/contribution pipeline re-run per keystroke, which
+      // lives in the model, so we freeze only in the case where the shown number would be stale.
+      ...((vals.monthlySpend !== initialValues?.monthlySpend
+        || vals.currentIncome !== initialValues?.currentIncome
+        || vals.currentAge !== initialValues?.currentAge)
+        ? { monthlySpend: vals.monthlySpend } : {}),
     });
     onComplete();
   };
 
   const summaryStats = [
     ["Retire at",       String(vals.retirementAge),                        t.ink],
-    ["Monthly income",  `${fmtFull(vals.monthlySpend)}/mo`,                t.warm],
+    ["Monthly spending", `${fmtFull(vals.monthlySpend)}/mo`,                t.warm],
     ["Savings today",   fmt(vals.totalSaved),                              t.ink],
   ];
 
@@ -650,8 +667,11 @@ export default function HorizonShell({ onShowClassic, ...props }) {
               currentIncome: props.currentIncome,
               totalSaved:    props.currentTotalSaved,
               retirementAge: retirementAge,
-              // model-provided monthly figure (calcStatementView) — no /12 here
-              monthlySpend:  props.statementView.monthlyTotal,
+              // BUG-167 (R-4): TODAY's-dollar monthly figure (calcStatementView.monthlyTodaysExp).
+              // The question is captioned "today's dollars" and commitPlan writes the answer into
+              // annualExpenses (a today's-dollar input), so this must NOT be monthlyTotal, which is
+              // retirement-year dollars (3.95x at the default).
+              monthlySpend:  props.statementView.monthlyTodaysExp,
             }}
             onComplete={handleOnboardingComplete}
             commitPlan={props.commitPlan}

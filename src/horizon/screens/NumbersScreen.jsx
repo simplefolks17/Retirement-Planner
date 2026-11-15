@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { HF, HM } from "../ThemeContext.jsx";
 import { fmt, fmtMo, Btn, Pill } from "../shared.jsx";
-import { fmtFull, fmtPct } from "../../formatters.js";
+import { fmtFull, fmtPct, fmtRate } from "../../formatters.js";
 import { buildBarSegments, SEG_LABEL_MIN_SHARE_PCT } from "../../model/budget.js";
 
 // A deduction row: "−$12,400" for a finite value, plain "—" when missing.
@@ -1129,10 +1129,10 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     border: `1px solid ${t.line2}`, marginBottom: 14,
                   }}>
                     {[
-                      ["Fed effective",  taxView.fedEffective,   t.accent],
-                      ["Fed marginal",   taxView.fedMarginal,    t.ink],
-                      ["Combined",       taxView.combinedEffRate, t.mut],
-                    ].map(([label, rate, color], i, arr) => (
+                      ["Fed effective",  taxView.fedEffective,   t.accent, 1],
+                      ["Fed marginal",   taxView.fedMarginal,    t.ink,    0],
+                      ["Combined",       taxView.combinedEffRate, t.mut,   1],
+                    ].map(([label, rate, color, dp], i, arr) => (
                       <div key={label} style={{
                         flex: 1, padding: "10px 0",
                         background: i === 0 ? `${t.accent}18` : "transparent",
@@ -1141,7 +1141,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                         borderRight: i < arr.length - 1 ? `1px solid ${t.line2}` : "none",
                       }}>
                         <span style={{ font: `700 18px ${HM}`, color }}>
-                          {rate != null ? `${Math.round(rate * 100)}%` : "—"}
+                          {fmtRate(rate, dp)}
                         </span>
                         <span style={{ font: `400 11px ${HF}`, color: t.mut }}>{label}</span>
                       </div>
@@ -1157,7 +1157,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                     }}>
                       Your 401k and HSA contributions save approximately{" "}
                       <strong>{fmtFull(taxView.taxSaveFromPreTax)}</strong> in federal tax
-                      this year at your {Math.round(taxView.fedMarginal * 100)}% marginal rate.
+                      this year at your {fmtRate(taxView.fedMarginal, 0)} marginal rate.
                     </div>
                   )}
                 </div>
@@ -1199,7 +1199,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       borderRight: `1px solid ${t.line2}`,
                     }}>
                       <span style={{ font: `700 20px ${HM}`, color: t.accent }}>
-                        {taxView.fedMarginal != null ? `${Math.round(taxView.fedMarginal * 100)}%` : "—"}
+                        {fmtRate(taxView.fedMarginal, 0)}
                       </span>
                       <span style={{ font: `400 11px ${HF}`, color: t.mut }}>working marginal</span>
                     </div>
@@ -1209,9 +1209,7 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                       alignItems: "center", justifyContent: "center",
                     }}>
                       <span style={{ font: `700 20px ${HM}`, color: t.good }}>
-                        {taxView.projectedRetBracket != null
-                          ? `${Math.round(taxView.projectedRetBracket * 100)}%`
-                          : "—"}
+                        {fmtRate(taxView.projectedRetBracket, 0)}
                       </span>
                       <span style={{ font: `400 11px ${HF}`, color: t.mut }}>projected ret. bracket</span>
                     </div>
@@ -1220,8 +1218,8 @@ export default function NumbersScreen({ t, props, isMobile = false, initialTab =
                   {/* Retirement rate detail rows */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 16 }}>
                     {[
-                      ["Projected retirement bracket", taxView.projectedRetBracket != null ? `${Math.round(taxView.projectedRetBracket * 100)}%` : "—"],
-                      ["Effective RMD tax rate",       taxView.effectiveRMDTaxRate != null ? `${Math.round(taxView.effectiveRMDTaxRate * 100)}%` : "—"],
+                      ["Projected retirement bracket", fmtRate(taxView.projectedRetBracket, 0)],
+                      ["Effective RMD tax rate",       fmtRate(taxView.effectiveRMDTaxRate)],
                       ["Total lifetime RMD tax burden", fmtFull(taxView.rmdTaxBite)],
                     ].map(([label, val]) => (
                       <div key={label} style={{

@@ -10,10 +10,13 @@
 // Baseline values are passed in from App.jsx to avoid re-computing them.
 
 import { runSimulation, projectedIncomeAtAge, coupleContribEndAges } from "./simulation.js";
+import { clampIncomePlateauAge } from "./income-growth.js";
+import { conversionEventOutsideWorkingYears } from "./conversion-events.js";
 import { calcRetirementIncome } from "./retirement-income.js";
 import { buildRetirementDrawdown } from "./retirement-drawdown.js";
 import { buildRetirementPhase, buildSpouseRetirementSeed, resolveSpouseRetAge, seedHasActiveSpouseGap } from "./retirement-phase.js";
 import { buildAccumChart } from "./accumulation.js";
+import { buildSpouseSimInput, runSpouseSim, resolveSpouseIncomeEndAge } from "./spouse-sim.js";
 import { ASSUMPTIONS, RMD_START_AGE, SS_FRA } from "../config/irs-2026.js";
 import {
   eventFirstAge, eventLastAge, eventGrossCost, eventNetTotal,
@@ -23,6 +26,79 @@ import { buildPreviewMetric } from "./apply-preview.js";
 import { calcAIME, calcPIA, calcBenefit } from "./social-security.js";
 import { fmtSigned } from "../formatters.js";
 import { toRetirementYearDollars, inflationRebaseFactor } from "./finance-math.js";
+
+// BUG-157/158: the SCENARIO's own re-derivation of everything the spouse side takes from the
+// PRIMARY's retirement age. Under "auto" (spouseRetirementAge === null) both the spouse's
+// MAGI cutoff in the primary's sim (spouseIncomeEndAge) and the spouse's own accumulation sim
+// (contribution end + the primary-income cutoff) move with the scenario's retirement age;
+// committing the change recomputes them (App.jsx), so a preview that inherits the base plan's
+// frozen results disagrees with its own commit. Both go through the SAME shared builders App
+// uses (spouse-sim.js) — never a second copy. Returns the primary re-sim inputs (with the
+// BUG-138 contribEnd coupling and the cutoff) plus the spouse bundle for the seed/chart.
+// With no spouse (spouseSeedInputs null) or an unchanged retirement age this is inert.
+// BUG-179/181 (Opus review 2, S-1/S-6): two App-side derivations are keyed on the retirement age
+// and were handed to scenarios already resolved against the BASE age, so a scenario that moves the
+// age disagreed with committing it. App now passes the STORED plateau and the UNFILTERED conversion
+// events; THIS is the one place a scenario resolves both against its OWN retirement age (the same
+// clampIncomePlateauAge / conversionEventOutsideWorkingYears App uses for the committed plan).
+// Idempotent at the base age, so an already-resolved hand-built bundle is unchanged.
+export function scenarioResolvedInputs(simInputs, scenarioRetAge) {
+  const out = {
+    ...simInputs,
+    incomeGrowthEndAge: clampIncomePlateauAge(
+      simInputs.incomeGrowthEndAge ?? null, simInputs.currentAge, scenarioRetAge),
+  };
+  if (Array.isArray(simInputs.conversionEvents)) {
+    out.conversionEvents = simInputs.conversionEvents.filter(
+      e => e.amount > 0 && !conversionEventOutsideWorkingYears(e, simInputs.currentAge, scenarioRetAge));
+  }
+  return out;
+}
+
+// BUG-182: `contribHsaOverride` (a contribOverrides.contribHSA) re-runs the spouse sim too under
+// FAMILY coverage: the primary draws the shared HSA ceiling first, so raising the primary's HSA
+// squeezes the spouse's effective share. A preview that kept the base spouse sim reported the
+// un-squeezed household ($9.4M vs the applied plan's $9,302,229).
+function scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge, contribHsaOverride = null) {
+  const resolved = scenarioResolvedInputs(simInputs, scenarioRetAge);
+  const primaryInputs = coupleContribEndAges(resolved, safeRetAge, scenarioRetAge, simInputs.currentAge);
+  const hsaSqueeze = contribHsaOverride != null && contribHsaOverride !== simInputs.contribHSA
+    && spouseSeedInputs?.spouseSimRaw?.hsaCoverageType === "family";
+  if (!spouseSeedInputs || (scenarioRetAge === safeRetAge && !hsaSqueeze)) {
+    return { primaryInputs, seedInputs: spouseSeedInputs, chartInputs: spouseChartInputs };
+  }
+  const raw = spouseSeedInputs.spouseSimRaw;
+  const spouseIncomeEndAge = resolveSpouseIncomeEndAge({
+    hasSpouse: true,
+    currentAge: simInputs.currentAge,
+    spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+    spouseRetirementAge: spouseSeedInputs.spouseRetirementAge,
+    primaryRetAge: scenarioRetAge,
+    lifeExp: spouseSeedInputs.lifeExp,
+  });
+  // Hand-built bundles with no spouseSimRaw keep the old (frozen) spouse sim.
+  if (!raw) {
+    return { primaryInputs: { ...primaryInputs, spouseIncomeEndAge }, seedInputs: spouseSeedInputs, chartInputs: spouseChartInputs };
+  }
+  const spouseSimData = runSpouseSim(buildSpouseSimInput({
+    totalYears: simInputs.totalYears, currentAge: simInputs.currentAge,
+    currentIncome: simInputs.currentIncome, incomeGrowth: simInputs.incomeGrowth,
+    incomeGrowthEndAge: resolved.incomeGrowthEndAge, filingStatus: simInputs.filingStatus,
+    returnRate: simInputs.returnRate, primaryContribHSA: contribHsaOverride ?? simInputs.contribHSA,
+    inflationRate: simInputs.inflationRate ?? 0,
+    hsaCoverageType: raw.hsaCoverageType,
+    primaryRetAge: scenarioRetAge,
+    spouseRetirementAge: spouseSeedInputs.spouseRetirementAge, lifeExp: spouseSeedInputs.lifeExp,
+    spouseCurrentAge: spouseSeedInputs.spouseCurrentAge,
+    spouseIncome: simInputs.spouseIncome, spouseIncomeGrowth: simInputs.spouseIncomeGrowth,
+    ...raw,
+  }));
+  return {
+    primaryInputs: { ...primaryInputs, spouseIncomeEndAge },
+    seedInputs: { ...spouseSeedInputs, spouseSimData },
+    chartInputs: spouseChartInputs ? { ...spouseChartInputs, spouseSimData } : spouseChartInputs,
+  };
+}
 
 // Infinity-aware longevity delta: scenarioYears vs baseYearsSustained, with
 // the ±Infinity edges handled explicitly (plain subtraction gives NaN when
@@ -300,7 +376,12 @@ export function verdictInfoForScenario(scenario, safeLifeExp) {
 // re-derive is a no-op there. One path, correct for both.
 function scenarioSocialSecurity(ssInputs, currentAge, baseRetAge, scenarioRetAge) {
   if (!ssInputs || scenarioRetAge === baseRetAge) return null;
-  return calcRetirementIncome({ ...ssInputs, currentAge, safeRetAge: scenarioRetAge });
+  // BUG-179: the plateau is clamped against the SCENARIO's retirement age (App passes the stored one).
+  return calcRetirementIncome({
+    ...ssInputs,
+    incomeGrowthEndAge: clampIncomePlateauAge(ssInputs.incomeGrowthEndAge ?? null, currentAge, scenarioRetAge),
+    currentAge, safeRetAge: scenarioRetAge,
+  });
 }
 
 // ── calcWhatIfDelta ──────────────────────────────────────────────────────────
@@ -396,6 +477,7 @@ export function calcWhatIfDelta({
 
   // ── Step 1: determine scenario starting balance at retirement ──────────────
   let scenarioTotalAtRet = baseTotalAtRet;
+  let spDelta = null;
 
   // Guard a degenerate retirement-age override: retiring at or before the
   // current age has no accumulation phase, so re-running the sim and indexing
@@ -410,12 +492,15 @@ export function calcWhatIfDelta({
     // the no-resim baseline (baseTotalAtRet) already includes them, so dropping
     // them here would make a forced re-sim's basis asymmetric (BUG-75 fix; same
     // class as the BUG-34/BUG-61 basis mismatches).
+    // BUG-157/158: one shared scenario re-derivation (see scenarioSpouseAwareInputs).
+    spDelta = scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, null, safeRetAge, scenarioRetAge, contribOverrides?.contribHSA ?? null);
     const raw = runSimulation({
       // BUG-138: same contribEnd coupling as calcWhatIfScenario's resim above —
-      // one shared rule, applied at both resim sites.
-      ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+      // one shared rule, applied at both resim sites (+ BUG-157's spouse cutoff).
+      ...spDelta.primaryInputs,
       ...(contribOverrides ?? {}),
       moneyEvents: [...(simInputs.moneyEvents ?? []), ...accumEvents],
+      otherEarnerGrowthEndAge: null, // BUG-187: primary's plateau must not cap the spouse's salary
     });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
@@ -431,7 +516,7 @@ export function calcWhatIfDelta({
       // both the base plan and every scenario, never a stale mix of the two.
       const spouseSeed = spouseSeedInputs
         ? buildSpouseRetirementSeed({
-            ...spouseSeedInputs,
+            ...spDelta.seedInputs,
             currentAge: simInputs.currentAge,
             primaryRetAge: scenarioRetAge,
             spouseRetAge: resolveSpouseRetAge({
@@ -503,6 +588,93 @@ export function calcWhatIfDelta({
     scenarioExpenses,
     scenarioEndVal: scenarioLifeWalk.endVal,
     scenarioDepletionAge: scenarioWalk.depletionAge,
+  };
+}
+
+// ── BUG-176 (Opus review R-9): headline-anchored previews of calcWhatIfDelta ─────────────────
+// calcWhatIfDelta still walks the BLENDED buildRetirementDrawdown (no spouse gap-year income,
+// no per-account path-dependent tax — BUG-36), so its ABSOLUTE scenario figures are on a
+// different engine than the plan headline and can contradict it by years in spouse-gap
+// households (measured: headline lasts to 70; the same function with NO change at all says
+// 5.41 years vs the headline's 12.97). Porting it onto buildRetirementPhase is the real fix
+// (BUG-36, still open). Until then every preview that prints a before/after pair uses this:
+//   - "before" IS the headline (never the blended walk's own figure);
+//   - "after" is headline + (scenario - noChange), where both terms of the difference come from
+//     the SAME blended engine, so the engine bias cancels and only the lever's own effect remains.
+// `noChange` is calcWhatIfDelta run with no override at all; `scenario` the run being previewed.
+// Edge states: a lever's delta is +/-Infinity when one side never depletes; "+Infinity" anchors to
+// Infinity (the lever made the blended plan sustainable); "-Infinity", and a hurting lever on an
+// already-sustainable headline, cannot be expressed as headline + delta, so the result is the
+// documented "not comparable" state (BUG-180: `comparable: false`, null years/age) instead of
+// the blended walk's own absolute figure, which contradicts the headline.
+// Basis: years/ages are basis-free; totalAtRet is in the scenario's retirement-year dollars, as
+// calcWhatIfDelta's own scenarioTotalAtRet is (the difference is added to the headline's).
+export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioRetAge }) {
+  let deltaYears = deltaYearsFrom(scenario.scenarioYears, noChange.scenarioYears);
+  // BUG-180 (Opus review 2, S-2): a lever that HURTS cannot be expressed as headline + delta when
+  // the headline never depletes (Infinity - n is still Infinity), nor when the blended no-change
+  // walk was sustainable but the scenario is not (delta = -Infinity). The old fallback printed the
+  // blended scenario's OWN absolute age ("lasts to 81" next to "Sustainable indefinitely", ~100
+  // years off the committed 127). Honest state instead: `scenarioYears`/`scenarioDepletionAge`
+  // are null and `comparable: false`, so a UI shows only that the plan gets weaker (and the
+  // finite delta, if any), never an absolute age from the other engine.
+  const unanchorable = deltaYears === -Infinity
+    || (headline.years === Infinity && Number.isFinite(deltaYears) && deltaYears < 0);
+  if (unanchorable) {
+    return {
+      baseYears: headline.years,
+      scenarioYears: null,
+      comparable: false,
+      deltaYears: Number.isFinite(deltaYears) ? deltaYears : null,
+      scenarioDepletionAge: null,
+      baseTotalAtRet: headline.totalAtRet,
+      scenarioTotalAtRet: headline.totalAtRet + (scenario.scenarioTotalAtRet - noChange.scenarioTotalAtRet),
+    };
+  }
+  let years;
+  if (deltaYears === Infinity) years = Infinity;
+  else if (headline.years === Infinity) years = Infinity;
+  else {
+    // BUG-188 (CodeRabbit, PR #70): a duration cannot be negative. A lever that removes more
+    // years than the headline has (headline 5, delta -10) clamps at 0, and the delta is restated
+    // so headline + delta still equals the years shown (-5, not -10).
+    years = Math.max(0, headline.years + deltaYears);
+    if (years !== headline.years + deltaYears) deltaYears = years - headline.years;
+  }
+  let depletionAge;
+  if (years === Infinity) depletionAge = null;
+  else if (deltaYears === 0) depletionAge = headline.depletionAge ?? null;
+  // BUG-189 (CodeRabbit, PR #70): the same convention as the engine (retirement-engine.js:
+  // yearsSustained = (age - startAge - 1) + frac, depletionAge = age), so a fractional
+  // duration Y depletes in year startAge + floor(Y) + 1. Math.round(retAge + Y) was one year early.
+  else depletionAge = scenarioRetAge + Math.floor(years) + 1;
+  return {
+    baseYears: headline.years,
+    scenarioYears: years,
+    comparable: true,
+    deltaYears,
+    scenarioDepletionAge: depletionAge,
+    baseTotalAtRet: headline.totalAtRet,
+    scenarioTotalAtRet: headline.totalAtRet + (scenario.scenarioTotalAtRet - noChange.scenarioTotalAtRet),
+  };
+}
+
+// Convenience for single-scenario callers (Classic WhatIfPanel): runs the no-change baseline and
+// the scenario through the SAME args, then anchors. `args` is calcWhatIfDelta's argument object
+// (`baseYearsSustained`/`baseTotalAtRet` in it ARE the headline).
+export function calcWhatIfDeltaAnchored(args) {
+  const noChange = calcWhatIfDelta({
+    ...args, moneyEvents: [], retirementAgeOverride: null, annualExpensesOverride: null, contribOverrides: null,
+  });
+  const scenario = calcWhatIfDelta(args);
+  const scenarioRetAge = args.retirementAgeOverride ?? args.safeRetAge;
+  return {
+    ...scenario,
+    scenarioRetAge,   // the age scenarioYears is measured FROM (a label needs it; the base's is safeRetAge)
+    ...anchorWhatIfToHeadline({
+      scenario, noChange, scenarioRetAge,
+      headline: { years: args.baseYearsSustained, depletionAge: null, totalAtRet: args.baseTotalAtRet },
+    }),
   };
 }
 
@@ -642,8 +814,11 @@ export function calcWhatIfScenario({
   const needsResim = scenarioRetAge !== safeRetAge || scenarioAccum.length > 0 || excludeEventId != null;
 
   let resimRaw = null;
+  let spScen = null;
   if (needsResim) {
     try {
+      // BUG-157/158: one shared scenario re-derivation (see scenarioSpouseAwareInputs).
+      spScen = scenarioSpouseAwareInputs(simInputs, spouseSeedInputs, spouseChartInputs, safeRetAge, scenarioRetAge);
       // Keep permanent accumulation-phase plan events in the re-sim (BUG-34).
       // Kind-aware filter (money-events.js): a duration event spanning the
       // boundary stays in — the sim result is read at the retirement-age row,
@@ -661,8 +836,9 @@ export function calcWhatIfScenario({
       // scenario, exactly as App.jsx's setRetirementAgeCoupled moves it on commit.
       // Without this a work-longer preview stopped contributing at the BASE age.
       resimRaw = runSimulation({
-        ...coupleContribEndAges(simInputs, safeRetAge, scenarioRetAge),
+        ...spScen.primaryInputs,
         moneyEvents: accumEvents,
+        otherEarnerGrowthEndAge: null, // BUG-187: primary's plateau must not cap the spouse's salary
       }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     } catch {
       return null;
@@ -713,10 +889,12 @@ export function calcWhatIfScenario({
   // ── Primary path: the per-account engine (BUG-35/BUG-31) ──────────────────
   if (retPhaseBase) {
     // BUG-77: re-seed the spouse at the SCENARIO's retirement age. Uses the same
-    // shared builder as the main path so the two can never diverge. No spouse
-    // RE-SIM is needed: spouseContribEnd is the spouse's OWN retirement age, so
-    // spouseSimData is invariant to a primary-retirement-age scenario — only the
-    // seed point + gap-year maps (read/built relative to scenarioRetAge) change.
+    // shared builder as the main path so the two can never diverge.
+    // BUG-158: spouseSimData is NOT invariant to a primary-retirement-age scenario.
+    // (The earlier comment here claimed it was; that holds only for an EXPLICIT
+    // spouseRetirementAge — under "auto" the spouse's contribution end follows the
+    // primary's retirement age, so scenarioSpouseAwareInputs re-runs the spouse's sim
+    // at the scenario's age via the same builder App.jsx uses.)
     // Only recomputed when a resim is already happening (retirement age moved, a
     // scenario event forced a re-sim, or an excluded committed event); otherwise
     // retPhaseBase's own spouse fields (already correct for the base retirement
@@ -743,7 +921,7 @@ export function calcWhatIfScenario({
       : null;
     const spouseSeed = (needsResim && spouseSeedInputs)
       ? buildSpouseRetirementSeed({
-          ...spouseSeedInputs,
+          ...spScen.seedInputs,
           currentAge: simInputs.currentAge,
           primaryRetAge: scenarioRetAge,
           spouseRetAge: scenarioSpouseRetAge,
@@ -783,7 +961,7 @@ export function calcWhatIfScenario({
           balTaxable: simInputs.balTaxable, balHSA: simInputs.balHSA,
           // A8: household, not primary-only — the same spouse args App's own
           // buildAccumChart call passes for the solid-line chart.
-          ...(spouseChartInputs ?? {}),
+          ...((spScen?.chartInputs ?? spouseChartInputs) ?? {}),
         })
       : (baseChart ?? []).filter(r => r.age <= scenarioRetAge);
 
@@ -1054,6 +1232,7 @@ export function eventIncomeImpact(event, simInputs, safeRetAge) {
   if (!event || !isIncomeReplacingEvent(event)) return null;
   if (eventFirstAge(event) > safeRetAge) return null;
 
+  const resolvedInputs = scenarioResolvedInputs(simInputs, safeRetAge); // BUG-179: App passes the stored plateau
   let monthsWorking = 0;
   let usualPay = 0;
   let eventPay = 0;
@@ -1062,7 +1241,7 @@ export function eventIncomeImpact(event, simInputs, safeRetAge) {
     const months = monthsActiveInYear(event, age);
     if (months <= 0) continue;
     monthsWorking += months;
-    usualPay += (months / 12) * projectedIncomeAtAge(simInputs, age);
+    usualPay += (months / 12) * projectedIncomeAtAge(resolvedInputs, age);
     eventPay += (months / 12) * Math.abs(event.incomeAnnual);
   }
   if (monthsWorking <= 0) return null;
@@ -1610,16 +1789,27 @@ export function calcWorkLongerBreakEven({
   const { baseTotalAtRet, baseYearsSustained, baseDepletionAge, safeLifeExp } = bundle;
   const baseSustainable = baseYearsSustained === Infinity;
 
-  const { currentIncome = 0, incomeGrowth = 0, incomeGrowthEndAge = null, ssClaimingAge = SS_FRA } = ssInputs;
-  const ssAnnualAt = (retAge) => includeSS
-    ? calcBenefit(
-        calcPIA(calcAIME(currentIncome, incomeGrowth, retAge - currentAge, incomeGrowthEndAge, currentAge)),
-        ssClaimingAge,
-      ) * ASSUMPTIONS.MONTHS_PER_YEAR
+  // BUG-173 (Opus review R-2): SS per row comes from the SAME `calcRetirementIncome` the scenario
+  // itself uses (`scenarioSocialSecurity`), fed the same inputs — so a pinned `ssOverride` is
+  // honoured (BUG-150/154's class) and the figure is the HOUSEHOLD's `householdSS` (primary +
+  // spouse), the same quantity the plan headline shows. Inputs: the bundle's own `ssInputs` (what
+  // the scenario engine reads) overlaid by any explicit `ssInputs` argument. When neither carries
+  // the override / spouse keys the defaults are the pre-fix primary-only, PIA-derived behaviour.
+  const ssSrc = { ...(bundle.ssInputs ?? {}), ...ssInputs };
+  const ssPinned = includeSS && (ssSrc.ssOverride ?? null) !== null;
+  const ssAt = (retAge) => includeSS
+    ? calcRetirementIncome({
+        currentIncome: 0, incomeGrowth: 0, incomeGrowthEndAge: null,
+        ssClaimingAge: SS_FRA, spouseSsEstimate: 0, pensionMonthly: 0, pensionStartAge: 0,
+        ...ssSrc,
+        incomeGrowthEndAge: clampIncomePlateauAge(ssSrc.incomeGrowthEndAge ?? null, currentAge, retAge), // BUG-179
+        ssOverride: ssSrc.ssOverride ?? null,
+        includeSS: true, currentAge, safeRetAge: retAge,
+      }).householdSS
     : 0;
   const windowAt = (retAge) => Math.max(0, RMD_START_AGE - 1 - retAge);
 
-  const baseSSAnnual = ssAnnualAt(safeRetAge);
+  const baseSSAnnual = ssAt(safeRetAge);
   const baseWindow = windowAt(safeRetAge);
 
   const rows = offsets.map((k) => {
@@ -1633,7 +1823,7 @@ export function calcWorkLongerBreakEven({
       (baseSustainable || scenSustainable || depletionAge == null || baseDepletionAge == null)
         ? null
         : depletionAge - baseDepletionAge;
-    const ssAnnual = ssAnnualAt(retAge);
+    const ssAnnual = ssAt(retAge);
     const window = windowAt(retAge);
     // See the header note: the plan-horizon test, not the never-depletes test.
     // `retAge < safeLifeExp` is required before the year-count comparison:
@@ -1655,6 +1845,9 @@ export function calcWorkLongerBreakEven({
       portfolioAtRet, portfolioDelta: portfolioAtRet - baseTotalAtRet,
       depletionAge, sustainable: scenSustainable, coversPlan, longevityDeltaYears,
       ssAnnual, ssDelta: ssAnnual - baseSSAnnual,
+      // A pinned override with nothing else moving the figure: the screen says "your entered figure"
+      // instead of an unexplained "+$0/yr" (rule 10 — the model decides, the screen renders).
+      ssPinnedFlat: ssPinned && ssAnnual === baseSSAnnual,
       conversionWindowYrs: window, conversionWindowDelta: window - baseWindow,
     };
   }).filter(Boolean);

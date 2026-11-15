@@ -1,0 +1,48 @@
+retest 2026-11-14T12:00:23.792Z
+      contribEnd trad401k 65 -> 55
+    before {"totalAtRet":4035855,"yrs":21.649,"wr":5.61,"netConv":-70844,"rmdTax":null}
+    after  {"totalAtRet":3628619,"yrs":19.531,"wr":6.24,"netConv":-87569,"rmdTax":null}
+      contribEnd roth 65 -> 55
+    before {"totalAtRet":4035855,"yrs":21.649,"wr":5.61,"netConv":-70844,"rmdTax":null}
+    after  {"totalAtRet":4035855,"yrs":21.649,"wr":5.61,"netConv":-70844,"rmdTax":null}
+      contribEnd taxable 65 -> 55
+    before {"totalAtRet":4035855,"yrs":21.649,"wr":5.61,"netConv":-70844,"rmdTax":null}
+    after  {"totalAtRet":3915507,"yrs":20.755,"wr":5.783,"netConv":-77464,"rmdTax":null}
+      contribEnd hsa 65 -> 55
+    before {"totalAtRet":4035855,"yrs":21.649,"wr":5.61,"netConv":-70844,"rmdTax":null}
+    after  {"totalAtRet":3985009,"yrs":21.297,"wr":5.682,"netConv":-70844,"rmdTax":null}
+      pensionStartAge 65 -> 69 (pension $2k/mo)
+    before {"totalAtRet":4035855,"yrs":52.905,"wr":3.263,"netConv":2149,"rmdTax":null}
+    after  {"totalAtRet":4035855,"yrs":47.618,"wr":5.61,"netConv":49511,"rmdTax":null}
+      spouseClaimingAge 67 -> 70 (spouse SS $24k)
+    before {"totalAtRet":4250757,"yrs":9.088,"wr":11.371,"netConv":-131681,"rmdTax":null}
+    after  {"totalAtRet":4250757,"yrs":9.209,"wr":11.371,"netConv":-129830,"rmdTax":null}
+      spouseClaimingAge 67 -> 62 (spouse SS $24k)
+    before {"totalAtRet":4250757,"yrs":9.088,"wr":11.371,"netConv":-131681,"rmdTax":null}
+    after  {"totalAtRet":4250757,"yrs":8.943,"wr":11.371,"netConv":-134058,"rmdTax":null}
+      spouseIsSoleBenef (spouse 15y younger, trad $1.5M)
+    before {"totalAtRet":12247815,"yrs":30.555,"wr":2.5,"netConv":4991,"rmdTax":null}
+    after  {"totalAtRet":12247815,"yrs":30.555,"wr":2.5,"netConv":4150,"rmdTax":null}
+      savingsSurplusPct 50 -> 90 (livingExpenses $50k)
+    before {"totalAtRet":4035855,"yrs":26.785,"wr":4.889,"netConv":-46057,"rmdTax":null}
+    after  {"totalAtRet":4035855,"yrs":26.785,"wr":4.889,"netConv":-46057,"rmdTax":null}
+      marketplace premium null -> $2,000/mo (retire 55, ACA on)
+    before {"totalAtRet":2155232,"yrs":14.479,"wr":7.097,"netConv":-89830,"rmdTax":null}
+    after  {"totalAtRet":2155232,"yrs":14.479,"wr":7.097,"netConv":-89830,"rmdTax":null}
+      hasMarketplaceInsurance off -> on (retire 55)
+    before {"totalAtRet":2155232,"yrs":14.479,"wr":7.097,"netConv":-89830,"rmdTax":null}
+    after  {"totalAtRet":2155232,"yrs":14.479,"wr":7.097,"netConv":-89830,"rmdTax":null}
+      hasMedicare off -> on (trad $2M, 32% bracket fill)
+    before {"totalAtRet":14792085,"yrs":95.167,"wr":1.531,"netConv":98394,"rmdTax":null}
+    after  {"totalAtRet":14792085,"yrs":95.167,"wr":1.531,"netConv":98394,"rmdTax":null}
+      conversionTaxSource converted -> taxable (custom $50k)
+    before {"totalAtRet":4035855,"yrs":21.744,"wr":5.61,"netConv":-28626,"rmdTax":null}
+    after  {"totalAtRet":4035855,"yrs":21.744,"wr":5.61,"netConv":-28626,"rmdTax":null}
+      livingExpenseGrowth 3 -> 8
+    before {"totalAtRet":4035855,"yrs":21.649,"wr":5.61,"netConv":-70844,"rmdTax":null}
+    after  {"totalAtRet":4035855,"yrs":21.649,"wr":5.61,"netConv":-70844,"rmdTax":null}
+[HSA] field shows 8000 (max 4400); totalAtRet with stored 8000 = 4304125, with 4400 = 4304125 -> sim caps it (display-only mismatch)
+[living] income 40k, living stored 300000 (max 35935); grossAfterTax NaN; budget.effectiveLiving 300000; surplus 0; effectiveExpenses 300000; totalAtRet 4001340
+[onboarding] currentTotalSaved 165000 -> 165000 (wizard answer 900,000 has no path in: commitPlan ignores totalSaved)
+[onboarding] after commitPlan(currentAge 72): ssClaimingAge 67 (min 70); yearsSustained 4.729225597670108
+[onboarding] same values via coupled setters: ssClaimingAge 70; yearsSustained 3.8179356057685694

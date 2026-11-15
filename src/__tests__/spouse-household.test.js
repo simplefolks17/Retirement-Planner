@@ -727,8 +727,9 @@ describe("BUG-96 — RMD tiles/table scope agreement", () => {
 // were locked by zero golden-master value, only by the narrower, synthetic
 // wiring tests in pension-timing-wiring.test.js. This fixture closes that gap:
 // a REAL pension (starts after retirement, before RMD age — the exact shape
-// that was double-gated), MFJ filing, a non-TX retirement state (exercises
-// calcStateTax's table path instead of TX's 0% no-op), a spouse with an
+// that was double-gated), MFJ filing, a non-TX RETIREMENT state (CA, set
+// explicitly while the work state stays TX — exercises the retStateRate path
+// instead of TX's 0% no-op; BUG-151: this is an explicit, non-auto choice), a spouse with an
 // active gap window, and a genuinely open conversion window with real RMD,
 // wr70, and projected-bracket signal (none of the three locked values is
 // degenerate — see the build helper's comment for how each was tuned).
@@ -760,7 +761,7 @@ function buildTX3Household() {
   // (retPensionAtRMDAge, retPensionAt70) were about.
   app.fire(() => app.latest().pension.pensionMonthly.set(3_000));
   app.fire(() => app.latest().pension.pensionStartAge.set(65));
-  app.fire(() => app.latest().assumptions.retirementState.set("CA")); // non-TX — exercises calcStateTax's real table
+  app.fire(() => app.latest().assumptions.retirementState.set("CA")); // non-TX retirement state (explicit, != work state) — exercises retStateRate
   return app;
 }
 
@@ -778,7 +779,11 @@ describe("spouse-household golden master (T-X.3, exact-locked — MFJ + pension 
     totalRMDs:             133_413,
     rmdTaxBite:            28_417,
     projectedRetBracket:  0.12,     // taxView.projectedRetBracket — exercises retPensionAtRMDAge (nonzero pension, MFJ brackets)
-    wr70:                 1.4225852835455082,  // ssView.wr70 — exercises retPensionAt70
+    // ssView.wr70 — exercises retPensionAt70. RE-LOCKED 2026-11-14 (BUG-154, owner-approved):
+    // was 1.4225852835455082. DOWN: this fixture pins ssOverride 38,000 at claim age 67, and the
+    // age-70 leg used to ignore the override (PIA-derived). It now honours it (38,000 x 1.24 =
+    // 47,120), so the age-70 draw — and wr70 — is lower. withdrawalRate is unchanged.
+    wr70:                 0.9726563582272075,
     // Session B (Monte Carlo engine port, 2026-07-28): re-locked 61 -> 60.
     // Direction: essentially FLAT (-1), not the "up" every other spouse
     // fixture shows — and that's the expected, explained outcome, not a
@@ -958,10 +963,23 @@ describe("spouse-household golden master (T-X.4, exact-locked — the auto/null 
   //   62:        99,220 -> 134,194   (187,641)
   // The residual gap is BUG-136 (the conversion schedule is still inherited from the
   // base plan); these locks are expected to close onto the truth column when it lands.
+  //
+  // RE-LOCKED again 2026-11-14 (BUG-157 + BUG-158). Under "auto" the scenario used to
+  // reuse the spouse's accumulation sim frozen at the BASE retirement age and the BASE
+  // plan's spouse-income MAGI cutoff, while the seed iterated the spouse's gap years at
+  // the scenario's age — a spouse earning full wages and saving nothing. The scenario now
+  // rebuilds both through the same shared builders App.jsx uses (src/model/spouse-sim.js).
+  // Only spillover moved (totalAtRet / depletionAge unchanged), and only TOWARD truth:
+  //        preview before -> after   (committed truth)
+  //   58:       743,001 -> 743,001   (742,667)   unchanged: no extra gap years to rebuild
+  //   60:       444,590 -> 474,936   (474,771)   gap 30,181 -> 165
+  //   62:       134,194 -> 192,945   (187,641)   gap 53,447 -> 5,304 (now just above)
+  // The remaining gap is BUG-136 and nothing else: with the conversion schedule zeroed
+  // preview and commit agree EXACTLY (whatif-parity-wiring.test.js, "BUG-157/158" block).
   const S = {
     58: { depletionAge: 112,  totalAtRet: 3_831_682, spillover: 743_001 },
-    60: { depletionAge: 135,  totalAtRet: 4_453_337, spillover: 444_590 },
-    62: { depletionAge: null, totalAtRet: 5_163_187, spillover: 134_194 },
+    60: { depletionAge: 135,  totalAtRet: 4_453_337, spillover: 474_936 },
+    62: { depletionAge: null, totalAtRet: 5_163_187, spillover: 192_945 },
   };
 
   it("resolves the spouse's retirement age from the AUTO default, not an explicit input", () => {

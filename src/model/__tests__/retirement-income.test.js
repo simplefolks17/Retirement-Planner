@@ -138,3 +138,35 @@ describe("calcSSBreakEven", () => {
     expect(age).toBeGreaterThan(SS_FRA);
   });
 });
+
+// ── BUG-154: ssOverride must also pin the delay-to-70 leg ─────────────────────
+describe("calcRetirementIncome — ssOverride honoured on the age-70 leg (BUG-154)", () => {
+  it("treats the override as the benefit AT the claim age: age-70 = override x F70 / F(claim)", () => {
+    const r = calcRetirementIncome({ ...defaults, ssClaimingAge: 62, ssOverride: 90_000 });
+    expect(r.ss70Annual).toBe(Math.round(90_000 * SS_FACTORS[70] / SS_FACTORS[62]));
+    expect(r.household70SS).toBe(r.ss70Annual);
+    expect(r.ss70DrawReduction).toBe(r.ss70Annual - 90_000);
+    expect(r.ss70DrawReduction).toBeGreaterThan(0);
+  });
+
+  it("claiming at 70 with an override: no delay gain", () => {
+    const r = calcRetirementIncome({ ...defaults, ssClaimingAge: 70, ssOverride: 90_000 });
+    expect(r.ss70Annual).toBe(90_000);
+    expect(r.ss70DrawReduction).toBe(0);
+  });
+
+  it("no override: unchanged PIA-derived figure", () => {
+    const r = calcRetirementIncome({ ...defaults, ssClaimingAge: 62 });
+    expect(r.ss70Annual).toBe(Math.round(r.ssPIA * SS_FACTORS[70]) * ASSUMPTIONS.MONTHS_PER_YEAR);
+  });
+
+  it("includeSS=false zeroes both legs, with or without an override", () => {
+    for (const ssOverride of [null, 90_000]) {
+      const r = calcRetirementIncome({ ...defaults, ssClaimingAge: 62, includeSS: false, ssOverride });
+      expect(r.householdSS).toBe(0);
+      expect(r.ss70Annual).toBe(0);
+      expect(r.household70SS).toBe(0);
+      expect(r.ss70DrawReduction).toBe(0);
+    }
+  });
+});

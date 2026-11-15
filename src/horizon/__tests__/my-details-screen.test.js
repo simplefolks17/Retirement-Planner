@@ -44,7 +44,6 @@ function makeProps() {
     },
     spending: {
       livingExpenses: { value: null, set: vi.fn(), min: 10_000, max: 200_000, step: 1_000 },
-      livingExpenseGrowth: num(3, 0, 10, 0.5),
       annualExpenses: { value: null, set: vi.fn(), min: 10_000, max: 300_000, step: 1_000 },
       retirementTarget: num(3_000_000, 100_000, 20_000_000, undefined),
     },
@@ -133,6 +132,23 @@ describe("MyDetailsScreen", () => {
     app.clickText("Formula");                                  // match mode → formula
     expect(props.accounts.matchMode.set).toHaveBeenCalledWith("formula");
     act(() => app.r.unmount());
+  });
+
+  // BUG-151 (R-6): the "following your home state" hint was deletable with 0 failing tests.
+  it("labels the retirement state 'following your home state' only while it is in auto mode", () => {
+    const auto = makeProps();
+    auto.assumptions.retirementState.isAuto = true;
+    const a = mount(auto);
+    a.click(n => textOf(n).startsWith("Assumptions"));
+    expect(a.text()).toContain("following your home state");
+    act(() => a.r.unmount());
+
+    const explicit = makeProps();
+    explicit.assumptions.retirementState.isAuto = false;
+    const b = mount(explicit);
+    b.click(n => textOf(n).startsWith("Assumptions"));
+    expect(b.text()).not.toContain("following your home state");
+    act(() => b.r.unmount());
   });
 
   it("shows the Default edge state for an unset state-tax override", () => {

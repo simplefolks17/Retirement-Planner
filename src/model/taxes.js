@@ -1,8 +1,6 @@
 import {
   TAX_DATA_2026,
   LTCG_BRACKETS_2026,
-  STATE_TAX,
-  RETIREMENT_STATE_TAX,
   ASSUMPTIONS,
 } from "../config/irs-2026.js";
 
@@ -68,14 +66,4 @@ export function projectRetirementBracket({ avgAnnualRMD, householdSS, effectiveP
   const bracket = brackets.find(b => taxableIncome >= b.min && taxableIncome < b.max)
                ?? brackets[brackets.length - 1];
   return { projRetIncome, taxableIncome, bracket, bracketPct: Math.round(bracket.rate * 100) };
-}
-
-// Returns annual state tax amount.
-// tableKey: "working" (uses STATE_TAX) or "retirement" (uses RETIREMENT_STATE_TAX).
-// rateOverride: if non-null, bypasses the table and uses this rate directly.
-export function calcStateTax(agi, tableKey, stateCode, rateOverride = null) {
-  if (rateOverride !== null) return agi * rateOverride;
-  const table = tableKey === "retirement" ? RETIREMENT_STATE_TAX : STATE_TAX;
-  const rate = table[stateCode]?.rate ?? 0;
-  return agi * rate;
 }

@@ -3,7 +3,9 @@ import { HF, HM } from "./ThemeContext.jsx";
 import { fmt, Btn, Pill } from "./shared.jsx";
 import { useDialogBehaviour } from "./useDialogBehaviour.js";
 import { evaluateLifeEvent, buildDurationRail } from "../model/what-if.js";
+import { mintEventId } from "../utils/event-id.js";
 import { VerdictTickRail } from "./fields.jsx";
+import { resolveUntilAge } from "../model/money-events.js";
 
 // LifeEventSheet — the sheet-first life-event placement flow (video-inspired):
 // configure a one-time or duration ("$X/mo for N months") event, watch a live
@@ -91,7 +93,11 @@ export default function LifeEventSheet({
   // horizon — the slider min is age+1, so clamp the stored value the same way
   // (age can move after untilAge was set). Used for both the slider and the
   // saved candidate so they can't disagree.
-  const effUntilAge = Math.max(age + 1, Math.min(bounds.maxAge, untilAge));
+  // BUG-192: the policy (clamp + "is an end even available") lives in the model — at age ===
+  // maxAge there is no valid end, so `until.available` is false and `effUntilAge` is null.
+  const until = resolveUntilAge(untilAge, age, bounds.maxAge);
+  const effUntilAge = until.effUntilAge;
+  const untilBlocked = mode === "monthly" && durationMode === "until" && !until.available;
 
   // "Your income during this time" seeding (owner decision: incomeAnnual means
   // "my total income during this period," not a bolt-on offset — money-events.js).
@@ -159,8 +165,8 @@ export default function LifeEventSheet({
   // ONE model run per model-candidate change — verdict, deltas, and (future)
   // overlay all come from this result, so they can never disagree (V1/principle 7).
   const result = useMemo(
-    () => (whatIfBundle ? evaluateLifeEvent(whatIfBundle, modelCandidate) : null),
-    [whatIfBundle, modelCandidate]);
+    () => (whatIfBundle && !untilBlocked ? evaluateLifeEvent(whatIfBundle, modelCandidate) : null),
+    [whatIfBundle, modelCandidate, untilBlocked]);
 
   // Duration tick rail (monthly mode only): one calcWhatIfScenario run per
   // month of duration, verdict-colored, so the slider shows which durations
@@ -190,9 +196,10 @@ export default function LifeEventSheet({
   const usualPayAtAge = seedIncomeForAge(bounds, age);
 
   const handleSave = () => {
+    if (untilBlocked) return;
     onSave({
       ...candidate,
-      id: initial?.id ?? String(Date.now()),
+      id: initial?.id ?? mintEventId(),
     });
   };
 
@@ -361,18 +368,24 @@ export default function LifeEventSheet({
                   aria-label="Duration in months" style={{ width: "100%", accentColor: t.accent }} />
                 <VerdictTickRail t={t} rail={durationRail} legend={result?.verdictInfo?.rangeLegend} />
               </div>
+            ) : !until.available ? (
+              <div style={{ marginBottom: 12, font: `400 12px ${HF}`, color: t.mut }} role="status"
+                data-testid="until-unavailable">
+                An end age isn't available when the event starts at the last age of your plan
+                ({bounds.maxAge}). Pick an earlier start age, or use "For a set time".
+              </div>
             ) : (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <div style={fieldLabel}>Runs until age</div>
                   <div style={{ font: `600 12px ${HM}`, color: t.accent }}>{effUntilAge}</div>
                 </div>
-                <input type="range" min={age + 1} max={bounds.maxAge} step="1" value={effUntilAge}
+                <input type="range" min={until.minUntilAge} max={bounds.maxAge} step="1" value={effUntilAge}
                   onChange={e => setUntilAge(Number(e.target.value))}
                   aria-label="Runs until age" style={{ width: "100%", accentColor: t.accent }} />
                 <div style={{ font: `400 10.5px ${HF}`, color: t.mut, marginTop: 4 }}>
                   Runs from {age} through {effUntilAge}, then stops
-                  {effUntilAge >= bounds.maxAge ? " (rest of your plan)" : ""}.
+                  {until.reachesPlanEnd ? " (rest of your plan)" : ""}.
                 </div>
               </div>
             )}
@@ -504,7 +517,7 @@ export default function LifeEventSheet({
             </Btn>
           )}
           <Btn t={t} size="sm" variant="quiet" onClick={onCancel}>Cancel</Btn>
-          <Btn t={t} size="sm" variant="primary" onClick={handleSave}>
+          <Btn t={t} size="sm" variant="primary" onClick={handleSave} disabled={untilBlocked}>
             {isEdit ? "Save changes" : "Add to plan"}
           </Btn>
         </div>

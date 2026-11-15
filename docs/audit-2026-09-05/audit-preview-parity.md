@@ -70,6 +70,7 @@ penalized spouse-401k spillover.
 ```
 
 ## VERIFIED FINDING 2 — `spouseSimData` is frozen at the base retirement age, so a "work longer" scenario models the spouse working but NOT contributing
+**FIXED by BUG-158 (2026-11-14, batch L1-D)** — the scenario now re-runs the spouse's accumulation sim through the shared `buildSpouseSimInput` (`src/model/spouse-sim.js`); preview == commit is asserted in `whatif-parity-wiring.test.js` ("BUG-157 + BUG-158").
 
 **Severity: MEDIUM-HIGH.** Only bites when `spouseRetirementAge` is null ("auto" — the DEFAULT).
 
@@ -319,6 +320,7 @@ committing that exact change gives depletion at 95. **6 years of runway and the 
 ---
 
 ## VERIFIED FINDING 7 — the existing scenario golden master (T-X.4) LOCKS THE DIVERGENCE IN
+**Update 2026-11-14 (L1-D):** the spouse-household-under-auto parity gap is now covered by `whatif-parity-wiring.test.js` (older-spouse and younger-spouse fixtures, preview == commit exactly with conversions zeroed). T-X.4's scenario spillover locks were re-locked TOWARD the committed truth (60: 444,590 -> 474,936 vs 474,771; 62: 134,194 -> 192,945 vs 187,641); the remaining gap is BUG-136 only.
 
 T-X.4 (`src/__tests__/spouse-household.test.js:832+`) was written specifically to catch
 scenario-path bugs (BUG-127/BUG-134) and locks `calcWhatIfScenario` output at three retirement

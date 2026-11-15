@@ -53,6 +53,7 @@ Direction: the frozen cutoff stops the spouse's wages counting in household MAGI
 under-stated MAGI ⇒ the primary's Roth-IRA phase-out doesn't bite ⇒ phantom contributions.
 The error GROWS with each extra year worked (optimistic bias, monotonic).
 Files: `src/App.jsx:1297`; `src/model/what-if.js:371`, `:605`.
+**FIXED by BUG-157 (2026-11-14, batch L1-D)** — shared `resolveSpouseIncomeEndAge` (`src/model/spouse-sim.js`), recomputed at both scenario re-sims; see `docs/BUGS.md` and `whatif-parity-wiring.test.js`.
 
 ---
 ## VERIFIED FINDING B (MEDIUM-HIGH) — `spouseSimData` is NOT scenario-invariant under "auto"; what-if.js's comment asserting it is, is false
@@ -93,9 +94,11 @@ scenRet=65  years 19.263 / 19.510   (+0.247)
 only in longevity, so it is understated but real and monotone.
 Files: `src/App.jsx:358` (`spouseContribEnd`), `:1479` (`spouseSeedInputs.spouseSimData`);
 `src/model/what-if.js:657-690`.
+**FIXED by BUG-158 (2026-11-14, batch L1-D)** — one shared spouse-sim builder (`buildSpouseSimInput`, `src/model/spouse-sim.js`) used by App.jsx and re-run by the scenario at its own retirement age; the false invariant comment is gone.
 
 ---
 ## VERIFIED FINDING C (HIGH) — `retirementState` is seeded ONCE from `selectedState` and never re-derives
+**Status (2026-11-14): FIXED by BUG-151 — see `docs/BUGS.md`.** `retirementState` is now `null` = "follow the work state" and resolves on read (`effectiveRetirementState`); an explicit pick sticks, and re-picking the work state returns to auto. Covered by `retirement-state-wiring.test.js` and, for the Classic `<select>`, `classic-horizon-parity.test.js` (R2-C).
 `src/App.jsx:116`: `const [retirementState, setRetirementState] = useState(selectedState);`
 A `useState` initializer runs only on the first render, so "same state as where you work" is
 resolved exactly once, at mount, against the hardcoded default `selectedState = "TX"` (0% tax).
@@ -121,6 +124,7 @@ No test anywhere sets `selectedState` and then reads `retirementState`.
 
 ---
 ## VERIFIED FINDING D (MEDIUM-HIGH) — `ssOverride` is honoured on the claim-age leg but NOT on the delay-to-70 leg, so pinning your own SS estimate silently kills the "delay SS" strategy
+**Status (2026-11-14): FIXED by BUG-154 — see `docs/BUGS.md`** (commit `0fecfb1`, owner-approved T-X.3 `wr70` re-lock): the age-70 leg now honours a pinned `ssOverride`. Known follow-up, an owner/product call and NOT part of that fix: a pinned override does not rescale when the claim-age slider moves, so the delay gain reads larger after exploring an earlier claim age (see the Opus review's BUG-154 verdict).
 `ssOverride !== null` is resolved in `retirement-income.js:33` (`effectiveSS`), which flows into
 `householdSS`/`ssAtRet`/`ssTaxableRet`. But the age-70 companion `ss70Annual`
 (`retirement-income.js:53`) is re-derived from `ssPIA` and never consults `ssOverride`, so
@@ -146,6 +150,7 @@ Files: `src/model/retirement-income.js:33` vs `:53-55`; consumers `src/App.jsx` 
 
 ---
 ## VERIFIED FINDING E (MEDIUM-HIGH) — `incomeGrowthEndAge` has FOUR independent resolution sites; two lack the `Math.max(0, …)` guard the other two have, so a stale value discounts income BACKWARD
+**Status (2026-11-14): FIXED by BUG-155 — see `docs/BUGS.md`.**
 The sentinel is `null` = "grows until retirement". Every consumer re-implements the resolution:
 
 | # | site | formula | negative guard |
@@ -179,6 +184,7 @@ disagreeing inside one render. Cost: **-$521/month of Social Security for life**
 
 ---
 ## VERIFIED FINDING F (MEDIUM) — `incomeGrowthEndAge` is a PRIMARY-frame age but is passed unchanged into the SPOUSE's `runSimulation`, whose age frame is the spouse's
+**Status (2026-11-14): FIXED by BUG-156 — see `docs/BUGS.md`.**
 `src/App.jsx:364` passes the primary's `incomeGrowthEndAge` into the spouse's sim, where
 `currentAge` is `spouseCurrentAge`. Both site 3 and site 4 above then evaluate
 `incomeGrowthEndAge - spouseCurrentAge`, which is a different number of calendar years — and goes
