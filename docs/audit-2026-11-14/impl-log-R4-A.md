@@ -18,3 +18,7 @@
 - BUG-189 verified REAL (engine convention above). Test anchor-duration-clamp.test.js: pre-fix FAIL `expected 75 to be 76`; fix `scenarioRetAge + Math.floor(years) + 1`; revert -> 1 failed; restored -> 3/3.
 - Full npm test then found ONE existing test (display-consistency-r2b.test.js, BUG-176 block, "finite delta rides on the headline") that locked the old rounding: retire 57, 15 yrs expected 72. Under the engine convention it is 73. Updated that one expectation with a BUG-189 comment (not a golden master; no golden-master value moved).
 - DONE: 4 commits (186,187,188,189). Final npm test 1725 green.
+
+## Orchestrator re-verification
+- npm test 1725, lint clean, build OK.
+- BUG-186 mutation (MFS exclusion removed) -> 2 failing; restored -> green.
