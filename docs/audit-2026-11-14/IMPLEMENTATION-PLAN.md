@@ -284,3 +284,21 @@ Haiku (R3-B). They run sequentially, because both touch App.jsx and BUGS.md. The
 | BUG-185 | S-9: a $0 conversion event past retirement isn't flagged "not modelled" | mechanical | R3-B |
 | (tests) | S-8: five on-screen halves deletable with 0 failures | mechanical | R3-B |
 | (docs) | S-10: doc and comment corrections | mechanical | R3-B |
+
+---
+
+## Round 4 — CodeRabbit review of PR #70 (review 5908050703, head f082775)
+
+Orchestrator triage: every finding is verified against the code before it is fixed.
+
+| id | CR thread | file | triage | batch |
+|---|---|---|---|---|
+| BUG-186 | MFS Roth phase-out indexed | simulation.js ~272 | real; introduced by BUG-159 (IRS: MFS 0-10k not COLA-indexed) | R4-A Haiku |
+| BUG-187 | primary sim caps spouse salary growth (otherEarnerGrowthEndAge default) | spouse-sim.js / App.jsx / what-if.js | real; default left by BUG-156 | R4-A Haiku |
+| BUG-188 | anchored duration can go negative | what-if.js ~636 | real; introduced by BUG-176 | R4-A Haiku |
+| BUG-189 | anchored fallback depletionAge rounds instead of floor+1 | what-if.js ~640 | verify against the engine's depletion convention; introduced by BUG-176 | R4-A Haiku |
+| BUG-190 | Classic WhatIfPanel clamps purchase to currentAge, an age runSimulation never charges | WhatIfPanel.jsx ~96 | real; introduced by BUG-162 | R4-B Sonnet |
+| BUG-191 | scenario spouse HSA uses base-capped value, not stored value re-capped at the scenario's primary HSA | what-if.js ~94 / App.jsx | verify | R4-B Sonnet |
+| BUG-192 | LifeEventSheet until-age reversed bounds at maxAge, plus age math in a Horizon screen | LifeEventSheet.jsx ~96 | verify; move the policy to the model (rule 10) | R4-B Sonnet |
+| (refactor) | WhatIfPanel derived ages in a Classic component | WhatIfPanel.jsx ~45 | judgement: move to model if small, else reply | R4-B Sonnet |
+| (reply) | ArcGraph vmax clamp in a component | ArcGraph.jsx 586/939 | pre-existing, only migrated to `clamp`; CR marked it unverified; reply, no change | orchestrator |
