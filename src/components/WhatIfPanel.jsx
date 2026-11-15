@@ -9,6 +9,7 @@ import { useState, useMemo } from "react";
 import { C } from "../theme.js";
 import { fmt, fmtPct } from "../formatters.js";
 import { calcWhatIfDeltaAnchored, calcAffordabilityMax } from "../model/what-if.js";
+import { firstChargedEventAge, defaultEventAge } from "../model/money-events.js";
 import { ASSUMPTIONS } from "../config/irs-2026.js";
 import { clamp } from "../model/finance-math.js";
 
@@ -33,16 +34,19 @@ function DeltaChip({ delta }) {
   );
 }
 
-// `retAge` is the retirement age the `years` were measured FROM — the scenario's own for a
-// scenario figure (BUG-176: it used to be the base plan's age for both, so "work 2 more years"
-// printed an age 2 years early).
-function YearsSustainedLabel({ years, retAge }) {
+// `depletionAge` is the MODEL's own age (deltaResult.scenarioDepletionAge / baseDepletionAge, the
+// engine's year convention, measured from the right retirement age) — never re-derived from years
+// here (rule 10; BUG-176 printed an age 2 years early, and a Math.round here disagreed with the
+// model by a year after BUG-189).
+function YearsSustainedLabel({ years, depletionAge }) {
   // BUG-180: model-provided "not comparable" state (scenarioYears null) — never an absolute age.
   if (years === null || years === undefined) {
     return <span style={{ color: "#f85149" }}>Weaker than your plan (no comparable age)</span>;
   }
   if (years === Infinity) return <span style={{ color: C.green }}>Sustainable indefinitely</span>;
-  const depletionAge = Math.round(retAge + years);
+  if (depletionAge === null || depletionAge === undefined) {
+    return <span style={{ color: C.muted }}>Portfolio lasts a limited time</span>;
+  }
   return <span>Portfolio lasts to age <strong>{depletionAge}</strong></span>;
 }
 
@@ -89,12 +93,16 @@ export function WhatIfPanel({
   const [targetAgeIn, setTargetAgeIn] = useState(null);
     const MAX_AGE = 120;
   // What the inputs DISPLAY (raw, so typing "6" on the way to "65" isn't fought) ...
-  const eventAgeShown  = eventAgeIn  ?? currentAge + 5;
-  const affAgeShown    = affAgeIn    ?? currentAge + 5;
+  const eventAgeShown  = eventAgeIn  ?? defaultEventAge(currentAge);
+  const affAgeShown    = affAgeIn    ?? defaultEventAge(currentAge);
   const targetAgeShown = targetAgeIn ?? safeLifeExp;
   // ... and what the model USES / the result text quotes (clamped to the live bounds).
-  const eventAge  = clamp(Number(eventAgeShown)  || 0, currentAge, MAX_AGE);
-  const affAge    = clamp(Number(affAgeShown)    || 0, currentAge, MAX_AGE);
+  // BUG-190: the lower bound is the first age the model actually CHARGES (currentAge + 1), not
+  // currentAge — an event at currentAge is never applied, so Max Affordable would report a large
+  // amount for a purchase that costs nothing.
+  const minEventAge = firstChargedEventAge(currentAge);
+  const eventAge  = clamp(Number(eventAgeShown)  || 0, minEventAge, MAX_AGE);
+  const affAge    = clamp(Number(affAgeShown)    || 0, minEventAge, MAX_AGE);
   const targetAge = clamp(Number(targetAgeShown) || 0, safeRetAge, MAX_AGE);
 
   // Memoized so deltaResult/affordResult can list it honestly in their deps
@@ -222,7 +230,7 @@ export function WhatIfPanel({
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min="0" step="1000"
                     placeholder="$ Amount"
                     value={amount} onChange={e => setAmount(e.target.value)} />
-                  <input style={{ ...inputStyle, width: "100%" }} type="number" min={currentAge} max={120}
+                  <input style={{ ...inputStyle, width: "100%" }} type="number" min={minEventAge} max={120}
                     placeholder="At age"
                     value={eventAgeShown} onChange={e => setEventAgeIn(Number(e.target.value))} />
                   <select style={{ ...inputStyle, width: "auto" }} value={isInflow ? "in" : "out"}
@@ -254,11 +262,11 @@ export function WhatIfPanel({
                 <div style={{ background: C.card, borderRadius: 8, padding: "12px 14px", border: `1px solid ${C.border}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
                     <span style={{ fontSize: 13, color: C.text }}>
-                      <YearsSustainedLabel years={deltaResult.scenarioYears} retAge={deltaResult.scenarioRetAge} />
+                      <YearsSustainedLabel years={deltaResult.scenarioYears} depletionAge={deltaResult.scenarioDepletionAge} />
                     </span>
                     <span style={{ fontSize: 12, color: C.muted }}>
                       vs&nbsp;
-                      <YearsSustainedLabel years={deltaResult.baseYears} retAge={safeRetAge} />
+                      <YearsSustainedLabel years={deltaResult.baseYears} depletionAge={deltaResult.baseDepletionAge} />
                       &nbsp;→&nbsp;<DeltaChip delta={deltaResult.deltaYears} />
                     </span>
                   </div>
@@ -290,7 +298,7 @@ export function WhatIfPanel({
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "auto 100px auto 100px", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 12, color: C.muted }}>One-time purchase at age</span>
-                  <input style={{ ...inputStyle, width: "100%" }} type="number" min={currentAge} max={120}
+                  <input style={{ ...inputStyle, width: "100%" }} type="number" min={minEventAge} max={120}
                     value={affAgeShown} onChange={e => setAffAgeIn(Number(e.target.value))} />
                   <span style={{ fontSize: 12, color: C.muted }}>sustaining to age</span>
                   <input style={{ ...inputStyle, width: "100%" }} type="number" min={safeRetAge} max={120}

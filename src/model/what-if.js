@@ -609,6 +609,15 @@ export function calcWhatIfDelta({
 // the blended walk's own absolute figure, which contradicts the headline.
 // Basis: years/ages are basis-free; totalAtRet is in the scenario's retirement-year dollars, as
 // calcWhatIfDelta's own scenarioTotalAtRet is (the difference is added to the headline's).
+// Depletion age implied by a years-sustained figure measured from `retAge`, in the engine's own
+// year convention (BUG-189: yearsSustained = (age - startAge - 1) + frac, depletionAge = age, so a
+// duration Y depletes in year retAge + floor(Y) + 1). Infinity -> null (never depletes).
+// Exported so a screen renders THIS instead of re-deriving an age from years (rule 10).
+export function depletionAgeFromYears(years, retAge) {
+  if (years === Infinity || !Number.isFinite(years) || !Number.isFinite(retAge)) return null;
+  return retAge + Math.floor(years) + 1;
+}
+
 export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioRetAge }) {
   let deltaYears = deltaYearsFrom(scenario.scenarioYears, noChange.scenarioYears);
   // BUG-180 (Opus review 2, S-2): a lever that HURTS cannot be expressed as headline + delta when
@@ -647,7 +656,7 @@ export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioR
   // BUG-189 (CodeRabbit, PR #70): the same convention as the engine (retirement-engine.js:
   // yearsSustained = (age - startAge - 1) + frac, depletionAge = age), so a fractional
   // duration Y depletes in year startAge + floor(Y) + 1. Math.round(retAge + Y) was one year early.
-  else depletionAge = scenarioRetAge + Math.floor(years) + 1;
+  else depletionAge = depletionAgeFromYears(years, scenarioRetAge);
   return {
     baseYears: headline.years,
     scenarioYears: years,
@@ -668,12 +677,16 @@ export function calcWhatIfDeltaAnchored(args) {
   });
   const scenario = calcWhatIfDelta(args);
   const scenarioRetAge = args.retirementAgeOverride ?? args.safeRetAge;
+  // R4-B: the HEADLINE's depletion age comes from the same convention, so a screen prints
+  // `baseDepletionAge` / `scenarioDepletionAge` and never recomputes an age from years.
+  const baseDepletionAge = depletionAgeFromYears(args.baseYearsSustained, args.safeRetAge);
   return {
     ...scenario,
     scenarioRetAge,   // the age scenarioYears is measured FROM (a label needs it; the base's is safeRetAge)
+    baseDepletionAge,
     ...anchorWhatIfToHeadline({
       scenario, noChange, scenarioRetAge,
-      headline: { years: args.baseYearsSustained, depletionAge: null, totalAtRet: args.baseTotalAtRet },
+      headline: { years: args.baseYearsSustained, depletionAge: baseDepletionAge, totalAtRet: args.baseTotalAtRet },
     }),
   };
 }

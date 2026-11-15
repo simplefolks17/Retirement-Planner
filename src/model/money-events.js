@@ -240,6 +240,13 @@ export function firstChargedEventAge(currentAge) {
   return Number.isFinite(currentAge) ? currentAge + 1 : null;
 }
 
+// Default age pre-filled in a what-if event / affordability age input before the user types:
+// a few years out, never earlier than the first charged year (so it is always a valid age).
+const DEFAULT_EVENT_AGE_OFFSET = 5;
+export function defaultEventAge(currentAge) {
+  return Number.isFinite(currentAge) ? currentAge + DEFAULT_EVENT_AGE_OFFSET : null;
+}
+
 // BUG-192 (CodeRabbit, PR #70): the effective end of an open-ended ("until an age") duration event
 // plus whether an end is available at all. An end must sit strictly after the start age and within
 // the plan horizon; when the start is already AT the horizon (startAge >= maxAge) no valid end
