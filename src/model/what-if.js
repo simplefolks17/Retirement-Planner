@@ -610,7 +610,7 @@ export function calcWhatIfDelta({
 // Basis: years/ages are basis-free; totalAtRet is in the scenario's retirement-year dollars, as
 // calcWhatIfDelta's own scenarioTotalAtRet is (the difference is added to the headline's).
 export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioRetAge }) {
-  const deltaYears = deltaYearsFrom(scenario.scenarioYears, noChange.scenarioYears);
+  let deltaYears = deltaYearsFrom(scenario.scenarioYears, noChange.scenarioYears);
   // BUG-180 (Opus review 2, S-2): a lever that HURTS cannot be expressed as headline + delta when
   // the headline never depletes (Infinity - n is still Infinity), nor when the blended no-change
   // walk was sustainable but the scenario is not (delta = -Infinity). The old fallback printed the
@@ -634,7 +634,13 @@ export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioR
   let years;
   if (deltaYears === Infinity) years = Infinity;
   else if (headline.years === Infinity) years = Infinity;
-  else years = headline.years + deltaYears;
+  else {
+    // BUG-188 (CodeRabbit, PR #70): a duration cannot be negative. A lever that removes more
+    // years than the headline has (headline 5, delta -10) clamps at 0, and the delta is restated
+    // so headline + delta still equals the years shown (-5, not -10).
+    years = Math.max(0, headline.years + deltaYears);
+    if (years !== headline.years + deltaYears) deltaYears = years - headline.years;
+  }
   let depletionAge;
   if (years === Infinity) depletionAge = null;
   else if (deltaYears === 0) depletionAge = headline.depletionAge ?? null;

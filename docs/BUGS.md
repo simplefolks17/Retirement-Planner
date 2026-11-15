@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-188 — the BUG-176 anchor could print a negative scenario duration (CodeRabbit review of PR #70; introduced by BUG-176; FIXED 2026-11-15)
+
+**Severity: LOW.** `anchorWhatIfToHeadline` computed "after" as headline + delta with no floor. A lever that removes more years than the headline has (headline 5, no-change 20, scenario 10: delta -10) printed -5 years.
+**Fix.** The anchored years clamp at 0. When the clamp applies, `deltaYears` is restated as clamped years minus the headline, so headline + delta still equals the years the screen prints (Classic's delta chip reads `deltaYears`). **Files:** `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `src/__tests__/anchor-duration-clamp.test.js` (the 5 / 20 / 10 example: years 0, delta -5). Removing the clamp: `expected -5 to be +0`, 1 failing; restored, pass. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
 ### BUG-187 — the primary's income plateau capped the SPOUSE's salary in every primary simulation (CodeRabbit review of PR #70; default left by BUG-156; FIXED 2026-11-15)
 
 **Severity: MEDIUM.** `runSimulation`'s `otherEarnerGrowthEndAge` defaults to the subject's own `incomeGrowthEndAge` when omitted. BUG-156 added that param for the spouse run but left the default in place, so the primary's plateau (set in the primary's frame) also froze the spouse's raises in the primary sim, App's chart and the what-if resims alike. Spouse income is then understated in household MAGI and the Roth phase-out, and in the spouse's wages that feed the walk.
