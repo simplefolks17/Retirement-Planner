@@ -619,3 +619,42 @@ describe("ArcGraph event badges", () => {
     expect(tree.root.findAll(n => n.type === "text").length).toBe(0);
   });
 });
+
+// ── BUG-192 (CodeRabbit, PR #70): an until-event starting AT the plan horizon has no valid end ──
+describe("LifeEventSheet — until-age at the plan horizon (BUG-192)", () => {
+  const atMax = { label: "Care costs", age: safeLifeExp, monthlyAmount: 4_000, untilAge: safeLifeExp,
+    incomeAnnual: 0, isInflow: false };
+
+  it("shows a designed unavailable state and refuses to save an end past the horizon", () => {
+    const onSave = vi.fn();
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds, initial: atMax, onSave, onCancel: vi.fn(),
+      }));
+    });
+    expect(allText(tree)).toContain("An end age isn't available");
+    // no range slider for the end age is rendered
+    expect(tree.root.findAll(n => n.type === "input" && n.props["aria-label"] === "Runs until age")).toHaveLength(0);
+    const save = findButton(tree.root, "Add to plan");
+    expect(save.props.disabled).toBe(true);
+    act(() => { save.props.onClick(); });
+    expect(onSave).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
+  it("below the horizon the end age is offered and saved inside the plan", () => {
+    const onSave = vi.fn();
+    let tree;
+    act(() => {
+      tree = create(React.createElement(LifeEventSheet, {
+        t, whatIfBundle, bounds, initial: { ...atMax, age: safeLifeExp - 1, untilAge: safeLifeExp },
+        onSave, onCancel: vi.fn(),
+      }));
+    });
+    expect(allText(tree)).not.toContain("An end age isn't available");
+    act(() => { findButton(tree.root, "Add to plan").props.onClick(); });
+    expect(onSave.mock.calls[0][0].untilAge).toBe(safeLifeExp);
+    act(() => tree.unmount());
+  });
+});

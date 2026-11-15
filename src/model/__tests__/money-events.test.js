@@ -460,3 +460,23 @@ describe("growth + open-ended (moneyEvents extension)", () => {
     }
   });
 });
+
+// ── BUG-190 / BUG-192 helpers (CodeRabbit, PR #70) ──
+import { firstChargedEventAge, resolveUntilAge } from "../money-events.js";
+describe("firstChargedEventAge (BUG-190)", () => {
+  it("is the first row runSimulation models: currentAge + 1", () => {
+    expect(firstChargedEventAge(30)).toBe(31);
+    expect(firstChargedEventAge(NaN)).toBeNull();
+  });
+});
+describe("resolveUntilAge (BUG-192)", () => {
+  it("clamps into (start, maxAge]", () => {
+    expect(resolveUntilAge(50, 40, 90)).toEqual({ available: true, minUntilAge: 41, effUntilAge: 50, reachesPlanEnd: false });
+    expect(resolveUntilAge(10, 40, 90).effUntilAge).toBe(41);
+    expect(resolveUntilAge(200, 40, 90)).toMatchObject({ effUntilAge: 90, reachesPlanEnd: true });
+  });
+  it("has no valid end when the start is at/after the horizon", () => {
+    expect(resolveUntilAge(90, 90, 90)).toEqual({ available: false, minUntilAge: 91, effUntilAge: null, reachesPlanEnd: false });
+    expect(resolveUntilAge(90, 95, 90).available).toBe(false);
+  });
+});

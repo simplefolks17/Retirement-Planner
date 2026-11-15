@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-192 — LifeEventSheet's until-age had reversed bounds at the plan horizon, and the policy was age math in a Horizon screen (CodeRabbit review of PR #70; FIXED 2026-11-15)
+
+**Severity: LOW-MEDIUM.** `effUntilAge = clamp(untilAge, age + 1, bounds.maxAge)` with `age === bounds.maxAge` reverses the bounds (min 91 > max 90) and returns an end past the plan horizon, which was then saved. It was also age arithmetic inside `src/horizon/` (rule 10).
+**Fix.** New pure `resolveUntilAge(untilAge, startAge, maxAge)` in `src/model/money-events.js` returns `{ available, minUntilAge, effUntilAge, reachesPlanEnd }`; at/after the horizon `available` is false and `effUntilAge` null. The sheet renders a designed "An end age isn't available..." state instead of the slider, disables "Add to plan", skips the evaluation, and `handleSave` refuses to save. The "(rest of your plan)" test also reads the model's `reachesPlanEnd`. **Files:** `src/model/money-events.js`, `src/horizon/LifeEventSheet.jsx`.
+**Tests/revert-and-confirm.** `life-event-sheet.test.js` (at maxAge: unavailable text, no slider, Save disabled and `onSave` not called; one year below: saved untilAge inside the plan), `money-events.test.js` (helper). Neutralising the sheet's `untilBlocked`/unavailable branch: the maxAge test fails; restored, pass. See `docs/audit-2026-11-14/impl-log-R4-B.md`.
+
 ### BUG-189 — the anchored fallback depletion age rounded instead of using the engine's year convention (CodeRabbit review of PR #70; introduced by BUG-176; FIXED 2026-11-15)
 
 **Severity: LOW.** The fallback in `anchorWhatIfToHeadline` was `Math.round(scenarioRetAge + years)`. The engine (`retirement-engine.js`) reports `yearsSustained = (age - startAge - 1) + frac` with `depletionAge = age`, so a fractional duration Y depletes in year `startAge + floor(Y) + 1`. Rounding printed the depletion one year early (retire 65 with 10.2 years: 75 instead of 76).
