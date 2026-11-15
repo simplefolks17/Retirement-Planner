@@ -93,3 +93,38 @@ describe("runSimulation Roth phase-out indexing (BUG-159)", () => {
     expect(Object.values(b).reduce((s, v) => s + v, 0)).toBeGreaterThan(Object.values(a).reduce((s, v) => s + v, 0));
   });
 });
+
+// BUG-186 (CodeRabbit, PR #70): the IRS does NOT index the married-filing-separately Roth
+// phase-out (0 to 10,000). Under 4% inflation the old code widened it to 10,400 in year 2+,
+// so MAGI of 10,200 still contributed. MFS must stay at the unindexed 10,000 cliff.
+describe("MFS Roth phase-out is NOT inflation-indexed (BUG-186)", () => {
+  it("MAGI 10,200 (inside the bug's indexed band, above the real 10,000 cliff) gives Roth 0 in year 2+", () => {
+    const rows = runSimulation({
+      totalYears: 5, currentAge: 30, currentIncome: 10_200, incomeGrowth: 0, incomeGrowthEndAge: null,
+      filingStatus: "mfs", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 5,
+      bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0,
+      contrib401k: 0, contribRoth: 7_000, contribTaxable: 0, contribHSA: 0,
+      contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+      calcEmployerMatchFn: () => 0, inflationRate: 4,
+    });
+    expect(rows[1].cRoth).toBe(0);   // year 2: the old code contributed here
+    expect(rows[2].cRoth).toBe(0);
+    expect(rows[4].cRoth).toBe(0);
+  });
+
+  it("MFS phase-out fraction does not drift year to year (constant MAGI 9,000 -> same Roth every year)", () => {
+    const rows = runSimulation({
+      totalYears: 5, currentAge: 30, currentIncome: 9_000, incomeGrowth: 0, incomeGrowthEndAge: null,
+      filingStatus: "mfs", spouseIncome: 0, spouseIncomeGrowth: 0, returnRate: 5,
+      bal401k: 0, balRoth: 0, balTaxable: 0, balHSA: 0,
+      contrib401k: 0, contribRoth: 7_000, contribTaxable: 0, contribHSA: 0,
+      contribEnd401k: 65, contribEndRoth: 65, contribEndTaxable: 65, contribEndHSA: 65,
+      calcEmployerMatchFn: () => 0, inflationRate: 4,
+    });
+    // Unindexed MFS: (10,000 - 9,000) / 10,000 of the 7,500 limit = 750 in year 1. With the
+    // threshold unindexed, the same MAGI gives the same 750 in every later year. The old code
+    // (indexed end 10,400 in year 2) gave 1,010 there, i.e. a phantom contribution increase.
+    expect(rows[0].cRoth).toBe(750);
+    expect(rows.every(r => r.cRoth === 750)).toBe(true);
+  });
+});

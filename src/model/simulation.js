@@ -269,8 +269,12 @@ export function runSimulation({
       // AGI-net MAGI (see netOrdinaryIncome): MFJ uses combined, every other status uses
       // primary-only (spouse income/contributions tracked separately). CLAUDE.md rules 3 & 9, BUG-12.
       const yearMAGI    = netOrdinaryIncome;
-      const po = indexedRothPhaseout(
-        ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single, inflationRate, y - 1);
+      // BUG-186: the IRS does NOT index the married-filing-separately phase-out (0-10,000),
+      // so mfs stays on its unindexed figures; every other status indexes as before.
+      const rothPo = ROTH_PHASEOUT_2026[filingStatus] ?? ROTH_PHASEOUT_2026.single;
+      const po = filingStatus === "mfs"
+        ? rothPo
+        : indexedRothPhaseout(rothPo, inflationRate, y - 1);
       if (yearMAGI >= po.end) return 0;
       if (yearMAGI <= po.start) return baseContrib;
       // Phase-out reduces the contribution LIMIT, then you contribute min(desired, reduced

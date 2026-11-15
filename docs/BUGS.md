@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-186 — the Roth IRA phase-out for married-filing-separately was inflation-indexed, but the IRS does not index it (CodeRabbit review of PR #70; introduced by BUG-159; FIXED 2026-11-15)
+
+**Severity: LOW.** BUG-159 indexed the Roth phase-out thresholds for every filing status. The IRS does not index the married-filing-separately band (0 to 10,000). At 4% inflation, year 2 widened it to 10,400, so an MFS filer with MAGI 10,200 kept contributing Roth (144 in year 2) where the real cliff gives 0.
+**Fix.** In `runSimulation`, `mfs` uses `ROTH_PHASEOUT_2026.mfs` unindexed; every other status is indexed as before. **Files:** `src/model/simulation.js`.
+**Tests/revert-and-confirm.** `src/model/__tests__/roth-phaseout-indexing.test.js` (2 new, MFS). Removing the fix line: both fail (year-2 Roth 144 instead of 0; constant-MAGI year 2 gives 1,010 instead of 750). Restored: 9/9 pass. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
 ### BUG-183 — editing a pinned Social Security override re-anchored it to the current claim age (Opus review 2 S-3, from BUG-177; FIXED 2026-11-14)
 
 **Severity: MEDIUM.** Pin 38,000 at claim age 70, move the claim age to 62 (field still shows 38,000, effective 21,452), then nudge the field to 38,500: the anchor silently became 62, so the claim leg read 38,500 (+79%) and moving back to 70 gave 68,200 (a fake delay gain BUG-177 was filed to stop).
