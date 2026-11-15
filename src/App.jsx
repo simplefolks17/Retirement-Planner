@@ -364,6 +364,8 @@ export default function App() {
       // convention. null when there's no spouse — inert (byte-identical).
       spouseIncomeEndAge: spouseIncomeEndAgeBase,
       inflationRate, // BUG-159: Roth phase-out thresholds index with inflation
+      // BUG-187: the PRIMARY sim's plateau applies to the primary only; the spouse's salary is uncapped here.
+      otherEarnerGrowthEndAge: null,
     });
     // BUG-35: "Trad 401k" is now displayed GROSS (the real pre-tax balance). The
     // engine taxes withdrawals year-by-year, so the headline + chart + account cards

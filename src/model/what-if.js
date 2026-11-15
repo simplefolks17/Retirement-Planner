@@ -500,6 +500,7 @@ export function calcWhatIfDelta({
       ...spDelta.primaryInputs,
       ...(contribOverrides ?? {}),
       moneyEvents: [...(simInputs.moneyEvents ?? []), ...accumEvents],
+      otherEarnerGrowthEndAge: null, // BUG-187: primary's plateau must not cap the spouse's salary
     });
     // Mirror App.jsx: the row at index (scenarioRetAge - currentAge - 1)
     const retIdx = scenarioRetAge - simInputs.currentAge - 1;
@@ -828,6 +829,7 @@ export function calcWhatIfScenario({
       resimRaw = runSimulation({
         ...spScen.primaryInputs,
         moneyEvents: accumEvents,
+        otherEarnerGrowthEndAge: null, // BUG-187: primary's plateau must not cap the spouse's salary
       }).map(d => ({ ...d, "Trad 401k": Math.round(d.tradGross ?? 0) }));
     } catch {
       return null;

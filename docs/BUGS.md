@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-187 — the primary's income plateau capped the SPOUSE's salary in every primary simulation (CodeRabbit review of PR #70; default left by BUG-156; FIXED 2026-11-15)
+
+**Severity: MEDIUM.** `runSimulation`'s `otherEarnerGrowthEndAge` defaults to the subject's own `incomeGrowthEndAge` when omitted. BUG-156 added that param for the spouse run but left the default in place, so the primary's plateau (set in the primary's frame) also froze the spouse's raises in the primary sim, App's chart and the what-if resims alike. Spouse income is then understated in household MAGI and the Roth phase-out, and in the spouse's wages that feed the walk.
+**Fix.** Every PRIMARY `runSimulation` call passes `otherEarnerGrowthEndAge: null` (the spouse's own salary has no plateau input): App.jsx's primary sim and the two what-if primary resims (`calcWhatIfDelta`, `calcWhatIfScenario`) in `src/model/what-if.js`. `spouse-sim.js` already passes its own value and is unchanged. **Files:** `src/App.jsx`, `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `src/__tests__/other-earner-plateau-wiring.test.js` (4): a model test (explicit null equals the no-plateau run; the omitted default changes Roth, so it is not vacuous), and two App-level tests that spy on `runSimulation` and assert every primary-plateau call passes null (one for the App sim, one for the what-if resims). Removing the App line: the App test fails. Removing either what-if line: the what-if test fails. Restored: 4/4 pass. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
 ### BUG-186 — the Roth IRA phase-out for married-filing-separately was inflation-indexed, but the IRS does not index it (CodeRabbit review of PR #70; introduced by BUG-159; FIXED 2026-11-15)
 
 **Severity: LOW.** BUG-159 indexed the Roth phase-out thresholds for every filing status. The IRS does not index the married-filing-separately band (0 to 10,000). At 4% inflation, year 2 widened it to 10,400, so an MFS filer with MAGI 10,200 kept contributing Roth (144 in year 2) where the real cliff gives 0.
