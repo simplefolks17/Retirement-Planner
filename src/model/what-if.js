@@ -644,7 +644,10 @@ export function anchorWhatIfToHeadline({ scenario, noChange, headline, scenarioR
   let depletionAge;
   if (years === Infinity) depletionAge = null;
   else if (deltaYears === 0) depletionAge = headline.depletionAge ?? null;
-  else depletionAge = Math.round(scenarioRetAge + years);
+  // BUG-189 (CodeRabbit, PR #70): the same convention as the engine (retirement-engine.js:
+  // yearsSustained = (age - startAge - 1) + frac, depletionAge = age), so a fractional
+  // duration Y depletes in year startAge + floor(Y) + 1. Math.round(retAge + Y) was one year early.
+  else depletionAge = scenarioRetAge + Math.floor(years) + 1;
   return {
     baseYears: headline.years,
     scenarioYears: years,

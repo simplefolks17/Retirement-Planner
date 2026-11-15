@@ -31,3 +31,18 @@ describe("BUG-188: anchored duration never goes negative", () => {
   });
 });
 
+// BUG-189 (CodeRabbit, PR #70): the anchored fallback depletion age used Math.round(retAge + years).
+// The engine (retirement-engine.js: yearsSustained = (age - startAge - 1) + frac, depletionAge = age)
+// maps a fractional duration Y to depletion age startAge + floor(Y) + 1.
+describe("BUG-189: anchored fallback depletion age uses the engine's convention", () => {
+  it("retire at 65 with 10.2 anchored years -> depletion at 76 (floor + 1), not round -> 75", () => {
+    const out = anchorWhatIfToHeadline({
+      scenario: { scenarioYears: 12.2, scenarioTotalAtRet: 1 },
+      noChange: { scenarioYears: 10, scenarioTotalAtRet: 1 },
+      headline: { years: 8, depletionAge: null, totalAtRet: 1 },
+      scenarioRetAge: 65,
+    });
+    expect(out.scenarioYears).toBeCloseTo(10.2, 9);
+    expect(out.scenarioDepletionAge).toBe(76);
+  });
+});

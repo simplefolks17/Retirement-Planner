@@ -249,7 +249,9 @@ describe("anchorWhatIfToHeadline (BUG-176) — edge states", () => {
   it("finite delta rides on the headline (engine bias cancels); nest egg likewise", () => {
     const a = mk(7.4, 5.4);
     expect(a.scenarioYears).toBe(15); expect(a.deltaYears).toBeCloseTo(2, 9);
-    expect(a.scenarioDepletionAge).toBe(72); expect(a.scenarioTotalAtRet).toBe(1_100_000);
+    // BUG-189: 57 + floor(15) + 1 = 73 (the engine's convention). This line previously locked the
+    // Math.round(57 + 15) = 72 off-by-one that BUG-189 corrected.
+    expect(a.scenarioDepletionAge).toBe(73); expect(a.scenarioTotalAtRet).toBe(1_100_000);
   });
   it("scenario never depletes while the no-change walk did -> Infinity, no depletion age", () => {
     const a = mk(Infinity, 5.4);

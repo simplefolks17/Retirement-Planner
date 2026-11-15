@@ -733,6 +733,12 @@ untouched). Still reproduces; still inert at the default state (no accumulation 
 
 ## Resolved Issues
 
+### BUG-189 — the anchored fallback depletion age rounded instead of using the engine's year convention (CodeRabbit review of PR #70; introduced by BUG-176; FIXED 2026-11-15)
+
+**Severity: LOW.** The fallback in `anchorWhatIfToHeadline` was `Math.round(scenarioRetAge + years)`. The engine (`retirement-engine.js`) reports `yearsSustained = (age - startAge - 1) + frac` with `depletionAge = age`, so a fractional duration Y depletes in year `startAge + floor(Y) + 1`. Rounding printed the depletion one year early (retire 65 with 10.2 years: 75 instead of 76).
+**Fix.** `depletionAge = scenarioRetAge + Math.floor(years) + 1`, matching the engine. **Files:** `src/model/what-if.js`.
+**Tests/revert-and-confirm.** `src/__tests__/anchor-duration-clamp.test.js` (retire 65, 10.2 years -> 76). Restoring `Math.round`: `expected 75 to be 76`, 1 failing; restored, pass. Known edge: a pool emptied exactly with full funding reports an integer duration that maps to age + 1 under this rule; the engine's convention cannot distinguish it from a fractional year. See `docs/audit-2026-11-14/impl-log-R4-A.md`.
+
 ### BUG-188 — the BUG-176 anchor could print a negative scenario duration (CodeRabbit review of PR #70; introduced by BUG-176; FIXED 2026-11-15)
 
 **Severity: LOW.** `anchorWhatIfToHeadline` computed "after" as headline + delta with no floor. A lever that removes more years than the headline has (headline 5, no-change 20, scenario 10: delta -10) printed -5 years.
